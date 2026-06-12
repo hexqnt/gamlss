@@ -1,0 +1,19 @@
+[package]
+name = "gamlss-family"
+version.workspace = true
+edition.workspace = true
+description = "Distribution families and likelihoods for GAMLSS modeling"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-family"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "Cargo.toml", "README.md"]
+
+[dependencies]
+gamlss-core.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "gamlss-spline"
+version.workspace = true
+edition.workspace = true
+description = "Spline bases, penalties, and metadata for GAMLSS modeling"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-spline"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "Cargo.toml", "README.md"]
+
+[dependencies]
+gamlss-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true

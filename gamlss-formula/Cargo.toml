@@ -1,0 +1,21 @@
+[package]
+name = "gamlss-formula"
+version.workspace = true
+edition.workspace = true
+description = "Formula and builder layer for typed GAMLSS models"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-formula"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "Cargo.toml", "README.md"]
+
+[dependencies]
+gamlss-core.workspace = true
+gamlss-family.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
