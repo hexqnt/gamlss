@@ -206,7 +206,7 @@ pub fn pspline_design(
 /// Open-uniform spline predictor с локальным sparse вычислением строк.
 ///
 /// В отличие от [`BSplineBasis`], хранит исходные данные и вычисляет
-/// базисные функции «на лету» через компактный [`LocalBasis`], не
+/// базисные функции «на лету» через компактное `LocalBasis`, не
 /// материализуя полную design matrix.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenUniformSplineDesign {

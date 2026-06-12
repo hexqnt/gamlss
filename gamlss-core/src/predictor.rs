@@ -5,6 +5,11 @@ use crate::{DesignMatrix, ModelError};
 /// Implementations map a local coefficient slice to a scalar linear predictor
 /// contribution for each observation and know how to propagate per-observation
 /// scores back to that local coefficient slice.
+///
+/// The model validates row counts before evaluation. In release builds,
+/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
+/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
+/// must add into the existing `grad` buffer rather than clearing it.
 pub trait PredictorBlock {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -202,6 +207,37 @@ impl_sum_block!(
     )
 );
 
+impl_sum_block!(
+    terms = (T1, T2, T3, T4, T5, T6, T7);
+    vars = (term1, term2, term3, term4, term5, term6, term7);
+    indices = (0, 1, 2, 3, 4, 5, 6);
+    names = (
+        "sum first term",
+        "sum second term",
+        "sum third term",
+        "sum fourth term",
+        "sum fifth term",
+        "sum sixth term",
+        "sum seventh term"
+    )
+);
+
+impl_sum_block!(
+    terms = (T1, T2, T3, T4, T5, T6, T7, T8);
+    vars = (term1, term2, term3, term4, term5, term6, term7, term8);
+    indices = (0, 1, 2, 3, 4, 5, 6, 7);
+    names = (
+        "sum first term",
+        "sum second term",
+        "sum third term",
+        "sum fourth term",
+        "sum fifth term",
+        "sum sixth term",
+        "sum seventh term",
+        "sum eighth term"
+    )
+);
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -223,5 +259,30 @@ mod tests {
 
         assert_relative_eq!(grad[0], 6.5);
         assert_relative_eq!(grad[1], 9.0);
+    }
+
+    #[test]
+    fn sum_block_supports_eight_terms() {
+        let terms = (
+            LinearPredictorBlock::new(DenseDesign::column(&[1.0, 2.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[2.0, 3.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[3.0, 4.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[4.0, 5.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[5.0, 6.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[6.0, 7.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[7.0, 8.0])),
+            LinearPredictorBlock::new(DenseDesign::column(&[8.0, 9.0])),
+        );
+        let block = crate::SumBlock::new(terms);
+        let beta = [1.0; 8];
+
+        assert_eq!(block.nparams(), 8);
+        assert_relative_eq!(block.eta_row(1, &beta), 44.0);
+
+        let mut grad = vec![0.0; 8];
+        block.add_gradient(&[0.5, 2.0], &beta, &mut grad);
+
+        assert_relative_eq!(grad[0], 4.5);
+        assert_relative_eq!(grad[7], 22.0);
     }
 }

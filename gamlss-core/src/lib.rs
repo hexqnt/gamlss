@@ -29,7 +29,7 @@ pub use model::{
     ParameterLayout, ParameterSlice, UnpackedTheta, WithGlobalPenalties,
 };
 pub use objective::{BlockObjective, Objective};
-pub use param::{Mu, Nu, ParameterBlock, ParameterName, Rate, Scale, Shape, Sigma, Tau};
+pub use param::{Mu, Nu, ParameterBlock, ParameterName, Precision, Rate, Scale, Shape, Sigma, Tau};
 pub use penalty::{GlobalPenalty, NoPenalty, Penalty, RidgePenalty};
 pub use predictor::{LinearPredictorBlock, PredictorBlock, SumBlock};
 
@@ -41,7 +41,7 @@ pub mod prelude {
         HasQuantile, Identity, LinearPredictorBlock, Link, Log, LogPlus, Logit, ModelError, Mu,
         NoPenalty, Nu, Objective, ParameterBlock, ParameterCoefficients, ParameterLayout,
         ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
-        PredictorBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock, Tau,
-        UnpackedTheta, WithGlobalPenalties,
+        Precision, PredictorBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock,
+        Tau, UnpackedTheta, WithGlobalPenalties,
     };
 }

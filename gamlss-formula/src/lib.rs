@@ -4,10 +4,13 @@
 use std::collections::BTreeMap;
 
 use gamlss_core::{
-    DenseDesign, Gamlss, Identity, LinearPredictorBlock, ModelError, Mu, NoPenalty, ParameterBlock,
-    Sigma,
+    DenseDesign, Gamlss, Identity, LinearPredictorBlock, Log, Logit, ModelError, Mu, NoPenalty,
+    ParameterBlock, Precision, Rate, Scale, Shape, Sigma,
 };
-use gamlss_family::DefaultNormal;
+use gamlss_family::{
+    DefaultBeta, DefaultGamma, DefaultInverseGaussian, DefaultLogNormal, DefaultNormal,
+    DefaultWeibull,
+};
 use thiserror::Error;
 
 /// Ошибки динамического formula/builder слоя.
@@ -119,6 +122,16 @@ impl DataFrame {
 pub enum FamilySpec {
     /// Нормальное распределение.
     Normal,
+    /// Gamma distribution.
+    Gamma,
+    /// Log-normal distribution.
+    LogNormal,
+    /// Weibull distribution.
+    Weibull,
+    /// Inverse Gaussian distribution.
+    InverseGaussian,
+    /// Beta distribution.
+    Beta,
 }
 
 /// Динамическая спецификация link-функции.
@@ -164,6 +177,51 @@ pub type CompiledNormal = Gamlss<
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Sigma, gamlss_core::Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+    ),
+>;
+
+/// Результат компиляции `GammaSpec` в типизированную модель.
+pub type CompiledGamma = Gamlss<
+    DefaultGamma,
+    (
+        ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ParameterBlock<Rate, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+    ),
+>;
+
+/// Результат компиляции `LogNormalSpec` в типизированную модель.
+pub type CompiledLogNormal = Gamlss<
+    DefaultLogNormal,
+    (
+        ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+    ),
+>;
+
+/// Результат компиляции `WeibullSpec` в типизированную модель.
+pub type CompiledWeibull = Gamlss<
+    DefaultWeibull,
+    (
+        ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ParameterBlock<Scale, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+    ),
+>;
+
+/// Результат компиляции `InverseGaussianSpec` в типизированную модель.
+pub type CompiledInverseGaussian = Gamlss<
+    DefaultInverseGaussian,
+    (
+        ParameterBlock<Mu, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+    ),
+>;
+
+/// Результат компиляции `BetaSpec` в типизированную модель.
+pub type CompiledBeta = Gamlss<
+    DefaultBeta,
+    (
+        ParameterBlock<Mu, Logit, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ParameterBlock<Precision, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
 >;
 
@@ -247,6 +305,132 @@ impl Default for NormalSpec {
     }
 }
 
+macro_rules! define_two_parameter_spec {
+    (
+        $(#[$meta:meta])*
+        $spec:ident, $compiled:ident, $family:ty;
+        first = $first_terms:ident, $first:ident, $first_intercept:ident, $first_linear:ident, $first_param:ty, $first_link:ty;
+        second = $second_terms:ident, $second:ident, $second_intercept:ident, $second_linear:ident, $second_param:ty, $second_link:ty
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $spec {
+            $first_terms: Vec<TermSpec>,
+            $second_terms: Vec<TermSpec>,
+        }
+
+        impl $spec {
+            /// Создаёт пустую спецификацию.
+            pub fn new() -> Self {
+                Self {
+                    $first_terms: Vec::new(),
+                    $second_terms: Vec::new(),
+                }
+            }
+
+            /// Добавляет term в predictor первого параметра.
+            pub fn $first(mut self, term: TermSpec) -> Self {
+                self.$first_terms.push(term);
+                self
+            }
+
+            /// Добавляет term в predictor второго параметра.
+            pub fn $second(mut self, term: TermSpec) -> Self {
+                self.$second_terms.push(term);
+                self
+            }
+
+            /// Добавляет intercept в predictor первого параметра.
+            pub fn $first_intercept(self) -> Self {
+                self.$first(TermSpec::Intercept)
+            }
+
+            /// Добавляет intercept в predictor второго параметра.
+            pub fn $second_intercept(self) -> Self {
+                self.$second(TermSpec::Intercept)
+            }
+
+            /// Добавляет linear term в predictor первого параметра.
+            pub fn $first_linear<S>(self, name: S) -> Self
+            where
+                S: Into<String>,
+            {
+                self.$first(TermSpec::linear(name))
+            }
+
+            /// Добавляет linear term в predictor второго параметра.
+            pub fn $second_linear<S>(self, name: S) -> Self
+            where
+                S: Into<String>,
+            {
+                self.$second(TermSpec::linear(name))
+            }
+
+            /// Компилирует динамическую спецификацию в типизированную модель.
+            pub fn compile(&self, data: &DataFrame, y: &str) -> Result<$compiled, FormulaError> {
+                let response = data.column(y)?.to_vec();
+                let first_x = design_from_terms(&self.$first_terms, data)?;
+                let second_x = design_from_terms(&self.$second_terms, data)?;
+
+                let first =
+                    ParameterBlock::<$first_param, $first_link, _, _>::linear(first_x, NoPenalty, 0);
+                let second = ParameterBlock::<$second_param, $second_link, _, _>::linear(
+                    second_x,
+                    NoPenalty,
+                    first.len(),
+                );
+
+                Ok(gamlss_core::Gamlss::try_new(
+                    <$family>::new(),
+                    (first, second),
+                    response,
+                )?)
+            }
+        }
+
+        impl Default for $spec {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
+define_two_parameter_spec!(
+    /// Динамическая спецификация gamma GAMLSS-модели с default links.
+    GammaSpec, CompiledGamma, DefaultGamma;
+    first = shape_terms, shape, shape_intercept, shape_linear, Shape, Log;
+    second = rate_terms, rate, rate_intercept, rate_linear, Rate, Log
+);
+
+define_two_parameter_spec!(
+    /// Динамическая спецификация log-normal GAMLSS-модели с default links.
+    LogNormalSpec, CompiledLogNormal, DefaultLogNormal;
+    first = mu_terms, mu, mu_intercept, mu_linear, Mu, Identity;
+    second = sigma_terms, sigma, sigma_intercept, sigma_linear, Sigma, Log
+);
+
+define_two_parameter_spec!(
+    /// Динамическая спецификация Weibull GAMLSS-модели с default links.
+    WeibullSpec, CompiledWeibull, DefaultWeibull;
+    first = shape_terms, shape, shape_intercept, shape_linear, Shape, Log;
+    second = scale_terms, scale, scale_intercept, scale_linear, Scale, Log
+);
+
+define_two_parameter_spec!(
+    /// Динамическая спецификация inverse Gaussian GAMLSS-модели с default links.
+    InverseGaussianSpec, CompiledInverseGaussian, DefaultInverseGaussian;
+    first = mu_terms, mu, mu_intercept, mu_linear, Mu, Log;
+    second = shape_terms, shape, shape_intercept, shape_linear, Shape, Log
+);
+
+define_two_parameter_spec!(
+    /// Динамическая спецификация beta GAMLSS-модели с default links.
+    BetaSpec, CompiledBeta, DefaultBeta;
+    first = mu_terms, mu, mu_intercept, mu_linear, Mu, Logit;
+    second = precision_terms, precision, precision_intercept, precision_linear, Precision, Log
+);
+
 /// Точка входа для builder-style API.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ModelSpec;
@@ -256,11 +440,61 @@ impl ModelSpec {
     pub fn normal() -> NormalSpec {
         NormalSpec::new()
     }
+
+    /// Создаёт gamma model spec.
+    pub fn gamma() -> GammaSpec {
+        GammaSpec::new()
+    }
+
+    /// Создаёт log-normal model spec.
+    pub fn log_normal() -> LogNormalSpec {
+        LogNormalSpec::new()
+    }
+
+    /// Создаёт Weibull model spec.
+    pub fn weibull() -> WeibullSpec {
+        WeibullSpec::new()
+    }
+
+    /// Создаёт inverse Gaussian model spec.
+    pub fn inverse_gaussian() -> InverseGaussianSpec {
+        InverseGaussianSpec::new()
+    }
+
+    /// Создаёт beta model spec.
+    pub fn beta() -> BetaSpec {
+        BetaSpec::new()
+    }
 }
 
 /// Вспомогательная функция для `ModelSpec::normal()`.
 pub fn normal() -> NormalSpec {
     ModelSpec::normal()
+}
+
+/// Вспомогательная функция для `ModelSpec::gamma()`.
+pub fn gamma() -> GammaSpec {
+    ModelSpec::gamma()
+}
+
+/// Вспомогательная функция для `ModelSpec::log_normal()`.
+pub fn log_normal() -> LogNormalSpec {
+    ModelSpec::log_normal()
+}
+
+/// Вспомогательная функция для `ModelSpec::weibull()`.
+pub fn weibull() -> WeibullSpec {
+    ModelSpec::weibull()
+}
+
+/// Вспомогательная функция для `ModelSpec::inverse_gaussian()`.
+pub fn inverse_gaussian() -> InverseGaussianSpec {
+    ModelSpec::inverse_gaussian()
+}
+
+/// Вспомогательная функция для `ModelSpec::beta()`.
+pub fn beta() -> BetaSpec {
+    ModelSpec::beta()
 }
 
 fn design_from_terms(terms: &[TermSpec], data: &DataFrame) -> Result<DenseDesign, FormulaError> {
@@ -291,8 +525,10 @@ fn design_from_terms(terms: &[TermSpec], data: &DataFrame) -> Result<DenseDesign
 /// Наиболее часто используемые импорты из `gamlss-formula`.
 pub mod prelude {
     pub use crate::{
-        CompiledNormal, DataFrame, FamilySpec, FormulaError, LinkSpec, ModelSpec, NormalSpec,
-        TermSpec, normal,
+        BetaSpec, CompiledBeta, CompiledGamma, CompiledInverseGaussian, CompiledLogNormal,
+        CompiledNormal, CompiledWeibull, DataFrame, FamilySpec, FormulaError, GammaSpec,
+        InverseGaussianSpec, LinkSpec, LogNormalSpec, ModelSpec, NormalSpec, TermSpec, WeibullSpec,
+        beta, gamma, inverse_gaussian, log_normal, normal, weibull,
     };
 }
 
@@ -317,5 +553,81 @@ mod tests {
 
         assert_eq!(model.nparams(), 3);
         assert!(model.value(&beta).unwrap().is_finite());
+    }
+
+    #[test]
+    fn compiles_new_default_family_specs_to_typed_models() {
+        let data = DataFrame::from_columns([
+            ("y_pos", vec![0.5, 1.0, 1.5]),
+            ("y_unit", vec![0.2, 0.5, 0.8]),
+            ("x", vec![1.0, 2.0, 3.0]),
+        ])
+        .unwrap();
+
+        let mut gamma = ModelSpec::gamma()
+            .shape_intercept()
+            .shape_linear("x")
+            .rate_intercept()
+            .compile(&data, "y_pos")
+            .unwrap();
+        assert_eq!(gamma.nparams(), 3);
+        assert_eq!(gamma.parameter_layout().slice("shape").unwrap(), 0..2);
+        assert_eq!(gamma.parameter_layout().slice("rate").unwrap(), 2..3);
+        assert!(gamma.value(&[0.0, 0.1, 0.0]).unwrap().is_finite());
+
+        let mut log_normal = ModelSpec::log_normal()
+            .mu_intercept()
+            .sigma_intercept()
+            .sigma_linear("x")
+            .compile(&data, "y_pos")
+            .unwrap();
+        assert_eq!(log_normal.nparams(), 3);
+        assert_eq!(log_normal.parameter_layout().slice("mu").unwrap(), 0..1);
+        assert_eq!(log_normal.parameter_layout().slice("sigma").unwrap(), 1..3);
+        assert!(log_normal.value(&[0.0, 0.0, 0.1]).unwrap().is_finite());
+
+        let mut weibull = ModelSpec::weibull()
+            .shape_intercept()
+            .scale_intercept()
+            .scale_linear("x")
+            .compile(&data, "y_pos")
+            .unwrap();
+        assert_eq!(weibull.nparams(), 3);
+        assert_eq!(weibull.parameter_layout().slice("shape").unwrap(), 0..1);
+        assert_eq!(weibull.parameter_layout().slice("scale").unwrap(), 1..3);
+        assert!(weibull.value(&[0.0, 0.0, 0.1]).unwrap().is_finite());
+
+        let mut inverse_gaussian = ModelSpec::inverse_gaussian()
+            .mu_intercept()
+            .mu_linear("x")
+            .shape_intercept()
+            .compile(&data, "y_pos")
+            .unwrap();
+        assert_eq!(inverse_gaussian.nparams(), 3);
+        assert_eq!(
+            inverse_gaussian.parameter_layout().slice("mu").unwrap(),
+            0..2
+        );
+        assert_eq!(
+            inverse_gaussian.parameter_layout().slice("shape").unwrap(),
+            2..3
+        );
+        assert!(
+            inverse_gaussian
+                .value(&[0.0, 0.1, 0.0])
+                .unwrap()
+                .is_finite()
+        );
+
+        let mut beta = ModelSpec::beta()
+            .mu_intercept()
+            .precision_intercept()
+            .precision_linear("x")
+            .compile(&data, "y_unit")
+            .unwrap();
+        assert_eq!(beta.nparams(), 3);
+        assert_eq!(beta.parameter_layout().slice("mu").unwrap(), 0..1);
+        assert_eq!(beta.parameter_layout().slice("precision").unwrap(), 1..3);
+        assert!(beta.value(&[0.0, 1.0, 0.1]).unwrap().is_finite());
     }
 }

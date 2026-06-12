@@ -6,6 +6,11 @@ use crate::{
 };
 
 /// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
+///
+/// Implementations are generated for typed tuples of [`ParameterBlock`]. The
+/// model validates response length, predictor row counts and coefficient
+/// ranges before hot-path evaluation; generated methods may then assume
+/// compatible slice lengths and non-overlapping block ranges.
 pub trait GamlssBlocks<F> {
     /// Число наблюдений в blocks.
     fn nrows(&self) -> usize;
@@ -62,6 +67,8 @@ pub trait GamlssBlocks<F> {
 /// The workspace stores one per-observation score vector and one local
 /// coefficient-gradient vector per parameter block. Reusing it avoids the
 /// temporary `Vec` allocations that otherwise happen inside each gradient call.
+/// The workspace is model-shape specific but can be reused across different
+/// beta vectors for the same compiled model.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GradientWorkspace {
     scores: Vec<Vec<f64>>,

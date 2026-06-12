@@ -36,6 +36,13 @@ pub struct Shape;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scale;
 
+/// Маркер для precision-параметра распределения.
+///
+/// Используется для параметризаций вида mean/precision, например beta
+/// distribution, где `precision > 0` управляет концентрацией вокруг mean.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Precision;
+
 impl ParameterName for Mu {
     const NAME: &'static str = "mu";
 }
@@ -62,6 +69,10 @@ impl ParameterName for Shape {
 
 impl ParameterName for Scale {
     const NAME: &'static str = "scale";
+}
+
+impl ParameterName for Precision {
+    const NAME: &'static str = "precision";
 }
 
 /// Типизированный block коэффициентов для одного параметра распределения.

@@ -1,22 +1,44 @@
 #![forbid(unsafe_code)]
 //! Распределения, likelihood и score для GAMLSS.
 
+/// Beta distribution.
+pub mod beta;
+/// Gamma distribution.
+pub mod gamma;
+/// Inverse Gaussian distribution.
+pub mod inverse_gaussian;
 /// Распределение Лапласа.
 pub mod laplace;
+/// Log-normal distribution.
+pub mod log_normal;
 /// Нормальное распределение.
 pub mod normal;
+mod special;
 /// Распределение Стьюдента с фиксированным числом степеней свободы.
 pub mod student_t;
+/// Weibull distribution.
+pub mod weibull;
 
+pub use beta::{Beta, BetaEta, BetaTheta, DefaultBeta};
+pub use gamma::{DefaultGamma, Gamma, GammaEta, GammaTheta};
+pub use inverse_gaussian::{
+    DefaultInverseGaussian, InverseGaussian, InverseGaussianEta, InverseGaussianTheta,
+};
 pub use laplace::{DefaultLaplace, Laplace, LaplaceEta, LaplaceTheta};
+pub use log_normal::{DefaultLogNormal, LogNormal, LogNormalEta, LogNormalTheta};
 pub use normal::{DefaultNormal, Normal, NormalEta, NormalGamlss, NormalTheta, normal_gamlss};
 pub use student_t::{DefaultStudentT, StudentT, StudentTEta, StudentTTheta};
+pub use weibull::{DefaultWeibull, Weibull, WeibullEta, WeibullTheta};
 
 /// Наиболее часто используемые импорты из `gamlss-family`.
 pub mod prelude {
     pub use crate::{
-        DefaultLaplace, DefaultNormal, DefaultStudentT, Laplace, LaplaceEta, LaplaceTheta, Normal,
-        NormalEta, NormalGamlss, NormalTheta, StudentT, StudentTEta, StudentTTheta, normal_gamlss,
+        Beta, BetaEta, BetaTheta, DefaultBeta, DefaultGamma, DefaultInverseGaussian,
+        DefaultLaplace, DefaultLogNormal, DefaultNormal, DefaultStudentT, DefaultWeibull, Gamma,
+        GammaEta, GammaTheta, InverseGaussian, InverseGaussianEta, InverseGaussianTheta, Laplace,
+        LaplaceEta, LaplaceTheta, LogNormal, LogNormalEta, LogNormalTheta, Normal, NormalEta,
+        NormalGamlss, NormalTheta, StudentT, StudentTEta, StudentTTheta, Weibull, WeibullEta,
+        WeibullTheta, normal_gamlss,
     };
 }
 

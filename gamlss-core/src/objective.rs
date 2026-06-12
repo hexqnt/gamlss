@@ -7,6 +7,11 @@ use crate::ModelError;
 /// Методы принимают `&mut self`, чтобы реализации могли переиспользовать
 /// временные буферы, не раскрывая состояние, специфичное для оптимизатора,
 /// в `gamlss-core`.
+///
+/// Implementations validate input lengths and return recoverable errors for
+/// shape mismatches. `value` and `gradient` are allowed to reuse internal
+/// buffers; callers should not assume they are pure with respect to internal
+/// cache state.
 pub trait Objective {
     /// Recoverable error returned by objective evaluation.
     type Error;
@@ -18,6 +23,10 @@ pub trait Objective {
     fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error>;
 
     /// Writes the gradient at `theta` into preallocated `grad`.
+    ///
+    /// Implementations overwrite the full gradient buffer after validating
+    /// `grad.len() == dim()`. They should return an error instead of panicking
+    /// for ordinary caller mistakes such as wrong vector length.
     fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error>;
 
     /// Computes objective value and gradient at `theta`.

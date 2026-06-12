@@ -5,6 +5,8 @@ use gamlss_core::{
     Sigma,
 };
 
+use crate::special::ln_gamma;
+
 /// Student's t location-scale family с фиксированным числом степеней свободы.
 ///
 /// `MuLink` и `SigmaLink` управляют link-функциями для параметров
@@ -181,39 +183,6 @@ pub type DefaultStudentT = StudentT<Identity, Log>;
 /// Нормировочная константа логарифма плотности распределения Стьюдента.
 fn student_t_constant(nu: f64) -> f64 {
     0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
-}
-
-/// Приближение логарифма гамма-функции (алгоритм Lanczos).
-///
-/// Используется для вычисления нормировочной константы плотности
-/// распределения Стьюдента. Точность достаточна для типовых приложений.
-fn ln_gamma(value: f64) -> f64 {
-    const COEFFICIENTS: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
-
-    if value < 0.5 {
-        return std::f64::consts::PI.ln()
-            - (std::f64::consts::PI * value).sin().ln()
-            - ln_gamma(1.0 - value);
-    }
-
-    let shifted = value - 1.0;
-    let mut x = COEFFICIENTS[0];
-    for (index, coefficient) in COEFFICIENTS.iter().copied().enumerate().skip(1) {
-        x += coefficient / (shifted + index as f64);
-    }
-    let t = shifted + 7.5;
-
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (shifted + 0.5) * t.ln() - t + x.ln()
 }
 
 #[cfg(test)]

@@ -4,6 +4,12 @@
 /// роли параметров и совместимость link-функций задаются через
 /// [`ParameterizedFamily`], поэтому hot path остаётся типизированным без
 /// dynamic lookup.
+///
+/// Implementations should treat `nll`/`nll_eta` as scalar negative
+/// log-likelihood contributions for one observation. Invalid observation or
+/// parameter domains should be represented by `f64::INFINITY` rather than
+/// panicking, so optimizers can reject the candidate point. `NaN` inputs may
+/// propagate as `NaN`; callers can inspect diagnostics for non-finite values.
 pub trait Family {
     /// Аддитивные предикторы на link-шкале.
     type Eta;
@@ -21,10 +27,18 @@ pub trait Family {
         self.nll(y, self.theta(eta))
     }
     /// Negative log-likelihood и score по `Eta` для одного наблюдения.
+    ///
+    /// `ScoreEta` is the gradient of the negative log-likelihood with respect
+    /// to the link-scale predictors `Eta`, after applying the chain rule for
+    /// the family links. It must have the same arity and ordering as `Eta`.
     fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta);
 }
 
 /// Контейнер для eta или score у family с фиксированной арностью `K`.
+///
+/// `part(index)` is used in the model hot path after compile-time arity
+/// selection. Callers pass `index < K`; implementations may use `unreachable!`
+/// for out-of-range indices instead of returning a recoverable error.
 pub trait ParameterParts<const K: usize>: Sized {
     /// Собирает контейнер из `K` scalar-частей.
     fn from_array(values: [f64; K]) -> Self;
@@ -103,6 +117,8 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
 /// Family с фиксированным числом параметров, ролями параметров и link-функциями.
 ///
 /// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
+/// Their order defines the order of predictor blocks, score parts and flat
+/// coefficient ranges in compiled models.
 pub trait ParameterizedFamily<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
