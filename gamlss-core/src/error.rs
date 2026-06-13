@@ -27,6 +27,13 @@ pub enum ModelError {
         actual_values: usize,
     },
 
+    /// Размеры design matrix не помещаются в `usize`.
+    #[error("arithmetic overflow while computing {context}")]
+    ArithmeticOverflow {
+        /// Описание вычисляемого размера.
+        context: &'static str,
+    },
+
     /// Число строк design matrix не совпадает с длиной response.
     #[error(
         "{parameter} design has {actual_rows} rows, expected {expected_rows} rows from response"
@@ -74,5 +81,16 @@ pub enum ModelError {
         first: &'static str,
         /// Второй пересекающийся блок.
         second: &'static str,
+    },
+
+    /// Диапазон коэффициентов parameter block не помещается в `usize`.
+    #[error("{parameter} parameter block range overflows: offset {offset}, len {len}")]
+    BlockRangeOverflow {
+        /// Имя параметра.
+        parameter: &'static str,
+        /// Начальная позиция блока.
+        offset: usize,
+        /// Длина блока.
+        len: usize,
     },
 }

@@ -33,7 +33,7 @@ impl DenseDesign {
         ncols: usize,
         values: Vec<f64>,
     ) -> Result<Self, ModelError> {
-        let expected_values = nrows * ncols;
+        let expected_values = checked_len(nrows, ncols, "dense design row-major value count")?;
         let actual_values = values.len();
         if actual_values != expected_values {
             return Err(ModelError::DesignSize {
@@ -95,8 +95,17 @@ impl DenseDesign {
             }
         }
 
-        let ncols = columns.len() + usize::from(include_intercept);
-        let mut values = Vec::with_capacity(nrows * ncols);
+        let ncols = columns
+            .len()
+            .checked_add(usize::from(include_intercept))
+            .ok_or(ModelError::ArithmeticOverflow {
+                context: "dense design column count",
+            })?;
+        let mut values = Vec::with_capacity(checked_len(
+            nrows,
+            ncols,
+            "dense design row-major value count",
+        )?);
 
         for row in 0..nrows {
             if include_intercept {
@@ -114,6 +123,12 @@ impl DenseDesign {
     pub fn values(&self) -> &[f64] {
         &self.values
     }
+}
+
+fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usize, ModelError> {
+    nrows
+        .checked_mul(ncols)
+        .ok_or(ModelError::ArithmeticOverflow { context })
 }
 
 impl DesignMatrix for DenseDesign {
@@ -155,6 +170,8 @@ mod tests {
     use super::{DenseDesign, DesignMatrix};
     use approx::assert_relative_eq;
 
+    use crate::ModelError;
+
     #[test]
     fn dense_design_multiplies_rows_and_transpose() {
         let design = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
@@ -166,5 +183,15 @@ mod tests {
 
         assert_relative_eq!(out[0], 6.5);
         assert_relative_eq!(out[1], 9.0);
+    }
+
+    #[test]
+    fn dense_design_rejects_overflowing_dimensions() {
+        assert_eq!(
+            DenseDesign::from_row_major(usize::MAX, 2, Vec::new()).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "dense design row-major value count"
+            }
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ops::Range};
 
-use crate::{DesignMatrix, LinearPredictorBlock, PredictorBlock};
+use crate::{DesignMatrix, LinearPredictorBlock, ModelError, PredictorBlock};
 
 /// Stable public name for a distribution parameter marker.
 pub trait ParameterName {
@@ -141,12 +141,14 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
 
     /// Диапазон коэффициентов блока в общем beta-векторе.
     pub fn range(&self) -> Range<usize> {
-        self.offset..self.offset + self.len
+        self.offset..self.end()
     }
 
     /// Индекс сразу после последнего коэффициента блока.
     pub fn end(&self) -> usize {
-        self.offset + self.len
+        self.offset
+            .checked_add(self.len)
+            .expect("parameter block range end must fit in usize")
     }
 
     /// Число коэффициентов блока.
@@ -157,5 +159,23 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// `true`, если block не содержит коэффициентов.
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+}
+
+impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty>
+where
+    P: ParameterName,
+{
+    /// Проверяет и возвращает диапазон коэффициентов блока.
+    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+        let end = self
+            .offset
+            .checked_add(self.len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: self.offset,
+                len: self.len,
+            })?;
+        Ok(self.offset..end)
     }
 }

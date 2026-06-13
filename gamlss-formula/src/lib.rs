@@ -508,7 +508,12 @@ fn design_from_terms(terms: &[TermSpec], data: &DataFrame) -> Result<DenseDesign
 
     let nrows = data.nrows();
     let ncols = terms.len();
-    let mut values = Vec::with_capacity(nrows * ncols);
+    let capacity = nrows
+        .checked_mul(ncols)
+        .ok_or(ModelError::ArithmeticOverflow {
+            context: "formula design row-major value count",
+        })?;
+    let mut values = Vec::with_capacity(capacity);
 
     for row in 0..nrows {
         for term in terms {

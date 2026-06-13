@@ -537,7 +537,7 @@ macro_rules! impl_gamlss_blocks {
             }
 
             fn len(&self) -> usize {
-                0$(.max(self.$idx.end()))+
+                0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+
             }
 
             fn validate(&self, y_len: usize) -> Result<(), ModelError> {
@@ -552,7 +552,7 @@ macro_rules! impl_gamlss_blocks {
 
                 let ranges = [$((
                     <$param as ParameterName>::NAME,
-                    self.$idx.range(),
+                    self.$idx.try_range()?,
                 ),)+];
                 for first in 0..ranges.len() {
                     for second in first + 1..ranges.len() {
@@ -753,8 +753,9 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, Mu, NoPenalty, Nu, Objective,
-        ParameterBlock, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock,
+        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, ModelError, Mu, NoPenalty, Nu,
+        Objective, ParameterBlock, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma,
+        SumBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -798,6 +799,22 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn rejects_overflowing_parameter_block_ranges() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
+
+        assert_eq!(
+            Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap_err(),
+            ModelError::BlockRangeOverflow {
+                parameter: "mu",
+                offset: usize::MAX,
+                len: 1,
+            }
+        );
     }
 
     #[test]
