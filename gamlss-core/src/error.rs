@@ -74,6 +74,15 @@ pub enum ModelError {
         actual: usize,
     },
 
+    /// Индекс строки predictor-а вне диапазона наблюдений модели.
+    #[error("row index {row} is out of bounds for {nrows} rows")]
+    RowOutOfBounds {
+        /// Запрошенный индекс строки.
+        row: usize,
+        /// Число строк в модели.
+        nrows: usize,
+    },
+
     /// Два parameter block используют пересекающиеся диапазоны beta.
     #[error("{first} parameter block overlaps with {second} parameter block")]
     BlockOverlap {

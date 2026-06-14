@@ -12,8 +12,14 @@ keywords.workspace = true
 categories.workspace = true
 include = ["src/**/*", "Cargo.toml", "README.md"]
 
+[features]
+default = []
+rand = ["dep:rand", "dep:rand_distr"]
+
 [dependencies]
 gamlss-core.workspace = true
+rand = { workspace = true, optional = true }
+rand_distr = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx.workspace = true

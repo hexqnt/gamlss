@@ -196,26 +196,48 @@ impl PredictorBlock for FourierDesign {
         debug_assert_eq!(grad.len(), self.nparams());
 
         for (row, score) in scores.iter().copied().enumerate() {
-            let mut offset = 0;
-            if self.include_intercept {
-                grad[0] += score;
-                offset = 1;
-            }
+            self.add_row_gradient(row, score, grad);
+        }
+    }
 
-            let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
-            let mut harmonic_sin = base_sin;
-            let mut harmonic_cos = base_cos;
-            for harmonic in 1..=self.order {
-                grad[offset] += score * harmonic_sin;
-                grad[offset + 1] += score * harmonic_cos;
-                offset += 2;
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        _: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(multiplier.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.nparams());
 
-                if harmonic != self.order {
-                    let next_sin = harmonic_sin * base_cos + harmonic_cos * base_sin;
-                    let next_cos = harmonic_cos * base_cos - harmonic_sin * base_sin;
-                    harmonic_sin = next_sin;
-                    harmonic_cos = next_cos;
-                }
+        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+            self.add_row_gradient(row, score * multiplier, grad);
+        }
+    }
+}
+
+impl FourierDesign {
+    fn add_row_gradient(&self, row: usize, score: f64, grad: &mut [f64]) {
+        let mut offset = 0;
+        if self.include_intercept {
+            grad[0] += score;
+            offset = 1;
+        }
+
+        let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
+        let mut harmonic_sin = base_sin;
+        let mut harmonic_cos = base_cos;
+        for harmonic in 1..=self.order {
+            grad[offset] += score * harmonic_sin;
+            grad[offset + 1] += score * harmonic_cos;
+            offset += 2;
+
+            if harmonic != self.order {
+                let next_sin = harmonic_sin * base_cos + harmonic_cos * base_sin;
+                let next_cos = harmonic_cos * base_cos - harmonic_sin * base_sin;
+                harmonic_sin = next_sin;
+                harmonic_cos = next_cos;
             }
         }
     }
@@ -478,6 +500,22 @@ impl PredictorBlock for OpenUniformSplineDesign {
             self.basis_for_row(row).add_scaled(score, grad);
         }
     }
+
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        _: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(multiplier.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.n_basis);
+
+        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+            self.basis_for_row(row).add_scaled(score * multiplier, grad);
+        }
+    }
 }
 
 /// Cyclic spline predictor для периодических ковариат на `[0, 1)`.
@@ -538,6 +576,22 @@ impl PredictorBlock for CyclicSplineDesign {
 
         for (row, score) in scores.iter().copied().enumerate() {
             self.basis_for_row(row).add_scaled(score, grad);
+        }
+    }
+
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        _: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), self.phi.len());
+        debug_assert_eq!(multiplier.len(), self.phi.len());
+        debug_assert_eq!(grad.len(), self.n_basis);
+
+        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+            self.basis_for_row(row).add_scaled(score * multiplier, grad);
         }
     }
 }

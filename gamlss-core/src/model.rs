@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    GlobalPenalty, ModelError, Objective, ParameterBlock, ParameterName, ParameterParts,
+    Family, GlobalPenalty, ModelError, Objective, ParameterBlock, ParameterName, ParameterParts,
     ParameterizedFamily, Penalty, PredictorBlock,
 };
 
@@ -26,6 +26,10 @@ pub trait GamlssBlocks<F> {
     fn validate(&self, y_len: usize) -> Result<(), ModelError>;
     /// Negative log-likelihood without penalties.
     fn train_nll(&self, family: &F, y: &[f64], beta: &[f64]) -> f64;
+    /// Аддитивные предикторы на link-шкале для одной строки.
+    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
+    where
+        F: Family;
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
     /// Значение negative log-likelihood плюс penalties.
@@ -360,6 +364,46 @@ where
         })
     }
 
+    /// Predicts link-scale distribution predictors for one training row.
+    pub fn predict_eta_row(&self, theta: &[f64], row: usize) -> Result<F::Eta, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        validate_row(row, self.nobs())?;
+        Ok(self.blocks.eta_row(theta, row))
+    }
+
+    /// Predicts natural-scale distribution parameters for one training row.
+    pub fn predict_theta_row(&self, theta: &[f64], row: usize) -> Result<F::Theta, ModelError>
+    where
+        F: Family,
+    {
+        Ok(self.family.theta(self.predict_eta_row(theta, row)?))
+    }
+
+    /// Predicts link-scale distribution predictors for all training rows.
+    pub fn predict_eta(&self, theta: &[f64]) -> Result<Vec<F::Eta>, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        Ok((0..self.nobs())
+            .map(|row| self.blocks.eta_row(theta, row))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters for all training rows.
+    pub fn predict_theta(&self, theta: &[f64]) -> Result<Vec<F::Theta>, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        Ok((0..self.nobs())
+            .map(|row| self.family.theta(self.blocks.eta_row(theta, row)))
+            .collect())
+    }
+
     /// Проверяет длину beta и вычисляет objective.
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
         let expected = self.nparams();
@@ -581,6 +625,15 @@ macro_rules! impl_gamlss_blocks {
                 loss
             }
 
+            fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
+            where
+                F: Family,
+            {
+                $(let $block = &self.$idx;)+
+                $(let $beta_block = &beta[$block.range()];)+
+                F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+])
+            }
+
             fn penalty_value(&self, beta: &[f64]) -> f64 {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
@@ -748,6 +801,14 @@ fn validate_len(name: &'static str, actual: usize, expected: usize) -> Result<()
     }
 }
 
+fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
+    if row < nrows {
+        Ok(())
+    } else {
+        Err(ModelError::RowOutOfBounds { row, nrows })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -755,7 +816,7 @@ mod tests {
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, ModelError, Mu, NoPenalty, Nu,
         Objective, ParameterBlock, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma,
-        SumBlock,
+        SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -799,6 +860,40 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn prediction_api_returns_eta_and_theta_for_one_parameter_model() {
+        let y = vec![1.0, 2.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 2.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let beta = vec![0.5, 0.25];
+
+        assert_relative_eq!(model.predict_eta_row(&beta, 1).unwrap(), 1.0);
+        assert_relative_eq!(model.predict_theta_row(&beta, 1).unwrap(), 1.0);
+        assert_eq!(model.predict_eta(&beta).unwrap(), vec![0.5, 1.0]);
+        assert_eq!(model.predict_theta(&beta).unwrap(), vec![0.5, 1.0]);
+    }
+
+    #[test]
+    fn prediction_api_rejects_invalid_theta_length_and_row() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+
+        assert_eq!(
+            model.predict_eta_row(&[], 0).unwrap_err(),
+            ModelError::BetaLength {
+                expected: 1,
+                actual: 0,
+            }
+        );
+        assert_eq!(
+            model.predict_eta_row(&[0.0], 1).unwrap_err(),
+            ModelError::RowOutOfBounds { row: 1, nrows: 1 }
+        );
     }
 
     #[test]
@@ -997,6 +1092,68 @@ mod tests {
         assert_relative_eq!(grad[0], -0.5);
         assert_relative_eq!(grad[1], -0.5);
         assert_relative_eq!(grad[2], 0.5);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct FourParameterMock;
+
+    impl Family for FourParameterMock {
+        type Eta = (f64, f64, f64, f64);
+        type Theta = (f64, f64, f64, f64);
+        type ScoreEta = (f64, f64, f64, f64);
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            (eta.0 + 1.0, eta.1 + 2.0, eta.2 + 3.0, eta.3 + 4.0)
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            theta.0 + theta.1 + theta.2 + theta.3 + y
+        }
+
+        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+            (self.nll(y, self.theta(eta)), (1.0, 1.0, 1.0, 1.0))
+        }
+    }
+
+    impl ParameterizedFamily<4> for FourParameterMock {
+        type Params = (Mu, Sigma, Nu, Tau);
+        type Links = (Identity, Identity, Identity, Identity);
+    }
+
+    #[test]
+    fn prediction_api_returns_eta_and_theta_for_four_parameter_model() {
+        let y = vec![2.0];
+        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            0,
+        );
+        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            1,
+        );
+        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            2,
+        );
+        let fourth = ParameterBlock::<Tau, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            3,
+        );
+        let model = Gamlss::try_new(FourParameterMock, (first, second, third, fourth), y).unwrap();
+        let beta = vec![0.5, 1.5, 2.5, 3.5];
+
+        assert_eq!(
+            model.predict_eta_row(&beta, 0).unwrap(),
+            (0.5, 1.5, 2.5, 3.5)
+        );
+        assert_eq!(
+            model.predict_theta_row(&beta, 0).unwrap(),
+            (1.5, 3.5, 5.5, 7.5)
+        );
     }
 
     #[test]

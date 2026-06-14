@@ -14,6 +14,17 @@ pub trait DesignMatrix {
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
     /// Добавляет `X^T weights` в `out`.
     fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
+    /// Добавляет `X^T (weights * multiplier)` в `out`.
+    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(weights.len(), multiplier.len());
+
+        let scaled_weights = weights
+            .iter()
+            .zip(multiplier)
+            .map(|(weight, multiplier)| weight * multiplier)
+            .collect::<Vec<_>>();
+        self.add_t_mul_vec(&scaled_weights, out);
+    }
 }
 
 /// Простая dense matrix в row-major порядке.
@@ -160,6 +171,20 @@ impl DesignMatrix for DenseDesign {
             let offset = row * self.ncols;
             for (col, out_value) in out.iter_mut().enumerate() {
                 *out_value += self.values[offset + col] * weight;
+            }
+        }
+    }
+
+    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(weights.len(), self.nrows);
+        debug_assert_eq!(multiplier.len(), self.nrows);
+        debug_assert_eq!(out.len(), self.ncols);
+
+        for (row, (weight, multiplier)) in weights.iter().zip(multiplier).enumerate() {
+            let scaled_weight = weight * multiplier;
+            let offset = row * self.ncols;
+            for (col, out_value) in out.iter_mut().enumerate() {
+                *out_value += self.values[offset + col] * scaled_weight;
             }
         }
     }

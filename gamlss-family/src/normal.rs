@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, Identity, LinearPredictorBlock, Link, Log, ModelError, Mu,
     NoPenalty, ParameterBlock, ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
@@ -160,6 +162,26 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Normal<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::Normal::new(theta.mu, theta.sigma)
+                .expect("validated normal parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Нормальное распределение с `Identity` link для `mu` и `Log` link для `sigma`.
 pub type DefaultNormal = Normal<Identity, Log>;
 
@@ -195,6 +217,8 @@ where
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
     use gamlss_core::{DenseDesign, NoPenalty, Objective};
 
     use super::{DefaultNormal, normal_gamlss};
@@ -228,5 +252,36 @@ mod tests {
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
         }
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultNormal::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    super::NormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    super::NormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 }

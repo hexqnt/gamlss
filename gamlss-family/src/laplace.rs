@@ -1,8 +1,12 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use rand::RngExt;
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
@@ -161,17 +165,71 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Laplace<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let centered = rng.random::<f64>() - 0.5;
+        let tail_probability: f64 = 1.0 - 2.0 * centered.abs();
+        theta.mu - theta.sigma * centered.signum() * tail_probability.ln()
+    }
+}
+
 /// Распределение Лапласа с `Identity` link для `mu` и `Log` link для `sigma`.
 pub type DefaultLaplace = Laplace<Identity, Log>;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
     use super::DefaultLaplace;
+    #[cfg(feature = "rand")]
+    use super::LaplaceTheta;
     use crate::test_support::assert_score_matches_finite_difference;
 
     #[test]
     fn laplace_score_matches_finite_difference() {
         let family = DefaultLaplace::new();
         assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn laplace_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultLaplace::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    LaplaceTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    LaplaceTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 }

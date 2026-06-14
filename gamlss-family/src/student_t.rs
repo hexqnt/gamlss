@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, Identity, Link, Log, ModelError, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
     Sigma,
@@ -177,6 +179,27 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for StudentT<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let z = rand_distr::Distribution::sample(
+            &rand_distr::StudentT::new(self.degrees_of_freedom)
+                .expect("validated degrees_of_freedom must construct"),
+            rng,
+        );
+        theta.mu + theta.sigma * z
+    }
+}
+
 /// Распределение Стьюдента с `Identity` link для `mu` и `Log` link для `sigma`.
 pub type DefaultStudentT = StudentT<Identity, Log>;
 
@@ -187,7 +210,12 @@ fn student_t_constant(nu: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
     use super::DefaultStudentT;
+    #[cfg(feature = "rand")]
+    use super::StudentTTheta;
     use crate::test_support::assert_score_matches_finite_difference;
 
     #[test]
@@ -200,5 +228,36 @@ mod tests {
     fn student_t_score_matches_finite_difference() {
         let family = DefaultStudentT::try_new(5.0).unwrap();
         assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn student_t_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 }

@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{Family, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate, Shape};
 
 use crate::special::{digamma, ln_gamma};
@@ -157,11 +159,37 @@ where
     type Links = (ShapeLink, RateLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, ShapeLink, RateLink> CanSimulate<Rng> for Gamma<ShapeLink, RateLink>
+where
+    Rng: rand::Rng,
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.rate <= 0.0
+            || !theta.rate.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(theta.shape, 1.0 / theta.rate)
+                .expect("validated gamma parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Gamma distribution with log links for shape and rate.
 pub type DefaultGamma = Gamma<Log, Log>;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
     use gamlss_core::{Family, Link, Log};
 
     use super::{DefaultGamma, GammaTheta};
@@ -193,6 +221,37 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn gamma_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultGamma::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    GammaTheta {
+                        shape: 2.0,
+                        rate: 3.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    GammaTheta {
+                        shape: 0.0,
+                        rate: 3.0
+                    }
+                )
+                .is_nan()
         );
     }
 }

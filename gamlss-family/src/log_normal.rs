@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
@@ -157,11 +159,33 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for LogNormal<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::LogNormal::new(theta.mu, theta.sigma)
+                .expect("validated log-normal parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Log-normal distribution with identity link for `mu` and log link for `sigma`.
 pub type DefaultLogNormal = LogNormal<Identity, Log>;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
     use gamlss_core::Family;
 
     use super::{DefaultLogNormal, LogNormalTheta};
@@ -193,6 +217,37 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn log_normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultLogNormal::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
         );
     }
 }
