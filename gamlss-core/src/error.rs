@@ -83,6 +83,15 @@ pub enum ModelError {
         nrows: usize,
     },
 
+    /// Prediction blocks имеют другую длину coefficient layout.
+    #[error("prediction blocks have parameter length {actual}, expected {expected}")]
+    PredictionParameterLength {
+        /// Ожидаемая длина theta.
+        expected: usize,
+        /// Фактическая длина prediction blocks.
+        actual: usize,
+    },
+
     /// Два parameter block используют пересекающиеся диапазоны beta.
     #[error("{first} parameter block overlaps with {second} parameter block")]
     BlockOverlap {

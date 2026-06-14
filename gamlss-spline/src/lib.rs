@@ -392,25 +392,26 @@ pub fn pspline_design(
     BSplineBasis::open_uniform_from_data(x, n_basis, degree)?.design_matrix(x)
 }
 
-/// Open-uniform spline predictor с локальным sparse вычислением строк.
+/// Metadata для open-uniform spline predictor-а.
 ///
-/// В отличие от [`BSplineBasis`], хранит исходные данные и вычисляет
-/// базисные функции «на лету» через компактное `LocalBasis`, не
-/// материализуя полную design matrix.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OpenUniformSplineDesign {
-    x: Vec<f64>,
+/// Хранит только shape basis-а и диапазон шкалирования, поэтому может
+/// переиспользоваться для построения design на обучающих и новых данных.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpenUniformSplineBasis {
     min: f64,
-    span: f64,
+    max: f64,
     n_basis: usize,
     order: SplineOrder,
     n_intervals: f64,
 }
 
-impl OpenUniformSplineDesign {
-    /// Строит open-uniform spline design по диапазону данных.
+impl OpenUniformSplineBasis {
+    /// Строит metadata по диапазону обучающих данных.
     ///
-    /// Если данные пусты или содержат не-finite значения, возвращает ошибку.
+    /// # Errors
+    ///
+    /// Возвращает ошибку, если `x` пустой, содержит не-finite значения,
+    /// имеет вырожденный диапазон или `n_basis` недостаточен для `order`.
     pub fn from_data(x: &[f64], n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
         if x.is_empty() {
             return Err(SplineError::EmptyInput);
@@ -431,7 +432,102 @@ impl OpenUniformSplineDesign {
             min = min.min(value);
             max = max.max(value);
         }
-        Self::with_range(x, min, max, n_basis, order)
+        Self::new(min, max, n_basis, order)
+    }
+
+    /// Строит metadata с явным конечным диапазоном.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает ошибку, если границы не конечны, `min >= max`, или
+    /// `n_basis` недостаточен для `order`.
+    pub fn new(
+        min: f64,
+        max: f64,
+        n_basis: usize,
+        order: SplineOrder,
+    ) -> Result<Self, SplineError> {
+        if !min.is_finite() || !max.is_finite() || min >= max {
+            return Err(SplineError::InvalidRange);
+        }
+        if n_basis < order.min_basis() {
+            return Err(SplineError::NotEnoughBasis {
+                n_basis,
+                degree: order.degree(),
+            });
+        }
+
+        Ok(Self {
+            min,
+            max,
+            n_basis,
+            order,
+            n_intervals: (n_basis - order.degree()).max(1) as f64,
+        })
+    }
+
+    /// Строит predictor design для конкретного набора координат.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает ошибку, если `x` содержит не-finite значения.
+    pub fn design(&self, x: &[f64]) -> Result<OpenUniformSplineDesign, SplineError> {
+        if x.iter().any(|value| !value.is_finite()) {
+            return Err(SplineError::NonFiniteValue);
+        }
+
+        Ok(OpenUniformSplineDesign {
+            x: x.to_vec(),
+            basis: *self,
+        })
+    }
+
+    /// Нижняя граница диапазона basis-а.
+    #[must_use]
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+
+    /// Верхняя граница диапазона basis-а.
+    #[must_use]
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+
+    /// Число spline-коэффициентов.
+    #[must_use]
+    pub fn n_basis(&self) -> usize {
+        self.n_basis
+    }
+
+    /// Порядок spline.
+    #[must_use]
+    pub fn order(&self) -> SplineOrder {
+        self.order
+    }
+
+    fn span(&self) -> f64 {
+        self.max - self.min
+    }
+}
+
+/// Open-uniform spline predictor с локальным sparse вычислением строк.
+///
+/// В отличие от [`BSplineBasis`], хранит исходные данные и вычисляет
+/// базисные функции «на лету» через компактное `LocalBasis`, не
+/// материализуя полную design matrix.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenUniformSplineDesign {
+    x: Vec<f64>,
+    basis: OpenUniformSplineBasis,
+}
+
+impl OpenUniformSplineDesign {
+    /// Строит open-uniform spline design по диапазону данных.
+    ///
+    /// Если данные пусты или содержат не-finite значения, возвращает ошибку.
+    pub fn from_data(x: &[f64], n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
+        OpenUniformSplineBasis::from_data(x, n_basis, order)?.design(x)
     }
 
     /// Строит open-uniform spline design с явным конечным диапазоном.
@@ -444,37 +540,35 @@ impl OpenUniformSplineDesign {
         n_basis: usize,
         order: SplineOrder,
     ) -> Result<Self, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
-        if !min.is_finite() || !max.is_finite() || min >= max {
-            return Err(SplineError::InvalidRange);
-        }
-        if n_basis < order.min_basis() {
-            return Err(SplineError::NotEnoughBasis {
-                n_basis,
-                degree: order.degree(),
-            });
-        }
-
-        Ok(Self {
-            x: x.to_vec(),
-            min,
-            span: max - min,
-            n_basis,
-            order,
-            n_intervals: (n_basis - order.degree()).max(1) as f64,
-        })
+        OpenUniformSplineBasis::new(min, max, n_basis, order)?.design(x)
     }
 
     /// Число spline-коэффициентов.
+    #[must_use]
     pub fn n_basis(&self) -> usize {
-        self.n_basis
+        self.basis.n_basis()
+    }
+
+    /// Metadata basis-а, пригодная для построения design на новых данных.
+    #[must_use]
+    pub fn basis(&self) -> OpenUniformSplineBasis {
+        self.basis
+    }
+
+    /// Возвращает исходные координаты design-а.
+    #[must_use]
+    pub fn x(&self) -> &[f64] {
+        &self.x
     }
 
     fn basis_for_row(&self, row: usize) -> LocalBasis {
-        let u = (self.x[row] - self.min) / self.span;
-        open_uniform_local_basis(u, self.order, self.n_basis, self.n_intervals)
+        let u = (self.x[row] - self.basis.min) / self.basis.span();
+        open_uniform_local_basis(
+            u,
+            self.basis.order,
+            self.basis.n_basis,
+            self.basis.n_intervals,
+        )
     }
 }
 
@@ -484,7 +578,7 @@ impl PredictorBlock for OpenUniformSplineDesign {
     }
 
     fn nparams(&self) -> usize {
-        self.n_basis
+        self.basis.n_basis
     }
 
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
@@ -494,7 +588,7 @@ impl PredictorBlock for OpenUniformSplineDesign {
 
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.n_basis);
+        debug_assert_eq!(grad.len(), self.basis.n_basis);
 
         for (row, score) in scores.iter().copied().enumerate() {
             self.basis_for_row(row).add_scaled(score, grad);
@@ -510,7 +604,7 @@ impl PredictorBlock for OpenUniformSplineDesign {
     ) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(multiplier.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.n_basis);
+        debug_assert_eq!(grad.len(), self.basis.n_basis);
 
         for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.basis_for_row(row).add_scaled(score * multiplier, grad);
@@ -518,12 +612,64 @@ impl PredictorBlock for OpenUniformSplineDesign {
     }
 }
 
+/// Metadata для cyclic spline predictor-а.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CyclicSplineSpec {
+    n_basis: usize,
+    order: SplineOrder,
+}
+
+impl CyclicSplineSpec {
+    /// Строит cyclic spline metadata.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает ошибку, если `n_basis` недостаточен для `order`.
+    pub fn new(n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
+        if n_basis < order.min_basis() {
+            return Err(SplineError::NotEnoughBasis {
+                n_basis,
+                degree: order.degree(),
+            });
+        }
+
+        Ok(Self { n_basis, order })
+    }
+
+    /// Строит predictor design для конкретных фаз.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает ошибку, если `phi` содержит не-finite значения.
+    pub fn design(&self, phi: &[f64]) -> Result<CyclicSplineDesign, SplineError> {
+        if phi.iter().any(|value| !value.is_finite()) {
+            return Err(SplineError::NonFiniteValue);
+        }
+
+        Ok(CyclicSplineDesign {
+            phi: phi.to_vec(),
+            spec: *self,
+        })
+    }
+
+    /// Число spline-коэффициентов.
+    #[must_use]
+    pub fn n_basis(&self) -> usize {
+        self.n_basis
+    }
+
+    /// Порядок spline.
+    #[must_use]
+    pub fn order(&self) -> SplineOrder {
+        self.order
+    }
+}
+
 /// Cyclic spline predictor для периодических ковариат на `[0, 1)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CyclicSplineDesign {
     phi: Vec<f64>,
-    n_basis: usize,
-    order: SplineOrder,
+    spec: CyclicSplineSpec,
 }
 
 impl CyclicSplineDesign {
@@ -531,29 +677,29 @@ impl CyclicSplineDesign {
     ///
     /// Все значения `phi` должны быть конечными.
     pub fn new(phi: &[f64], n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
-        if phi.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
-        if n_basis < order.min_basis() {
-            return Err(SplineError::NotEnoughBasis {
-                n_basis,
-                degree: order.degree(),
-            });
-        }
-        Ok(Self {
-            phi: phi.to_vec(),
-            n_basis,
-            order,
-        })
+        CyclicSplineSpec::new(n_basis, order)?.design(phi)
     }
 
     /// Number of spline coefficients.
+    #[must_use]
     pub fn n_basis(&self) -> usize {
-        self.n_basis
+        self.spec.n_basis()
+    }
+
+    /// Metadata basis-а, пригодная для построения design на новых данных.
+    #[must_use]
+    pub fn spec(&self) -> CyclicSplineSpec {
+        self.spec
+    }
+
+    /// Возвращает исходные фазы design-а.
+    #[must_use]
+    pub fn phi(&self) -> &[f64] {
+        &self.phi
     }
 
     fn basis_for_row(&self, row: usize) -> LocalBasis {
-        cyclic_local_basis(self.phi[row], self.order, self.n_basis)
+        cyclic_local_basis(self.phi[row], self.spec.order, self.spec.n_basis)
     }
 }
 
@@ -563,7 +709,7 @@ impl PredictorBlock for CyclicSplineDesign {
     }
 
     fn nparams(&self) -> usize {
-        self.n_basis
+        self.spec.n_basis
     }
 
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
@@ -572,7 +718,7 @@ impl PredictorBlock for CyclicSplineDesign {
 
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.phi.len());
-        debug_assert_eq!(grad.len(), self.n_basis);
+        debug_assert_eq!(grad.len(), self.spec.n_basis);
 
         for (row, score) in scores.iter().copied().enumerate() {
             self.basis_for_row(row).add_scaled(score, grad);
@@ -588,7 +734,7 @@ impl PredictorBlock for CyclicSplineDesign {
     ) {
         debug_assert_eq!(scores.len(), self.phi.len());
         debug_assert_eq!(multiplier.len(), self.phi.len());
-        debug_assert_eq!(grad.len(), self.n_basis);
+        debug_assert_eq!(grad.len(), self.spec.n_basis);
 
         for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.basis_for_row(row).add_scaled(score * multiplier, grad);
@@ -1118,9 +1264,10 @@ fn binomial(n: usize, k: usize) -> usize {
 /// Наиболее часто используемые импорты из `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
-        BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, DifferencePenalty,
-        EdgeMonotonicPenalty, FourierDesign, FourierError, OpenUniformSplineDesign,
-        SlopeLimitPenalty, SplineError, SplineOrder, pspline_design,
+        BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
+        DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError,
+        OpenUniformSplineBasis, OpenUniformSplineDesign, SlopeLimitPenalty, SplineError,
+        SplineOrder, pspline_design,
     };
 }
 
@@ -1130,9 +1277,9 @@ mod tests {
     use gamlss_core::{Penalty, PredictorBlock};
 
     use super::{
-        BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, DifferencePenalty,
-        EdgeMonotonicPenalty, FourierDesign, FourierError, OpenUniformSplineDesign,
-        SlopeLimitPenalty, SplineOrder,
+        BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
+        DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError,
+        OpenUniformSplineBasis, OpenUniformSplineDesign, SlopeLimitPenalty, SplineOrder,
     };
 
     #[test]
@@ -1286,6 +1433,39 @@ mod tests {
 
         for row in 0..design.nrows() {
             assert_relative_eq!(design.eta_row(row, &beta), 1.0, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn open_uniform_spline_basis_reuses_training_range_for_new_data() {
+        let train = [0.0, 0.5, 1.0];
+        let basis = OpenUniformSplineBasis::from_data(&train, 6, SplineOrder::Cubic).unwrap();
+        let train_design = basis.design(&train).unwrap();
+        let new_design = basis.design(&[-0.25, 0.25, 1.25]).unwrap();
+
+        assert_eq!(train_design.basis(), basis);
+        assert_eq!(new_design.nparams(), train_design.nparams());
+        assert_relative_eq!(basis.min(), 0.0, epsilon = 1.0e-12);
+        assert_relative_eq!(basis.max(), 1.0, epsilon = 1.0e-12);
+
+        let beta = vec![1.0; new_design.nparams()];
+        for row in 0..new_design.nrows() {
+            assert_relative_eq!(new_design.eta_row(row, &beta), 1.0, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn cyclic_spline_spec_reuses_basis_shape_for_new_data() {
+        let spec = CyclicSplineSpec::new(6, SplineOrder::Cubic).unwrap();
+        let train_design = spec.design(&[0.0, 0.5]).unwrap();
+        let new_design = spec.design(&[0.25, 1.25]).unwrap();
+
+        assert_eq!(train_design.spec(), spec);
+        assert_eq!(new_design.nparams(), train_design.nparams());
+
+        let beta = vec![1.0; new_design.nparams()];
+        for row in 0..new_design.nrows() {
+            assert_relative_eq!(new_design.eta_row(row, &beta), 1.0, epsilon = 1.0e-12);
         }
     }
 

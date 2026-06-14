@@ -404,6 +404,95 @@ where
             .collect())
     }
 
+    /// Predicts link-scale distribution predictors for one row from compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `theta` has the wrong length, if `blocks` do not
+    /// match this model's parameter layout, or if `row` is out of bounds for
+    /// the supplied prediction blocks.
+    pub fn predict_eta_row_with_blocks<PBlocks>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        row: usize,
+    ) -> Result<F::Eta, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        validate_prediction_blocks(blocks, self.nparams())?;
+        validate_row(row, blocks.nrows())?;
+        Ok(blocks.eta_row(theta, row))
+    }
+
+    /// Predicts natural-scale distribution parameters for one row from compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `theta` has the wrong length, if `blocks` do not
+    /// match this model's parameter layout, or if `row` is out of bounds for
+    /// the supplied prediction blocks.
+    pub fn predict_theta_row_with_blocks<PBlocks>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        row: usize,
+    ) -> Result<F::Theta, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        Ok(self
+            .family
+            .theta(self.predict_eta_row_with_blocks(theta, blocks, row)?))
+    }
+
+    /// Predicts link-scale distribution predictors for all rows in compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `theta` has the wrong length or if `blocks` do not
+    /// match this model's parameter layout.
+    pub fn predict_eta_with_blocks<PBlocks>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+    ) -> Result<Vec<F::Eta>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        validate_prediction_blocks(blocks, self.nparams())?;
+        Ok((0..blocks.nrows())
+            .map(|row| blocks.eta_row(theta, row))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters for all rows in compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `theta` has the wrong length or if `blocks` do not
+    /// match this model's parameter layout.
+    pub fn predict_theta_with_blocks<PBlocks>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+    ) -> Result<Vec<F::Theta>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        validate_len("theta", theta.len(), self.nparams())?;
+        validate_prediction_blocks(blocks, self.nparams())?;
+        Ok((0..blocks.nrows())
+            .map(|row| self.family.theta(blocks.eta_row(theta, row)))
+            .collect())
+    }
+
     /// Проверяет длину beta и вычисляет objective.
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
         let expected = self.nparams();
@@ -809,6 +898,25 @@ fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     }
 }
 
+fn validate_prediction_blocks<F, Blocks>(
+    blocks: &Blocks,
+    expected_len: usize,
+) -> Result<(), ModelError>
+where
+    Blocks: GamlssBlocks<F>,
+{
+    blocks.validate(blocks.nrows())?;
+    let actual = blocks.len();
+    if actual == expected_len {
+        Ok(())
+    } else {
+        Err(ModelError::PredictionParameterLength {
+            expected: expected_len,
+            actual,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -893,6 +1001,60 @@ mod tests {
         assert_eq!(
             model.predict_eta_row(&[0.0], 1).unwrap_err(),
             ModelError::RowOutOfBounds { row: 1, nrows: 1 }
+        );
+    }
+
+    #[test]
+    fn prediction_api_uses_compatible_blocks_for_new_rows() {
+        let y = vec![1.0, 2.0];
+        let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0], [1.0, 3.0], [1.0, 4.0]]);
+        let prediction_mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
+        let prediction_blocks = (prediction_mu,);
+        let beta = vec![0.5, 0.25];
+
+        assert_relative_eq!(
+            model
+                .predict_eta_row_with_blocks(&beta, &prediction_blocks, 1)
+                .unwrap(),
+            1.25
+        );
+        assert_eq!(
+            model
+                .predict_eta_with_blocks(&beta, &prediction_blocks)
+                .unwrap(),
+            vec![1.0, 1.25, 1.5]
+        );
+        assert_eq!(
+            model
+                .predict_theta_with_blocks(&beta, &prediction_blocks)
+                .unwrap(),
+            vec![1.0, 1.25, 1.5]
+        );
+    }
+
+    #[test]
+    fn prediction_api_rejects_incompatible_prediction_blocks() {
+        let y = vec![1.0, 2.0];
+        let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0, 3.0]]);
+        let prediction_mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
+        let prediction_blocks = (prediction_mu,);
+
+        assert_eq!(
+            model
+                .predict_eta_with_blocks(&[0.5, 0.25], &prediction_blocks)
+                .unwrap_err(),
+            ModelError::PredictionParameterLength {
+                expected: 2,
+                actual: 3,
+            }
         );
     }
 
