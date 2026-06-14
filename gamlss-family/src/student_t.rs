@@ -56,10 +56,12 @@ where
 
     /// Negative log-likelihood одного наблюдения на естественной шкале.
     ///
-    /// Возвращает `INFINITY` при неположительном sigma.
+    /// Возвращает `INFINITY` при non-finite observation/location или
+    /// неположительном sigma.
     #[inline(always)]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -76,6 +78,15 @@ where
     fn nll_and_score_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = self.nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                StudentTEta {
+                    mu: f64::NAN,
+                    sigma: f64::NAN,
+                },
+            );
+        }
 
         let nu = self.degrees_of_freedom;
         let sigma = theta.sigma;
@@ -212,10 +223,10 @@ fn student_t_constant(nu: f64) -> f64 {
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::Family;
 
-    use super::DefaultStudentT;
+    use super::{DefaultStudentT, StudentTEta, StudentTTheta};
     #[cfg(feature = "rand")]
-    use super::StudentTTheta;
     use crate::test_support::assert_score_matches_finite_difference;
 
     #[test]
@@ -228,6 +239,51 @@ mod tests {
     fn student_t_score_matches_finite_difference() {
         let family = DefaultStudentT::try_new(5.0).unwrap();
         assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn student_t_rejects_non_finite_domain_and_returns_nan_score() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        assert!(family.nll(1.7, theta).is_finite());
+        assert!(family.nll(f64::NEG_INFINITY, theta).is_infinite());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    StudentTTheta {
+                        mu: f64::NAN,
+                        sigma: theta.sigma,
+                    },
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    StudentTTheta {
+                        mu: theta.mu,
+                        sigma: 0.0,
+                    },
+                )
+                .is_infinite()
+        );
+
+        let (nll, score) = family.nll_and_score_eta(
+            1.7,
+            StudentTEta {
+                mu: 0.4,
+                sigma: f64::NEG_INFINITY,
+            },
+        );
+        assert!(nll.is_infinite());
+        assert!(score.mu.is_nan());
+        assert!(score.sigma.is_nan());
     }
 
     #[cfg(feature = "rand")]

@@ -81,7 +81,8 @@ where
     }
 
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -93,6 +94,15 @@ where
     fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
         let theta = self.theta(eta);
         let nll = self.nll(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                UserNormalEta {
+                    mu: f64::NAN,
+                    sigma: f64::NAN,
+                },
+            );
+        }
 
         let residual = y - theta.mu;
         let sigma2 = theta.sigma * theta.sigma;
@@ -123,7 +133,8 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::NAN;
         }
 

@@ -36,7 +36,12 @@ where
 
     #[inline(always)]
     fn nll_theta(y: f64, theta: LogNormalTheta) -> f64 {
-        if y <= 0.0 || !y.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if y <= 0.0
+            || !y.is_finite()
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -207,6 +212,17 @@ mod tests {
 
         assert!(family.nll(1.7, theta).is_finite());
         assert!(family.nll(0.0, theta).is_infinite());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    LogNormalTheta {
+                        mu: f64::INFINITY,
+                        sigma: theta.sigma,
+                    },
+                )
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(

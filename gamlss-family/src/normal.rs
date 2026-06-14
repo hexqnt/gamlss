@@ -42,10 +42,12 @@ where
 
     /// Negative log-likelihood одного наблюдения на естественной шкале.
     ///
-    /// Возвращает `INFINITY` при неположительном sigma.
+    /// Возвращает `INFINITY` при non-finite observation/location или
+    /// неположительном sigma.
     #[inline(always)]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -62,6 +64,15 @@ where
     fn nll_and_score_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                NormalEta {
+                    mu: f64::NAN,
+                    sigma: f64::NAN,
+                },
+            );
+        }
 
         let residual = y - theta.mu;
         let sigma2 = theta.sigma * theta.sigma;
@@ -227,15 +238,60 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{DenseDesign, NoPenalty, Objective};
+    use gamlss_core::{DenseDesign, Family, NoPenalty, Objective};
 
-    use super::{DefaultNormal, normal_gamlss};
+    use super::{DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
     use crate::test_support::assert_score_matches_finite_difference;
 
     #[test]
     fn normal_score_matches_finite_difference() {
         let family = DefaultNormal::new();
         assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn normal_rejects_non_finite_domain_and_returns_nan_score() {
+        let family = DefaultNormal::new();
+        let theta = NormalTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        assert!(family.nll(1.7, theta).is_finite());
+        assert!(family.nll(f64::NAN, theta).is_infinite());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    NormalTheta {
+                        mu: f64::INFINITY,
+                        sigma: theta.sigma,
+                    },
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    NormalTheta {
+                        mu: theta.mu,
+                        sigma: 0.0,
+                    },
+                )
+                .is_infinite()
+        );
+
+        let (nll, score) = family.nll_and_score_eta(
+            1.7,
+            NormalEta {
+                mu: 0.4,
+                sigma: f64::NEG_INFINITY,
+            },
+        );
+        assert!(nll.is_infinite());
+        assert!(score.mu.is_nan());
+        assert!(score.sigma.is_nan());
     }
 
     #[test]

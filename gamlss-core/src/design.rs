@@ -353,18 +353,36 @@ mod tests {
 
     #[test]
     fn default_gram_weighted_matches_dense_override() {
-        // Verify that default (trait-level) implementation matches the
-        // DenseDesign override by comparing against a manual computation.
-        let design = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
+        #[derive(Debug)]
+        struct DefaultGramDesign(DenseDesign);
+
+        impl DesignMatrix for DefaultGramDesign {
+            fn nrows(&self) -> usize {
+                self.0.nrows()
+            }
+
+            fn ncols(&self) -> usize {
+                self.0.ncols()
+            }
+
+            fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
+                self.0.dot_row(row, beta)
+            }
+
+            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec(weights, out);
+            }
+        }
+
+        let dense = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
+        let default = DefaultGramDesign(dense.clone());
         let weights = vec![0.5, 2.0];
 
-        // Default impl via DesignMatrix trait (column-by-column)
         let mut gram_default = vec![0.0; 4];
-        DesignMatrix::gram_weighted(&design, &weights, &mut gram_default);
+        default.gram_weighted(&weights, &mut gram_default);
 
-        // Override via DenseDesign
         let mut gram_override = vec![0.0; 4];
-        design.gram_weighted(&weights, &mut gram_override);
+        dense.gram_weighted(&weights, &mut gram_override);
 
         assert_relative_eq!(gram_default[0], gram_override[0]);
         assert_relative_eq!(gram_default[1], gram_override[1]);

@@ -42,10 +42,12 @@ where
 
     /// Negative log-likelihood одного наблюдения на естественной шкале.
     ///
-    /// Возвращает `INFINITY` при неположительном sigma.
+    /// Возвращает `INFINITY` при non-finite observation/location или
+    /// неположительном sigma.
     #[inline(always)]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -59,6 +61,15 @@ where
     fn nll_and_score_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                LaplaceEta {
+                    mu: f64::NAN,
+                    sigma: f64::NAN,
+                },
+            );
+        }
 
         let residual = y - theta.mu;
         let d_nll_d_mu = if residual > 0.0 {
@@ -190,16 +201,61 @@ pub type DefaultLaplace = Laplace<Identity, Log>;
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::Family;
 
-    use super::DefaultLaplace;
+    use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
     #[cfg(feature = "rand")]
-    use super::LaplaceTheta;
     use crate::test_support::assert_score_matches_finite_difference;
 
     #[test]
     fn laplace_score_matches_finite_difference() {
         let family = DefaultLaplace::new();
         assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn laplace_rejects_non_finite_domain_and_returns_nan_score() {
+        let family = DefaultLaplace::new();
+        let theta = LaplaceTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        assert!(family.nll(1.7, theta).is_finite());
+        assert!(family.nll(f64::INFINITY, theta).is_infinite());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    LaplaceTheta {
+                        mu: f64::NAN,
+                        sigma: theta.sigma,
+                    },
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    LaplaceTheta {
+                        mu: theta.mu,
+                        sigma: 0.0,
+                    },
+                )
+                .is_infinite()
+        );
+
+        let (nll, score) = family.nll_and_score_eta(
+            1.7,
+            LaplaceEta {
+                mu: 0.4,
+                sigma: f64::NEG_INFINITY,
+            },
+        );
+        assert!(nll.is_infinite());
+        assert!(score.mu.is_nan());
+        assert!(score.sigma.is_nan());
     }
 
     #[cfg(feature = "rand")]
