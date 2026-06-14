@@ -56,6 +56,22 @@ pub enum ModelError {
         actual: usize,
     },
 
+    /// Длина observation weights не совпадает с длиной response.
+    #[error("weights length is {actual}, expected {expected}")]
+    WeightLength {
+        /// Ожидаемая длина.
+        expected: usize,
+        /// Фактическая длина.
+        actual: usize,
+    },
+
+    /// Observation weight имеет недопустимое значение.
+    #[error("weight at index {index} must be finite and >= 0")]
+    InvalidWeight {
+        /// Индекс недопустимого веса.
+        index: usize,
+    },
+
     /// Длина beta-вектора не совпадает с числом коэффициентов модели.
     #[error("beta length is {actual}, expected {expected}")]
     BetaLength {

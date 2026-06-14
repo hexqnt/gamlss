@@ -44,26 +44,38 @@ pub trait Objective {
 /// projected view of a full [`Objective`].
 ///
 /// Оборачивает полный objective и проецирует вызовы на диапазон одного
-/// параметрического блока, копируя коэффициенты блока в общий `full_beta`
-/// перед вычислением.
+/// параметрического блока, переиспользуя рабочие буферы между вызовами.
 #[derive(Debug)]
 pub struct BlockObjective<'a, O> {
     /// Полный objective.
     pub full_objective: &'a mut O,
-    /// Текущий полный beta-вектор.
-    pub full_beta: Vec<f64>,
+    /// Рабочий полный beta-вектор.
+    pub working_beta: Vec<f64>,
+    /// Рабочий полный gradient-вектор.
+    pub full_grad: Vec<f64>,
     /// Диапазон оптимизируемого блока.
     pub block: Range<usize>,
 }
 
-impl<'a, O> BlockObjective<'a, O> {
+impl<'a, O> BlockObjective<'a, O>
+where
+    O: Objective,
+{
     /// Создаёт block objective поверх полного objective.
     pub fn new(full_objective: &'a mut O, full_beta: Vec<f64>, block: Range<usize>) -> Self {
+        let full_grad = vec![0.0; full_objective.dim()];
+        debug_assert!(block.end <= full_beta.len());
+        debug_assert!(block.end <= full_grad.len());
         Self {
             full_objective,
-            full_beta,
+            working_beta: full_beta,
+            full_grad,
             block,
         }
+    }
+
+    fn update_block_beta(&mut self, block_beta: &[f64]) {
+        self.working_beta[self.block.clone()].copy_from_slice(block_beta);
     }
 }
 
@@ -81,21 +93,18 @@ where
     fn value(&mut self, block_beta: &[f64]) -> Result<f64, Self::Error> {
         validate_block_len("theta", block_beta.len(), self.block.len())?;
 
-        let mut beta = self.full_beta.clone();
-        beta[self.block.clone()].copy_from_slice(block_beta);
-        self.full_objective.value(&beta)
+        self.update_block_beta(block_beta);
+        self.full_objective.value(&self.working_beta)
     }
 
     fn gradient(&mut self, block_beta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
         validate_block_len("theta", block_beta.len(), self.block.len())?;
         validate_block_len("gradient", grad.len(), self.block.len())?;
 
-        let mut beta = self.full_beta.clone();
-        beta[self.block.clone()].copy_from_slice(block_beta);
-
-        let mut full_grad = vec![0.0; self.full_objective.dim()];
-        self.full_objective.gradient(&beta, &mut full_grad)?;
-        grad.copy_from_slice(&full_grad[self.block.clone()]);
+        self.update_block_beta(block_beta);
+        self.full_objective
+            .gradient(&self.working_beta, &mut self.full_grad)?;
+        grad.copy_from_slice(&self.full_grad[self.block.clone()]);
         Ok(())
     }
 }
@@ -111,5 +120,56 @@ fn validate_block_len(
         Err(ModelError::GradientLength { expected, actual })
     } else {
         Err(ModelError::BetaLength { expected, actual })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockObjective, Objective};
+    use crate::ModelError;
+
+    #[derive(Debug)]
+    struct QuadraticObjective {
+        dim: usize,
+    }
+
+    impl Objective for QuadraticObjective {
+        type Error = ModelError;
+
+        fn dim(&self) -> usize {
+            self.dim
+        }
+
+        fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
+            Ok(0.5 * theta.iter().map(|value| value * value).sum::<f64>())
+        }
+
+        fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+            grad.copy_from_slice(theta);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn block_objective_reuses_working_buffers_on_repeated_calls() {
+        let mut full = QuadraticObjective { dim: 3 };
+        let mut objective = BlockObjective::new(&mut full, vec![1.0, 2.0, 3.0], 1..3);
+        let beta_capacity = objective.working_beta.capacity();
+        let grad_capacity = objective.full_grad.capacity();
+        let mut grad = vec![0.0; objective.dim()];
+
+        assert_eq!(objective.dim(), 2);
+        assert_eq!(objective.value(&[4.0, 5.0]).unwrap(), 21.0);
+
+        objective.gradient(&[6.0, 7.0], &mut grad).unwrap();
+
+        assert_eq!(grad, vec![6.0, 7.0]);
+        assert_eq!(objective.working_beta, vec![1.0, 6.0, 7.0]);
+        assert_eq!(objective.working_beta.capacity(), beta_capacity);
+        assert_eq!(objective.full_grad.capacity(), grad_capacity);
+
+        assert_eq!(objective.value(&[8.0, 9.0]).unwrap(), 73.0);
+        assert_eq!(objective.working_beta.capacity(), beta_capacity);
+        assert_eq!(objective.full_grad.capacity(), grad_capacity);
     }
 }

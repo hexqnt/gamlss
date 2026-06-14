@@ -31,8 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let diagnostics = model.diagnostics(&theta)?;
     let coefficients = model.unpack_theta(&theta)?;
-    let mu_hat = coefficients.coefficients("mu").expect("mu block")[0];
-    let sigma_hat = coefficients.coefficients("sigma").expect("sigma block")[0].exp();
+    let mu_hat = coefficients.coefficients_of::<Mu>().expect("mu block")[0];
+    let sigma_hat = coefficients
+        .coefficients_of::<Sigma>()
+        .expect("sigma block")[0]
+        .exp();
 
     println!(
         "simple_fit: objective={:.6}, grad_norm={:.6}, mu={mu_hat:.4}, sigma={sigma_hat:.4}",

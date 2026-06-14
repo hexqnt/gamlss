@@ -68,9 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let initial_theta = model.initial_theta()?;
 
-    // into_cached_objective кэширует значения предикторов, пересчитывая их инкрементально.
-    // Для сплайновых моделей это даёт ускорение до ~10x.
-    let problem = ArgminObjective::new(model.into_cached_objective());
+    // into_workspace_objective переиспользует gradient buffers между вызовами optimizer-а.
+    let problem = ArgminObjective::new(model.into_workspace_objective());
 
     // L-BFGS: квази-ньютоновский метод, m=7 последних пар (s_k, y_k).
     // More-Thuente line search гарантирует условия Вольфе на каждом шаге.
