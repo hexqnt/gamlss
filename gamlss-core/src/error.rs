@@ -127,4 +127,14 @@ pub enum ModelError {
         /// Длина блока.
         len: usize,
     },
+
+    /// Модель не содержит parameter block с указанным именем.
+    ///
+    /// Возникает при попытке создать `BlockObjective` для параметра,
+    /// отсутствующего в модели.
+    #[error("model has no parameter block named {name:?}")]
+    UnknownParameter {
+        /// Имя запрошенного параметра.
+        name: &'static str,
+    },
 }

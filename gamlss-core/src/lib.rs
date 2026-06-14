@@ -45,13 +45,14 @@ pub use predictor::{
 /// Наиболее часто используемые импорты из `gamlss-core`.
 pub mod prelude {
     pub use crate::{
-        AssignParameterOffsets, CanSimulate, ClampedLog, CoefficientTransform, DenseDesign,
-        DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks, GlobalPenalty, GradientWorkspace,
-        HasCdf, HasDesignMatrix, HasFisherInfo, HasQuantile, Identity, LinearPredictorBlock, Link,
-        Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, OffsetBlock,
-        ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName,
-        ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Precision,
-        PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock,
-        Tau, TransformedScalar, UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+        AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog, CoefficientTransform,
+        DenseDesign, DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks, GlobalPenalty,
+        GradientWorkspace, HasCdf, HasDesignMatrix, HasFisherInfo, HasQuantile, Identity,
+        LinearPredictorBlock, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty,
+        Nu, Objective, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients,
+        ParameterLayout, ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily,
+        Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale,
+        Shape, Sigma, Softplus, SumBlock, Tau, TransformedScalar, UnpackedTheta,
+        WithGlobalPenalties, WorkspaceGamlss,
     };
 }

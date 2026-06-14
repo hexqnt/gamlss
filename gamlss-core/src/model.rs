@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use crate::{
-    Family, GlobalPenalty, ModelError, Objective, ParameterBlock, ParameterName, ParameterParts,
-    ParameterizedFamily, Penalty, PredictorBlock,
+    BlockObjective, Family, GlobalPenalty, ModelError, Objective, ParameterBlock, ParameterName,
+    ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
 };
 
 /// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
@@ -372,6 +372,33 @@ where
         self.blocks.parameter_layout()
     }
 
+    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
+    ///
+    /// This is the zero-cost building block for staged/block-wise fitting:
+    /// optimise one distribution parameter (e.g. `Mu`) while keeping the
+    /// remaining coefficients fixed at the values in `full_beta`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
+    /// contain a parameter named `P::NAME`. When blocks are constructed through
+    /// the typed [`ParameterBlock`] API this cannot happen in practice — the
+    /// compiler guarantees that `ParameterBlock<Mu, …>` registers itself as
+    /// `"mu"`.
+    pub fn block_objective_for<P>(
+        &mut self,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError>
+    where
+        P: ParameterName,
+    {
+        let range = self
+            .parameter_layout()
+            .slice_of::<P>()
+            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
+        Ok(BlockObjective::new(self, full_beta, range))
+    }
+
     /// Unpacks a flat theta vector into named coefficient blocks.
     pub fn unpack_theta(&self, theta: &[f64]) -> Result<UnpackedTheta, ModelError> {
         validate_len("theta", theta.len(), self.nparams())?;
@@ -623,6 +650,31 @@ where
     /// Consumes the workspace-backed objective and returns the wrapped model.
     pub fn into_model(self) -> Gamlss<F, Blocks> {
         self.model
+    }
+
+    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
+    ///
+    /// Delegates to the inner model's [`Gamlss::block_objective_for`] through
+    /// [`model_mut`](Self::model_mut), so the returned objective borrows the
+    /// workspace-backed model and reuses its gradient buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
+    /// contain a parameter named `P::NAME`.
+    pub fn block_objective_for<P>(
+        &mut self,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError>
+    where
+        P: ParameterName,
+    {
+        let range = self
+            .model
+            .parameter_layout()
+            .slice_of::<P>()
+            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
+        Ok(BlockObjective::new(self, full_beta, range))
     }
 
     /// Wraps the workspace-backed objective with penalties evaluated on the full beta vector.
@@ -1691,6 +1743,67 @@ mod tests {
 
         assert_relative_eq!(grad[0], 5.0);
         assert_relative_eq!(grad[1], -5.0);
+    }
+
+    #[test]
+    fn block_objective_for_projects_mu_coefficients() {
+        // Simple 2-param mock: identity link for both, NLL = 0.5 * sum of squares.
+        #[derive(Debug, Clone, Copy)]
+        struct TwoParamMock;
+
+        impl Family for TwoParamMock {
+            type Eta = (f64, f64);
+            type Theta = (f64, f64);
+            type ScoreEta = (f64, f64);
+
+            fn theta(&self, eta: Self::Eta) -> Self::Theta {
+                eta
+            }
+
+            fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+                let first = theta.0 - y;
+                let second = theta.1 - 1.0;
+                0.5 * (first * first + second * second)
+            }
+
+            fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+                let score = (eta.0 - y, eta.1 - 1.0);
+                (self.nll(y, eta), score)
+            }
+        }
+
+        impl ParameterizedFamily<2> for TwoParamMock {
+            type Params = (Mu, Sigma);
+            type Links = (Identity, Identity);
+        }
+
+        let y = vec![1.0, 2.0, 3.0];
+        let x_mu = DenseDesign::from_rows(&[[1.0, 0.5], [1.0, 1.5], [1.0, 2.5]]);
+        let x_sigma = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x_mu, NoPenalty, 0);
+        let sigma = ParameterBlock::<Sigma, Identity, _, _>::linear(x_sigma, NoPenalty, 0);
+        let (mu, sigma) = ParameterBlocks::new((mu, sigma));
+        let mut model = Gamlss::try_new(TwoParamMock, (mu, sigma), y).unwrap();
+
+        let beta = vec![0.5, 0.2, 0.3];
+        let nparams = model.nparams();
+
+        // Scope the block objective to release the mutable borrow on model.
+        let (mu_dim, mu_grad) = {
+            let mut mu_block = model.block_objective_for::<Mu>(beta.clone()).unwrap();
+            let dim = mu_block.dim();
+            let mut block_grad = vec![0.0; dim];
+            mu_block.gradient(&beta[..2], &mut block_grad).unwrap();
+            (dim, block_grad)
+        };
+
+        assert_eq!(mu_dim, 2);
+
+        let mut full_grad = vec![0.0; nparams];
+        model.gradient(&beta, &mut full_grad).unwrap();
+
+        assert_relative_eq!(mu_grad[0], full_grad[0]);
+        assert_relative_eq!(mu_grad[1], full_grad[1]);
     }
 
     fn softplus(value: f64) -> f64 {
