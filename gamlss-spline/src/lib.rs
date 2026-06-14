@@ -61,6 +61,173 @@ pub enum SplineError {
     Model(#[from] ModelError),
 }
 
+/// Ошибки построения Fourier basis и Fourier predictor.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum FourierError {
+    /// Входной вектор содержит `NaN` или infinity.
+    #[error("Fourier input contains a non-finite value")]
+    NonFiniteValue,
+
+    /// Период должен быть конечным положительным числом.
+    #[error("Fourier period must be finite and positive")]
+    InvalidPeriod,
+
+    /// Число гармоник должно быть положительным.
+    #[error("Fourier order must be greater than zero")]
+    InvalidOrder,
+
+    /// Число коэффициентов переполнило `usize`.
+    #[error("Fourier coefficient count overflowed")]
+    CoefficientOverflow,
+}
+
+/// Fourier predictor для сезонных/периодических ковариат.
+///
+/// Для `order = K` строит колонки
+/// `sin(2πkx / period)` и `cos(2πkx / period)`, `k = 1..=K`.
+/// Если `include_intercept = true`, первым коэффициентом является intercept.
+/// Локальный вектор коэффициентов имеет порядок:
+/// `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`.
+///
+/// В отличие от dense design matrix, этот predictor не материализует базис:
+/// значения вычисляются напрямую в [`PredictorBlock::eta_row`] и
+/// [`PredictorBlock::add_gradient`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FourierDesign {
+    x: Vec<f64>,
+    omega: f64,
+    order: usize,
+    nparams: usize,
+    include_intercept: bool,
+}
+
+impl FourierDesign {
+    /// Строит Fourier predictor.
+    ///
+    /// `period` должен быть конечным и положительным, `order` — положительным.
+    /// Все значения `x` должны быть конечными.
+    pub fn new(
+        x: &[f64],
+        period: f64,
+        order: usize,
+        include_intercept: bool,
+    ) -> Result<Self, FourierError> {
+        if x.iter().any(|value| !value.is_finite()) {
+            return Err(FourierError::NonFiniteValue);
+        }
+        if !period.is_finite() || period <= 0.0 {
+            return Err(FourierError::InvalidPeriod);
+        }
+        if order == 0 {
+            return Err(FourierError::InvalidOrder);
+        }
+
+        let nparams = coefficient_count(order, include_intercept)?;
+
+        Ok(Self {
+            x: x.to_vec(),
+            omega: std::f64::consts::TAU / period,
+            order,
+            nparams,
+            include_intercept,
+        })
+    }
+
+    /// Число гармоник.
+    pub fn order(&self) -> usize {
+        self.order
+    }
+
+    /// Период Fourier basis.
+    pub fn period(&self) -> f64 {
+        std::f64::consts::TAU / self.omega
+    }
+
+    /// Возвращает `true`, если predictor содержит intercept.
+    pub fn include_intercept(&self) -> bool {
+        self.include_intercept
+    }
+
+    /// Возвращает исходные координаты.
+    pub fn x(&self) -> &[f64] {
+        &self.x
+    }
+}
+
+impl PredictorBlock for FourierDesign {
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+
+    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert!(row < self.x.len());
+        debug_assert_eq!(beta.len(), self.nparams());
+
+        let mut value = 0.0;
+        let mut offset = 0;
+        if self.include_intercept {
+            value += beta[0];
+            offset = 1;
+        }
+
+        let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
+        let mut harmonic_sin = base_sin;
+        let mut harmonic_cos = base_cos;
+        for harmonic in 1..=self.order {
+            value += beta[offset] * harmonic_sin + beta[offset + 1] * harmonic_cos;
+            offset += 2;
+
+            if harmonic != self.order {
+                let next_sin = harmonic_sin * base_cos + harmonic_cos * base_sin;
+                let next_cos = harmonic_cos * base_cos - harmonic_sin * base_sin;
+                harmonic_sin = next_sin;
+                harmonic_cos = next_cos;
+            }
+        }
+        value
+    }
+
+    fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.nparams());
+
+        for (row, score) in scores.iter().copied().enumerate() {
+            let mut offset = 0;
+            if self.include_intercept {
+                grad[0] += score;
+                offset = 1;
+            }
+
+            let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
+            let mut harmonic_sin = base_sin;
+            let mut harmonic_cos = base_cos;
+            for harmonic in 1..=self.order {
+                grad[offset] += score * harmonic_sin;
+                grad[offset + 1] += score * harmonic_cos;
+                offset += 2;
+
+                if harmonic != self.order {
+                    let next_sin = harmonic_sin * base_cos + harmonic_cos * base_sin;
+                    let next_cos = harmonic_cos * base_cos - harmonic_sin * base_sin;
+                    harmonic_sin = next_sin;
+                    harmonic_cos = next_cos;
+                }
+            }
+        }
+    }
+}
+
+fn coefficient_count(order: usize, include_intercept: bool) -> Result<usize, FourierError> {
+    order
+        .checked_mul(2)
+        .and_then(|count| count.checked_add(usize::from(include_intercept)))
+        .ok_or(FourierError::CoefficientOverflow)
+}
+
 /// B-spline basis с заданной степенью и knot vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BSplineBasis {
@@ -898,8 +1065,8 @@ fn binomial(n: usize, k: usize) -> usize {
 pub mod prelude {
     pub use crate::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, DifferencePenalty,
-        EdgeMonotonicPenalty, OpenUniformSplineDesign, SlopeLimitPenalty, SplineError, SplineOrder,
-        pspline_design,
+        EdgeMonotonicPenalty, FourierDesign, FourierError, OpenUniformSplineDesign,
+        SlopeLimitPenalty, SplineError, SplineOrder, pspline_design,
     };
 }
 
@@ -910,7 +1077,8 @@ mod tests {
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, DifferencePenalty,
-        EdgeMonotonicPenalty, OpenUniformSplineDesign, SlopeLimitPenalty, SplineOrder,
+        EdgeMonotonicPenalty, FourierDesign, FourierError, OpenUniformSplineDesign,
+        SlopeLimitPenalty, SplineOrder,
     };
 
     #[test]
@@ -956,6 +1124,98 @@ mod tests {
 
         let ramp = (0..8).map(|value| value as f64).collect::<Vec<_>>();
         assert_relative_eq!(design.eta_row(0, &ramp), design.eta_row(2, &ramp));
+    }
+
+    #[test]
+    fn fourier_design_evaluates_harmonics_without_materialized_matrix() {
+        let design = FourierDesign::new(&[0.0, 0.25, 0.5, 1.25], 1.0, 2, true).unwrap();
+        let beta = [0.5, 1.0, 2.0, -0.25, 0.75];
+
+        assert_eq!(design.nrows(), 4);
+        assert_eq!(design.nparams(), 5);
+        assert_eq!(design.order(), 2);
+        assert_relative_eq!(design.period(), 1.0, epsilon = 1.0e-12);
+        assert!(design.include_intercept());
+
+        for row in 0..design.nrows() {
+            let x = design.x()[row];
+            let phase1 = std::f64::consts::TAU * x;
+            let phase2 = 2.0 * std::f64::consts::TAU * x;
+            let expected = beta[0]
+                + beta[1] * phase1.sin()
+                + beta[2] * phase1.cos()
+                + beta[3] * phase2.sin()
+                + beta[4] * phase2.cos();
+
+            assert_relative_eq!(design.eta_row(row, &beta), expected, epsilon = 1.0e-12);
+        }
+
+        assert_relative_eq!(
+            design.eta_row(1, &beta),
+            design.eta_row(3, &beta),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn fourier_design_without_intercept_uses_two_coefficients_per_harmonic() {
+        let design = FourierDesign::new(&[1.0], 4.0, 1, false).unwrap();
+        let beta = [2.0, 3.0];
+        let phase = std::f64::consts::TAU * 1.0 / 4.0;
+
+        assert_eq!(design.nparams(), 2);
+        assert_relative_eq!(
+            design.eta_row(0, &beta),
+            beta[0] * phase.sin() + beta[1] * phase.cos(),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn fourier_design_rejects_invalid_inputs() {
+        assert_eq!(
+            FourierDesign::new(&[f64::NAN], 1.0, 1, true).unwrap_err(),
+            FourierError::NonFiniteValue
+        );
+        assert_eq!(
+            FourierDesign::new(&[0.0], 0.0, 1, true).unwrap_err(),
+            FourierError::InvalidPeriod
+        );
+        assert_eq!(
+            FourierDesign::new(&[0.0], 1.0, 0, true).unwrap_err(),
+            FourierError::InvalidOrder
+        );
+        assert_eq!(
+            FourierDesign::new(&[0.0], 1.0, usize::MAX, true).unwrap_err(),
+            FourierError::CoefficientOverflow
+        );
+    }
+
+    #[test]
+    fn fourier_design_gradient_matches_finite_difference() {
+        let design = FourierDesign::new(&[0.0, 0.2, 0.7, 1.4], 1.0, 3, true).unwrap();
+        let beta = vec![0.3, -0.5, 1.2, 0.4, -0.8, 0.9, 0.1];
+        let scores = vec![0.7, -1.1, 0.2, 1.4];
+        let eps = 1.0e-6;
+        let mut grad = vec![0.0; design.nparams()];
+
+        design.add_gradient(&scores, &beta, &mut grad);
+
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += eps;
+            let mut minus = beta.clone();
+            minus[index] -= eps;
+
+            let objective = |candidate: &[f64]| {
+                (0..design.nrows())
+                    .map(|row| scores[row] * design.eta_row(row, candidate))
+                    .sum::<f64>()
+            };
+            let finite_difference = (objective(&plus) - objective(&minus)) / (2.0 * eps);
+
+            assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
     }
 
     #[test]
