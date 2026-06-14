@@ -109,6 +109,32 @@ where
     }
 }
 
+/// Predictor blocks that expose an underlying [`DesignMatrix`].
+///
+/// This extension trait enables Fisher Scoring solvers to construct the
+/// weighted Gram matrix `X^T W X` for each parameter block. Only predictor
+/// blocks with a linear structure can provide this — nonlinear blocks like
+/// [`TransformedScalar`] or [`ProductBlock`] must fall back to gradient-only
+/// optimizers.
+///
+/// Currently only [`LinearPredictorBlock`] implements this trait.
+/// Future sparse or structured matrix backends will implement it as well.
+pub trait HasDesignMatrix: PredictorBlock {
+    /// The underlying design matrix type.
+    type Matrix: DesignMatrix;
+
+    /// Returns a reference to the design matrix.
+    fn design(&self) -> &Self::Matrix;
+}
+
+impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
+    type Matrix = X;
+
+    fn design(&self) -> &Self::Matrix {
+        &self.x
+    }
+}
+
 /// Transform for a single coefficient used by [`TransformedScalar`].
 pub trait CoefficientTransform {
     /// Transformed coefficient value.

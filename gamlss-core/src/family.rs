@@ -34,6 +34,30 @@ pub trait Family {
     fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta);
 }
 
+/// Extension trait for families that provide diagonal Fisher information.
+///
+/// Families implementing this trait can be used with Fisher Scoring solvers
+/// (Rigby–Stasinopoulos algorithm). The diagonal Fisher information is the
+/// expected negative second derivative `E[-∂²ℓ/∂η²]` on the link scale.
+///
+/// Currently no built-in family implements this trait. It exists as an
+/// explicit extension point for future solver integrations — add
+/// implementations when you need Fisher Scoring for specific families.
+pub trait HasFisherInfo: Family {
+    /// Negative log-likelihood, score, and diagonal Fisher information per
+    /// observation on the link scale.
+    ///
+    /// The `fisher` component must have the same arity and ordering as
+    /// [`Family::Eta`] and [`Family::ScoreEta`]. Each element is
+    /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
+    /// respect to the k-th link-scale predictor, given the observation `y`.
+    fn nll_score_and_fisher_eta(
+        &self,
+        y: f64,
+        eta: Self::Eta,
+    ) -> (f64, Self::ScoreEta, Self::ScoreEta);
+}
+
 /// Контейнер для eta или score у family с фиксированной арностью `K`.
 ///
 /// `part(index)` is used in the model hot path after compile-time arity

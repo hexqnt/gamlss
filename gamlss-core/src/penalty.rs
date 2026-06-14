@@ -81,6 +81,39 @@ impl Penalty for RidgePenalty {
     }
 }
 
+/// Penalty that can be expressed as a quadratic form `β^T P β`.
+///
+/// This extension trait enables Fisher Scoring solvers to add the penalty
+/// matrix to the weighted Gram matrix: `X^T W X + P`. Penalties that cannot
+/// be expressed as a constant quadratic form (e.g., slope-limit or
+/// monotonic constraints) should not implement this trait.
+///
+/// Currently [`NoPenalty`] and [`RidgePenalty`] implement this trait.
+/// Spline penalties like [`crate::DifferencePenalty`] will implement it
+/// in `gamlss-spline`.
+pub trait MatrixPenalty: Penalty {
+    /// Adds the penalty matrix `P` to `gram` in row-major order.
+    ///
+    /// `gram` is a `dim × dim` matrix, where `dim` equals the number
+    /// of coefficients in the parameter block. Implementations should add
+    /// their contribution — the caller is responsible for zeroing `gram`
+    /// before the first call.
+    fn add_penalty_matrix(&self, gram: &mut [f64]);
+}
+
+impl MatrixPenalty for NoPenalty {
+    fn add_penalty_matrix(&self, _gram: &mut [f64]) {}
+}
+
+impl MatrixPenalty for RidgePenalty {
+    fn add_penalty_matrix(&self, gram: &mut [f64]) {
+        let dim = (gram.len() as f64).sqrt() as usize;
+        for i in 0..dim {
+            gram[i * dim + i] += self.lambda;
+        }
+    }
+}
+
 macro_rules! impl_global_penalty_tuple {
     (types = ($($ty:ident),+); indices = ($($idx:tt),+)) => {
         impl<$($ty,)+> GlobalPenalty for ($($ty,)+)
@@ -137,7 +170,7 @@ impl_global_penalty_tuple!(types = (P1, P2, P3, P4, P5, P6, P7, P8); indices = (
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::{GlobalPenalty, Penalty};
+    use super::{GlobalPenalty, MatrixPenalty, NoPenalty, Penalty, RidgePenalty};
 
     #[derive(Debug, Clone, Copy)]
     struct LinearPenalty(f64);
@@ -204,5 +237,31 @@ mod tests {
         assert_relative_eq!(GlobalPenalty::value(&penalty, &beta), 72.0);
         GlobalPenalty::add_gradient(&penalty, &beta, &mut grad);
         assert_relative_eq!(grad[0], 37.0);
+    }
+
+    #[test]
+    fn no_penalty_matrix_adds_nothing() {
+        let mut gram = vec![1.0, 2.0, 3.0, 4.0];
+        NoPenalty.add_penalty_matrix(&mut gram);
+        assert_eq!(gram, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn ridge_penalty_matrix_adds_lambda_to_diagonal() {
+        let penalty = RidgePenalty::new(3.0);
+        // 3x3 Gram matrix: [[1,2,3], [4,5,6], [7,8,9]]
+        let mut gram = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        penalty.add_penalty_matrix(&mut gram);
+        // Diagonal += lambda: [4, 2, 3, 4, 8, 6, 7, 8, 12]
+        assert_eq!(gram[0], 4.0);
+        assert_eq!(gram[4], 8.0);
+        assert_eq!(gram[8], 12.0);
+        // Off-diagonal unchanged
+        assert_eq!(gram[1], 2.0);
+        assert_eq!(gram[2], 3.0);
+        assert_eq!(gram[3], 4.0);
+        assert_eq!(gram[5], 6.0);
+        assert_eq!(gram[6], 7.0);
+        assert_eq!(gram[7], 8.0);
     }
 }

@@ -22,7 +22,9 @@ pub mod predictor;
 
 pub use design::{DenseDesign, DesignMatrix};
 pub use error::ModelError;
-pub use family::{CanSimulate, Family, HasCdf, HasQuantile, ParameterParts, ParameterizedFamily};
+pub use family::{
+    CanSimulate, Family, HasCdf, HasFisherInfo, HasQuantile, ParameterParts, ParameterizedFamily,
+};
 pub use link::{ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus};
 pub use model::{
     Diagnostics, Gamlss, GamlssBlocks, GradientWorkspace, ParameterCoefficients, ParameterLayout,
@@ -33,11 +35,11 @@ pub use param::{
     AssignParameterOffsets, Mu, Nu, ParameterBlock, ParameterBlocks, ParameterName, Precision,
     Rate, Scale, Shape, Sigma, Tau,
 };
-pub use penalty::{GlobalPenalty, NoPenalty, Penalty, RidgePenalty};
+pub use penalty::{GlobalPenalty, MatrixPenalty, NoPenalty, Penalty, RidgePenalty};
 pub use predictor::{
-    CoefficientTransform, FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar,
-    NegativeSoftplusTransform, OffsetBlock, PredictorBlock, ProductBlock, SoftplusScalar,
-    SoftplusTransform, SumBlock, TransformedScalar,
+    CoefficientTransform, FloorSoftplusScalar, HasDesignMatrix, LinearPredictorBlock,
+    NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock, PredictorBlock, ProductBlock,
+    SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
 
 /// Наиболее часто используемые импорты из `gamlss-core`.
@@ -45,11 +47,11 @@ pub mod prelude {
     pub use crate::{
         AssignParameterOffsets, CanSimulate, ClampedLog, CoefficientTransform, DenseDesign,
         DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks, GlobalPenalty, GradientWorkspace,
-        HasCdf, HasQuantile, Identity, LinearPredictorBlock, Link, Log, LogPlus, Logit, ModelError,
-        Mu, NoPenalty, Nu, Objective, OffsetBlock, ParameterBlock, ParameterBlocks,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
-        RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock, Tau, TransformedScalar,
-        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+        HasCdf, HasDesignMatrix, HasFisherInfo, HasQuantile, Identity, LinearPredictorBlock, Link,
+        Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, OffsetBlock,
+        ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName,
+        ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Precision,
+        PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock,
+        Tau, TransformedScalar, UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
     };
 }
