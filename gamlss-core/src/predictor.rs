@@ -197,13 +197,19 @@ where
     }
 }
 
-/// Predictor block alias for `softplus(beta)`.
+/// Convenience predictor block alias for `softplus(beta)`.
+///
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
 pub type SoftplusScalar = TransformedScalar<SoftplusTransform>;
 
-/// Predictor block alias for `-softplus(beta)`.
+/// Convenience predictor block alias for `-softplus(beta)`.
+///
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
 pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 
-/// One-coefficient predictor block: `floor + softplus(beta)`.
+/// Convenience one-coefficient predictor block: `floor + softplus(beta)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FloorSoftplusScalar {
     /// Number of observations this scalar contribution applies to.

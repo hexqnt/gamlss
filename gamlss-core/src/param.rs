@@ -8,6 +8,41 @@ pub trait ParameterName {
     const NAME: &'static str;
 }
 
+/// Helper for assigning sequential offsets to typed parameter block tuples.
+///
+/// This is the safe construction path for ordinary models: create each
+/// [`ParameterBlock`] with any placeholder offset, then call
+/// `ParameterBlocks::new((...))` to lay the tuple out from zero. Low-level
+/// constructors that accept explicit offsets remain available for advanced
+/// layouts and integration code.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ParameterBlocks;
+
+/// Tuple contract implemented for typed parameter block tuples up to arity 8.
+pub trait AssignParameterOffsets: Sized {
+    /// Returns `self` with sequential offsets starting at `start`.
+    fn assign_offsets(self, start: usize) -> Self;
+}
+
+impl ParameterBlocks {
+    /// Assigns sequential offsets starting at zero.
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new<Blocks>(blocks: Blocks) -> Blocks
+    where
+        Blocks: AssignParameterOffsets,
+    {
+        Self::with_start(0, blocks)
+    }
+
+    /// Assigns sequential offsets starting at `start`.
+    pub fn with_start<Blocks>(start: usize, blocks: Blocks) -> Blocks
+    where
+        Blocks: AssignParameterOffsets,
+    {
+        blocks.assign_offsets(start)
+    }
+}
+
 /// Маркер для location-параметра `mu`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mu;
@@ -177,5 +212,129 @@ where
                 len: self.len,
             })?;
         Ok(self.offset..end)
+    }
+}
+
+macro_rules! impl_assign_offsets {
+    (
+        types = ($($block:ident),+);
+        vars = ($($var:ident),+)
+    ) => {
+        impl<$($block,)+> AssignParameterOffsets for ($($block,)+)
+        where
+            $($block: OffsetAssignable,)+
+        {
+            fn assign_offsets(self, start: usize) -> Self {
+                let ($($var,)+) = self;
+                let mut offset = start;
+                $(
+                    let $var = $var.with_assigned_offset(offset);
+                    offset = offset.saturating_add($var.assigned_len());
+                )+
+                let _ = offset;
+                ($($var,)+)
+            }
+        }
+    };
+}
+
+trait OffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_len(&self) -> usize;
+}
+
+impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl_assign_offsets!(types = (B1); vars = (b1));
+impl_assign_offsets!(types = (B1, B2); vars = (b1, b2));
+impl_assign_offsets!(types = (B1, B2, B3); vars = (b1, b2, b3));
+impl_assign_offsets!(types = (B1, B2, B3, B4); vars = (b1, b2, b3, b4));
+impl_assign_offsets!(types = (B1, B2, B3, B4, B5); vars = (b1, b2, b3, b4, b5));
+impl_assign_offsets!(types = (B1, B2, B3, B4, B5, B6); vars = (b1, b2, b3, b4, b5, b6));
+impl_assign_offsets!(
+    types = (B1, B2, B3, B4, B5, B6, B7);
+    vars = (b1, b2, b3, b4, b5, b6, b7)
+);
+impl_assign_offsets!(
+    types = (B1, B2, B3, B4, B5, B6, B7, B8);
+    vars = (b1, b2, b3, b4, b5, b6, b7, b8)
+);
+
+#[cfg(test)]
+mod tests {
+    use crate::{DenseDesign, Identity, LinearPredictorBlock, NoPenalty};
+
+    use super::{
+        Mu, Nu, ParameterBlock, ParameterBlocks, Precision, Rate, Scale, Shape, Sigma, Tau,
+    };
+
+    #[test]
+    fn parameter_blocks_assign_offsets_for_one_block() {
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::from_rows(&[[1.0, 2.0]]),
+            NoPenalty,
+            99,
+        );
+
+        let (mu,) = ParameterBlocks::new((mu,));
+
+        assert_eq!(mu.range(), 0..2);
+    }
+
+    #[test]
+    fn parameter_blocks_assign_offsets_for_two_blocks() {
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::from_rows(&[[1.0, 2.0]]),
+            NoPenalty,
+            99,
+        );
+        let sigma = ParameterBlock::<Sigma, Identity, _, _>::linear(
+            DenseDesign::from_rows(&[[1.0, 2.0, 3.0]]),
+            NoPenalty,
+            99,
+        );
+
+        let (mu, sigma) = ParameterBlocks::new((mu, sigma));
+
+        assert_eq!(mu.range(), 0..2);
+        assert_eq!(sigma.range(), 2..5);
+    }
+
+    #[test]
+    fn parameter_blocks_assign_offsets_for_eight_blocks_with_start() {
+        let blocks = (
+            intercept_block::<Mu>(),
+            intercept_block::<Sigma>(),
+            intercept_block::<Nu>(),
+            intercept_block::<Tau>(),
+            intercept_block::<Shape>(),
+            intercept_block::<Scale>(),
+            intercept_block::<Rate>(),
+            intercept_block::<Precision>(),
+        );
+
+        let (b1, b2, b3, b4, b5, b6, b7, b8) = ParameterBlocks::with_start(10, blocks);
+
+        assert_eq!(b1.range(), 10..11);
+        assert_eq!(b2.range(), 11..12);
+        assert_eq!(b3.range(), 12..13);
+        assert_eq!(b4.range(), 13..14);
+        assert_eq!(b5.range(), 14..15);
+        assert_eq!(b6.range(), 15..16);
+        assert_eq!(b7.range(), 16..17);
+        assert_eq!(b8.range(), 17..18);
+    }
+
+    fn intercept_block<P>()
+    -> ParameterBlock<P, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty> {
+        ParameterBlock::linear(DenseDesign::intercept(1), NoPenalty, 99)
     }
 }

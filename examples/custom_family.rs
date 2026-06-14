@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 
 use gamlss::core::{
     DenseDesign, Family, Gamlss, HasCdf, Identity, Link, Log, Mu, NoPenalty, Objective,
-    ParameterBlock, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -150,12 +150,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = vec![1.0, 1.4, 1.8, 2.2, 2.6];
     let n = y.len();
 
-    let mu = ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0);
-    let sigma =
-        ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, mu.len());
+    let blocks = ParameterBlocks::new((
+        ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
+        ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
+    ));
 
     let family = UserNormal::<Identity, Log>::new();
-    let mut model = Gamlss::try_new(family, (mu, sigma), y)?;
+    let mut model = Gamlss::try_new(family, blocks, y)?;
     let mut theta = model.initial_theta()?;
     let mut grad = vec![0.0; model.dim()];
 

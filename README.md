@@ -19,20 +19,31 @@ Type-driven Rust crates for GAMLSS-style modeling.
 gamlss = "0.1"
 ```
 
-Workspace также публикует несколько низкоуровневых crate-ов:
+`gamlss` — batteries-included фасад: по умолчанию он реэкспортирует typed
+core, готовые families, spline/predictor building blocks, target transforms и
+dynamic formula/builder слой.
+
+Workspace также публикует отдельные crate-ы для более явного контроля API и
+зависимостей:
 
 - `gamlss-core` — type-driven ядро: links, parameter blocks, objectives и
-  compiled models.
-- `gamlss-family` — распределения, likelihoods, scores и вспомогательные
-  функции.
-- `gamlss-spline` — spline bases, penalties и spline metadata.
-- `gamlss-formula` — optional formula/builder layer, который компилируется в
-  typed models.
+  compiled models. Это низкоуровневый Rust-native framework API: без
+  optimizer-а, dataframe abstraction и тяжёлого matrix backend-а.
+- `gamlss-family` — reusable typed building blocks: распределения,
+  likelihoods, scores, CDF/quantile/simulation helpers.
+- `gamlss-spline` — reusable typed building blocks для spline/Fourier
+  predictors, penalties и spline metadata.
+- `gamlss-transform` — target preprocessing transforms.
+- `gamlss-formula` — dynamic convenience layer. Он предназначен для удобной
+  сборки типизированных моделей из простых runtime specifications, но не
+  задаёт архитектуру hot-path core API.
 
 Эти crate-ы опубликованы отдельно, чтобы сохранить явные границы модулей и
 легкие зависимости, но они не являются основной пользовательской поверхностью.
 В обычном случае достаточно зависеть от `gamlss`; остальные crate-ы будут
-подключены транзитивно.
+подключены транзитивно. Если нужен минимальный низкоуровневый API для
+integration crate-а или собственного optimizer-а, используйте `gamlss-core`
+напрямую.
 
 ## Общая форма GAMLSS
 
@@ -52,7 +63,7 @@ g_k(\theta_{ik}) = \eta_{ik}
 \qquad k = 1,\ldots,K.
 $$
 
-Классическое соглашение `gamlss` часто записывает до четырех параметров как
+Классическое соглашение `gamlss` часто называет первые четыре параметра
 `mu`, `sigma`, `nu` и `tau`:
 
 $$
@@ -65,7 +76,7 @@ Y_i \mid x_i \sim D(\mu_i, \sigma_i, \nu_i, \tau_i).
 $$
 
 Здесь `mu`, `sigma`, `nu` и `tau` обычно отвечают за положение, масштаб,
-асимметрию и форму распределения. Не каждое семейство использует все четыре
-параметра: например, двухпараметрическое распределение может иметь только
-`D(mu_i, sigma_i)`, а другие семейства могут задавать свое число и смысл
-параметров.
+асимметрию и форму распределения. Это соглашение об именах, а не обязательная
+форма API: не каждое семейство использует все четыре параметра, а typed core
+поддерживает пользовательские parameter markers для собственного числа и
+смысла параметров.

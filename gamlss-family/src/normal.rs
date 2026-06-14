@@ -4,7 +4,8 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, Identity, LinearPredictorBlock, Link, Log, ModelError, Mu,
-    NoPenalty, ParameterBlock, ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
+    NoPenalty, ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty,
+    PositiveLink, Sigma,
 };
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -208,10 +209,12 @@ where
     PMu: Penalty,
     PSigma: Penalty,
 {
-    let mu = ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, mu_penalty, 0);
-    let sigma = ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, mu.len());
+    let blocks = ParameterBlocks::new((
+        ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, mu_penalty, 0),
+        ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, 0),
+    ));
 
-    Gamlss::try_new(DefaultNormal::new(), (mu, sigma), y)
+    Gamlss::try_new(DefaultNormal::new(), blocks, y)
 }
 
 #[cfg(test)]

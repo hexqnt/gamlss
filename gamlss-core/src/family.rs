@@ -114,6 +114,94 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
     }
 }
 
+impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 5]) -> Self {
+        (values[0], values[1], values[2], values[3], values[4])
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            _ => unreachable!("five-parameter parts only have indices 0 through 4"),
+        }
+    }
+}
+
+impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 6]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            _ => unreachable!("six-parameter parts only have indices 0 through 5"),
+        }
+    }
+}
+
+impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 7]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            6 => self.6,
+            _ => unreachable!("seven-parameter parts only have indices 0 through 6"),
+        }
+    }
+}
+
+impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 8]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            6 => self.6,
+            7 => self.7,
+            _ => unreachable!("eight-parameter parts only have indices 0 through 7"),
+        }
+    }
+}
+
 /// Family с фиксированным числом параметров, ролями параметров и link-функциями.
 ///
 /// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.

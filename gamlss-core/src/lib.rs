@@ -29,7 +29,10 @@ pub use model::{
     ParameterLayout, ParameterSlice, UnpackedTheta, WithGlobalPenalties,
 };
 pub use objective::{BlockObjective, Objective};
-pub use param::{Mu, Nu, ParameterBlock, ParameterName, Precision, Rate, Scale, Shape, Sigma, Tau};
+pub use param::{
+    AssignParameterOffsets, Mu, Nu, ParameterBlock, ParameterBlocks, ParameterName, Precision,
+    Rate, Scale, Shape, Sigma, Tau,
+};
 pub use penalty::{GlobalPenalty, NoPenalty, Penalty, RidgePenalty};
 pub use predictor::{
     CoefficientTransform, FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar,
@@ -40,14 +43,13 @@ pub use predictor::{
 /// Наиболее часто используемые импорты из `gamlss-core`.
 pub mod prelude {
     pub use crate::{
-        BlockObjective, CachedGamlss, CanSimulate, ClampedLog, CoefficientTransform, DenseDesign,
-        DesignMatrix, Diagnostics, Family, FloorSoftplusScalar, Gamlss, GamlssBlocks,
-        GlobalPenalty, GradientWorkspace, HasCdf, HasQuantile, Identity, LinearPredictorBlock,
-        Link, Log, LogPlus, Logit, ModelError, Mu, NegativeSoftplusScalar,
-        NegativeSoftplusTransform, NoPenalty, Nu, Objective, OffsetBlock, ParameterBlock,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
-        RidgePenalty, Scale, Shape, Sigma, Softplus, SoftplusScalar, SoftplusTransform, SumBlock,
-        Tau, TransformedScalar, UnpackedTheta, WithGlobalPenalties,
+        AssignParameterOffsets, CachedGamlss, CanSimulate, ClampedLog, CoefficientTransform,
+        DenseDesign, DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks, GlobalPenalty,
+        GradientWorkspace, HasCdf, HasQuantile, Identity, LinearPredictorBlock, Link, Log, LogPlus,
+        Logit, ModelError, Mu, NoPenalty, Nu, Objective, OffsetBlock, ParameterBlock,
+        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
+        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock,
+        ProductBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock, Tau,
+        TransformedScalar, UnpackedTheta, WithGlobalPenalties,
     };
 }

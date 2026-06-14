@@ -37,7 +37,11 @@ pub trait Objective {
     }
 }
 
-/// Objective по одному блоку коэффициентов при фиксированных остальных блоках.
+/// Convenience adapter for optimizing one coefficient block at a time.
+///
+/// This is not part of the fundamental model representation. It exists for
+/// block-wise fitting and optimizer integration code that wants to expose a
+/// projected view of a full [`Objective`].
 ///
 /// Оборачивает полный objective и проецирует вызовы на диапазон одного
 /// параметрического блока, копируя коэффициенты блока в общий `full_beta`

@@ -200,6 +200,14 @@ impl ParameterLayout {
             .find(|slice| slice.name == name)
             .map(|slice| slice.range.clone())
     }
+
+    /// Returns the coefficient range for typed parameter marker `P`, if present.
+    pub fn slice_of<P>(&self) -> Option<Range<usize>>
+    where
+        P: ParameterName,
+    {
+        self.slice(P::NAME)
+    }
 }
 
 /// Коэффициенты одного распакованного параметрического блока.
@@ -230,9 +238,25 @@ impl UnpackedTheta {
         self.blocks.iter().find(|block| block.name == name)
     }
 
+    /// Returns an unpacked coefficient block for typed parameter marker `P`.
+    pub fn block_of<P>(&self) -> Option<&ParameterCoefficients>
+    where
+        P: ParameterName,
+    {
+        self.block(P::NAME)
+    }
+
     /// Returns coefficients by parameter name.
     pub fn coefficients(&self, name: &str) -> Option<&[f64]> {
         self.block(name).map(|block| block.coefficients.as_slice())
+    }
+
+    /// Returns coefficients for typed parameter marker `P`.
+    pub fn coefficients_of<P>(&self) -> Option<&[f64]>
+    where
+        P: ParameterName,
+    {
+        self.coefficients(P::NAME)
     }
 }
 
@@ -846,6 +870,58 @@ impl_gamlss_blocks!(
     indices = (0, 1, 2, 3)
 );
 
+impl_gamlss_blocks!(
+    5;
+    params = (P1, P2, P3, P4, P5);
+    links = (L1, L2, L3, L4, L5);
+    designs = (X1, X2, X3, X4, X5);
+    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5);
+    blocks = (block1, block2, block3, block4, block5);
+    beta_blocks = (beta1, beta2, beta3, beta4, beta5);
+    scores = (score1, score2, score3, score4, score5);
+    local_grads = (grad1, grad2, grad3, grad4, grad5);
+    indices = (0, 1, 2, 3, 4)
+);
+
+impl_gamlss_blocks!(
+    6;
+    params = (P1, P2, P3, P4, P5, P6);
+    links = (L1, L2, L3, L4, L5, L6);
+    designs = (X1, X2, X3, X4, X5, X6);
+    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6);
+    blocks = (block1, block2, block3, block4, block5, block6);
+    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6);
+    scores = (score1, score2, score3, score4, score5, score6);
+    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6);
+    indices = (0, 1, 2, 3, 4, 5)
+);
+
+impl_gamlss_blocks!(
+    7;
+    params = (P1, P2, P3, P4, P5, P6, P7);
+    links = (L1, L2, L3, L4, L5, L6, L7);
+    designs = (X1, X2, X3, X4, X5, X6, X7);
+    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7);
+    blocks = (block1, block2, block3, block4, block5, block6, block7);
+    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7);
+    scores = (score1, score2, score3, score4, score5, score6, score7);
+    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7);
+    indices = (0, 1, 2, 3, 4, 5, 6)
+);
+
+impl_gamlss_blocks!(
+    8;
+    params = (P1, P2, P3, P4, P5, P6, P7, P8);
+    links = (L1, L2, L3, L4, L5, L6, L7, L8);
+    designs = (X1, X2, X3, X4, X5, X6, X7, X8);
+    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7, Pen8);
+    blocks = (block1, block2, block3, block4, block5, block6, block7, block8);
+    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7, beta8);
+    scores = (score1, score2, score3, score4, score5, score6, score7, score8);
+    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7, grad8);
+    indices = (0, 1, 2, 3, 4, 5, 6, 7)
+);
+
 /// Проверяет, что число строк predictor-а совпадает с длиной response.
 fn validate_block_rows(
     parameter: &'static str,
@@ -922,9 +998,9 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, ModelError, Mu, NoPenalty, Nu,
-        Objective, ParameterBlock, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma,
-        SumBlock, Tau,
+        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
+        NoPenalty, Nu, Objective, ParameterBlock, ParameterBlocks, ParameterName,
+        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1282,6 +1358,57 @@ mod tests {
         type Links = (Identity, Identity, Identity, Identity);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct Fifth;
+
+    impl ParameterName for Fifth {
+        const NAME: &'static str = "fifth";
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct FiveParameterMock;
+
+    impl Family for FiveParameterMock {
+        type Eta = (f64, f64, f64, f64, f64);
+        type Theta = (f64, f64, f64, f64, f64);
+        type ScoreEta = (f64, f64, f64, f64, f64);
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            let targets = [y, 1.0, 2.0, 3.0, 4.0];
+            let values = [theta.0, theta.1, theta.2, theta.3, theta.4];
+            0.5 * values
+                .iter()
+                .zip(targets)
+                .map(|(value, target)| {
+                    let residual = value - target;
+                    residual * residual
+                })
+                .sum::<f64>()
+        }
+
+        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+            (
+                self.nll(y, eta),
+                (
+                    eta.0 - y,
+                    eta.1 - 1.0,
+                    eta.2 - 2.0,
+                    eta.3 - 3.0,
+                    eta.4 - 4.0,
+                ),
+            )
+        }
+    }
+
+    impl ParameterizedFamily<5> for FiveParameterMock {
+        type Params = (Mu, Sigma, Nu, Tau, Fifth);
+        type Links = (Identity, Identity, Identity, Identity, Identity);
+    }
+
     #[test]
     fn prediction_api_returns_eta_and_theta_for_four_parameter_model() {
         let y = vec![2.0];
@@ -1319,6 +1446,38 @@ mod tests {
     }
 
     #[test]
+    fn custom_five_parameter_family_uses_generic_blocks() {
+        let y = vec![2.0];
+        let blocks = ParameterBlocks::new((
+            intercept_block::<Mu>(y.len()),
+            intercept_block::<Sigma>(y.len()),
+            intercept_block::<Nu>(y.len()),
+            intercept_block::<Tau>(y.len()),
+            intercept_block::<Fifth>(y.len()),
+        ));
+        let mut model = Gamlss::try_new(FiveParameterMock, blocks, y).unwrap();
+        let beta = vec![1.5, 0.5, 1.5, 2.5, 3.5];
+        let mut grad = vec![0.0; 5];
+
+        assert_relative_eq!(model.value(&beta).unwrap(), 0.625);
+
+        model.gradient(&beta, &mut grad).unwrap();
+
+        assert_eq!(model.parameter_layout().slice("fifth").unwrap(), 4..5);
+        assert_relative_eq!(grad[0], -0.5);
+        assert_relative_eq!(grad[1], -0.5);
+        assert_relative_eq!(grad[2], -0.5);
+        assert_relative_eq!(grad[3], -0.5);
+        assert_relative_eq!(grad[4], -0.5);
+    }
+
+    fn intercept_block<P>(
+        nrows: usize,
+    ) -> ParameterBlock<P, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty> {
+        ParameterBlock::linear(DenseDesign::intercept(nrows), NoPenalty, 99)
+    }
+
+    #[test]
     fn parameter_layout_and_unpack_use_distribution_parameter_names() {
         let y = vec![2.0];
         let first = ParameterBlock::<Mu, Identity, _, _>::linear(
@@ -1342,9 +1501,14 @@ mod tests {
         let unpacked = model.unpack_theta(&theta).unwrap();
 
         assert_eq!(layout.slice("mu").unwrap(), 0..1);
+        assert_eq!(layout.slice_of::<Mu>().unwrap(), 0..1);
         assert_eq!(layout.slice("sigma").unwrap(), 1..2);
+        assert_eq!(layout.slice_of::<Sigma>().unwrap(), 1..2);
         assert_eq!(layout.slice("nu").unwrap(), 2..3);
+        assert_eq!(layout.slice_of::<Nu>().unwrap(), 2..3);
         assert_eq!(unpacked.coefficients("mu").unwrap(), &[1.5]);
+        assert_eq!(unpacked.coefficients_of::<Mu>().unwrap(), &[1.5]);
+        assert_eq!(unpacked.block_of::<Mu>().unwrap().name, "mu");
         assert_eq!(unpacked.coefficients("sigma").unwrap(), &[0.5]);
         assert_eq!(unpacked.coefficients("nu").unwrap(), &[-0.5]);
     }
