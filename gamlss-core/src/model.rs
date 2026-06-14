@@ -29,7 +29,13 @@ pub trait GamlssBlocks<F> {
     ///
     /// `weights` must have the same length as `y`. Each scalar likelihood
     /// contribution is multiplied by the corresponding observation weight.
-    fn train_nll(&self, family: &F, y: &[f64], weights: &[f64], beta: &[f64]) -> f64;
+    fn train_nll(
+        &self,
+        family: &F,
+        y: &[f64],
+        weights: ObservationWeights<'_>,
+        beta: &[f64],
+    ) -> f64;
     /// Аддитивные предикторы на link-шкале для одной строки.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
@@ -37,7 +43,7 @@ pub trait GamlssBlocks<F> {
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
     /// Значение weighted negative log-likelihood плюс penalties.
-    fn value(&self, family: &F, y: &[f64], weights: &[f64], beta: &[f64]) -> f64 {
+    fn value(&self, family: &F, y: &[f64], weights: ObservationWeights<'_>, beta: &[f64]) -> f64 {
         self.train_nll(family, y, weights, beta) + self.penalty_value(beta)
     }
     /// Creates reusable buffers for repeated gradient evaluations.
@@ -56,7 +62,7 @@ pub trait GamlssBlocks<F> {
         &self,
         family: &F,
         y: &[f64],
-        weights: &[f64],
+        weights: ObservationWeights<'_>,
         beta: &[f64],
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
@@ -122,20 +128,94 @@ impl GradientWorkspace {
     }
 }
 
+/// Observation weights used by a compiled model.
+///
+/// Unit weights are represented without allocating a vector. Borrowed weights
+/// are validated at construction and then used directly in objective
+/// evaluation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ObservationWeights<'a> {
+    /// Every observation has weight `1.0`.
+    Unit {
+        /// Number of observations covered by the unit weights.
+        len: usize,
+    },
+    /// Caller-owned non-negative finite weights.
+    Borrowed(&'a [f64]),
+}
+
+impl<'a> ObservationWeights<'a> {
+    /// Creates unit weights for `len` observations.
+    pub fn unit(len: usize) -> Self {
+        Self::Unit { len }
+    }
+
+    /// Borrows already validated or to-be-validated weights from the caller.
+    pub fn borrowed(weights: &'a [f64]) -> Self {
+        Self::Borrowed(weights)
+    }
+
+    /// Number of observations covered by the weights.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Unit { len } => *len,
+            Self::Borrowed(weights) => weights.len(),
+        }
+    }
+
+    /// Returns `true` when the weight set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the weight for `index`.
+    ///
+    /// Panics if `index >= self.len()`.
+    pub fn weight_at(&self, index: usize) -> f64 {
+        match self {
+            Self::Unit { .. } => 1.0,
+            Self::Borrowed(weights) => weights[index],
+        }
+    }
+
+    fn validate(self, expected: usize) -> Result<(), ModelError> {
+        let actual = self.len();
+        if actual != expected {
+            return Err(ModelError::WeightLength { expected, actual });
+        }
+
+        if let Self::Borrowed(weights) = self {
+            for (index, weight) in weights.iter().copied().enumerate() {
+                if !weight.is_finite() || weight < 0.0 {
+                    return Err(ModelError::InvalidWeight { index });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Скомпилированная типизированная GAMLSS-модель.
 ///
 /// `F` задаёт распределение response, а `Blocks` задаёт по одному predictor
 /// block для каждого параметра family.
+///
+/// The model is a compiled view over caller-owned response data: it borrows
+/// `y` and optional observation weights, and owns the family and parameter
+/// blocks. This
+/// keeps `gamlss-core` independent of the caller's storage backend while the
+/// lifetime guarantees that the response outlives objective evaluation.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Gamlss<F, Blocks> {
+pub struct Gamlss<'a, F, Blocks> {
     /// Family распределения response.
     pub family: F,
     /// Типизированные parameter blocks.
     pub blocks: Blocks,
-    /// Response vector.
-    pub y: Vec<f64>,
+    /// Response vector (borrowed from caller).
+    pub y: &'a [f64],
     /// Non-negative per-observation weights.
-    pub weights: Vec<f64>,
+    pub weights: ObservationWeights<'a>,
 }
 
 /// GAMLSS objective with reusable gradient buffers.
@@ -144,9 +224,9 @@ pub struct Gamlss<F, Blocks> {
 /// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
 /// avoiding per-call allocation of score and local-gradient vectors.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WorkspaceGamlss<F, Blocks> {
+pub struct WorkspaceGamlss<'a, F, Blocks> {
     /// Wrapped compiled model.
-    pub model: Gamlss<F, Blocks>,
+    pub model: Gamlss<'a, F, Blocks>,
     /// Reusable gradient workspace.
     pub workspace: GradientWorkspace,
 }
@@ -281,7 +361,7 @@ pub struct Diagnostics {
     pub nonfinite_gradient_count: usize,
 }
 
-impl<F, Blocks> Gamlss<F, Blocks> {
+impl<'a, F, Blocks> Gamlss<'a, F, Blocks> {
     /// Wraps the model with penalties evaluated on the full beta vector.
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
@@ -291,19 +371,21 @@ impl<F, Blocks> Gamlss<F, Blocks> {
     }
 }
 
-impl<F, Blocks> Gamlss<F, Blocks>
+impl<'a, F, Blocks> Gamlss<'a, F, Blocks>
 where
     Blocks: GamlssBlocks<F>,
 {
     /// Создаёт unweighted модель после проверки response и blocks.
     ///
-    /// Внутри создаёт единичные observation weights.
-    pub fn try_new(family: F, blocks: Blocks, y: Vec<f64>) -> Result<Self, ModelError> {
-        let weights = vec![1.0; y.len()];
-        Self::try_new_weighted(family, blocks, y, weights)
+    /// Borrows `y` from the caller and uses allocation-free unit observation weights.
+    pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
+        let weights = ObservationWeights::unit(y.len());
+        Self::try_new_with_observation_weights(family, blocks, y, weights)
     }
 
     /// Создаёт модель с observation weights после проверки response, weights и blocks.
+    ///
+    /// Borrows `y` and `weights` from the caller.
     ///
     /// Weights must have the same length as `y`; each weight must be finite and
     /// non-negative. Zero weights are accepted and exclude the corresponding
@@ -311,14 +393,28 @@ where
     pub fn try_new_weighted(
         family: F,
         blocks: Blocks,
-        y: Vec<f64>,
-        weights: Vec<f64>,
+        y: &'a [f64],
+        weights: &'a [f64],
+    ) -> Result<Self, ModelError> {
+        Self::try_new_with_observation_weights(
+            family,
+            blocks,
+            y,
+            ObservationWeights::borrowed(weights),
+        )
+    }
+
+    fn try_new_with_observation_weights(
+        family: F,
+        blocks: Blocks,
+        y: &'a [f64],
+        weights: ObservationWeights<'a>,
     ) -> Result<Self, ModelError> {
         if y.is_empty() {
             return Err(ModelError::EmptyResponse);
         }
 
-        validate_weights(y.len(), &weights)?;
+        weights.validate(y.len())?;
         blocks.validate(y.len())?;
         Ok(Self {
             family,
@@ -354,7 +450,7 @@ where
     }
 
     /// Wraps the model as an objective with reusable gradient buffers.
-    pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks> {
+    pub fn into_workspace_objective(self) -> WorkspaceGamlss<'a, F, Blocks> {
         let workspace = self.gradient_workspace();
         WorkspaceGamlss {
             model: self,
@@ -422,7 +518,7 @@ where
 
         let train_nll = self
             .blocks
-            .train_nll(&self.family, &self.y, &self.weights, theta);
+            .train_nll(&self.family, self.y, self.weights, theta);
         let penalty = self.blocks.penalty_value(theta);
         let mut grad = vec![0.0; self.nparams()];
         self.try_gradient_into(theta, &mut grad)?;
@@ -580,9 +676,7 @@ where
             return Err(ModelError::BetaLength { expected, actual });
         }
 
-        Ok(self
-            .blocks
-            .value(&self.family, &self.y, &self.weights, beta))
+        Ok(self.blocks.value(&self.family, self.y, self.weights, beta))
     }
 
     /// Проверяет размеры beta/grad и записывает gradient.
@@ -618,8 +712,8 @@ where
         grad.fill(0.0);
         self.blocks.gradient_into_workspace(
             &self.family,
-            &self.y,
-            &self.weights,
+            self.y,
+            self.weights,
             beta,
             grad,
             workspace,
@@ -628,27 +722,27 @@ where
     }
 }
 
-impl<F, Blocks> WorkspaceGamlss<F, Blocks>
+impl<'a, F, Blocks> WorkspaceGamlss<'a, F, Blocks>
 where
     Blocks: GamlssBlocks<F>,
 {
     /// Creates a workspace-backed objective from a compiled model.
-    pub fn new(model: Gamlss<F, Blocks>) -> Self {
+    pub fn new(model: Gamlss<'a, F, Blocks>) -> Self {
         model.into_workspace_objective()
     }
 
     /// Returns the wrapped model.
-    pub fn model(&self) -> &Gamlss<F, Blocks> {
+    pub fn model(&self) -> &Gamlss<'a, F, Blocks> {
         &self.model
     }
 
     /// Returns the wrapped model mutably.
-    pub fn model_mut(&mut self) -> &mut Gamlss<F, Blocks> {
+    pub fn model_mut(&mut self) -> &mut Gamlss<'a, F, Blocks> {
         &mut self.model
     }
 
     /// Consumes the workspace-backed objective and returns the wrapped model.
-    pub fn into_model(self) -> Gamlss<F, Blocks> {
+    pub fn into_model(self) -> Gamlss<'a, F, Blocks> {
         self.model
     }
 
@@ -686,7 +780,7 @@ where
     }
 }
 
-impl<F, Blocks> Objective for Gamlss<F, Blocks>
+impl<'a, F, Blocks> Objective for Gamlss<'a, F, Blocks>
 where
     Blocks: GamlssBlocks<F>,
 {
@@ -705,7 +799,7 @@ where
     }
 }
 
-impl<F, Blocks> Objective for WorkspaceGamlss<F, Blocks>
+impl<'a, F, Blocks> Objective for WorkspaceGamlss<'a, F, Blocks>
 where
     Blocks: GamlssBlocks<F>,
 {
@@ -813,19 +907,21 @@ macro_rules! impl_gamlss_blocks {
                 Ok(())
             }
 
-            fn train_nll(&self, family: &F, y: &[f64], weights: &[f64], beta: &[f64]) -> f64 {
+            fn train_nll(
+                &self,
+                family: &F,
+                y: &[f64],
+                weights: ObservationWeights<'_>,
+                beta: &[f64],
+            ) -> f64 {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 let mut loss = 0.0;
 
-                for (row, (y_value, weight)) in y
-                    .iter()
-                    .copied()
-                    .zip(weights.iter().copied())
-                    .enumerate()
-                {
+                debug_assert_eq!(weights.len(), y.len());
+                for (row, y_value) in y.iter().copied().enumerate() {
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    loss += weight * family.nll_eta(y_value, eta);
+                    loss += weights.weight_at(row) * family.nll_eta(y_value, eta);
                 }
 
                 loss
@@ -861,7 +957,7 @@ macro_rules! impl_gamlss_blocks {
                 &self,
                 family: &F,
                 y: &[f64],
-                weights: &[f64],
+                weights: ObservationWeights<'_>,
                 beta: &[f64],
                 grad: &mut [f64],
                 workspace: &mut GradientWorkspace,
@@ -871,14 +967,11 @@ macro_rules! impl_gamlss_blocks {
                 workspace.prepare($k);
                 $(workspace.prepare_score($idx, y.len());)+
 
-                for (row, (y_value, weight)) in y
-                    .iter()
-                    .copied()
-                    .zip(weights.iter().copied())
-                    .enumerate()
-                {
+                debug_assert_eq!(weights.len(), y.len());
+                for (row, y_value) in y.iter().copied().enumerate() {
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
                     let (_, score) = family.nll_and_score_eta(y_value, eta);
+                    let weight = weights.weight_at(row);
                     $(workspace.set_score($idx, row, weight * score.part($idx));)+
                 }
 
@@ -1028,21 +1121,6 @@ fn validate_block_rows(
     }
 }
 
-fn validate_weights(expected: usize, weights: &[f64]) -> Result<(), ModelError> {
-    let actual = weights.len();
-    if actual != expected {
-        return Err(ModelError::WeightLength { expected, actual });
-    }
-
-    for (index, weight) in weights.iter().copied().enumerate() {
-        if !weight.is_finite() || weight < 0.0 {
-            return Err(ModelError::InvalidWeight { index });
-        }
-    }
-
-    Ok(())
-}
-
 /// Проверяет пересечение двух диапазонов (непустое пересечение).
 fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
     first.start < second.end && second.start < first.end
@@ -1103,8 +1181,8 @@ mod tests {
 
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ParameterBlock, ParameterBlocks, ParameterName,
-        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
+        NoPenalty, Nu, Objective, ObservationWeights, ParameterBlock, ParameterBlocks,
+        ParameterName, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1139,7 +1217,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let beta = vec![1.5];
         let mut grad = vec![0.0];
 
@@ -1151,14 +1229,27 @@ mod tests {
     }
 
     #[test]
+    fn model_borrows_response_without_copying() {
+        let y = vec![1.0, 2.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+
+        assert_eq!(model.y.as_ptr(), y.as_ptr());
+        assert_eq!(model.y, y.as_slice());
+        assert_eq!(model.weights, ObservationWeights::unit(y.len()));
+    }
+
+    #[test]
     fn unweighted_model_matches_unit_weights() {
         let y = vec![1.0, 2.0];
+        let unit_weights = vec![1.0, 1.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x.clone(), NoPenalty, 0);
         let weighted_mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y.clone()).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let weighted =
-            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), y, vec![1.0, 1.0]).unwrap();
+            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), &y, &unit_weights).unwrap();
         let beta = vec![1.5];
         let mut grad = vec![0.0];
         let mut weighted_grad = vec![0.0];
@@ -1179,9 +1270,10 @@ mod tests {
     #[test]
     fn zero_weight_excludes_observation_from_value_and_gradient() {
         let y = vec![1.0, 10.0];
+        let weights = vec![1.0, 0.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), y, vec![1.0, 0.0]).unwrap();
+        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
         let beta = vec![1.0];
         let mut grad = vec![f64::NAN];
 
@@ -1195,11 +1287,14 @@ mod tests {
     #[test]
     fn weighted_model_rejects_invalid_weights() {
         let y = vec![1.0, 2.0];
+        let short_weights = vec![1.0];
+        let infinite_weights = vec![1.0, f64::INFINITY];
+        let negative_weights = vec![1.0, -0.1];
         let mu =
             ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
 
         assert_eq!(
-            Gamlss::try_new_weighted(FixedSigmaNormal, (mu.clone(),), y.clone(), vec![1.0])
+            Gamlss::try_new_weighted(FixedSigmaNormal, (mu.clone(),), &y, &short_weights,)
                 .unwrap_err(),
             ModelError::WeightLength {
                 expected: 2,
@@ -1207,17 +1302,12 @@ mod tests {
             }
         );
         assert_eq!(
-            Gamlss::try_new_weighted(
-                FixedSigmaNormal,
-                (mu.clone(),),
-                y.clone(),
-                vec![1.0, f64::INFINITY],
-            )
-            .unwrap_err(),
+            Gamlss::try_new_weighted(FixedSigmaNormal, (mu.clone(),), &y, &infinite_weights,)
+                .unwrap_err(),
             ModelError::InvalidWeight { index: 1 }
         );
         assert_eq!(
-            Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), y, vec![1.0, -0.1]).unwrap_err(),
+            Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &negative_weights).unwrap_err(),
             ModelError::InvalidWeight { index: 1 }
         );
     }
@@ -1227,7 +1317,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 2.0]]);
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let beta = vec![0.5, 0.25];
 
         assert_relative_eq!(model.predict_eta_row(&beta, 1).unwrap(), 1.0);
@@ -1241,7 +1331,7 @@ mod tests {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
 
         assert_eq!(
             model.predict_eta_row(&[], 0).unwrap_err(),
@@ -1261,7 +1351,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0], [1.0, 3.0], [1.0, 4.0]]);
         let prediction_mu =
             ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
@@ -1293,7 +1383,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0, 3.0]]);
         let prediction_mu =
             ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
@@ -1317,7 +1407,7 @@ mod tests {
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
 
         assert_eq!(
-            Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap_err(),
+            Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
             ModelError::BlockRangeOverflow {
                 parameter: "mu",
                 offset: usize::MAX,
@@ -1331,7 +1421,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let mut workspace_objective = model.clone().into_workspace_objective();
 
         for beta in [vec![1.0, 0.25], vec![1.5, -0.1]] {
@@ -1384,7 +1474,7 @@ mod tests {
         let nonlinear = SoftplusIntercept { nrows: y.len() };
         let predictor = SumBlock::new((linear, nonlinear));
         let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let beta = vec![0.4, -0.2];
         let eps = 1.0e-6;
         let mut grad = vec![0.0; beta.len()];
@@ -1438,7 +1528,7 @@ mod tests {
         let y = vec![2.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(StatefulLocation { target_shift: 1.0 }, (mu,), y).unwrap();
+        let mut model = Gamlss::try_new(StatefulLocation { target_shift: 1.0 }, (mu,), &y).unwrap();
         let beta = vec![0.5];
         let mut grad = vec![0.0];
 
@@ -1497,7 +1587,7 @@ mod tests {
             NoPenalty,
             2,
         );
-        let mut model = Gamlss::try_new(ThreeParameterMock, (first, second, third), y).unwrap();
+        let mut model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
         let beta = vec![1.5, 0.5, -0.5];
         let mut grad = vec![0.0; 3];
 
@@ -1610,7 +1700,7 @@ mod tests {
             NoPenalty,
             3,
         );
-        let model = Gamlss::try_new(FourParameterMock, (first, second, third, fourth), y).unwrap();
+        let model = Gamlss::try_new(FourParameterMock, (first, second, third, fourth), &y).unwrap();
         let beta = vec![0.5, 1.5, 2.5, 3.5];
 
         assert_eq!(
@@ -1633,7 +1723,7 @@ mod tests {
             intercept_block::<Tau>(y.len()),
             intercept_block::<Fifth>(y.len()),
         ));
-        let mut model = Gamlss::try_new(FiveParameterMock, blocks, y).unwrap();
+        let mut model = Gamlss::try_new(FiveParameterMock, blocks, &y).unwrap();
         let beta = vec![1.5, 0.5, 1.5, 2.5, 3.5];
         let mut grad = vec![0.0; 5];
 
@@ -1673,7 +1763,7 @@ mod tests {
             NoPenalty,
             2,
         );
-        let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), y).unwrap();
+        let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
         let theta = vec![1.5, 0.5, -0.5];
         let layout = model.parameter_layout();
         let unpacked = model.unpack_theta(&theta).unwrap();
@@ -1696,7 +1786,7 @@ mod tests {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), y).unwrap();
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let theta = vec![1.5];
         let diagnostics = model.diagnostics(&theta).unwrap();
 
@@ -1731,7 +1821,7 @@ mod tests {
         let y = vec![0.0, 0.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), y)
+        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
             .unwrap()
             .with_global_penalties(DifferenceGlobalPenalty { lambda: 1.0 });
         let beta = vec![1.0, -1.0];
@@ -1783,7 +1873,7 @@ mod tests {
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x_mu, NoPenalty, 0);
         let sigma = ParameterBlock::<Sigma, Identity, _, _>::linear(x_sigma, NoPenalty, 0);
         let (mu, sigma) = ParameterBlocks::new((mu, sigma));
-        let mut model = Gamlss::try_new(TwoParamMock, (mu, sigma), y).unwrap();
+        let mut model = Gamlss::try_new(TwoParamMock, (mu, sigma), &y).unwrap();
 
         let beta = vec![0.5, 0.2, 0.3];
         let nparams = model.nparams();

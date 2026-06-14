@@ -187,7 +187,10 @@ where
 pub type DefaultNormal = Normal<Identity, Log>;
 
 /// Типизированная GAMLSS-модель для normal family по умолчанию.
-pub type NormalGamlss<XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
+///
+/// The lifetime tracks the borrowed response slice.
+pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
+    'a,
     DefaultNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
@@ -196,13 +199,15 @@ pub type NormalGamlss<XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss
 >;
 
 /// Создаёт normal GAMLSS-модель из response, двух design matrices и штрафов.
-pub fn normal_gamlss<XMu, XSigma, PMu, PSigma>(
-    y: Vec<f64>,
+///
+/// The returned model borrows `y` and owns the design matrices and penalties.
+pub fn normal_gamlss<'a, XMu, XSigma, PMu, PSigma>(
+    y: &'a [f64],
     mu_x: XMu,
     sigma_x: XSigma,
     mu_penalty: PMu,
     sigma_penalty: PSigma,
-) -> Result<NormalGamlss<XMu, XSigma, PMu, PSigma>, ModelError>
+) -> Result<NormalGamlss<'a, XMu, XSigma, PMu, PSigma>, ModelError>
 where
     XMu: DesignMatrix,
     XSigma: DesignMatrix,
@@ -238,7 +243,7 @@ mod tests {
         let y = vec![0.2, 1.1, 1.8];
         let mu_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]]);
         let sigma_x = DenseDesign::intercept(y.len());
-        let mut model = normal_gamlss(y, mu_x, sigma_x, NoPenalty, NoPenalty).unwrap();
+        let mut model = normal_gamlss(&y, mu_x, sigma_x, NoPenalty, NoPenalty).unwrap();
         let beta = vec![0.1, 0.8, -0.3];
         let eps = 1.0e-6;
         let mut grad = vec![0.0; model.dim()];

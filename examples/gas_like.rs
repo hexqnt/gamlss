@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = Gamlss::try_new(
         Normal::<Identity, ClampedLog<-12, 12>>::new(),
         (mu, sigma),
-        data.y,
+        &data.y,
     )?;
 
     let initial_theta = model.initial_theta()?;

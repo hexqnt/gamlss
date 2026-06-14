@@ -156,7 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let family = UserNormal::<Identity, Log>::new();
-    let mut model = Gamlss::try_new(family, blocks, y)?;
+    let mut model = Gamlss::try_new(family, blocks, &y)?;
     let mut theta = model.initial_theta()?;
     let mut grad = vec![0.0; model.dim()];
 

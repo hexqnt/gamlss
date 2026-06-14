@@ -172,7 +172,10 @@ impl TermSpec {
 }
 
 /// Результат компиляции `NormalSpec` в типизированную модель.
-pub type CompiledNormal = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledNormal<'a> = Gamlss<
+    'a,
     DefaultNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -181,7 +184,10 @@ pub type CompiledNormal = Gamlss<
 >;
 
 /// Результат компиляции `GammaSpec` в типизированную модель.
-pub type CompiledGamma = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledGamma<'a> = Gamlss<
+    'a,
     DefaultGamma,
     (
         ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -190,7 +196,10 @@ pub type CompiledGamma = Gamlss<
 >;
 
 /// Результат компиляции `LogNormalSpec` в типизированную модель.
-pub type CompiledLogNormal = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledLogNormal<'a> = Gamlss<
+    'a,
     DefaultLogNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -199,7 +208,10 @@ pub type CompiledLogNormal = Gamlss<
 >;
 
 /// Результат компиляции `WeibullSpec` в типизированную модель.
-pub type CompiledWeibull = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledWeibull<'a> = Gamlss<
+    'a,
     DefaultWeibull,
     (
         ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -208,7 +220,10 @@ pub type CompiledWeibull = Gamlss<
 >;
 
 /// Результат компиляции `InverseGaussianSpec` в типизированную модель.
-pub type CompiledInverseGaussian = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledInverseGaussian<'a> = Gamlss<
+    'a,
     DefaultInverseGaussian,
     (
         ParameterBlock<Mu, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -217,7 +232,10 @@ pub type CompiledInverseGaussian = Gamlss<
 >;
 
 /// Результат компиляции `BetaSpec` в типизированную модель.
-pub type CompiledBeta = Gamlss<
+///
+/// The compiled model borrows the response column from the source [`DataFrame`].
+pub type CompiledBeta<'a> = Gamlss<
+    'a,
     DefaultBeta,
     (
         ParameterBlock<Mu, Logit, LinearPredictorBlock<DenseDesign>, NoPenalty>,
@@ -282,8 +300,14 @@ impl NormalSpec {
     }
 
     /// Компилирует динамическую спецификацию в типизированную normal GAMLSS-модель.
-    pub fn compile(&self, data: &DataFrame, y: &str) -> Result<CompiledNormal, FormulaError> {
-        let response = data.column(y)?.to_vec();
+    ///
+    /// The returned model borrows the response column from `data`.
+    pub fn compile<'a>(
+        &self,
+        data: &'a DataFrame,
+        y: &str,
+    ) -> Result<CompiledNormal<'a>, FormulaError> {
+        let response = data.column(y)?;
         let mu_x = design_from_terms(&self.mu_terms, data)?;
         let sigma_x = design_from_terms(&self.sigma_terms, data)?;
 
@@ -367,8 +391,14 @@ macro_rules! define_two_parameter_spec {
             }
 
             /// Компилирует динамическую спецификацию в типизированную модель.
-            pub fn compile(&self, data: &DataFrame, y: &str) -> Result<$compiled, FormulaError> {
-                let response = data.column(y)?.to_vec();
+            ///
+            /// The returned model borrows the response column from `data`.
+            pub fn compile<'a>(
+                &self,
+                data: &'a DataFrame,
+                y: &str,
+            ) -> Result<$compiled<'a>, FormulaError> {
+                let response = data.column(y)?;
                 let first_x = design_from_terms(&self.$first_terms, data)?;
                 let second_x = design_from_terms(&self.$second_terms, data)?;
 
@@ -558,6 +588,22 @@ mod tests {
 
         assert_eq!(model.nparams(), 3);
         assert!(model.value(&beta).unwrap().is_finite());
+    }
+
+    #[test]
+    fn compiled_model_borrows_response_column_without_copying() {
+        let data =
+            DataFrame::from_columns([("y", vec![0.0, 1.0, 2.0]), ("x", vec![1.0, 2.0, 3.0])])
+                .unwrap();
+        let response = data.column("y").unwrap();
+        let model = ModelSpec::normal()
+            .mu_intercept()
+            .sigma_intercept()
+            .compile(&data, "y")
+            .unwrap();
+
+        assert_eq!(model.y.as_ptr(), response.as_ptr());
+        assert_eq!(model.y, response);
     }
 
     #[test]

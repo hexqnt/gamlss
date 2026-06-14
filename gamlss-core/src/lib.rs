@@ -27,8 +27,9 @@ pub use family::{
 };
 pub use link::{ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus};
 pub use model::{
-    Diagnostics, Gamlss, GamlssBlocks, GradientWorkspace, ParameterCoefficients, ParameterLayout,
-    ParameterSlice, UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+    Diagnostics, Gamlss, GamlssBlocks, GradientWorkspace, ObservationWeights,
+    ParameterCoefficients, ParameterLayout, ParameterSlice, UnpackedTheta, WithGlobalPenalties,
+    WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -49,10 +50,10 @@ pub mod prelude {
         DenseDesign, DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks, GlobalPenalty,
         GradientWorkspace, HasCdf, HasDesignMatrix, HasFisherInfo, HasQuantile, Identity,
         LinearPredictorBlock, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty,
-        Nu, Objective, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients,
-        ParameterLayout, ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily,
-        Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale,
-        Shape, Sigma, Softplus, SumBlock, Tau, TransformedScalar, UnpackedTheta,
-        WithGlobalPenalties, WorkspaceGamlss,
+        Nu, Objective, ObservationWeights, OffsetBlock, ParameterBlock, ParameterBlocks,
+        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
+        RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock, Tau, TransformedScalar,
+        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
     };
 }

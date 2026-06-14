@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mu = ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0);
     let sigma =
         ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, mu.len());
-    let mut model = Gamlss::try_new(Normal::<Identity, Log>::new(), (mu, sigma), y)?;
+    let mut model = Gamlss::try_new(Normal::<Identity, Log>::new(), (mu, sigma), &y)?;
 
     let mut theta = model.initial_theta()?;
     let mut grad = vec![0.0; model.dim()];
