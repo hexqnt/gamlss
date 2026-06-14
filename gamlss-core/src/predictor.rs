@@ -22,6 +22,10 @@ pub trait PredictorBlock {
     /// Adds the gradient contribution implied by `scores` into `grad`.
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
     /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
+    ///
+    /// Default implementation materializes scaled scores and delegates to
+    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
+    /// this method when they can fuse the multiplier into their gradient pass.
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -40,6 +44,11 @@ pub trait PredictorBlock {
     }
 
     /// Validates internal block consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when internal dimensions or invariants do not
+    /// match the block contract.
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -57,11 +66,13 @@ pub struct LinearPredictorBlock<X> {
 
 impl<X> LinearPredictorBlock<X> {
     /// Wraps a design matrix as a predictor block.
-    pub fn new(x: X) -> Self {
+    #[must_use]
+    pub const fn new(x: X) -> Self {
         Self { x }
     }
 
     /// Returns the wrapped design matrix.
+    #[must_use]
     pub fn into_inner(self) -> X {
         self.x
     }
@@ -178,7 +189,10 @@ where
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] += scores.iter().sum::<f64>() * T::derivative(beta[0]);
+        grad[0] = scores
+            .iter()
+            .sum::<f64>()
+            .mul_add(T::derivative(beta[0]), grad[0]);
     }
 
     fn add_weighted_gradient(
@@ -193,7 +207,7 @@ where
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] += weighted_sum(scores, multiplier) * T::derivative(beta[0]);
+        grad[0] = weighted_sum(scores, multiplier).mul_add(T::derivative(beta[0]), grad[0]);
     }
 }
 
@@ -244,7 +258,10 @@ impl PredictorBlock for FloorSoftplusScalar {
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] += scores.iter().sum::<f64>() * Softplus::derivative_inverse(beta[0]);
+        grad[0] = scores
+            .iter()
+            .sum::<f64>()
+            .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
 
     fn add_weighted_gradient(
@@ -259,7 +276,8 @@ impl PredictorBlock for FloorSoftplusScalar {
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] += weighted_sum(scores, multiplier) * Softplus::derivative_inverse(beta[0]);
+        grad[0] = weighted_sum(scores, multiplier)
+            .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
 }
 
@@ -310,7 +328,7 @@ pub struct ProductBlock<X> {
 impl<X> ProductBlock<X> {
     /// Creates a product predictor block.
     #[must_use]
-    pub fn new(multiplier: Vec<f64>, inner: X) -> Self {
+    pub const fn new(multiplier: Vec<f64>, inner: X) -> Self {
         Self { multiplier, inner }
     }
 
@@ -379,7 +397,8 @@ pub struct SumBlock<Terms> {
 
 impl<Terms> SumBlock<Terms> {
     /// Creates a summed predictor from tuple terms.
-    pub fn new(terms: Terms) -> Self {
+    #[must_use]
+    pub const fn new(terms: Terms) -> Self {
         Self { terms }
     }
 }
@@ -582,6 +601,19 @@ mod tests {
 
         assert_relative_eq!(grad[0], 6.5);
         assert_relative_eq!(grad[1], 9.0);
+    }
+
+    #[test]
+    fn linear_predictor_block_fuses_weighted_gradient() {
+        let design = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
+        let block = LinearPredictorBlock::new(design);
+        let beta = [10.0, 1.0];
+        let mut grad = vec![1.0, 1.0];
+
+        block.add_weighted_gradient(&[0.5, 2.0], &[2.0, -1.0], &beta, &mut grad);
+
+        assert_relative_eq!(grad[0], -4.0);
+        assert_relative_eq!(grad[1], -5.0);
     }
 
     #[test]

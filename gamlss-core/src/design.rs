@@ -15,6 +15,10 @@ pub trait DesignMatrix {
     /// Добавляет `X^T weights` в `out`.
     fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
     /// Добавляет `X^T (weights * multiplier)` в `out`.
+    ///
+    /// Default implementation materializes scaled weights. Matrix
+    /// implementations used in hot paths should override this method when they
+    /// can fuse scaling into their transpose multiply.
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), multiplier.len());
 
@@ -38,7 +42,11 @@ pub struct DenseDesign {
 impl DenseDesign {
     /// Создаёт dense matrix из row-major значений.
     ///
-    /// Возвращает ошибку, если `values.len() != nrows * ncols`.
+    /// # Errors
+    ///
+    /// Возвращает [`ModelError::DesignSize`], если `values.len() != nrows * ncols`.
+    /// Возвращает [`ModelError::ArithmeticOverflow`], если `nrows * ncols` не
+    /// помещается в `usize`.
     pub fn from_row_major(
         nrows: usize,
         ncols: usize,
@@ -61,6 +69,7 @@ impl DenseDesign {
     }
 
     /// Создаёт dense matrix из массива строк фиксированной ширины.
+    #[must_use]
     pub fn from_rows<const C: usize>(rows: &[[f64; C]]) -> Self {
         let values = rows.iter().flat_map(|row| row.iter().copied()).collect();
         Self {
@@ -71,6 +80,7 @@ impl DenseDesign {
     }
 
     /// Создаёт design matrix из одного intercept-столбца.
+    #[must_use]
     pub fn intercept(nrows: usize) -> Self {
         Self {
             nrows,
@@ -80,6 +90,7 @@ impl DenseDesign {
     }
 
     /// Создаёт design matrix из одного пользовательского столбца.
+    #[must_use]
     pub fn column(values: &[f64]) -> Self {
         Self {
             nrows: values.len(),
@@ -91,6 +102,13 @@ impl DenseDesign {
     /// Создаёт matrix из набора столбцов, опционально добавляя intercept первым.
     ///
     /// Все переданные столбцы должны иметь длину `nrows`.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает [`ModelError::DesignRowMismatch`], если хотя бы один столбец
+    /// имеет длину, отличную от `nrows`. Возвращает
+    /// [`ModelError::ArithmeticOverflow`], если число элементов row-major
+    /// представления не помещается в `usize`.
     pub fn from_columns(
         nrows: usize,
         include_intercept: bool,
@@ -131,6 +149,7 @@ impl DenseDesign {
     }
 
     /// Возвращает row-major значения матрицы.
+    #[must_use]
     pub fn values(&self) -> &[f64] {
         &self.values
     }
@@ -170,7 +189,7 @@ impl DesignMatrix for DenseDesign {
         for (row, weight) in weights.iter().copied().enumerate() {
             let offset = row * self.ncols;
             for (col, out_value) in out.iter_mut().enumerate() {
-                *out_value += self.values[offset + col] * weight;
+                *out_value = self.values[offset + col].mul_add(weight, *out_value);
             }
         }
     }
@@ -184,7 +203,7 @@ impl DesignMatrix for DenseDesign {
             let scaled_weight = weight * multiplier;
             let offset = row * self.ncols;
             for (col, out_value) in out.iter_mut().enumerate() {
-                *out_value += self.values[offset + col] * scaled_weight;
+                *out_value = self.values[offset + col].mul_add(scaled_weight, *out_value);
             }
         }
     }
@@ -208,6 +227,35 @@ mod tests {
 
         assert_relative_eq!(out[0], 6.5);
         assert_relative_eq!(out[1], 9.0);
+    }
+
+    #[test]
+    fn dense_design_builds_from_columns_and_weighted_transpose() {
+        let first = [2.0, 3.0];
+        let second = [5.0, 7.0];
+        let design = DenseDesign::from_columns(2, true, &[&first, &second]).unwrap();
+
+        assert_eq!(design.values(), &[1.0, 2.0, 5.0, 1.0, 3.0, 7.0]);
+        assert_relative_eq!(design.dot_row(1, &[10.0, 1.0, 0.5]), 16.5);
+
+        let mut out = vec![1.0, 1.0, 1.0];
+        design.add_weighted_t_mul_vec(&[2.0, 3.0], &[0.5, -1.0], &mut out);
+
+        assert_relative_eq!(out[0], -1.0);
+        assert_relative_eq!(out[1], -6.0);
+        assert_relative_eq!(out[2], -15.0);
+    }
+
+    #[test]
+    fn dense_design_rejects_column_row_mismatch() {
+        assert_eq!(
+            DenseDesign::from_columns(2, false, &[&[1.0]]).unwrap_err(),
+            ModelError::DesignRowMismatch {
+                parameter: "column",
+                expected_rows: 2,
+                actual_rows: 1,
+            }
+        );
     }
 
     #[test]

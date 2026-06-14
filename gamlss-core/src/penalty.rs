@@ -60,7 +60,8 @@ pub struct RidgePenalty {
 
 impl RidgePenalty {
     /// Создаёт ridge penalty с заданным `lambda`.
-    pub fn new(lambda: f64) -> Self {
+    #[must_use]
+    pub const fn new(lambda: f64) -> Self {
         Self { lambda }
     }
 }
@@ -73,8 +74,9 @@ impl Penalty for RidgePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(beta.len(), grad.len());
 
+        let scale = 2.0 * self.lambda;
         for (grad_value, beta_value) in grad.iter_mut().zip(beta) {
-            *grad_value += 2.0 * self.lambda * beta_value;
+            *grad_value = scale.mul_add(*beta_value, *grad_value);
         }
     }
 }

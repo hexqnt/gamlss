@@ -21,12 +21,14 @@ pub struct ParameterBlocks;
 /// Tuple contract implemented for typed parameter block tuples up to arity 8.
 pub trait AssignParameterOffsets: Sized {
     /// Returns `self` with sequential offsets starting at `start`.
+    #[must_use]
     fn assign_offsets(self, start: usize) -> Self;
 }
 
 impl ParameterBlocks {
     /// Assigns sequential offsets starting at zero.
     #[allow(clippy::new_ret_no_self)]
+    #[must_use]
     pub fn new<Blocks>(blocks: Blocks) -> Blocks
     where
         Blocks: AssignParameterOffsets,
@@ -35,6 +37,7 @@ impl ParameterBlocks {
     }
 
     /// Assigns sequential offsets starting at `start`.
+    #[must_use]
     pub fn with_start<Blocks>(start: usize, blocks: Blocks) -> Blocks
     where
         Blocks: AssignParameterOffsets,
@@ -133,6 +136,7 @@ where
     X: PredictorBlock,
 {
     /// Создаёт блок и берёт `len` из `x.nparams()`.
+    #[must_use]
     pub fn new(x: X, penalty: Penalty, offset: usize) -> Self {
         let len = x.nparams();
         Self::from_len(x, penalty, offset, len)
@@ -142,6 +146,7 @@ where
     ///
     /// Это синоним [`Self::new`], оставленный для кода, где явное слово
     /// `predictor` делает вызов читаемее.
+    #[must_use]
     pub fn from_predictor(x: X, penalty: Penalty, offset: usize) -> Self {
         Self::new(x, penalty, offset)
     }
@@ -152,6 +157,7 @@ where
     X: DesignMatrix,
 {
     /// Создаёт линейный block из design matrix.
+    #[must_use]
     pub fn linear(x: X, penalty: Penalty, offset: usize) -> Self {
         Self::new(LinearPredictorBlock::new(x), penalty, offset)
     }
@@ -169,17 +175,30 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     }
 
     /// Возвращает копию блока с новым offset.
+    #[must_use]
     pub fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
     }
 
     /// Диапазон коэффициентов блока в общем beta-векторе.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] when the
+    /// offset may come from unchecked external input.
+    #[must_use]
     pub fn range(&self) -> Range<usize> {
         self.offset..self.end()
     }
 
     /// Индекс сразу после последнего коэффициента блока.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
+    #[must_use]
     pub fn end(&self) -> usize {
         self.offset
             .checked_add(self.len)
@@ -187,11 +206,13 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     }
 
     /// Число коэффициентов блока.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// `true`, если block не содержит коэффициентов.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -202,6 +223,11 @@ where
     P: ParameterName,
 {
     /// Проверяет и возвращает диапазон коэффициентов блока.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает [`ModelError::BlockRangeOverflow`], если `offset + len` не
+    /// помещается в `usize`.
     pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
         let end = self
             .offset
@@ -331,6 +357,24 @@ mod tests {
         assert_eq!(b6.range(), 15..16);
         assert_eq!(b7.range(), 16..17);
         assert_eq!(b8.range(), 17..18);
+    }
+
+    #[test]
+    fn parameter_block_try_range_reports_overflow() {
+        let block = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::from_rows(&[[1.0, 2.0]]),
+            NoPenalty,
+            usize::MAX,
+        );
+
+        assert_eq!(
+            block.try_range().unwrap_err(),
+            crate::ModelError::BlockRangeOverflow {
+                parameter: "mu",
+                offset: usize::MAX,
+                len: 2,
+            }
+        );
     }
 
     fn intercept_block<P>()
