@@ -175,72 +175,72 @@ impl TermSpec {
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledNormal<'a> = Gamlss<
-    'a,
     DefaultNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Sigma, gamlss_core::Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Результат компиляции `GammaSpec` в типизированную модель.
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledGamma<'a> = Gamlss<
-    'a,
     DefaultGamma,
     (
         ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Rate, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Результат компиляции `LogNormalSpec` в типизированную модель.
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledLogNormal<'a> = Gamlss<
-    'a,
     DefaultLogNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Результат компиляции `WeibullSpec` в типизированную модель.
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledWeibull<'a> = Gamlss<
-    'a,
     DefaultWeibull,
     (
         ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Scale, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Результат компиляции `InverseGaussianSpec` в типизированную модель.
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledInverseGaussian<'a> = Gamlss<
-    'a,
     DefaultInverseGaussian,
     (
         ParameterBlock<Mu, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Shape, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Результат компиляции `BetaSpec` в типизированную модель.
 ///
 /// The compiled model borrows the response column from the source [`DataFrame`].
 pub type CompiledBeta<'a> = Gamlss<
-    'a,
     DefaultBeta,
     (
         ParameterBlock<Mu, Logit, LinearPredictorBlock<DenseDesign>, NoPenalty>,
         ParameterBlock<Precision, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
     ),
+    &'a [f64],
 >;
 
 /// Динамическая спецификация normal GAMLSS-модели.
@@ -602,8 +602,8 @@ mod tests {
             .compile(&data, "y")
             .unwrap();
 
-        assert_eq!(model.y.as_ptr(), response.as_ptr());
-        assert_eq!(model.y, response);
+        assert_eq!(model.obs.as_ptr(), response.as_ptr());
+        assert_eq!(model.obs, response);
     }
 
     #[test]

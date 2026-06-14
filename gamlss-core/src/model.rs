@@ -8,10 +8,10 @@ use crate::{
 /// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
 ///
 /// Implementations are generated for typed tuples of [`ParameterBlock`]. The
-/// model validates response length, predictor row counts and coefficient
-/// ranges, and observation weights before hot-path evaluation; generated
-/// methods may then assume compatible slice lengths, finite non-negative
-/// weights and non-overlapping block ranges.
+/// model validates observation count, predictor row counts and coefficient
+/// ranges before hot-path evaluation; generated methods may then assume
+/// compatible row counts, finite non-negative weights and non-overlapping block
+/// ranges.
 pub trait GamlssBlocks<F> {
     /// Число наблюдений в blocks.
     fn nrows(&self) -> usize;
@@ -23,19 +23,16 @@ pub trait GamlssBlocks<F> {
         self.len() == 0
     }
 
-    /// Проверяет, что blocks совместимы с response длины `y_len`.
-    fn validate(&self, y_len: usize) -> Result<(), ModelError>;
+    /// Проверяет, что blocks совместимы с observation count `nobs`.
+    fn validate(&self, nobs: usize) -> Result<(), ModelError>;
     /// Weighted negative log-likelihood without penalties.
     ///
-    /// `weights` must have the same length as `y`. Each scalar likelihood
-    /// contribution is multiplied by the corresponding observation weight.
-    fn train_nll(
-        &self,
-        family: &F,
-        y: &[f64],
-        weights: ObservationWeights<'_>,
-        beta: &[f64],
-    ) -> f64;
+    /// `obs` has already been validated by the model constructor. Each scalar
+    /// likelihood contribution is multiplied by the corresponding observation
+    /// weight.
+    fn train_nll<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
+    where
+        Obs: ObservationView;
     /// Аддитивные предикторы на link-шкале для одной строки.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
@@ -43,30 +40,33 @@ pub trait GamlssBlocks<F> {
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
     /// Значение weighted negative log-likelihood плюс penalties.
-    fn value(&self, family: &F, y: &[f64], weights: ObservationWeights<'_>, beta: &[f64]) -> f64 {
-        self.train_nll(family, y, weights, beta) + self.penalty_value(beta)
+    fn value<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
+    where
+        Obs: ObservationView,
+    {
+        self.train_nll(family, obs, beta) + self.penalty_value(beta)
     }
     /// Creates reusable buffers for repeated gradient evaluations.
-    fn gradient_workspace(&self, y_len: usize) -> GradientWorkspace {
+    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
         let mut workspace = GradientWorkspace::new();
         let ranges = self.block_ranges();
         workspace.prepare(ranges.len());
         for (index, range) in ranges.iter().enumerate() {
-            workspace.prepare_score(index, y_len);
+            workspace.prepare_score(index, nobs);
             let _ = workspace.local_gradient_mut(index, range.len());
         }
         workspace
     }
     /// Добавляет weighted gradient, переиспользуя временные буферы из `workspace`.
-    fn gradient_into_workspace(
+    fn gradient_into_workspace<Obs>(
         &self,
         family: &F,
-        y: &[f64],
-        weights: ObservationWeights<'_>,
+        obs: &Obs,
         beta: &[f64],
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
-    );
+    ) where
+        Obs: ObservationView;
     /// Диапазоны коэффициентов каждого block в общем beta-векторе.
     fn block_ranges(&self) -> Vec<Range<usize>>;
     /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
@@ -128,68 +128,76 @@ impl GradientWorkspace {
     }
 }
 
-/// Observation weights used by a compiled model.
+/// Read-only scalar observation access for training objective evaluation.
 ///
-/// Unit weights are represented without allocating a vector. Borrowed weights
-/// are validated at construction and then used directly in objective
-/// evaluation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ObservationWeights<'a> {
-    /// Every observation has weight `1.0`.
-    Unit {
-        /// Number of observations covered by the unit weights.
-        len: usize,
-    },
-    /// Caller-owned non-negative finite weights.
-    Borrowed(&'a [f64]),
-}
+/// This trait is intentionally small: it describes the row-wise data needed by
+/// the current univariate likelihood loop. Implementations should make
+/// [`len`](Self::len) O(1), keep it stable for the lifetime of the model, and
+/// provide deterministic, panic-free access for `row < len()`.
+pub trait ObservationView {
+    /// Number of observations.
+    fn len(&self) -> usize;
 
-impl<'a> ObservationWeights<'a> {
-    /// Creates unit weights for `len` observations.
-    pub fn unit(len: usize) -> Self {
-        Self::Unit { len }
-    }
-
-    /// Borrows already validated or to-be-validated weights from the caller.
-    pub fn borrowed(weights: &'a [f64]) -> Self {
-        Self::Borrowed(weights)
-    }
-
-    /// Number of observations covered by the weights.
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Unit { len } => *len,
-            Self::Borrowed(weights) => weights.len(),
-        }
-    }
-
-    /// Returns `true` when the weight set is empty.
-    pub fn is_empty(&self) -> bool {
+    /// Returns `true` if there are no observations.
+    fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Returns the weight for `index`.
-    ///
-    /// Panics if `index >= self.len()`.
-    pub fn weight_at(&self, index: usize) -> f64 {
-        match self {
-            Self::Unit { .. } => 1.0,
-            Self::Borrowed(weights) => weights[index],
+    /// Response value for `row`.
+    fn y_at(&self, row: usize) -> f64;
+
+    /// Non-negative finite observation weight for `row`.
+    fn weight_at(&self, row: usize) -> f64;
+
+    /// Validates observation-level invariants before hot-path evaluation.
+    fn validate(&self) -> Result<(), ModelError> {
+        for row in 0..self.len() {
+            validate_observation_weight(row, self.weight_at(row))?;
         }
+        Ok(())
+    }
+}
+
+impl ObservationView for &[f64] {
+    fn len(&self) -> usize {
+        <[f64]>::len(self)
     }
 
-    fn validate(self, expected: usize) -> Result<(), ModelError> {
-        let actual = self.len();
+    fn y_at(&self, row: usize) -> f64 {
+        self[row]
+    }
+
+    fn weight_at(&self, _row: usize) -> f64 {
+        1.0
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+impl ObservationView for (&[f64], &[f64]) {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn y_at(&self, row: usize) -> f64 {
+        self.0[row]
+    }
+
+    fn weight_at(&self, row: usize) -> f64 {
+        self.1[row]
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        let expected = self.0.len();
+        let actual = self.1.len();
         if actual != expected {
             return Err(ModelError::WeightLength { expected, actual });
         }
 
-        if let Self::Borrowed(weights) = self {
-            for (index, weight) in weights.iter().copied().enumerate() {
-                if !weight.is_finite() || weight < 0.0 {
-                    return Err(ModelError::InvalidWeight { index });
-                }
-            }
+        for (index, weight) in self.1.iter().copied().enumerate() {
+            validate_observation_weight(index, weight)?;
         }
 
         Ok(())
@@ -201,21 +209,18 @@ impl<'a> ObservationWeights<'a> {
 /// `F` задаёт распределение response, а `Blocks` задаёт по одному predictor
 /// block для каждого параметра family.
 ///
-/// The model is a compiled view over caller-owned response data: it borrows
-/// `y` and optional observation weights, and owns the family and parameter
-/// blocks. This
-/// keeps `gamlss-core` independent of the caller's storage backend while the
-/// lifetime guarantees that the response outlives objective evaluation.
+/// The model owns the family and parameter blocks, and stores an observation
+/// view supplied by the caller. This keeps `gamlss-core` independent of the
+/// caller's storage backend while static dispatch preserves zero-cost hot-path
+/// evaluation.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Gamlss<'a, F, Blocks> {
+pub struct Gamlss<F, Blocks, Obs> {
     /// Family распределения response.
     pub family: F,
     /// Типизированные parameter blocks.
     pub blocks: Blocks,
-    /// Response vector (borrowed from caller).
-    pub y: &'a [f64],
-    /// Non-negative per-observation weights.
-    pub weights: ObservationWeights<'a>,
+    /// Observation view used for training objective evaluation.
+    pub obs: Obs,
 }
 
 /// GAMLSS objective with reusable gradient buffers.
@@ -224,9 +229,9 @@ pub struct Gamlss<'a, F, Blocks> {
 /// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
 /// avoiding per-call allocation of score and local-gradient vectors.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WorkspaceGamlss<'a, F, Blocks> {
+pub struct WorkspaceGamlss<F, Blocks, Obs> {
     /// Wrapped compiled model.
-    pub model: Gamlss<'a, F, Blocks>,
+    pub model: Gamlss<F, Blocks, Obs>,
     /// Reusable gradient workspace.
     pub workspace: GradientWorkspace,
 }
@@ -361,7 +366,7 @@ pub struct Diagnostics {
     pub nonfinite_gradient_count: usize,
 }
 
-impl<'a, F, Blocks> Gamlss<'a, F, Blocks> {
+impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
     /// Wraps the model with penalties evaluated on the full beta vector.
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
@@ -371,62 +376,37 @@ impl<'a, F, Blocks> Gamlss<'a, F, Blocks> {
     }
 }
 
-impl<'a, F, Blocks> Gamlss<'a, F, Blocks>
+impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs>
 where
     Blocks: GamlssBlocks<F>,
+    Obs: ObservationView,
 {
-    /// Создаёт unweighted модель после проверки response и blocks.
+    /// Создаёт модель после проверки observation view и blocks.
     ///
-    /// Borrows `y` from the caller and uses allocation-free unit observation weights.
-    pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
-        let weights = ObservationWeights::unit(y.len());
-        Self::try_new_with_observation_weights(family, blocks, y, weights)
-    }
-
-    /// Создаёт модель с observation weights после проверки response, weights и blocks.
-    ///
-    /// Borrows `y` and `weights` from the caller.
-    ///
-    /// Weights must have the same length as `y`; each weight must be finite and
-    /// non-negative. Zero weights are accepted and exclude the corresponding
-    /// observation from likelihood and score contributions.
-    pub fn try_new_weighted(
+    /// This is the extension point for custom storage backends. The observation
+    /// view is stored by value, so callers can pass lightweight borrowed views,
+    /// owned adapters, or newtypes around external dataframe/columnar storage.
+    pub fn try_new_with_observations(
         family: F,
         blocks: Blocks,
-        y: &'a [f64],
-        weights: &'a [f64],
+        obs: Obs,
     ) -> Result<Self, ModelError> {
-        Self::try_new_with_observation_weights(
-            family,
-            blocks,
-            y,
-            ObservationWeights::borrowed(weights),
-        )
-    }
-
-    fn try_new_with_observation_weights(
-        family: F,
-        blocks: Blocks,
-        y: &'a [f64],
-        weights: ObservationWeights<'a>,
-    ) -> Result<Self, ModelError> {
-        if y.is_empty() {
+        if obs.is_empty() {
             return Err(ModelError::EmptyResponse);
         }
 
-        weights.validate(y.len())?;
-        blocks.validate(y.len())?;
+        obs.validate()?;
+        blocks.validate(obs.len())?;
         Ok(Self {
             family,
             blocks,
-            y,
-            weights,
+            obs,
         })
     }
 
     /// Число наблюдений.
     pub fn nobs(&self) -> usize {
-        self.y.len()
+        self.obs.len()
     }
 
     /// Число коэффициентов в общем beta-векторе.
@@ -446,11 +426,11 @@ where
 
     /// Creates reusable gradient buffers sized for this model.
     pub fn gradient_workspace(&self) -> GradientWorkspace {
-        self.blocks.gradient_workspace(self.y.len())
+        self.blocks.gradient_workspace(self.obs.len())
     }
 
     /// Wraps the model as an objective with reusable gradient buffers.
-    pub fn into_workspace_objective(self) -> WorkspaceGamlss<'a, F, Blocks> {
+    pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
         let workspace = self.gradient_workspace();
         WorkspaceGamlss {
             model: self,
@@ -516,9 +496,7 @@ where
     pub fn diagnostics(&self, theta: &[f64]) -> Result<Diagnostics, ModelError> {
         validate_len("theta", theta.len(), self.nparams())?;
 
-        let train_nll = self
-            .blocks
-            .train_nll(&self.family, self.y, self.weights, theta);
+        let train_nll = self.blocks.train_nll(&self.family, &self.obs, theta);
         let penalty = self.blocks.penalty_value(theta);
         let mut grad = vec![0.0; self.nparams()];
         self.try_gradient_into(theta, &mut grad)?;
@@ -676,7 +654,7 @@ where
             return Err(ModelError::BetaLength { expected, actual });
         }
 
-        Ok(self.blocks.value(&self.family, self.y, self.weights, beta))
+        Ok(self.blocks.value(&self.family, &self.obs, beta))
     }
 
     /// Проверяет размеры beta/grad и записывает gradient.
@@ -710,39 +688,63 @@ where
         }
 
         grad.fill(0.0);
-        self.blocks.gradient_into_workspace(
-            &self.family,
-            self.y,
-            self.weights,
-            beta,
-            grad,
-            workspace,
-        );
+        self.blocks
+            .gradient_into_workspace(&self.family, &self.obs, beta, grad, workspace);
         Ok(())
     }
 }
 
-impl<'a, F, Blocks> WorkspaceGamlss<'a, F, Blocks>
+impl<'a, F, Blocks> Gamlss<F, Blocks, &'a [f64]>
 where
     Blocks: GamlssBlocks<F>,
 {
+    /// Создаёт unweighted модель после проверки response и blocks.
+    pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, y)
+    }
+}
+
+impl<'a, F, Blocks> Gamlss<F, Blocks, (&'a [f64], &'a [f64])>
+where
+    Blocks: GamlssBlocks<F>,
+{
+    /// Создаёт модель с observation weights после проверки response, weights и blocks.
+    ///
+    /// Weights must have the same length as `y`; each weight must be finite and
+    /// non-negative. Zero weights are accepted and exclude the corresponding
+    /// observation from likelihood and score contributions.
+    pub fn try_new_weighted(
+        family: F,
+        blocks: Blocks,
+        y: &'a [f64],
+        weights: &'a [f64],
+    ) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, (y, weights))
+    }
+}
+
+impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
+where
+    Blocks: GamlssBlocks<F>,
+    Obs: ObservationView,
+{
     /// Creates a workspace-backed objective from a compiled model.
-    pub fn new(model: Gamlss<'a, F, Blocks>) -> Self {
+    pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
         model.into_workspace_objective()
     }
 
     /// Returns the wrapped model.
-    pub fn model(&self) -> &Gamlss<'a, F, Blocks> {
+    pub fn model(&self) -> &Gamlss<F, Blocks, Obs> {
         &self.model
     }
 
     /// Returns the wrapped model mutably.
-    pub fn model_mut(&mut self) -> &mut Gamlss<'a, F, Blocks> {
+    pub fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
         &mut self.model
     }
 
     /// Consumes the workspace-backed objective and returns the wrapped model.
-    pub fn into_model(self) -> Gamlss<'a, F, Blocks> {
+    pub fn into_model(self) -> Gamlss<F, Blocks, Obs> {
         self.model
     }
 
@@ -780,9 +782,10 @@ where
     }
 }
 
-impl<'a, F, Blocks> Objective for Gamlss<'a, F, Blocks>
+impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
 where
     Blocks: GamlssBlocks<F>,
+    Obs: ObservationView,
 {
     type Error = ModelError;
 
@@ -799,9 +802,10 @@ where
     }
 }
 
-impl<'a, F, Blocks> Objective for WorkspaceGamlss<'a, F, Blocks>
+impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
 where
     Blocks: GamlssBlocks<F>,
+    Obs: ObservationView,
 {
     type Error = ModelError;
 
@@ -907,21 +911,23 @@ macro_rules! impl_gamlss_blocks {
                 Ok(())
             }
 
-            fn train_nll(
+            fn train_nll<Obs>(
                 &self,
                 family: &F,
-                y: &[f64],
-                weights: ObservationWeights<'_>,
+                obs: &Obs,
                 beta: &[f64],
-            ) -> f64 {
+            ) -> f64
+            where
+                Obs: ObservationView,
+            {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 let mut loss = 0.0;
 
-                debug_assert_eq!(weights.len(), y.len());
-                for (row, y_value) in y.iter().copied().enumerate() {
+                for row in 0..obs.len() {
+                    let y_value = obs.y_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    loss += weights.weight_at(row) * family.nll_eta(y_value, eta);
+                    loss += obs.weight_at(row) * family.nll_eta(y_value, eta);
                 }
 
                 loss
@@ -953,25 +959,27 @@ macro_rules! impl_gamlss_blocks {
                 workspace
             }
 
-            fn gradient_into_workspace(
+            fn gradient_into_workspace<Obs>(
                 &self,
                 family: &F,
-                y: &[f64],
-                weights: ObservationWeights<'_>,
+                obs: &Obs,
                 beta: &[f64],
                 grad: &mut [f64],
                 workspace: &mut GradientWorkspace,
-            ) {
+            )
+            where
+                Obs: ObservationView,
+            {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 workspace.prepare($k);
-                $(workspace.prepare_score($idx, y.len());)+
+                $(workspace.prepare_score($idx, obs.len());)+
 
-                debug_assert_eq!(weights.len(), y.len());
-                for (row, y_value) in y.iter().copied().enumerate() {
+                for row in 0..obs.len() {
+                    let y_value = obs.y_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
                     let (_, score) = family.nll_and_score_eta(y_value, eta);
-                    let weight = weights.weight_at(row);
+                    let weight = obs.weight_at(row);
                     $(workspace.set_score($idx, row, weight * score.part($idx));)+
                 }
 
@@ -1121,6 +1129,14 @@ fn validate_block_rows(
     }
 }
 
+fn validate_observation_weight(index: usize, weight: f64) -> Result<(), ModelError> {
+    if weight.is_finite() && weight >= 0.0 {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidWeight { index })
+    }
+}
+
 /// Проверяет пересечение двух диапазонов (непустое пересечение).
 fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
     first.start < second.end && second.start < first.end
@@ -1181,8 +1197,8 @@ mod tests {
 
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObservationWeights, ParameterBlock, ParameterBlocks,
-        ParameterName, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
+        NoPenalty, Nu, Objective, ObservationView, ParameterBlock, ParameterBlocks, ParameterName,
+        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1212,6 +1228,27 @@ mod tests {
         type Links = (Identity,);
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct ShiftedObservations<'a> {
+        y: &'a [f64],
+        shift: f64,
+        weight: f64,
+    }
+
+    impl ObservationView for ShiftedObservations<'_> {
+        fn len(&self) -> usize {
+            self.y.len()
+        }
+
+        fn y_at(&self, row: usize) -> f64 {
+            self.y[row] + self.shift
+        }
+
+        fn weight_at(&self, _row: usize) -> f64 {
+            self.weight
+        }
+    }
+
     #[test]
     fn custom_one_parameter_family_uses_generic_family_contract() {
         let y = vec![1.0, 2.0];
@@ -1229,15 +1266,53 @@ mod tests {
     }
 
     #[test]
+    fn model_accepts_user_defined_observation_view() {
+        let y = vec![1.0, 2.0];
+        let obs = ShiftedObservations {
+            y: &y,
+            shift: 1.0,
+            weight: 0.5,
+        };
+        let x = DenseDesign::intercept(obs.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new_with_observations(FixedSigmaNormal, (mu,), obs).unwrap();
+        let beta = vec![2.5];
+        let mut grad = vec![0.0];
+
+        assert_relative_eq!(model.value(&beta).unwrap(), 0.125);
+
+        model.gradient(&beta, &mut grad).unwrap();
+
+        assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn custom_observation_view_rejects_invalid_weight() {
+        let y = vec![1.0, 2.0];
+        let obs = ShiftedObservations {
+            y: &y,
+            shift: 0.0,
+            weight: f64::NAN,
+        };
+        let x = DenseDesign::intercept(obs.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+
+        assert_eq!(
+            Gamlss::try_new_with_observations(FixedSigmaNormal, (mu,), obs).unwrap_err(),
+            ModelError::InvalidWeight { index: 0 }
+        );
+    }
+
+    #[test]
     fn model_borrows_response_without_copying() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
 
-        assert_eq!(model.y.as_ptr(), y.as_ptr());
-        assert_eq!(model.y, y.as_slice());
-        assert_eq!(model.weights, ObservationWeights::unit(y.len()));
+        assert_eq!(model.obs.as_ptr(), y.as_ptr());
+        assert_eq!(model.obs, y.as_slice());
+        assert_eq!(model.obs.weight_at(0), 1.0);
     }
 
     #[test]

@@ -190,12 +190,12 @@ pub type DefaultNormal = Normal<Identity, Log>;
 ///
 /// The lifetime tracks the borrowed response slice.
 pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
-    'a,
     DefaultNormal,
     (
         ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
         ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
     ),
+    &'a [f64],
 >;
 
 /// Создаёт normal GAMLSS-модель из response, двух design matrices и штрафов.
