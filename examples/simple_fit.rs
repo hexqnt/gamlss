@@ -34,10 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pit = model.pit_values(&theta)?;
     let residuals = model.quantile_residuals(&theta)?;
     let coefficients = model.unpack_theta(&theta)?;
-    let mu_hat = coefficients.coefficients_of::<Mu>().expect("mu block")[0];
+    let mu_hat = coefficients
+        .coefficients_of::<Mu>()
+        .and_then(|values| values.first().copied())
+        .expect("mu block has an intercept coefficient");
     let sigma_hat = coefficients
         .coefficients_of::<Sigma>()
-        .expect("sigma block")[0]
+        .and_then(|values| values.first().copied())
+        .expect("sigma block has an intercept coefficient")
         .exp();
 
     let (pit_min, pit_max) = finite_range(&pit);

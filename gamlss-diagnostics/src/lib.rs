@@ -68,13 +68,15 @@ where
     for<'row> Obs: ObservationView<'row, Observation = f64>,
 {
     fn pit_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError> {
-        (0..self.nobs())
-            .map(|row| {
+        let parameters = self.predict_theta(theta)?;
+        Ok(parameters
+            .into_iter()
+            .enumerate()
+            .map(|(row, parameters)| {
                 let observation = self.obs.observation_at(row);
-                let parameters = self.predict_theta_row(theta, row)?;
-                Ok(self.family.cdf(observation, parameters))
+                self.family.cdf(observation, parameters)
             })
-            .collect()
+            .collect())
     }
 }
 

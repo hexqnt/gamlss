@@ -59,11 +59,7 @@ pub trait TargetTransform {
     /// `NaN` или infinity. Конкретные transform-ы могут усиливать проверку
     /// domain-а, например требовать строго положительные значения.
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        validate_finite(y)?;
-        Ok(y.iter()
-            .copied()
-            .map(|value| Self::transform(state, value))
-            .collect())
+        map_slice(y, validate_finite, |value| Self::transform(state, value))
     }
 
     /// Возвращает срез значений на исходную шкалу в новый `Vec`.
@@ -73,12 +69,7 @@ pub trait TargetTransform {
     /// Возвращает [`TransformError::NonFiniteValue`], если значения на
     /// transform-шкале содержат `NaN` или infinity.
     fn inverse_slice(state: &Self::State, values: &[f64]) -> Result<Vec<f64>, TransformError> {
-        validate_finite(values)?;
-        Ok(values
-            .iter()
-            .copied()
-            .map(|value| Self::inverse(state, value))
-            .collect())
+        map_slice(values, validate_finite, |value| Self::inverse(state, value))
     }
 }
 
@@ -153,11 +144,7 @@ impl TargetTransform for Log {
     }
 
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        validate_positive(y)?;
-        Ok(y.iter()
-            .copied()
-            .map(|value| Self::transform(state, value))
-            .collect())
+        map_slice(y, validate_positive, |value| Self::transform(state, value))
     }
 }
 
@@ -186,12 +173,17 @@ impl TargetTransform for IdentityPositive {
     }
 
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        validate_positive(y)?;
-        Ok(y.iter()
-            .copied()
-            .map(|value| Self::transform(state, value))
-            .collect())
+        map_slice(y, validate_positive, |value| Self::transform(state, value))
     }
+}
+
+fn map_slice(
+    values: &[f64],
+    validate: impl FnOnce(&[f64]) -> Result<(), TransformError>,
+    map: impl FnMut(f64) -> f64,
+) -> Result<Vec<f64>, TransformError> {
+    validate(values)?;
+    Ok(values.iter().copied().map(map).collect())
 }
 
 fn validate_non_empty_finite(values: &[f64]) -> Result<(), TransformError> {

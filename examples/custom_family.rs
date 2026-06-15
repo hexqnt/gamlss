@@ -181,10 +181,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let diagnostics = model.training_diagnostics(&theta)?;
     let coefficients = model.unpack_theta(&theta)?;
-    let mu_hat = coefficients.coefficients_of::<Mu>().expect("mu block")[0];
+    let mu_hat = coefficients
+        .coefficients_of::<Mu>()
+        .and_then(|values| values.first().copied())
+        .expect("mu block has an intercept coefficient");
     let sigma_hat = coefficients
         .coefficients_of::<Sigma>()
-        .expect("sigma block")[0]
+        .and_then(|values| values.first().copied())
+        .expect("sigma block has an intercept coefficient")
         .exp();
     let median_cdf = family.cdf(
         mu_hat,

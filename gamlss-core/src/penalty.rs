@@ -108,8 +108,8 @@ impl MatrixPenalty for NoPenalty {
 impl MatrixPenalty for RidgePenalty {
     fn add_penalty_matrix(&self, gram: &mut [f64]) {
         let dim = (gram.len() as f64).sqrt() as usize;
-        for i in 0..dim {
-            gram[i * dim + i] += self.lambda;
+        for (row, row_values) in gram.chunks_exact_mut(dim).enumerate() {
+            row_values[row] += self.lambda;
         }
     }
 }

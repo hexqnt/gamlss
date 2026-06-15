@@ -44,11 +44,11 @@
 //! # Ok::<_, FormulaError>(())
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use gamlss_core::{
     DenseDesign, Gamlss, Identity, LinearPredictorBlock, Log, Logit, ModelError, Mu, NoPenalty,
-    ParameterBlock, Precision, Rate, Scale, Shape, Sigma,
+    ParameterBlock, ParameterBlocks, Precision, Rate, Scale, Shape, Sigma,
 };
 use gamlss_family::{
     DefaultBeta, DefaultGamma, DefaultInverseGaussian, DefaultLogNormal, DefaultNormal,
@@ -138,12 +138,13 @@ impl DataFrame {
             });
         }
 
-        if self.columns.contains_key(&name) {
-            return Err(FormulaError::DuplicateColumn(name));
+        match self.columns.entry(name) {
+            Entry::Vacant(entry) => {
+                entry.insert(values);
+                Ok(())
+            }
+            Entry::Occupied(entry) => Err(FormulaError::DuplicateColumn(entry.key().clone())),
         }
-
-        self.columns.insert(name, values);
-        Ok(())
     }
 
     /// Число строк.
@@ -355,12 +356,12 @@ impl NormalSpec {
         let sigma_x = design_from_terms(&self.sigma_terms, data)?;
 
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, NoPenalty, 0);
-        let sigma =
-            ParameterBlock::<Sigma, gamlss_core::Log, _, _>::linear(sigma_x, NoPenalty, mu.len());
+        let sigma = ParameterBlock::<Sigma, gamlss_core::Log, _, _>::linear(sigma_x, NoPenalty, 0);
+        let blocks = ParameterBlocks::new((mu, sigma));
 
         Ok(gamlss_core::Gamlss::try_new(
             DefaultNormal::new(),
-            (mu, sigma),
+            blocks,
             response,
         )?)
     }
@@ -450,12 +451,13 @@ macro_rules! define_two_parameter_spec {
                 let second = ParameterBlock::<$second_param, $second_link, _, _>::linear(
                     second_x,
                     NoPenalty,
-                    first.len(),
+                    0,
                 );
+                let blocks = ParameterBlocks::new((first, second));
 
                 Ok(gamlss_core::Gamlss::try_new(
                     <$family>::new(),
-                    (first, second),
+                    blocks,
                     response,
                 )?)
             }
@@ -579,8 +581,21 @@ fn design_from_terms(terms: &[TermSpec], data: &DataFrame) -> Result<DenseDesign
         terms
     };
 
+    enum TermColumn<'a> {
+        Intercept,
+        Linear(&'a [f64]),
+    }
+
+    let term_columns = terms
+        .iter()
+        .map(|term| match term {
+            TermSpec::Intercept => Ok(TermColumn::Intercept),
+            TermSpec::Linear(name) => data.column(name).map(TermColumn::Linear),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let nrows = data.nrows();
-    let ncols = terms.len();
+    let ncols = term_columns.len();
     let capacity = nrows
         .checked_mul(ncols)
         .ok_or(ModelError::ArithmeticOverflow {
@@ -589,10 +604,10 @@ fn design_from_terms(terms: &[TermSpec], data: &DataFrame) -> Result<DenseDesign
     let mut values = Vec::with_capacity(capacity);
 
     for row in 0..nrows {
-        for term in terms {
+        for term in &term_columns {
             match term {
-                TermSpec::Intercept => values.push(1.0),
-                TermSpec::Linear(name) => values.push(data.column(name)?[row]),
+                TermColumn::Intercept => values.push(1.0),
+                TermColumn::Linear(column) => values.push(column[row]),
             }
         }
     }

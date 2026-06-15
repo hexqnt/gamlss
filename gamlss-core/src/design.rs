@@ -223,8 +223,9 @@ impl DesignMatrix for DenseDesign {
 
         for (row, weight) in weights.iter().copied().enumerate() {
             let offset = row * self.ncols;
-            for (col, out_value) in out.iter_mut().enumerate() {
-                *out_value = self.values[offset + col].mul_add(weight, *out_value);
+            let row_values = &self.values[offset..offset + self.ncols];
+            for (out_value, x) in out.iter_mut().zip(row_values) {
+                *out_value = x.mul_add(weight, *out_value);
             }
         }
     }
@@ -234,11 +235,12 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(multiplier.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, (weight, multiplier)) in weights.iter().zip(multiplier).enumerate() {
+        for (row, (&weight, &multiplier)) in weights.iter().zip(multiplier).enumerate() {
             let scaled_weight = weight * multiplier;
             let offset = row * self.ncols;
-            for (col, out_value) in out.iter_mut().enumerate() {
-                *out_value = self.values[offset + col].mul_add(scaled_weight, *out_value);
+            let row_values = &self.values[offset..offset + self.ncols];
+            for (out_value, x) in out.iter_mut().zip(row_values) {
+                *out_value = x.mul_add(scaled_weight, *out_value);
             }
         }
     }
@@ -251,10 +253,10 @@ impl DesignMatrix for DenseDesign {
         for (row, weight) in weights.iter().copied().enumerate() {
             let row_offset = row * ncols;
             let row_values = &self.values[row_offset..row_offset + ncols];
-            for j in 0..ncols {
-                let xw_j = row_values[j] * weight;
-                for k in j..ncols {
-                    let delta = row_values[k] * xw_j;
+            for (j, x_j) in row_values.iter().copied().enumerate() {
+                let xw_j = x_j * weight;
+                for (k, x_k) in row_values.iter().copied().enumerate().skip(j) {
+                    let delta = x_k * xw_j;
                     out[j * ncols + k] += delta;
                     if k != j {
                         out[k * ncols + j] += delta;

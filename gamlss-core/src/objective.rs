@@ -75,7 +75,7 @@ where
     }
 
     fn update_block_beta(&mut self, block_beta: &[f64]) {
-        self.working_beta[self.block.clone()].copy_from_slice(block_beta);
+        self.working_beta[self.block.start..self.block.end].copy_from_slice(block_beta);
     }
 }
 
@@ -104,7 +104,7 @@ where
         self.update_block_beta(block_beta);
         self.full_objective
             .gradient(&self.working_beta, &mut self.full_grad)?;
-        grad.copy_from_slice(&self.full_grad[self.block.clone()]);
+        grad.copy_from_slice(&self.full_grad[self.block.start..self.block.end]);
         Ok(())
     }
 }

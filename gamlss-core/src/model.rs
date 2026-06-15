@@ -266,13 +266,15 @@ where
         let penalty = self.blocks.penalty_value(theta);
         let mut grad = vec![0.0; self.nparams()];
         self.try_gradient_into(theta, &mut grad)?;
-        let gradient_norm = grad
-            .iter()
-            .filter(|value| value.is_finite())
-            .map(|value| value * value)
-            .sum::<f64>()
-            .sqrt();
-        let nonfinite_gradient_count = grad.iter().filter(|value| !value.is_finite()).count();
+        let (finite_gradient_sum_squares, nonfinite_gradient_count) =
+            grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
+                if value.is_finite() {
+                    (sum_squares + value * value, count)
+                } else {
+                    (sum_squares, count + 1)
+                }
+            });
+        let gradient_norm = finite_gradient_sum_squares.sqrt();
 
         Ok(TrainingDiagnostics {
             objective: train_nll + penalty,
@@ -668,12 +670,12 @@ macro_rules! impl_gamlss_blocks {
                     <$param as ParameterName>::NAME,
                     self.$idx.try_range()?,
                 ),)+];
-                for first in 0..ranges.len() {
-                    for second in first + 1..ranges.len() {
-                        if ranges_overlap(ranges[first].1.clone(), ranges[second].1.clone()) {
+                for (first_index, first) in ranges.iter().enumerate() {
+                    for second in ranges.iter().skip(first_index + 1) {
+                        if ranges_overlap(first.1.clone(), second.1.clone()) {
                             return Err(ModelError::BlockOverlap {
-                                first: ranges[first].0,
-                                second: ranges[second].0,
+                                first: first.0,
+                                second: second.0,
                             });
                         }
                     }
@@ -759,7 +761,7 @@ macro_rules! impl_gamlss_blocks {
                         workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
                     $block.x.add_gradient($row_gradient, $beta_block, $local_grad);
                     $block.penalty.add_gradient($beta_block, $local_grad);
-                    add_into(&mut grad[$block.range()], $local_grad);
+                    add_into(&mut grad[$block.offset..$block.offset + $block.len], $local_grad);
                 )+
             }
 

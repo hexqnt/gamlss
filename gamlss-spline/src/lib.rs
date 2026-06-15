@@ -211,7 +211,7 @@ impl PredictorBlock for FourierDesign {
         debug_assert_eq!(multiplier.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.add_row_gradient(row, score * multiplier, grad);
         }
     }
@@ -334,9 +334,9 @@ impl BSplineBasis {
 
     /// Значения всех basis-функций в точке `x`.
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
-        (0..self.n_basis())
-            .map(|index| self.basis_value(index, self.degree, x))
-            .collect()
+        let mut values = vec![0.0; self.n_basis()];
+        self.evaluate_into(x, &mut values);
+        values
     }
 
     /// Dense design matrix, где каждая строка содержит `evaluate(x_i)`.
@@ -347,11 +347,20 @@ impl BSplineBasis {
 
         let n_basis = self.n_basis();
         let mut values = Vec::with_capacity(x.len() * n_basis);
-        for value in x.iter().copied() {
-            values.extend(self.evaluate(value));
+        values.resize(x.len() * n_basis, 0.0);
+        for (row, value) in values.chunks_exact_mut(n_basis).zip(x.iter().copied()) {
+            self.evaluate_into(value, row);
         }
 
         Ok(DenseDesign::from_row_major(x.len(), n_basis, values)?)
+    }
+
+    fn evaluate_into(&self, x: f64, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), self.n_basis());
+
+        for (index, value) in out.iter_mut().enumerate() {
+            *value = self.basis_value(index, self.degree, x);
+        }
     }
 
     fn basis_value(&self, index: usize, degree: usize, x: f64) -> f64 {
@@ -606,7 +615,7 @@ impl PredictorBlock for OpenUniformSplineDesign {
         debug_assert_eq!(multiplier.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis);
 
-        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.basis_for_row(row).add_scaled(score * multiplier, grad);
         }
     }
@@ -736,7 +745,7 @@ impl PredictorBlock for CyclicSplineDesign {
         debug_assert_eq!(multiplier.len(), self.phi.len());
         debug_assert_eq!(grad.len(), self.spec.n_basis);
 
-        for (row, (score, multiplier)) in scores.iter().zip(multiplier).enumerate() {
+        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.basis_for_row(row).add_scaled(score * multiplier, grad);
         }
     }
@@ -770,11 +779,12 @@ impl Penalty for DifferencePenalty {
         }
 
         let mut sum = 0.0;
-        for start in 0..=beta.len() - coefficients.len() {
+        for window in beta.windows(coefficients.len()) {
             let diff = coefficients
                 .iter()
-                .enumerate()
-                .map(|(offset, coefficient)| coefficient * beta[start + offset])
+                .copied()
+                .zip(window.iter().copied())
+                .map(|(coefficient, beta)| coefficient * beta)
                 .sum::<f64>();
             sum += diff * diff;
         }
@@ -790,11 +800,12 @@ impl Penalty for DifferencePenalty {
             return;
         }
 
-        for start in 0..=beta.len() - coefficients.len() {
+        for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
             let diff = coefficients
                 .iter()
-                .enumerate()
-                .map(|(offset, coefficient)| coefficient * beta[start + offset])
+                .copied()
+                .zip(beta_window.iter().copied())
+                .map(|(coefficient, beta)| coefficient * beta)
                 .sum::<f64>();
 
             for (offset, coefficient) in coefficients.iter().copied().enumerate() {
@@ -833,17 +844,18 @@ impl Penalty for CyclicDifferencePenalty {
             return 0.0;
         }
 
+        let n = beta.len();
         let mut sum = 0.0;
-        for start in 0..beta.len() {
+        for start in 0..n {
             let diff = coefficients
                 .iter()
                 .enumerate()
-                .map(|(offset, coefficient)| coefficient * beta[(start + offset) % beta.len()])
+                .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
                 .sum::<f64>();
             sum += diff * diff;
         }
 
-        self.lambda * sum / beta.len() as f64
+        self.lambda * sum / n as f64
     }
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
@@ -854,19 +866,24 @@ impl Penalty for CyclicDifferencePenalty {
             return;
         }
 
-        let scale = self.lambda / beta.len() as f64;
-        for start in 0..beta.len() {
+        let n = beta.len();
+        let scale = self.lambda / n as f64;
+        for start in 0..n {
             let diff = coefficients
                 .iter()
                 .enumerate()
-                .map(|(offset, coefficient)| coefficient * beta[(start + offset) % beta.len()])
+                .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
                 .sum::<f64>();
 
             for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-                grad[(start + offset) % beta.len()] += 2.0 * scale * diff * coefficient;
+                grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
             }
         }
     }
+}
+
+fn cyclic_value(values: &[f64], index: usize) -> f64 {
+    values[index % values.len()]
 }
 
 /// Квадратичный штраф за нарушение монотонности на краях сплайна.
@@ -988,8 +1005,11 @@ impl LocalBasis {
     /// Скалярное произведение базиса на коэффициенты.
     fn dot(self, beta: &[f64]) -> f64 {
         let mut value = 0.0;
-        for idx in 0..self.len {
-            value += beta[self.indices[idx]] * self.weights[idx];
+        for (&index, &weight) in self.indices[..self.len]
+            .iter()
+            .zip(&self.weights[..self.len])
+        {
+            value += beta[index] * weight;
         }
         value
     }
@@ -997,8 +1017,11 @@ impl LocalBasis {
     /// Добавляет `scale * weights[i]` в `out[indices[i]]` для каждого
     /// ненулевого элемента базиса.
     fn add_scaled(self, scale: f64, out: &mut [f64]) {
-        for idx in 0..self.len {
-            out[self.indices[idx]] += scale * self.weights[idx];
+        for (&index, &weight) in self.indices[..self.len]
+            .iter()
+            .zip(&self.weights[..self.len])
+        {
+            out[index] += scale * weight;
         }
     }
 }

@@ -29,8 +29,9 @@ impl GradientWorkspace {
 
     pub(crate) fn set_row_gradient(&mut self, index: usize, row: usize, value: f64) {
         debug_assert!(index < self.row_gradients.len());
-        debug_assert!(row < self.row_gradients[index].len());
-        self.row_gradients[index][row] = value;
+        let row_gradient = &mut self.row_gradients[index];
+        debug_assert!(row < row_gradient.len());
+        row_gradient[row] = value;
     }
 
     pub(crate) fn local_gradient_mut(&mut self, index: usize, len: usize) -> &mut [f64] {
