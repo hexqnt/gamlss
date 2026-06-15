@@ -145,6 +145,7 @@ where
     type Eta = LaplaceEta;
     type Theta = LaplaceTheta;
     type ScoreEta = LaplaceEta;
+    type Observation = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {

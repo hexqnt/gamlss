@@ -128,6 +128,7 @@ where
     type Eta = GammaEta;
     type Theta = GammaTheta;
     type ScoreEta = GammaEta;
+    type Observation = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {

@@ -12,7 +12,10 @@ use crate::{
 /// ranges before hot-path evaluation; generated methods may then assume
 /// compatible row counts, finite non-negative weights and non-overlapping block
 /// ranges.
-pub trait GamlssBlocks<F> {
+pub trait GamlssBlocks<F>
+where
+    F: Family,
+{
     /// Число наблюдений в blocks.
     fn nrows(&self) -> usize;
     /// Длина общего beta-вектора, покрывающего все blocks.
@@ -32,7 +35,7 @@ pub trait GamlssBlocks<F> {
     /// weight.
     fn train_nll<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
     where
-        Obs: ObservationView;
+        Obs: ObservationView<Observation = F::Observation>;
     /// Аддитивные предикторы на link-шкале для одной строки.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
@@ -42,7 +45,7 @@ pub trait GamlssBlocks<F> {
     /// Значение weighted negative log-likelihood плюс penalties.
     fn value<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
     where
-        Obs: ObservationView,
+        Obs: ObservationView<Observation = F::Observation>,
     {
         self.train_nll(family, obs, beta) + self.penalty_value(beta)
     }
@@ -66,7 +69,7 @@ pub trait GamlssBlocks<F> {
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
     ) where
-        Obs: ObservationView;
+        Obs: ObservationView<Observation = F::Observation>;
     /// Диапазоны коэффициентов каждого block в общем beta-векторе.
     fn block_ranges(&self) -> Vec<Range<usize>>;
     /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
@@ -128,13 +131,16 @@ impl GradientWorkspace {
     }
 }
 
-/// Read-only scalar observation access for training objective evaluation.
+/// Read-only row-wise observation access for training objective evaluation.
 ///
 /// This trait is intentionally small: it describes the row-wise data needed by
-/// the current univariate likelihood loop. Implementations should make
+/// the likelihood loop. Implementations should make
 /// [`len`](Self::len) O(1), keep it stable for the lifetime of the model, and
 /// provide deterministic, panic-free access for `row < len()`.
 pub trait ObservationView {
+    /// Observation representation returned for one row.
+    type Observation;
+
     /// Number of observations.
     fn len(&self) -> usize;
 
@@ -143,8 +149,8 @@ pub trait ObservationView {
         self.len() == 0
     }
 
-    /// Response value for `row`.
-    fn y_at(&self, row: usize) -> f64;
+    /// Observation value for `row`.
+    fn observation_at(&self, row: usize) -> Self::Observation;
 
     /// Non-negative finite observation weight for `row`.
     fn weight_at(&self, row: usize) -> f64;
@@ -159,11 +165,13 @@ pub trait ObservationView {
 }
 
 impl ObservationView for &[f64] {
+    type Observation = f64;
+
     fn len(&self) -> usize {
         <[f64]>::len(self)
     }
 
-    fn y_at(&self, row: usize) -> f64 {
+    fn observation_at(&self, row: usize) -> Self::Observation {
         self[row]
     }
 
@@ -177,11 +185,63 @@ impl ObservationView for &[f64] {
 }
 
 impl ObservationView for (&[f64], &[f64]) {
+    type Observation = f64;
+
     fn len(&self) -> usize {
         self.0.len()
     }
 
-    fn y_at(&self, row: usize) -> f64 {
+    fn observation_at(&self, row: usize) -> Self::Observation {
+        self.0[row]
+    }
+
+    fn weight_at(&self, row: usize) -> f64 {
+        self.1[row]
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        let expected = self.0.len();
+        let actual = self.1.len();
+        if actual != expected {
+            return Err(ModelError::WeightLength { expected, actual });
+        }
+
+        for (index, weight) in self.1.iter().copied().enumerate() {
+            validate_observation_weight(index, weight)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<const N: usize> ObservationView for &[[f64; N]] {
+    type Observation = [f64; N];
+
+    fn len(&self) -> usize {
+        <[[f64; N]]>::len(self)
+    }
+
+    fn observation_at(&self, row: usize) -> Self::Observation {
+        self[row]
+    }
+
+    fn weight_at(&self, _row: usize) -> f64 {
+        1.0
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+impl<const N: usize> ObservationView for (&[[f64; N]], &[f64]) {
+    type Observation = [f64; N];
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn observation_at(&self, row: usize) -> Self::Observation {
         self.0[row]
     }
 
@@ -378,8 +438,9 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
 
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs>
 where
+    F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView,
+    Obs: ObservationView<Observation = F::Observation>,
 {
     /// Создаёт модель после проверки observation view и blocks.
     ///
@@ -696,6 +757,7 @@ where
 
 impl<'a, F, Blocks> Gamlss<F, Blocks, &'a [f64]>
 where
+    F: Family<Observation = f64>,
     Blocks: GamlssBlocks<F>,
 {
     /// Создаёт unweighted модель после проверки response и blocks.
@@ -706,6 +768,7 @@ where
 
 impl<'a, F, Blocks> Gamlss<F, Blocks, (&'a [f64], &'a [f64])>
 where
+    F: Family<Observation = f64>,
     Blocks: GamlssBlocks<F>,
 {
     /// Создаёт модель с observation weights после проверки response, weights и blocks.
@@ -725,8 +788,9 @@ where
 
 impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
 where
+    F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView,
+    Obs: ObservationView<Observation = F::Observation>,
 {
     /// Creates a workspace-backed objective from a compiled model.
     pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
@@ -784,8 +848,9 @@ where
 
 impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
 where
+    F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView,
+    Obs: ObservationView<Observation = F::Observation>,
 {
     type Error = ModelError;
 
@@ -804,8 +869,9 @@ where
 
 impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
 where
+    F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView,
+    Obs: ObservationView<Observation = F::Observation>,
 {
     type Error = ModelError;
 
@@ -918,16 +984,16 @@ macro_rules! impl_gamlss_blocks {
                 beta: &[f64],
             ) -> f64
             where
-                Obs: ObservationView,
+                Obs: ObservationView<Observation = F::Observation>,
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 let mut loss = 0.0;
 
                 for row in 0..obs.len() {
-                    let y_value = obs.y_at(row);
+                    let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    loss += obs.weight_at(row) * family.nll_eta(y_value, eta);
+                    loss += obs.weight_at(row) * family.nll_eta(observation, eta);
                 }
 
                 loss
@@ -968,7 +1034,7 @@ macro_rules! impl_gamlss_blocks {
                 workspace: &mut GradientWorkspace,
             )
             where
-                Obs: ObservationView,
+                Obs: ObservationView<Observation = F::Observation>,
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
@@ -976,9 +1042,9 @@ macro_rules! impl_gamlss_blocks {
                 $(workspace.prepare_score($idx, obs.len());)+
 
                 for row in 0..obs.len() {
-                    let y_value = obs.y_at(row);
+                    let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    let (_, score) = family.nll_and_score_eta(y_value, eta);
+                    let (_, score) = family.nll_and_score_eta(observation, eta);
                     let weight = obs.weight_at(row);
                     $(workspace.set_score($idx, row, weight * score.part($idx));)+
                 }
@@ -1177,6 +1243,7 @@ fn validate_prediction_blocks<F, Blocks>(
     expected_len: usize,
 ) -> Result<(), ModelError>
 where
+    F: Family,
     Blocks: GamlssBlocks<F>,
 {
     blocks.validate(blocks.nrows())?;
@@ -1208,6 +1275,7 @@ mod tests {
         type Eta = f64;
         type Theta = f64;
         type ScoreEta = f64;
+        type Observation = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1236,11 +1304,13 @@ mod tests {
     }
 
     impl ObservationView for ShiftedObservations<'_> {
+        type Observation = f64;
+
         fn len(&self) -> usize {
             self.y.len()
         }
 
-        fn y_at(&self, row: usize) -> f64 {
+        fn observation_at(&self, row: usize) -> Self::Observation {
             self.y[row] + self.shift
         }
 
@@ -1577,6 +1647,7 @@ mod tests {
         type Eta = f64;
         type Theta = f64;
         type ScoreEta = f64;
+        type Observation = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta + self.target_shift
@@ -1615,12 +1686,64 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct BivariateLocation;
+
+    impl Family for BivariateLocation {
+        type Eta = f64;
+        type Theta = f64;
+        type ScoreEta = f64;
+        type Observation = [f64; 2];
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, observation: Self::Observation, theta: Self::Theta) -> f64 {
+            let first = theta - observation[0];
+            let second = theta - observation[1];
+            0.5 * (first * first + second * second)
+        }
+
+        fn nll_and_score_eta(
+            &self,
+            observation: Self::Observation,
+            eta: Self::Eta,
+        ) -> (f64, Self::ScoreEta) {
+            let score = (eta - observation[0]) + (eta - observation[1]);
+            (self.nll(observation, eta), score)
+        }
+    }
+
+    impl ParameterizedFamily<1> for BivariateLocation {
+        type Params = (Mu,);
+        type Links = (Identity,);
+    }
+
+    #[test]
+    fn model_accepts_multivariate_observation_rows() {
+        let y = vec![[1.0, 3.0], [2.0, 4.0]];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mut model =
+            Gamlss::try_new_with_observations(BivariateLocation, (mu,), y.as_slice()).unwrap();
+        let beta = vec![2.0];
+        let mut grad = vec![0.0];
+
+        assert_relative_eq!(model.value(&beta).unwrap(), 3.0);
+
+        model.gradient(&beta, &mut grad).unwrap();
+
+        assert_relative_eq!(grad[0], -2.0);
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct ThreeParameterMock;
 
     impl Family for ThreeParameterMock {
         type Eta = (f64, f64, f64);
         type Theta = (f64, f64, f64);
         type ScoreEta = (f64, f64, f64);
+        type Observation = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1682,6 +1805,7 @@ mod tests {
         type Eta = (f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64);
         type ScoreEta = (f64, f64, f64, f64);
+        type Observation = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             (eta.0 + 1.0, eta.1 + 2.0, eta.2 + 3.0, eta.3 + 4.0)
@@ -1715,6 +1839,7 @@ mod tests {
         type Eta = (f64, f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64, f64);
         type ScoreEta = (f64, f64, f64, f64, f64);
+        type Observation = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1920,6 +2045,7 @@ mod tests {
             type Eta = (f64, f64);
             type Theta = (f64, f64);
             type ScoreEta = (f64, f64);
+            type Observation = f64;
 
             fn theta(&self, eta: Self::Eta) -> Self::Theta {
                 eta

@@ -55,7 +55,7 @@ pub(crate) mod test_support {
         y: f64,
         eta: [f64; K],
     ) where
-        F: Family,
+        F: Family<Observation = f64>,
         F::Eta: ParameterParts<K>,
         F::ScoreEta: ParameterParts<K>,
     {
@@ -75,7 +75,7 @@ pub(crate) mod test_support {
         epsilon: f64,
         tolerance: f64,
     ) where
-        F: Family,
+        F: Family<Observation = f64>,
         F::Eta: ParameterParts<K>,
         F::ScoreEta: ParameterParts<K>,
     {

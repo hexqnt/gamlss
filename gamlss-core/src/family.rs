@@ -5,12 +5,18 @@
 /// [`ParameterizedFamily`], поэтому hot path остаётся типизированным без
 /// dynamic lookup.
 ///
-/// Implementations should treat `nll`/`nll_eta` as scalar negative
-/// log-likelihood contributions for one observation. Invalid observation or
-/// parameter domains should be represented by `f64::INFINITY` rather than
-/// panicking, so optimizers can reject the candidate point. `NaN` inputs may
-/// propagate as `NaN`; callers can inspect diagnostics for non-finite values.
+/// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
+/// contributions for one observation. Invalid observation or parameter domains
+/// should be represented by `f64::INFINITY` rather than panicking, so
+/// optimizers can reject the candidate point. `NaN` inputs may propagate as
+/// `NaN`; callers can inspect diagnostics for non-finite values.
 pub trait Family {
+    /// Observation representation consumed by this family.
+    ///
+    /// Univariate families usually use `f64`. Multivariate, censored,
+    /// interval, or mixture families can use small arrays, tuples, or custom
+    /// row-view structs without changing the compiled model machinery.
+    type Observation;
     /// Аддитивные предикторы на link-шкале.
     type Eta;
     /// Параметры распределения на естественной шкале.
@@ -21,17 +27,21 @@ pub trait Family {
     /// Преобразует предикторы с link-шкалы в параметры распределения.
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
     /// Negative log-likelihood для одного наблюдения на естественной шкале.
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64;
+    fn nll(&self, observation: Self::Observation, theta: Self::Theta) -> f64;
     /// Negative log-likelihood для одного наблюдения на link-шкале.
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, self.theta(eta))
+    fn nll_eta(&self, observation: Self::Observation, eta: Self::Eta) -> f64 {
+        self.nll(observation, self.theta(eta))
     }
     /// Negative log-likelihood и score по `Eta` для одного наблюдения.
     ///
     /// `ScoreEta` is the gradient of the negative log-likelihood with respect
     /// to the link-scale predictors `Eta`, after applying the chain rule for
     /// the family links. It must have the same arity and ordering as `Eta`.
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta);
+    fn nll_and_score_eta(
+        &self,
+        observation: Self::Observation,
+        eta: Self::Eta,
+    ) -> (f64, Self::ScoreEta);
 }
 
 /// Extension trait for families that provide diagonal Fisher information.
@@ -50,10 +60,10 @@ pub trait HasFisherInfo: Family {
     /// The `fisher` component must have the same arity and ordering as
     /// [`Family::Eta`] and [`Family::ScoreEta`]. Each element is
     /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
-    /// respect to the k-th link-scale predictor, given the observation `y`.
+    /// respect to the k-th link-scale predictor, given the observation.
     fn nll_score_and_fisher_eta(
         &self,
-        y: f64,
+        observation: Self::Observation,
         eta: Self::Eta,
     ) -> (f64, Self::ScoreEta, Self::ScoreEta);
 }

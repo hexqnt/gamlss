@@ -128,6 +128,7 @@ where
     type Eta = InverseGaussianEta;
     type Theta = InverseGaussianTheta;
     type ScoreEta = InverseGaussianEta;
+    type Observation = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {

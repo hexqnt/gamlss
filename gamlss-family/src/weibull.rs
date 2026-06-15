@@ -128,6 +128,7 @@ where
     type Eta = WeibullEta;
     type Theta = WeibullTheta;
     type ScoreEta = WeibullEta;
+    type Observation = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {

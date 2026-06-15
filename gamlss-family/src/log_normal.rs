@@ -133,6 +133,7 @@ where
     type Eta = LogNormalEta;
     type Theta = LogNormalTheta;
     type ScoreEta = LogNormalEta;
+    type Observation = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {

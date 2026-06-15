@@ -72,6 +72,7 @@ where
     type Eta = UserNormalEta;
     type Theta = UserNormalTheta;
     type ScoreEta = UserNormalEta;
+    type Observation = f64;
 
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         UserNormalTheta {
