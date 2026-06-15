@@ -1,5 +1,48 @@
 #![forbid(unsafe_code)]
 //! Динамический formula/builder слой, который компилируется в типизированные модели.
+//!
+//! Этот crate является runtime boundary layer: он принимает простые динамические
+//! specifications и строит typed [`gamlss_core::Gamlss`] models с
+//! [`gamlss_core::DenseDesign`] predictors. Hot path после компиляции остаётся
+//! в `gamlss-core`.
+//!
+//! # Builders
+//!
+//! Поддержаны default two-parameter builders:
+//!
+//! - [`ModelSpec::normal`] / [`normal`]: `mu`, `sigma`;
+//! - [`ModelSpec::gamma`] / [`gamma`]: `shape`, `rate`;
+//! - [`ModelSpec::log_normal`] / [`log_normal`]: `mu`, `sigma`;
+//! - [`ModelSpec::weibull`] / [`weibull`]: `shape`, `scale`;
+//! - [`ModelSpec::inverse_gaussian`] / [`inverse_gaussian`]: `mu`, `shape`;
+//! - [`ModelSpec::beta`] / [`beta`]: `mu`, `precision`.
+//!
+//! Если terms для параметра не заданы, компиляция использует intercept-only
+//! predictor для этого параметра.
+//!
+//! # Example
+//!
+//! ```
+//! use gamlss_core::Objective;
+//! use gamlss_formula::prelude::*;
+//!
+//! let data = DataFrame::from_columns([
+//!     ("y", vec![0.0, 1.0, 2.0]),
+//!     ("x", vec![0.0, 1.0, 2.0]),
+//! ])?;
+//!
+//! let mut model = ModelSpec::normal()
+//!     .mu_intercept()
+//!     .mu_linear("x")
+//!     .sigma_intercept()
+//!     .compile(&data, "y")?;
+//!
+//! let theta = vec![0.0, 0.5, -0.2];
+//! let value = model.value(&theta)?;
+//! let predicted = model.predict_theta(&theta)?;
+//! assert_eq!(predicted.len(), data.nrows());
+//! # Ok::<_, FormulaError>(())
+//! ```
 
 use std::collections::BTreeMap;
 

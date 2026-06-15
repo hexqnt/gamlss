@@ -1,5 +1,32 @@
 #![forbid(unsafe_code)]
 //! Типизированное ядро GAMLSS: link-функции, parameter blocks, objectives и compiled models.
+//!
+//! `gamlss-core` содержит минимальные abstractions, которые нужны
+//! distributional-regression моделям, но не зависит от optimizers,
+//! dataframe-библиотек и тяжёлых matrix backends.
+//!
+//! # Parameter blocks
+//!
+//! Модель собирается из typed [`ParameterBlock`] values. Тип `P` задаёт
+//! parameter marker (`Mu`, `Sigma`, `Shape`, пользовательский marker и т.д.),
+//! `L` задаёт link, predictor block `X` считает link-scale predictor, а
+//! `Penalty` добавляет локальную регуляризацию.
+//!
+//! Используйте [`ParameterBlocks::new`] для обычной сборки tuple blocks: она
+//! последовательно назначает offsets и убирает ручной расчёт диапазонов в
+//! общем beta-векторе.
+//!
+//! # Observations and prediction
+//!
+//! [`Gamlss::try_new`] строит unweighted модель над borrowed response slice.
+//! [`Gamlss::try_new_weighted`] дополнительно принимает finite non-negative
+//! observation weights; нулевой вес исключает наблюдение из likelihood и
+//! gradient.
+//!
+//! Prediction methods возвращают link-scale `Eta` или natural-scale `Theta`:
+//! `predict_eta`, `predict_theta` используют training blocks, а методы
+//! `*_with_blocks` принимают совместимый tuple prediction blocks для новых
+//! строк.
 
 /// Абстракции design matrix.
 pub mod design;

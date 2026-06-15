@@ -7,16 +7,7 @@ in Rust.
 > yet. The public API, internals, numerical behavior, and crate structure may
 > change substantially while the library is being developed.
 
-Most users should depend on the top-level `gamlss` crate instead:
+This crate contains distribution-specific building blocks used by typed GAMLSS
+models: family types, likelihoods, scores, and related helpers.
 
-```toml
-[dependencies]
-gamlss = "0.1"
-```
-
-This crate provides distribution-specific pieces used by typed GAMLSS models,
-including likelihood and score implementations for supported families.
-
-Use `gamlss-family` directly only when composing lower-level models or adding
-new family integrations. In ordinary applications it is pulled in transitively
-by `gamlss`.
+Use it when composing lower-level models or adding new family integrations.
