@@ -27,6 +27,12 @@ pub trait Family {
     type NllGradientEta;
 
     /// Преобразует предикторы с link-шкалы в параметры распределения.
+    ///
+    /// Per-parameter links are a convenient way to express independent scalar
+    /// constraints, such as positive scales. Dependent constraints between
+    /// parameters — for example correlations, covariance factors, ordered
+    /// cutpoints, or simplex weights — should be handled here by transforming
+    /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
     /// Negative log-likelihood для одного наблюдения на естественной шкале.
     fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
@@ -47,6 +53,47 @@ pub trait Family {
     ) -> (f64, Self::NllGradientEta);
 }
 
+/// Dense expected information matrix for a fixed-arity family.
+///
+/// This is an extension-point container for second-order fitting algorithms.
+/// The core model hot path does not consume it directly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DenseInformation<const K: usize> {
+    values: [[f64; K]; K],
+}
+
+impl<const K: usize> DenseInformation<K> {
+    /// Creates a dense information matrix from row-major values.
+    #[must_use]
+    pub const fn new(values: [[f64; K]; K]) -> Self {
+        Self { values }
+    }
+
+    /// Creates a diagonal information matrix.
+    #[must_use]
+    pub fn diagonal(diagonal: [f64; K]) -> Self {
+        let mut values = [[0.0; K]; K];
+        let mut index = 0;
+        while index < K {
+            values[index][index] = diagonal[index];
+            index += 1;
+        }
+        Self { values }
+    }
+
+    /// Returns the matrix entry at `row`, `col`.
+    #[must_use]
+    pub fn get(&self, row: usize, col: usize) -> f64 {
+        self.values[row][col]
+    }
+
+    /// Returns the underlying dense matrix.
+    #[must_use]
+    pub const fn as_array(&self) -> &[[f64; K]; K] {
+        &self.values
+    }
+}
+
 /// Extension trait for families that provide diagonal Fisher information.
 ///
 /// Families implementing this trait can be used with Fisher Scoring solvers
@@ -56,7 +103,7 @@ pub trait Family {
 /// Currently no built-in family implements this trait. It exists as an
 /// explicit extension point for future solver integrations — add
 /// implementations when you need Fisher Scoring for specific families.
-pub trait HasFisherInfo: Family {
+pub trait HasDiagonalFisherInfo: Family {
     /// Negative log-likelihood, NLL gradient, and diagonal Fisher information per
     /// observation on the link scale.
     ///
@@ -64,11 +111,30 @@ pub trait HasFisherInfo: Family {
     /// [`Family::Eta`] and [`Family::NllGradientEta`]. Each element is
     /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
     /// respect to the k-th link-scale predictor, given the observation.
-    fn nll_gradient_and_fisher_eta(
+    fn nll_gradient_and_diagonal_fisher_eta(
         &self,
         observation: Self::Observation<'_>,
         eta: Self::Eta,
     ) -> (f64, Self::NllGradientEta, Self::NllGradientEta);
+}
+
+/// Extension trait for families that provide dense expected information.
+///
+/// This trait covers families whose second-order structure has cross-parameter
+/// terms. It is intentionally not wired into [`crate::Gamlss`] evaluation yet;
+/// optimizer integrations can opt into it when they need expected information.
+pub trait HasExpectedInformation<const K: usize>: Family
+where
+    Self::Eta: ParameterParts<K>,
+    Self::NllGradientEta: ParameterParts<K>,
+{
+    /// Negative log-likelihood, NLL gradient, and dense expected information
+    /// per observation on the link scale.
+    fn nll_gradient_and_expected_information_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
 }
 
 /// Контейнер для eta или NLL-gradient у family с фиксированной арностью `K`.
@@ -244,6 +310,10 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
 /// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
 /// Their order defines the order of predictor blocks, gradient parts and flat
 /// coefficient ranges in compiled models.
+///
+/// `Links` describe the independent scalar link contracts for parameter
+/// blocks. More complex dependent constraints are still expressed by
+/// [`Family::theta`], which sees the full link-scale parameter set.
 pub trait ParameterizedFamily<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
