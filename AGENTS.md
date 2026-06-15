@@ -10,7 +10,7 @@
 
 Это Rust-native workspace для GAMLSS / distributional regression.
 
-Цель проекта — не прямой порт R `gamlss` или `gamlss2`(ориентироваться как на источник архитектурных edge cases). Их можно использовать как статистический ориентир, но архитектура должна оставаться Rust-идиоматичной: type-driven, zero-cost, backend-agnostic и optimizer-agnostic.
+Цель проекта — не прямой порт R `gamlss` или `gamlss2`(ориентироваться как на источник архитектурных edge cases). Их можно использовать как статистический ориентир, но архитектура должна оставаться Rust-идиоматичной: type-driven, zero-cost, backend-agnostic и optimizer-agnostic. Также библиотека больше тяготеет к ML-стилю, чем к стилю статистической библиотеки.
 
 ## Структура workspace
 

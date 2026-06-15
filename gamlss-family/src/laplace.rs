@@ -54,11 +54,11 @@ where
         LOG_2 + theta.sigma.ln() + (y - theta.mu).abs() / theta.sigma
     }
 
-    /// Вычисляет NLL и score по eta для одного наблюдения.
+    /// Вычисляет NLL и gradient по eta для одного наблюдения.
     ///
     /// Градиент по `mu` использует субградиент sign (0 при `residual == 0`).
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -81,12 +81,12 @@ where
         };
         let d_nll_d_sigma = 1.0 / theta.sigma - residual.abs() / (theta.sigma * theta.sigma);
 
-        let score_eta = LaplaceEta {
+        let gradient_eta = LaplaceEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -144,8 +144,8 @@ where
 {
     type Eta = LaplaceEta;
     type Theta = LaplaceTheta;
-    type ScoreEta = LaplaceEta;
-    type Observation = f64;
+    type NllGradientEta = LaplaceEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -163,8 +163,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -206,16 +206,16 @@ mod tests {
 
     use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
     #[cfg(feature = "rand")]
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn laplace_score_matches_finite_difference() {
+    fn laplace_gradient_matches_finite_difference() {
         let family = DefaultLaplace::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
-    fn laplace_rejects_non_finite_domain_and_returns_nan_score() {
+    fn laplace_rejects_non_finite_domain_and_returns_nan_gradient() {
         let family = DefaultLaplace::new();
         let theta = LaplaceTheta {
             mu: 0.4,
@@ -247,7 +247,7 @@ mod tests {
                 .is_infinite()
         );
 
-        let (nll, score) = family.nll_and_score_eta(
+        let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
             LaplaceEta {
                 mu: 0.4,
@@ -255,8 +255,8 @@ mod tests {
             },
         );
         assert!(nll.is_infinite());
-        assert!(score.mu.is_nan());
-        assert!(score.sigma.is_nan());
+        assert!(gradient.mu.is_nan());
+        assert!(gradient.sigma.is_nan());
     }
 
     #[cfg(feature = "rand")]

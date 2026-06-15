@@ -49,7 +49,7 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: GammaEta) -> (f64, GammaEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: GammaEta) -> (f64, GammaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -64,12 +64,12 @@ where
 
         let d_shape = digamma(theta.shape) - theta.rate.ln() - y.ln();
         let d_rate = y - theta.shape / theta.rate;
-        let score_eta = GammaEta {
+        let gradient_eta = GammaEta {
             shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
             rate: d_rate * RateLink::derivative_inverse(eta.rate),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -127,8 +127,8 @@ where
 {
     type Eta = GammaEta;
     type Theta = GammaTheta;
-    type ScoreEta = GammaEta;
-    type Observation = f64;
+    type NllGradientEta = GammaEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -146,8 +146,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -194,12 +194,12 @@ mod tests {
     use gamlss_core::{Family, Link, Log};
 
     use super::{DefaultGamma, GammaTheta};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn gamma_score_matches_finite_difference() {
+    fn gamma_gradient_matches_finite_difference() {
         let family = DefaultGamma::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]

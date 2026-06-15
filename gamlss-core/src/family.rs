@@ -15,33 +15,36 @@ pub trait Family {
     ///
     /// Univariate families usually use `f64`. Multivariate, censored,
     /// interval, or mixture families can use small arrays, tuples, or custom
-    /// row-view structs without changing the compiled model machinery.
-    type Observation;
+    /// row-view structs without changing the compiled model machinery. The
+    /// lifetime parameter allows families to consume borrowed observations,
+    /// such as `&'obs [f64]`, without forcing row copies.
+    type Observation<'obs>;
     /// Аддитивные предикторы на link-шкале.
     type Eta;
     /// Параметры распределения на естественной шкале.
     type Theta;
     /// Градиент negative log-likelihood по `Eta`.
-    type ScoreEta;
+    type NllGradientEta;
 
     /// Преобразует предикторы с link-шкалы в параметры распределения.
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
     /// Negative log-likelihood для одного наблюдения на естественной шкале.
-    fn nll(&self, observation: Self::Observation, theta: Self::Theta) -> f64;
+    fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
     /// Negative log-likelihood для одного наблюдения на link-шкале.
-    fn nll_eta(&self, observation: Self::Observation, eta: Self::Eta) -> f64 {
+    fn nll_eta<'obs>(&self, observation: Self::Observation<'obs>, eta: Self::Eta) -> f64 {
         self.nll(observation, self.theta(eta))
     }
-    /// Negative log-likelihood и score по `Eta` для одного наблюдения.
+    /// Negative log-likelihood и NLL-gradient по `Eta` для одного наблюдения.
     ///
-    /// `ScoreEta` is the gradient of the negative log-likelihood with respect
-    /// to the link-scale predictors `Eta`, after applying the chain rule for
-    /// the family links. It must have the same arity and ordering as `Eta`.
-    fn nll_and_score_eta(
+    /// `NllGradientEta` is the gradient of the negative log-likelihood with
+    /// respect to the link-scale predictors `Eta`, after applying the chain
+    /// rule for the family links. It must have the same arity and ordering as
+    /// `Eta`.
+    fn nll_and_gradient_eta(
         &self,
-        observation: Self::Observation,
+        observation: Self::Observation<'_>,
         eta: Self::Eta,
-    ) -> (f64, Self::ScoreEta);
+    ) -> (f64, Self::NllGradientEta);
 }
 
 /// Extension trait for families that provide diagonal Fisher information.
@@ -54,21 +57,21 @@ pub trait Family {
 /// explicit extension point for future solver integrations — add
 /// implementations when you need Fisher Scoring for specific families.
 pub trait HasFisherInfo: Family {
-    /// Negative log-likelihood, score, and diagonal Fisher information per
+    /// Negative log-likelihood, NLL gradient, and diagonal Fisher information per
     /// observation on the link scale.
     ///
     /// The `fisher` component must have the same arity and ordering as
-    /// [`Family::Eta`] and [`Family::ScoreEta`]. Each element is
+    /// [`Family::Eta`] and [`Family::NllGradientEta`]. Each element is
     /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
     /// respect to the k-th link-scale predictor, given the observation.
-    fn nll_score_and_fisher_eta(
+    fn nll_gradient_and_fisher_eta(
         &self,
-        observation: Self::Observation,
+        observation: Self::Observation<'_>,
         eta: Self::Eta,
-    ) -> (f64, Self::ScoreEta, Self::ScoreEta);
+    ) -> (f64, Self::NllGradientEta, Self::NllGradientEta);
 }
 
-/// Контейнер для eta или score у family с фиксированной арностью `K`.
+/// Контейнер для eta или NLL-gradient у family с фиксированной арностью `K`.
 ///
 /// `part(index)` is used in the model hot path after compile-time arity
 /// selection. Callers pass `index < K`; implementations may use `unreachable!`
@@ -239,12 +242,12 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
 /// Family с фиксированным числом параметров, ролями параметров и link-функциями.
 ///
 /// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
-/// Their order defines the order of predictor blocks, score parts and flat
+/// Their order defines the order of predictor blocks, gradient parts and flat
 /// coefficient ranges in compiled models.
 pub trait ParameterizedFamily<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::ScoreEta: ParameterParts<K>,
+    Self::NllGradientEta: ParameterParts<K>,
 {
     /// Роли параметров family.
     type Params;

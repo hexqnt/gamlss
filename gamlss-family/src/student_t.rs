@@ -70,12 +70,12 @@ where
         student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
     }
 
-    /// Вычисляет NLL и score по eta для одного наблюдения.
+    /// Вычисляет NLL и gradient по eta для одного наблюдения.
     ///
     /// Использует аналитические производные с учётом фиксированного `nu`
     /// и домножает на производные link-функций (chain rule).
     #[inline(always)]
-    fn nll_and_score_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
+    fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = self.nll_theta(y, theta);
         if !nll.is_finite() {
@@ -95,12 +95,12 @@ where
         let d_nll_d_mu = -slope / sigma;
         let d_nll_d_sigma = (1.0 - slope * z) / sigma;
 
-        let score_eta = StudentTEta {
+        let gradient_eta = StudentTEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -158,8 +158,8 @@ where
 {
     type Eta = StudentTEta;
     type Theta = StudentTTheta;
-    type ScoreEta = StudentTEta;
-    type Observation = f64;
+    type NllGradientEta = StudentTEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -177,8 +177,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        self.nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        self.nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -228,7 +228,7 @@ mod tests {
 
     use super::{DefaultStudentT, StudentTEta, StudentTTheta};
     #[cfg(feature = "rand")]
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn student_t_rejects_invalid_degrees_of_freedom() {
@@ -237,13 +237,13 @@ mod tests {
     }
 
     #[test]
-    fn student_t_score_matches_finite_difference() {
+    fn student_t_gradient_matches_finite_difference() {
         let family = DefaultStudentT::try_new(5.0).unwrap();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
-    fn student_t_rejects_non_finite_domain_and_returns_nan_score() {
+    fn student_t_rejects_non_finite_domain_and_returns_nan_gradient() {
         let family = DefaultStudentT::try_new(5.0).unwrap();
         let theta = StudentTTheta {
             mu: 0.4,
@@ -275,7 +275,7 @@ mod tests {
                 .is_infinite()
         );
 
-        let (nll, score) = family.nll_and_score_eta(
+        let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
             StudentTEta {
                 mu: 0.4,
@@ -283,8 +283,8 @@ mod tests {
             },
         );
         assert!(nll.is_infinite());
-        assert!(score.mu.is_nan());
-        assert!(score.sigma.is_nan());
+        assert!(gradient.mu.is_nan());
+        assert!(gradient.sigma.is_nan());
     }
 
     #[cfg(feature = "rand")]

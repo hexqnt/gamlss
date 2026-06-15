@@ -47,7 +47,7 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: WeibullEta) -> (f64, WeibullEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: WeibullEta) -> (f64, WeibullEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -64,12 +64,12 @@ where
         let power = (theta.shape * log_ratio).exp();
         let d_shape = -1.0 / theta.shape - log_ratio + power * log_ratio;
         let d_scale = theta.shape * (1.0 - power) / theta.scale;
-        let score_eta = WeibullEta {
+        let gradient_eta = WeibullEta {
             shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
             scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -127,8 +127,8 @@ where
 {
     type Eta = WeibullEta;
     type Theta = WeibullTheta;
-    type ScoreEta = WeibullEta;
-    type Observation = f64;
+    type NllGradientEta = WeibullEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -146,8 +146,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -168,12 +168,12 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{DefaultWeibull, WeibullTheta};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn weibull_score_matches_finite_difference() {
+    fn weibull_gradient_matches_finite_difference() {
         let family = DefaultWeibull::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]

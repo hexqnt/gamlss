@@ -5,6 +5,16 @@ use crate::{
     ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
 };
 
+mod layout;
+mod observation;
+mod workspace;
+
+pub use layout::{
+    Diagnostics, ParameterCoefficients, ParameterLayout, ParameterSlice, UnpackedTheta,
+};
+pub use observation::ObservationView;
+pub use workspace::GradientWorkspace;
+
 /// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
 ///
 /// Implementations are generated for typed tuples of [`ParameterBlock`]. The
@@ -33,9 +43,9 @@ where
     /// `obs` has already been validated by the model constructor. Each scalar
     /// likelihood contribution is multiplied by the corresponding observation
     /// weight.
-    fn train_nll<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
+    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
-        Obs: ObservationView<Observation = F::Observation>;
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
     /// Аддитивные предикторы на link-шкале для одной строки.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
@@ -43,9 +53,9 @@ where
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
     /// Значение weighted negative log-likelihood плюс penalties.
-    fn value<Obs>(&self, family: &F, obs: &Obs, beta: &[f64]) -> f64
+    fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
-        Obs: ObservationView<Observation = F::Observation>,
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
         self.train_nll(family, obs, beta) + self.penalty_value(beta)
     }
@@ -55,213 +65,25 @@ where
         let ranges = self.block_ranges();
         workspace.prepare(ranges.len());
         for (index, range) in ranges.iter().enumerate() {
-            workspace.prepare_score(index, nobs);
+            workspace.prepare_row_gradient(index, nobs);
             let _ = workspace.local_gradient_mut(index, range.len());
         }
         workspace
     }
     /// Добавляет weighted gradient, переиспользуя временные буферы из `workspace`.
-    fn gradient_into_workspace<Obs>(
+    fn gradient_into_workspace<'obs, Obs>(
         &self,
         family: &F,
-        obs: &Obs,
+        obs: &'obs Obs,
         beta: &[f64],
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
     ) where
-        Obs: ObservationView<Observation = F::Observation>;
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
     /// Диапазоны коэффициентов каждого block в общем beta-векторе.
     fn block_ranges(&self) -> Vec<Range<usize>>;
     /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
     fn parameter_layout(&self) -> ParameterLayout;
-}
-
-/// Reusable scratch buffers for GAMLSS gradient evaluation.
-///
-/// The workspace stores one per-observation score vector and one local
-/// coefficient-gradient vector per parameter block. Reusing it avoids the
-/// temporary `Vec` allocations that otherwise happen inside each gradient call.
-/// The workspace is model-shape specific but can be reused across different
-/// beta vectors for the same compiled model.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct GradientWorkspace {
-    scores: Vec<Vec<f64>>,
-    local_gradients: Vec<Vec<f64>>,
-}
-
-impl GradientWorkspace {
-    /// Creates an empty workspace. Buffers are allocated lazily on first use.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn prepare(&mut self, block_count: usize) {
-        self.scores.resize_with(block_count, Vec::new);
-        self.local_gradients.resize_with(block_count, Vec::new);
-    }
-
-    fn prepare_score(&mut self, index: usize, len: usize) {
-        let score = &mut self.scores[index];
-        score.resize(len, 0.0);
-    }
-
-    fn set_score(&mut self, index: usize, row: usize, value: f64) {
-        debug_assert!(index < self.scores.len());
-        debug_assert!(row < self.scores[index].len());
-        self.scores[index][row] = value;
-    }
-
-    fn local_gradient_mut(&mut self, index: usize, len: usize) -> &mut [f64] {
-        let gradient = &mut self.local_gradients[index];
-        gradient.resize(len, 0.0);
-        gradient.fill(0.0);
-        gradient
-    }
-
-    fn score_and_local_gradient_mut(
-        &mut self,
-        index: usize,
-        local_gradient_len: usize,
-    ) -> (&[f64], &mut [f64]) {
-        let local_gradient = &mut self.local_gradients[index];
-        local_gradient.resize(local_gradient_len, 0.0);
-        local_gradient.fill(0.0);
-
-        (self.scores[index].as_slice(), local_gradient.as_mut_slice())
-    }
-}
-
-/// Read-only row-wise observation access for training objective evaluation.
-///
-/// This trait is intentionally small: it describes the row-wise data needed by
-/// the likelihood loop. Implementations should make
-/// [`len`](Self::len) O(1), keep it stable for the lifetime of the model, and
-/// provide deterministic, panic-free access for `row < len()`.
-pub trait ObservationView {
-    /// Observation representation returned for one row.
-    type Observation;
-
-    /// Number of observations.
-    fn len(&self) -> usize;
-
-    /// Returns `true` if there are no observations.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Observation value for `row`.
-    fn observation_at(&self, row: usize) -> Self::Observation;
-
-    /// Non-negative finite observation weight for `row`.
-    fn weight_at(&self, row: usize) -> f64;
-
-    /// Validates observation-level invariants before hot-path evaluation.
-    fn validate(&self) -> Result<(), ModelError> {
-        for row in 0..self.len() {
-            validate_observation_weight(row, self.weight_at(row))?;
-        }
-        Ok(())
-    }
-}
-
-impl ObservationView for &[f64] {
-    type Observation = f64;
-
-    fn len(&self) -> usize {
-        <[f64]>::len(self)
-    }
-
-    fn observation_at(&self, row: usize) -> Self::Observation {
-        self[row]
-    }
-
-    fn weight_at(&self, _row: usize) -> f64 {
-        1.0
-    }
-
-    fn validate(&self) -> Result<(), ModelError> {
-        Ok(())
-    }
-}
-
-impl ObservationView for (&[f64], &[f64]) {
-    type Observation = f64;
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn observation_at(&self, row: usize) -> Self::Observation {
-        self.0[row]
-    }
-
-    fn weight_at(&self, row: usize) -> f64 {
-        self.1[row]
-    }
-
-    fn validate(&self) -> Result<(), ModelError> {
-        let expected = self.0.len();
-        let actual = self.1.len();
-        if actual != expected {
-            return Err(ModelError::WeightLength { expected, actual });
-        }
-
-        for (index, weight) in self.1.iter().copied().enumerate() {
-            validate_observation_weight(index, weight)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl<const N: usize> ObservationView for &[[f64; N]] {
-    type Observation = [f64; N];
-
-    fn len(&self) -> usize {
-        <[[f64; N]]>::len(self)
-    }
-
-    fn observation_at(&self, row: usize) -> Self::Observation {
-        self[row]
-    }
-
-    fn weight_at(&self, _row: usize) -> f64 {
-        1.0
-    }
-
-    fn validate(&self) -> Result<(), ModelError> {
-        Ok(())
-    }
-}
-
-impl<const N: usize> ObservationView for (&[[f64; N]], &[f64]) {
-    type Observation = [f64; N];
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn observation_at(&self, row: usize) -> Self::Observation {
-        self.0[row]
-    }
-
-    fn weight_at(&self, row: usize) -> f64 {
-        self.1[row]
-    }
-
-    fn validate(&self) -> Result<(), ModelError> {
-        let expected = self.0.len();
-        let actual = self.1.len();
-        if actual != expected {
-            return Err(ModelError::WeightLength { expected, actual });
-        }
-
-        for (index, weight) in self.1.iter().copied().enumerate() {
-            validate_observation_weight(index, weight)?;
-        }
-
-        Ok(())
-    }
 }
 
 /// Скомпилированная типизированная GAMLSS-модель.
@@ -287,7 +109,7 @@ pub struct Gamlss<F, Blocks, Obs> {
 ///
 /// This wrapper is intended for optimizers that call `gradient` repeatedly.
 /// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
-/// avoiding per-call allocation of score and local-gradient vectors.
+/// avoiding per-call allocation of row-gradient and local-gradient vectors.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceGamlss<F, Blocks, Obs> {
     /// Wrapped compiled model.
@@ -309,123 +131,6 @@ pub struct WithGlobalPenalties<O, GP> {
     pub penalties: GP,
 }
 
-/// Именованный блок коэффициентов внутри плоского вектора параметров.
-///
-/// Связывает стабильное имя параметра распределения (например, `"mu"`)
-/// с диапазоном позиций в общем beta-векторе.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParameterSlice {
-    /// Stable distribution parameter name, e.g. `"mu"` or `"sigma"`.
-    pub name: &'static str,
-    /// Coefficient range for this parameter inside the full beta vector.
-    pub range: Range<usize>,
-}
-
-/// Отображение параметров распределения на диапазоны в плоском beta-векторе.
-///
-/// Используется для introspection модели: распаковки коэффициентов,
-/// построения diagnostics и передачи информации внешним оптимизаторам.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParameterLayout {
-    slices: Vec<ParameterSlice>,
-}
-
-impl ParameterLayout {
-    /// Creates a layout from named slices.
-    pub fn new(slices: Vec<ParameterSlice>) -> Self {
-        Self { slices }
-    }
-
-    /// Returns all parameter slices in model order.
-    pub fn slices(&self) -> &[ParameterSlice] {
-        &self.slices
-    }
-
-    /// Returns the coefficient range for `name`, if present.
-    pub fn slice(&self, name: &str) -> Option<Range<usize>> {
-        self.slices
-            .iter()
-            .find(|slice| slice.name == name)
-            .map(|slice| slice.range.clone())
-    }
-
-    /// Returns the coefficient range for typed parameter marker `P`, if present.
-    pub fn slice_of<P>(&self) -> Option<Range<usize>>
-    where
-        P: ParameterName,
-    {
-        self.slice(P::NAME)
-    }
-}
-
-/// Коэффициенты одного распакованного параметрического блока.
-///
-/// Возвращается методом [`Gamlss::unpack_theta`] для human-readable
-/// представления плоского beta-вектора.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParameterCoefficients {
-    /// Stable distribution parameter name.
-    pub name: &'static str,
-    /// Coefficients for this parameter block.
-    pub coefficients: Vec<f64>,
-}
-
-/// Человекочитаемое представление плоского beta-вектора.
-///
-/// Содержит по одному [`ParameterCoefficients`] для каждого параметра
-/// распределения в порядке модели.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UnpackedTheta {
-    /// Parameter blocks in model order.
-    pub blocks: Vec<ParameterCoefficients>,
-}
-
-impl UnpackedTheta {
-    /// Returns an unpacked coefficient block by parameter name.
-    pub fn block(&self, name: &str) -> Option<&ParameterCoefficients> {
-        self.blocks.iter().find(|block| block.name == name)
-    }
-
-    /// Returns an unpacked coefficient block for typed parameter marker `P`.
-    pub fn block_of<P>(&self) -> Option<&ParameterCoefficients>
-    where
-        P: ParameterName,
-    {
-        self.block(P::NAME)
-    }
-
-    /// Returns coefficients by parameter name.
-    pub fn coefficients(&self, name: &str) -> Option<&[f64]> {
-        self.block(name).map(|block| block.coefficients.as_slice())
-    }
-
-    /// Returns coefficients for typed parameter marker `P`.
-    pub fn coefficients_of<P>(&self) -> Option<&[f64]>
-    where
-        P: ParameterName,
-    {
-        self.coefficients(P::NAME)
-    }
-}
-
-/// Диагностики обучения для кандидата theta.
-///
-/// Содержит значения objective, weighted negative log-likelihood (без штрафов),
-/// суммарный штраф, норму градиента и число не-finite компонент градиента.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Diagnostics {
-    /// Full objective value: weighted training negative log-likelihood plus penalties.
-    pub objective: f64,
-    /// Weighted training negative log-likelihood before penalties.
-    pub train_nll: f64,
-    /// Total penalty contribution.
-    pub penalty: f64,
-    /// Euclidean norm of the objective gradient.
-    pub gradient_norm: f64,
-    /// Number of non-finite gradient entries.
-    pub nonfinite_gradient_count: usize,
-}
-
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
     /// Wraps the model with penalties evaluated on the full beta vector.
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
@@ -440,7 +145,7 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs>
 where
     F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView<Observation = F::Observation>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
     /// Создаёт модель после проверки observation view и blocks.
     ///
@@ -757,7 +462,7 @@ where
 
 impl<'a, F, Blocks> Gamlss<F, Blocks, &'a [f64]>
 where
-    F: Family<Observation = f64>,
+    F: for<'obs> Family<Observation<'obs> = f64>,
     Blocks: GamlssBlocks<F>,
 {
     /// Создаёт unweighted модель после проверки response и blocks.
@@ -768,14 +473,14 @@ where
 
 impl<'a, F, Blocks> Gamlss<F, Blocks, (&'a [f64], &'a [f64])>
 where
-    F: Family<Observation = f64>,
+    F: for<'obs> Family<Observation<'obs> = f64>,
     Blocks: GamlssBlocks<F>,
 {
     /// Создаёт модель с observation weights после проверки response, weights и blocks.
     ///
     /// Weights must have the same length as `y`; each weight must be finite and
     /// non-negative. Zero weights are accepted and exclude the corresponding
-    /// observation from likelihood and score contributions.
+    /// observation from likelihood and gradient contributions.
     pub fn try_new_weighted(
         family: F,
         blocks: Blocks,
@@ -790,7 +495,7 @@ impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
 where
     F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView<Observation = F::Observation>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
     /// Creates a workspace-backed objective from a compiled model.
     pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
@@ -850,7 +555,7 @@ impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
 where
     F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView<Observation = F::Observation>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
     type Error = ModelError;
 
@@ -871,7 +576,7 @@ impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
 where
     F: Family,
     Blocks: GamlssBlocks<F>,
-    Obs: ObservationView<Observation = F::Observation>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
     type Error = ModelError;
 
@@ -926,7 +631,7 @@ macro_rules! impl_gamlss_blocks {
         penalties = ($($penalty:ident),+);
         blocks = ($($block:ident),+);
         beta_blocks = ($($beta_block:ident),+);
-        scores = ($($score:ident),+);
+        row_gradients = ($($row_gradient:ident),+);
         local_grads = ($($local_grad:ident),+);
         indices = ($($idx:tt),+)
     ) => {
@@ -935,7 +640,7 @@ macro_rules! impl_gamlss_blocks {
         where
             F: ParameterizedFamily<$k, Params = ($($param,)+), Links = ($($link,)+)>,
             F::Eta: ParameterParts<$k>,
-            F::ScoreEta: ParameterParts<$k>,
+            F::NllGradientEta: ParameterParts<$k>,
             $($param: ParameterName,)+
             $($link: crate::Link<f64>,)+
             $($design: PredictorBlock,)+
@@ -977,14 +682,14 @@ macro_rules! impl_gamlss_blocks {
                 Ok(())
             }
 
-            fn train_nll<Obs>(
+            fn train_nll<'obs, Obs>(
                 &self,
                 family: &F,
-                obs: &Obs,
+                obs: &'obs Obs,
                 beta: &[f64],
             ) -> f64
             where
-                Obs: ObservationView<Observation = F::Observation>,
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
@@ -1019,40 +724,40 @@ macro_rules! impl_gamlss_blocks {
                 let mut workspace = GradientWorkspace::new();
                 workspace.prepare($k);
                 $(
-                    workspace.prepare_score($idx, y_len);
+                    workspace.prepare_row_gradient($idx, y_len);
                     let _ = workspace.local_gradient_mut($idx, self.$idx.len());
                 )+
                 workspace
             }
 
-            fn gradient_into_workspace<Obs>(
+            fn gradient_into_workspace<'obs, Obs>(
                 &self,
                 family: &F,
-                obs: &Obs,
+                obs: &'obs Obs,
                 beta: &[f64],
                 grad: &mut [f64],
                 workspace: &mut GradientWorkspace,
             )
             where
-                Obs: ObservationView<Observation = F::Observation>,
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 workspace.prepare($k);
-                $(workspace.prepare_score($idx, obs.len());)+
+                $(workspace.prepare_row_gradient($idx, obs.len());)+
 
                 for row in 0..obs.len() {
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    let (_, score) = family.nll_and_score_eta(observation, eta);
+                    let (_, gradient) = family.nll_and_gradient_eta(observation, eta);
                     let weight = obs.weight_at(row);
-                    $(workspace.set_score($idx, row, weight * score.part($idx));)+
+                    $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
 
                 $(
-                    let ($score, $local_grad) =
-                        workspace.score_and_local_gradient_mut($idx, $block.len());
-                    $block.x.add_gradient($score, $beta_block, $local_grad);
+                    let ($row_gradient, $local_grad) =
+                        workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
+                    $block.x.add_gradient($row_gradient, $beta_block, $local_grad);
                     $block.penalty.add_gradient($beta_block, $local_grad);
                     add_into(&mut grad[$block.range()], $local_grad);
                 )+
@@ -1082,7 +787,7 @@ impl_gamlss_blocks!(
     penalties = (Pen1);
     blocks = (block1);
     beta_blocks = (beta1);
-    scores = (score1);
+    row_gradients = (row_gradient1);
     local_grads = (grad1);
     indices = (0)
 );
@@ -1095,7 +800,7 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2);
     blocks = (block1, block2);
     beta_blocks = (beta1, beta2);
-    scores = (score1, score2);
+    row_gradients = (row_gradient1, row_gradient2);
     local_grads = (grad1, grad2);
     indices = (0, 1)
 );
@@ -1108,7 +813,7 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3);
     blocks = (block1, block2, block3);
     beta_blocks = (beta1, beta2, beta3);
-    scores = (score1, score2, score3);
+    row_gradients = (row_gradient1, row_gradient2, row_gradient3);
     local_grads = (grad1, grad2, grad3);
     indices = (0, 1, 2)
 );
@@ -1121,7 +826,7 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3, Pen4);
     blocks = (block1, block2, block3, block4);
     beta_blocks = (beta1, beta2, beta3, beta4);
-    scores = (score1, score2, score3, score4);
+    row_gradients = (row_gradient1, row_gradient2, row_gradient3, row_gradient4);
     local_grads = (grad1, grad2, grad3, grad4);
     indices = (0, 1, 2, 3)
 );
@@ -1134,7 +839,13 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3, Pen4, Pen5);
     blocks = (block1, block2, block3, block4, block5);
     beta_blocks = (beta1, beta2, beta3, beta4, beta5);
-    scores = (score1, score2, score3, score4, score5);
+    row_gradients = (
+        row_gradient1,
+        row_gradient2,
+        row_gradient3,
+        row_gradient4,
+        row_gradient5
+    );
     local_grads = (grad1, grad2, grad3, grad4, grad5);
     indices = (0, 1, 2, 3, 4)
 );
@@ -1147,7 +858,14 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6);
     blocks = (block1, block2, block3, block4, block5, block6);
     beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6);
-    scores = (score1, score2, score3, score4, score5, score6);
+    row_gradients = (
+        row_gradient1,
+        row_gradient2,
+        row_gradient3,
+        row_gradient4,
+        row_gradient5,
+        row_gradient6
+    );
     local_grads = (grad1, grad2, grad3, grad4, grad5, grad6);
     indices = (0, 1, 2, 3, 4, 5)
 );
@@ -1160,7 +878,15 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7);
     blocks = (block1, block2, block3, block4, block5, block6, block7);
     beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7);
-    scores = (score1, score2, score3, score4, score5, score6, score7);
+    row_gradients = (
+        row_gradient1,
+        row_gradient2,
+        row_gradient3,
+        row_gradient4,
+        row_gradient5,
+        row_gradient6,
+        row_gradient7
+    );
     local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7);
     indices = (0, 1, 2, 3, 4, 5, 6)
 );
@@ -1173,7 +899,16 @@ impl_gamlss_blocks!(
     penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7, Pen8);
     blocks = (block1, block2, block3, block4, block5, block6, block7, block8);
     beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7, beta8);
-    scores = (score1, score2, score3, score4, score5, score6, score7, score8);
+    row_gradients = (
+        row_gradient1,
+        row_gradient2,
+        row_gradient3,
+        row_gradient4,
+        row_gradient5,
+        row_gradient6,
+        row_gradient7,
+        row_gradient8
+    );
     local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7, grad8);
     indices = (0, 1, 2, 3, 4, 5, 6, 7)
 );
@@ -1192,14 +927,6 @@ fn validate_block_rows(
             expected_rows,
             actual_rows,
         })
-    }
-}
-
-fn validate_observation_weight(index: usize, weight: f64) -> Result<(), ModelError> {
-    if weight.is_finite() && weight >= 0.0 {
-        Ok(())
-    } else {
-        Err(ModelError::InvalidWeight { index })
     }
 }
 
@@ -1274,8 +1001,8 @@ mod tests {
     impl Family for FixedSigmaNormal {
         type Eta = f64;
         type Theta = f64;
-        type ScoreEta = f64;
-        type Observation = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1286,7 +1013,7 @@ mod tests {
             0.5 * residual * residual
         }
 
-        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
             (self.nll(y, self.theta(eta)), eta - y)
         }
     }
@@ -1303,14 +1030,14 @@ mod tests {
         weight: f64,
     }
 
-    impl ObservationView for ShiftedObservations<'_> {
+    impl<'row> ObservationView<'row> for ShiftedObservations<'_> {
         type Observation = f64;
 
         fn len(&self) -> usize {
             self.y.len()
         }
 
-        fn observation_at(&self, row: usize) -> Self::Observation {
+        fn observation_at(&'row self, row: usize) -> Self::Observation {
             self.y[row] + self.shift
         }
 
@@ -1646,8 +1373,8 @@ mod tests {
     impl Family for StatefulLocation {
         type Eta = f64;
         type Theta = f64;
-        type ScoreEta = f64;
-        type Observation = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta + self.target_shift
@@ -1658,7 +1385,7 @@ mod tests {
             0.5 * residual * residual
         }
 
-        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
             let theta = self.theta(eta);
             (self.nll(y, theta), theta - y)
         }
@@ -1691,26 +1418,26 @@ mod tests {
     impl Family for BivariateLocation {
         type Eta = f64;
         type Theta = f64;
-        type ScoreEta = f64;
-        type Observation = [f64; 2];
+        type NllGradientEta = f64;
+        type Observation<'obs> = [f64; 2];
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
         }
 
-        fn nll(&self, observation: Self::Observation, theta: Self::Theta) -> f64 {
+        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
             let first = theta - observation[0];
             let second = theta - observation[1];
             0.5 * (first * first + second * second)
         }
 
-        fn nll_and_score_eta(
+        fn nll_and_gradient_eta(
             &self,
-            observation: Self::Observation,
+            observation: Self::Observation<'_>,
             eta: Self::Eta,
-        ) -> (f64, Self::ScoreEta) {
-            let score = (eta - observation[0]) + (eta - observation[1]);
-            (self.nll(observation, eta), score)
+        ) -> (f64, Self::NllGradientEta) {
+            let gradient = (eta - observation[0]) + (eta - observation[1]);
+            (self.nll(observation, eta), gradient)
         }
     }
 
@@ -1736,14 +1463,87 @@ mod tests {
         assert_relative_eq!(grad[0], -2.0);
     }
 
+    #[derive(Debug, Clone, PartialEq)]
+    struct BorrowedRows {
+        rows: Vec<Vec<f64>>,
+    }
+
+    impl<'row> ObservationView<'row> for BorrowedRows {
+        type Observation = &'row [f64];
+
+        fn len(&self) -> usize {
+            self.rows.len()
+        }
+
+        fn observation_at(&'row self, row: usize) -> Self::Observation {
+            self.rows[row].as_slice()
+        }
+
+        fn weight_at(&self, _row: usize) -> f64 {
+            1.0
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct BorrowedRowMean;
+
+    impl Family for BorrowedRowMean {
+        type Eta = f64;
+        type Theta = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = &'obs [f64];
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+            let mean = observation.iter().sum::<f64>() / observation.len() as f64;
+            let residual = theta - mean;
+            0.5 * residual * residual
+        }
+
+        fn nll_and_gradient_eta(
+            &self,
+            observation: Self::Observation<'_>,
+            eta: Self::Eta,
+        ) -> (f64, Self::NllGradientEta) {
+            let mean = observation.iter().sum::<f64>() / observation.len() as f64;
+            (self.nll(observation, eta), eta - mean)
+        }
+    }
+
+    impl ParameterizedFamily<1> for BorrowedRowMean {
+        type Params = (Mu,);
+        type Links = (Identity,);
+    }
+
+    #[test]
+    fn model_accepts_borrowed_dynamic_observation_rows() {
+        let obs = BorrowedRows {
+            rows: vec![vec![1.0, 3.0], vec![2.0, 4.0]],
+        };
+        let x = DenseDesign::intercept(obs.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new_with_observations(BorrowedRowMean, (mu,), obs).unwrap();
+        let beta = vec![2.0];
+        let mut grad = vec![0.0];
+
+        assert_relative_eq!(model.value(&beta).unwrap(), 0.5);
+
+        model.gradient(&beta, &mut grad).unwrap();
+
+        assert_relative_eq!(grad[0], -1.0);
+    }
+
     #[derive(Debug, Clone, Copy)]
     struct ThreeParameterMock;
 
     impl Family for ThreeParameterMock {
         type Eta = (f64, f64, f64);
         type Theta = (f64, f64, f64);
-        type ScoreEta = (f64, f64, f64);
-        type Observation = f64;
+        type NllGradientEta = (f64, f64, f64);
+        type Observation<'obs> = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1756,9 +1556,9 @@ mod tests {
             0.5 * (first * first + second * second + third * third)
         }
 
-        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-            let score = (eta.0 - y, eta.1 - 1.0, eta.2 + 1.0);
-            (self.nll(y, eta), score)
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            let gradient = (eta.0 - y, eta.1 - 1.0, eta.2 + 1.0);
+            (self.nll(y, eta), gradient)
         }
     }
 
@@ -1804,8 +1604,8 @@ mod tests {
     impl Family for FourParameterMock {
         type Eta = (f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64);
-        type ScoreEta = (f64, f64, f64, f64);
-        type Observation = f64;
+        type NllGradientEta = (f64, f64, f64, f64);
+        type Observation<'obs> = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             (eta.0 + 1.0, eta.1 + 2.0, eta.2 + 3.0, eta.3 + 4.0)
@@ -1815,7 +1615,7 @@ mod tests {
             theta.0 + theta.1 + theta.2 + theta.3 + y
         }
 
-        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
             (self.nll(y, self.theta(eta)), (1.0, 1.0, 1.0, 1.0))
         }
     }
@@ -1838,8 +1638,8 @@ mod tests {
     impl Family for FiveParameterMock {
         type Eta = (f64, f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64, f64);
-        type ScoreEta = (f64, f64, f64, f64, f64);
-        type Observation = f64;
+        type NllGradientEta = (f64, f64, f64, f64, f64);
+        type Observation<'obs> = f64;
 
         fn theta(&self, eta: Self::Eta) -> Self::Theta {
             eta
@@ -1858,7 +1658,7 @@ mod tests {
                 .sum::<f64>()
         }
 
-        fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
             (
                 self.nll(y, eta),
                 (
@@ -2044,8 +1844,8 @@ mod tests {
         impl Family for TwoParamMock {
             type Eta = (f64, f64);
             type Theta = (f64, f64);
-            type ScoreEta = (f64, f64);
-            type Observation = f64;
+            type NllGradientEta = (f64, f64);
+            type Observation<'obs> = f64;
 
             fn theta(&self, eta: Self::Eta) -> Self::Theta {
                 eta
@@ -2057,9 +1857,9 @@ mod tests {
                 0.5 * (first * first + second * second)
             }
 
-            fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-                let score = (eta.0 - y, eta.1 - 1.0);
-                (self.nll(y, eta), score)
+            fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+                let gradient = (eta.0 - y, eta.1 - 1.0);
+                (self.nll(y, eta), gradient)
             }
         }
 

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Распределения, likelihood и score для GAMLSS.
+//! Распределения, likelihood и NLL gradients для GAMLSS.
 
 /// Beta distribution.
 pub mod beta;
@@ -50,16 +50,16 @@ pub(crate) mod test_support {
     const DEFAULT_EPSILON: f64 = 1.0e-6;
     const DEFAULT_TOLERANCE: f64 = 1.0e-6;
 
-    pub(crate) fn assert_score_matches_finite_difference<F, const K: usize>(
+    pub(crate) fn assert_gradient_matches_finite_difference<F, const K: usize>(
         family: &F,
         y: f64,
         eta: [f64; K],
     ) where
-        F: Family<Observation = f64>,
+        F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::ScoreEta: ParameterParts<K>,
+        F::NllGradientEta: ParameterParts<K>,
     {
-        assert_score_matches_finite_difference_with_tolerance::<F, K>(
+        assert_gradient_matches_finite_difference_with_tolerance::<F, K>(
             family,
             y,
             eta,
@@ -68,18 +68,18 @@ pub(crate) mod test_support {
         );
     }
 
-    pub(crate) fn assert_score_matches_finite_difference_with_tolerance<F, const K: usize>(
+    pub(crate) fn assert_gradient_matches_finite_difference_with_tolerance<F, const K: usize>(
         family: &F,
         y: f64,
         eta: [f64; K],
         epsilon: f64,
         tolerance: f64,
     ) where
-        F: Family<Observation = f64>,
+        F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::ScoreEta: ParameterParts<K>,
+        F::NllGradientEta: ParameterParts<K>,
     {
-        let (_, score) = family.nll_and_score_eta(y, F::Eta::from_array(eta));
+        let (_, gradient) = family.nll_and_gradient_eta(y, F::Eta::from_array(eta));
 
         for index in 0..K {
             let mut plus = eta;
@@ -90,15 +90,15 @@ pub(crate) mod test_support {
             let finite_difference = (family.nll_eta(y, F::Eta::from_array(plus))
                 - family.nll_eta(y, F::Eta::from_array(minus)))
                 / (2.0 * epsilon);
-            let actual = score.part(index);
+            let actual = gradient.part(index);
 
             assert!(
                 actual.is_finite(),
-                "score component {index} is not finite: {actual}"
+                "gradient component {index} is not finite: {actual}"
             );
             assert!(
                 finite_difference.is_finite(),
-                "finite-difference score component {index} is not finite: {finite_difference}"
+                "finite-difference gradient component {index} is not finite: {finite_difference}"
             );
             assert_relative_eq!(actual, finite_difference, epsilon = tolerance);
         }

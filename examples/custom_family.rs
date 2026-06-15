@@ -5,7 +5,7 @@
 //! - choose typed parameter markers and link functions through
 //!   `ParameterizedFamily`;
 //! - convert link-scale predictors `Eta` to natural parameters `Theta`;
-//! - return scalar negative log-likelihood and its score on the link scale.
+//! - return scalar negative log-likelihood and its NLL gradient on the link scale.
 
 #![allow(clippy::suboptimal_flops)]
 
@@ -71,8 +71,8 @@ where
 {
     type Eta = UserNormalEta;
     type Theta = UserNormalTheta;
-    type ScoreEta = UserNormalEta;
-    type Observation = f64;
+    type NllGradientEta = UserNormalEta;
+    type Observation<'obs> = f64;
 
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         UserNormalTheta {
@@ -92,7 +92,7 @@ where
         HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
     }
 
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         let theta = self.theta(eta);
         let nll = self.nll(y, theta);
         if !nll.is_finite() {
@@ -110,12 +110,12 @@ where
         let d_nll_d_mu = (theta.mu - y) / sigma2;
         let d_nll_d_sigma = (1.0 / theta.sigma) - (residual * residual / (sigma2 * theta.sigma));
 
-        let score_eta = UserNormalEta {
+        let gradient_eta = UserNormalEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -146,7 +146,7 @@ where
 
 fn erf_approx(x: f64) -> f64 {
     // Abramowitz-Stegun 7.1.26 approximation. Good enough for a helper example;
-    // likelihood and score above do not depend on this approximation.
+    // likelihood and NLL gradient above do not depend on this approximation.
     let sign = if x.is_sign_negative() { -1.0 } else { 1.0 };
     let abs_x = x.abs();
     let t = 1.0 / (1.0 + 0.327_591_1 * abs_x);

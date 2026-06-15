@@ -52,7 +52,7 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: LogNormalEta) -> (f64, LogNormalEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: LogNormalEta) -> (f64, LogNormalEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -69,12 +69,12 @@ where
         let sigma2 = theta.sigma * theta.sigma;
         let d_mu = (theta.mu - y.ln()) / sigma2;
         let d_sigma = 1.0 / theta.sigma - residual * residual / (sigma2 * theta.sigma);
-        let score_eta = LogNormalEta {
+        let gradient_eta = LogNormalEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -132,8 +132,8 @@ where
 {
     type Eta = LogNormalEta;
     type Theta = LogNormalTheta;
-    type ScoreEta = LogNormalEta;
-    type Observation = f64;
+    type NllGradientEta = LogNormalEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -151,8 +151,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -195,12 +195,12 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{DefaultLogNormal, LogNormalTheta};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn log_normal_score_matches_finite_difference() {
+    fn log_normal_gradient_matches_finite_difference() {
         let family = DefaultLogNormal::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]

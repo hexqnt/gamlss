@@ -56,12 +56,12 @@ where
         HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
     }
 
-    /// Вычисляет NLL и score по eta для одного наблюдения.
+    /// Вычисляет NLL и gradient по eta для одного наблюдения.
     ///
     /// Использует аналитические производные NLL по `mu` и `sigma` и
     /// домножает на производные link-функций (chain rule).
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -79,12 +79,12 @@ where
         let d_nll_d_mu = (theta.mu - y) / sigma2;
         let d_nll_d_sigma = (1.0 / theta.sigma) - (residual * residual / (sigma2 * theta.sigma));
 
-        let score_eta = NormalEta {
+        let gradient_eta = NormalEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -142,8 +142,8 @@ where
 {
     type Eta = NormalEta;
     type Theta = NormalTheta;
-    type ScoreEta = NormalEta;
-    type Observation = f64;
+    type NllGradientEta = NormalEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -161,8 +161,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -242,16 +242,16 @@ mod tests {
     use gamlss_core::{DenseDesign, Family, NoPenalty, Objective};
 
     use super::{DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn normal_score_matches_finite_difference() {
+    fn normal_gradient_matches_finite_difference() {
         let family = DefaultNormal::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
-    fn normal_rejects_non_finite_domain_and_returns_nan_score() {
+    fn normal_rejects_non_finite_domain_and_returns_nan_gradient() {
         let family = DefaultNormal::new();
         let theta = NormalTheta {
             mu: 0.4,
@@ -283,7 +283,7 @@ mod tests {
                 .is_infinite()
         );
 
-        let (nll, score) = family.nll_and_score_eta(
+        let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
             NormalEta {
                 mu: 0.4,
@@ -291,8 +291,8 @@ mod tests {
             },
         );
         assert!(nll.is_infinite());
-        assert!(score.mu.is_nan());
-        assert!(score.sigma.is_nan());
+        assert!(gradient.mu.is_nan());
+        assert!(gradient.sigma.is_nan());
     }
 
     #[test]

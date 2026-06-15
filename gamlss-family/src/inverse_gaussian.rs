@@ -48,7 +48,7 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: InverseGaussianEta) -> (f64, InverseGaussianEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: InverseGaussianEta) -> (f64, InverseGaussianEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -64,12 +64,12 @@ where
         let residual = y - theta.mu;
         let d_mu = -theta.shape * residual / (theta.mu * theta.mu * theta.mu);
         let d_shape = -0.5 / theta.shape + residual * residual / (2.0 * theta.mu * theta.mu * y);
-        let score_eta = InverseGaussianEta {
+        let gradient_eta = InverseGaussianEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -127,8 +127,8 @@ where
 {
     type Eta = InverseGaussianEta;
     type Theta = InverseGaussianTheta;
-    type ScoreEta = InverseGaussianEta;
-    type Observation = f64;
+    type NllGradientEta = InverseGaussianEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -146,8 +146,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -168,12 +168,12 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{DefaultInverseGaussian, InverseGaussianTheta};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn inverse_gaussian_score_matches_finite_difference() {
+    fn inverse_gaussian_gradient_matches_finite_difference() {
         let family = DefaultInverseGaussian::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]

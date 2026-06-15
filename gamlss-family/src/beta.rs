@@ -55,7 +55,7 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta_values(y: f64, eta: BetaEta) -> (f64, BetaEta) {
+    fn nll_and_gradient_eta_values(y: f64, eta: BetaEta) -> (f64, BetaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
@@ -75,12 +75,12 @@ where
         let d_beta = digamma(beta) - common - (1.0 - y).ln();
         let d_mu = theta.precision * (d_alpha - d_beta);
         let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
-        let score_eta = BetaEta {
+        let gradient_eta = BetaEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             precision: d_precision * PrecisionLink::derivative_inverse(eta.precision),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -138,8 +138,8 @@ where
 {
     type Eta = BetaEta;
     type Theta = BetaTheta;
-    type ScoreEta = BetaEta;
-    type Observation = f64;
+    type NllGradientEta = BetaEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -157,8 +157,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        Self::nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -179,12 +179,12 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{BetaTheta, DefaultBeta};
-    use crate::test_support::assert_score_matches_finite_difference;
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn beta_score_matches_finite_difference() {
+    fn beta_gradient_matches_finite_difference() {
         let family = DefaultBeta::new();
-        assert_score_matches_finite_difference::<_, 2>(&family, 0.4, [0.2, 1.0]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 0.4, [0.2, 1.0]);
     }
 
     #[test]
