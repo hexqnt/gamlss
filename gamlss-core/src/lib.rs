@@ -50,8 +50,8 @@ pub mod predictor;
 pub use design::{DenseDesign, DesignMatrix};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, DenseInformation, Family, HasCdf, HasDiagonalFisherInfo, HasExpectedInformation,
-    HasQuantile, ParameterParts, ParameterizedFamily,
+    CanSimulate, DenseInformation, Family, HasCdf, HasDeviance, HasDiagonalFisherInfo,
+    HasExpectedInformation, HasInitialEta, HasQuantile, ParameterParts, ParameterizedFamily,
 };
 pub use link::{ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus};
 pub use model::{
@@ -75,12 +75,13 @@ pub mod prelude {
     pub use crate::{
         AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog, CoefficientTransform,
         DenseDesign, DenseInformation, DesignMatrix, Diagnostics, Family, Gamlss, GamlssBlocks,
-        GlobalPenalty, GradientWorkspace, HasCdf, HasDesignMatrix, HasDiagonalFisherInfo,
-        HasExpectedInformation, HasQuantile, Identity, LinearPredictorBlock, Link, Log, LogPlus,
-        Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, ObservationView,
-        OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
-        ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
-        Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, Shape, Sigma, Softplus,
-        SumBlock, Tau, TransformedScalar, UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+        GlobalPenalty, GradientWorkspace, HasCdf, HasDesignMatrix, HasDeviance,
+        HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasQuantile, Identity,
+        LinearPredictorBlock, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty,
+        Nu, Objective, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
+        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
+        RidgePenalty, Scale, Shape, Sigma, Softplus, SumBlock, Tau, TransformedScalar,
+        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
     };
 }

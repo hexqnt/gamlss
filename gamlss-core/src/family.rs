@@ -342,3 +342,31 @@ pub trait CanSimulate<Rng>: Family {
     /// Генерирует одно значение для параметров на естественной шкале.
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
 }
+
+/// Distribution helper для per-observation deviance.
+///
+/// This is intentionally separate from [`Family`] so compiled likelihood
+/// evaluation remains minimal. Diagnostics and residual tooling can opt into
+/// this trait when a family has a meaningful deviance definition.
+pub trait HasDeviance: Family {
+    /// Deviance contribution for one observation on the natural parameter scale.
+    ///
+    /// Implementations should return a non-finite value for invalid observation
+    /// or parameter domains rather than panicking, matching the rest of the
+    /// family helper contracts.
+    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+}
+
+/// Distribution helper для family-specific link-scale initialization.
+///
+/// This gives future fit layers a typed place to ask the family for starting
+/// predictors without hard-coding distribution heuristics outside the family
+/// implementation.
+pub trait HasInitialEta: Family {
+    /// Initial link-scale predictors for one observation.
+    ///
+    /// Implementations should return finite values when the observation is
+    /// inside the supported domain. Unsupported or invalid observations may
+    /// produce non-finite components instead of panicking.
+    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta;
+}

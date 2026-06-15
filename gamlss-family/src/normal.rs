@@ -3,12 +3,13 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    DesignMatrix, Family, Gamlss, Identity, LinearPredictorBlock, Link, Log, ModelError, Mu,
-    NoPenalty, ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty,
-    PositiveLink, Sigma,
+    DesignMatrix, Family, Gamlss, HasDeviance, HasInitialEta, Identity, LinearPredictorBlock, Link,
+    Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks, ParameterParts,
+    ParameterizedFamily, Penalty, PositiveLink, Sigma,
 };
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
+const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
 /// Нормальное распределение с типизированными link-функциями для `mu` и `sigma`.
 ///
@@ -175,6 +176,31 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+impl<MuLink, SigmaLink> HasDeviance for Normal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn deviance<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::INFINITY;
+        }
+
+        let z = (y - theta.mu) / theta.sigma;
+        z * z
+    }
+}
+
+impl HasInitialEta for Normal<Identity, Log> {
+    fn initial_eta<'obs>(&self, y: Self::Observation<'obs>) -> Self::Eta {
+        NormalEta {
+            mu: y,
+            sigma: DEFAULT_INITIAL_LOG_SIGMA,
+        }
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Normal<MuLink, SigmaLink>
 where
@@ -239,9 +265,9 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{DenseDesign, Family, NoPenalty, Objective};
+    use gamlss_core::{DenseDesign, Family, HasDeviance, HasInitialEta, NoPenalty, Objective};
 
-    use super::{DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
+    use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
@@ -293,6 +319,67 @@ mod tests {
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
         assert!(gradient.sigma.is_nan());
+    }
+
+    #[test]
+    fn normal_initial_eta_starts_inside_domain_for_valid_observation() {
+        let family = DefaultNormal::new();
+        let eta = family.initial_eta(1.7);
+
+        assert_relative_eq!(eta.mu, 1.7);
+        assert_relative_eq!(eta.sigma, DEFAULT_INITIAL_LOG_SIGMA);
+        assert!(family.nll_eta(1.7, eta).is_finite());
+    }
+
+    #[test]
+    fn normal_initial_eta_propagates_invalid_observation_without_panic() {
+        let family = DefaultNormal::new();
+        let invalid_eta = family.initial_eta(f64::NAN);
+
+        assert!(invalid_eta.mu.is_nan());
+        assert!(invalid_eta.sigma.is_finite());
+    }
+
+    #[test]
+    fn normal_deviance_returns_non_finite_for_invalid_domains() {
+        let family = DefaultNormal::new();
+
+        assert!(
+            family
+                .deviance(
+                    1.7,
+                    NormalTheta {
+                        mu: 1.7,
+                        sigma: 0.0,
+                    },
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .deviance(
+                    f64::NAN,
+                    NormalTheta {
+                        mu: 1.7,
+                        sigma: 1.0,
+                    },
+                )
+                .is_infinite()
+        );
+    }
+
+    #[test]
+    fn normal_deviance_is_standardized_squared_residual() {
+        let family = DefaultNormal::new();
+        let deviance = family.deviance(
+            2.5,
+            NormalTheta {
+                mu: 1.5,
+                sigma: 0.5,
+            },
+        );
+
+        assert_relative_eq!(deviance, 4.0);
     }
 
     #[test]

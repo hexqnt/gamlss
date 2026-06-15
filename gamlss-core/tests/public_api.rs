@@ -1,8 +1,8 @@
 use gamlss_core::{
-    DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDiagonalFisherInfo,
-    HasExpectedInformation, Identity, Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective,
-    ObservationView, ParameterBlock, ParameterParts, ParameterizedFamily, PredictorBlock,
-    SoftplusScalar,
+    DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Mu,
+    NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObservationView, ParameterBlock,
+    ParameterParts, ParameterizedFamily, PredictorBlock, SoftplusScalar,
 };
 
 #[test]
@@ -112,6 +112,18 @@ impl HasExpectedInformation<2> for DependentConstraintFamily {
     }
 }
 
+impl HasDeviance for DependentConstraintFamily {
+    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        2.0 * self.nll(observation, theta)
+    }
+}
+
+impl HasInitialEta for DependentConstraintFamily {
+    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta {
+        (Self::target(observation), 0.0)
+    }
+}
+
 #[test]
 fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information() {
     let obs = BorrowedRows {
@@ -161,5 +173,17 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     assert_eq!(
         DenseInformation::<2>::diagonal([2.0, 3.0]).as_array(),
         &[[2.0, 0.0], [0.0, 3.0]]
+    );
+}
+
+#[test]
+fn public_api_supports_deviance_and_initial_eta_extension_traits() {
+    let initial_eta = DependentConstraintFamily.initial_eta(&[1.0, 3.0]);
+
+    assert_eq!(initial_eta, (2.0, 0.0));
+    assert_eq!(
+        DependentConstraintFamily
+            .deviance(&[1.0, 3.0], DependentConstraintFamily.theta(initial_eta)),
+        0.0
     );
 }
