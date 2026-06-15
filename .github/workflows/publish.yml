@@ -34,8 +34,8 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features --locked
 
-      - name: Package workspace
-        run: cargo package --workspace --locked
+      - name: Check package contents
+        run: cargo package --workspace --locked --list
 
   publish:
     name: Publish to crates.io

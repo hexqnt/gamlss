@@ -19,6 +19,7 @@
 * `gamlss-family` — распределения, likelihoods, scores, CDF/quantile helpers.
 * `gamlss-spline` — spline bases, penalties и spline metadata.
 * `gamlss-formula` — optional dynamic formula/builder layer, который компилируется в typed models.
+* `gamlss-transform` — target transforms, их persisted state и domain-aware inverse transforms.
 
 ## Принципы дизайна
 

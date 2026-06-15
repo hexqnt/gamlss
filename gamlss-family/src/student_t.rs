@@ -227,7 +227,6 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{DefaultStudentT, StudentTEta, StudentTTheta};
-    #[cfg(feature = "rand")]
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]

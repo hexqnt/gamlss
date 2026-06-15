@@ -205,7 +205,6 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
-    #[cfg(feature = "rand")]
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
