@@ -29,6 +29,8 @@ Workspace также публикует отдельные crate-ы для бо�
 - `gamlss-core` — type-driven ядро для links, parameter blocks, objectives и
   compiled models.
 - `gamlss-family` — распределения, likelihoods и score helpers.
+- `gamlss-diagnostics` — post-fit PIT/CDF diagnostics и normalized quantile
+  residuals для supported continuous CDF families.
 - `gamlss-spline` — spline/Fourier predictors, penalties и spline metadata.
 - `gamlss-transform` — target preprocessing transforms.
 - `gamlss-formula` — dynamic formula/builder layer, который компилирует runtime

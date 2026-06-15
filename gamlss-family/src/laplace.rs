@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
+    Sigma,
 };
 #[cfg(feature = "rand")]
 use rand::RngExt;
@@ -177,6 +178,26 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+impl<MuLink, SigmaLink> HasCdf for Laplace<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let standardized = (y - theta.mu) / theta.sigma;
+        if standardized < 0.0 {
+            0.5 * standardized.exp()
+        } else {
+            1.0 - 0.5 * (-standardized).exp()
+        }
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Laplace<MuLink, SigmaLink>
 where
@@ -200,9 +221,10 @@ pub type DefaultLaplace = Laplace<Identity, Log>;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::Family;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -256,6 +278,55 @@ mod tests {
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
         assert!(gradient.sigma.is_nan());
+    }
+
+    #[test]
+    fn laplace_cdf_matches_reference_points() {
+        let family = DefaultLaplace::new();
+        let theta = LaplaceTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+
+        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5);
+        assert_relative_eq!(
+            family.cdf(theta.mu + theta.sigma, theta),
+            1.0 - 0.5 / std::f64::consts::E,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.cdf(theta.mu - theta.sigma, theta),
+            0.5 / std::f64::consts::E,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn laplace_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultLaplace::new();
+
+        assert!(
+            family
+                .cdf(
+                    f64::NAN,
+                    LaplaceTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    0.0,
+                    LaplaceTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 
     #[cfg(feature = "rand")]

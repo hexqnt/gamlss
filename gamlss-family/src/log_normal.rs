@@ -3,8 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
+    Sigma,
 };
+
+use crate::special::unit_normal_cdf;
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
@@ -165,6 +168,25 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+impl<MuLink, SigmaLink> HasCdf for LogNormal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if y <= 0.0
+            || !y.is_finite()
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        unit_normal_cdf((y.ln() - theta.mu) / theta.sigma)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for LogNormal<MuLink, SigmaLink>
 where
@@ -190,9 +212,10 @@ pub type DefaultLogNormal = LogNormal<Identity, Log>;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::Family;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{DefaultLogNormal, LogNormalTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -234,6 +257,55 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn log_normal_cdf_matches_reference_points() {
+        let family = DefaultLogNormal::new();
+        let theta = LogNormalTheta {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+
+        assert_relative_eq!(family.cdf(1.0, theta), 0.5, epsilon = 1.0e-7);
+        assert_relative_eq!(
+            family.cdf(std::f64::consts::E, theta),
+            0.841_344_746,
+            epsilon = 1.0e-7
+        );
+        assert_relative_eq!(
+            family.cdf(1.0 / std::f64::consts::E, theta),
+            0.158_655_254,
+            epsilon = 1.0e-7
+        );
+    }
+
+    #[test]
+    fn log_normal_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultLogNormal::new();
+
+        assert!(
+            family
+                .cdf(
+                    0.0,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
         );
     }
 

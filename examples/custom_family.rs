@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let diagnostics = model.diagnostics(&theta)?;
+    let diagnostics = model.training_diagnostics(&theta)?;
     let coefficients = model.unpack_theta(&theta)?;
     let mu_hat = coefficients.coefficients_of::<Mu>().expect("mu block")[0];
     let sigma_hat = coefficients

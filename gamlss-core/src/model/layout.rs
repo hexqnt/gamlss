@@ -101,12 +101,12 @@ impl UnpackedTheta {
     }
 }
 
-/// Диагностики обучения для кандидата theta.
+/// Training diagnostics for a candidate theta vector.
 ///
 /// Содержит значения objective, weighted negative log-likelihood (без штрафов),
 /// суммарный штраф, норму градиента и число не-finite компонент градиента.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Diagnostics {
+pub struct TrainingDiagnostics {
     /// Full objective value: weighted training negative log-likelihood plus penalties.
     pub objective: f64,
     /// Weighted training negative log-likelihood before penalties.

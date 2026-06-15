@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "gamlss-core",
+    "gamlss-diagnostics",
     "gamlss-family",
     "gamlss-spline",
     "gamlss-formula",
@@ -23,6 +24,7 @@ categories = ["algorithms", "mathematics", "science"]
 [workspace.dependencies]
 approx = "0.5.1"
 gamlss-core = { path = "gamlss-core", version = "0.2.0" }
+gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.2.0" }
 gamlss-family = { path = "gamlss-family", version = "0.2.0" }
 gamlss-formula = { path = "gamlss-formula", version = "0.2.0" }
 gamlss-spline = { path = "gamlss-spline", version = "0.2.0" }
@@ -51,6 +53,7 @@ formula = ["dep:gamlss-formula"]
 
 [dependencies]
 gamlss-core.workspace = true
+gamlss-diagnostics.workspace = true
 gamlss-family.workspace = true
 gamlss-formula = { workspace = true, optional = true }
 gamlss-spline.workspace = true

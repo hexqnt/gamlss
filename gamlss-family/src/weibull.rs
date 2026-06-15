@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use gamlss_core::{Family, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape};
+use gamlss_core::{
+    Family, HasCdf, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape,
+};
 
 /// Weibull family parameterized by positive shape and scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -160,12 +162,33 @@ where
     type Links = (ShapeLink, ScaleLink);
 }
 
+impl<ShapeLink, ScaleLink> HasCdf for Weibull<ShapeLink, ScaleLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if y <= 0.0
+            || !y.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        -(-(y / theta.scale).powf(theta.shape)).exp_m1()
+    }
+}
+
 /// Weibull distribution with log links for shape and scale.
 pub type DefaultWeibull = Weibull<Log, Log>;
 
 #[cfg(test)]
 mod tests {
-    use gamlss_core::Family;
+    use approx::assert_relative_eq;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{DefaultWeibull, WeibullTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -196,6 +219,54 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn weibull_cdf_matches_reference_points() {
+        let family = DefaultWeibull::new();
+        let theta = WeibullTheta {
+            shape: 2.0,
+            scale: 3.0,
+        };
+
+        assert_relative_eq!(
+            family.cdf(theta.scale, theta),
+            1.0 - (-1.0_f64).exp(),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.cdf(theta.scale * std::f64::consts::LN_2.sqrt(), theta),
+            0.5,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn weibull_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultWeibull::new();
+
+        assert!(
+            family
+                .cdf(
+                    0.0,
+                    WeibullTheta {
+                        shape: 2.0,
+                        scale: 3.0
+                    }
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    WeibullTheta {
+                        shape: 0.0,
+                        scale: 3.0
+                    }
+                )
+                .is_nan()
         );
     }
 }

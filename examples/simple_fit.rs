@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use gamlss::core::{
         DenseDesign, Gamlss, Identity, Log, Mu, NoPenalty, Objective, ParameterBlock, Sigma,
     };
+    use gamlss::diagnostics::CdfDiagnosticsExt;
     use gamlss::family::Normal;
 
     let y = vec![1.0, 1.4, 1.8, 2.2, 2.6];
@@ -29,7 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let diagnostics = model.diagnostics(&theta)?;
+    let diagnostics = model.training_diagnostics(&theta)?;
+    let pit = model.pit_values(&theta)?;
+    let residuals = model.quantile_residuals(&theta)?;
     let coefficients = model.unpack_theta(&theta)?;
     let mu_hat = coefficients.coefficients_of::<Mu>().expect("mu block")[0];
     let sigma_hat = coefficients
@@ -37,10 +40,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("sigma block")[0]
         .exp();
 
+    let (pit_min, pit_max) = finite_range(&pit);
+    let (residual_min, residual_max) = finite_range(&residuals);
+
     println!(
-        "simple_fit: objective={:.6}, grad_norm={:.6}, mu={mu_hat:.4}, sigma={sigma_hat:.4}",
+        "simple_fit: objective={:.6}, grad_norm={:.6}, mu={mu_hat:.4}, sigma={sigma_hat:.4}, pit=[{pit_min:.4}, {pit_max:.4}], qres=[{residual_min:.4}, {residual_max:.4}]",
         diagnostics.objective, diagnostics.gradient_norm,
     );
 
     Ok(())
+}
+
+fn finite_range(values: &[f64]) -> (f64, f64) {
+    let range = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), value| {
+            (min.min(value), max.max(value))
+        });
+
+    if range.0.is_finite() && range.1.is_finite() {
+        range
+    } else {
+        (f64::NAN, f64::NAN)
+    }
 }

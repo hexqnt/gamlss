@@ -13,6 +13,7 @@
 //! - unweighted и weighted модели через [`core::Gamlss::try_new`] и
 //!   [`core::Gamlss::try_new_weighted`];
 //! - prediction API для training rows и совместимых prediction blocks;
+//! - post-fit diagnostics namespace через [`diagnostics`];
 //! - formula builders через [`formula::ModelSpec`] при включённой feature
 //!   `formula`.
 //!
@@ -52,6 +53,8 @@
 
 /// Типизированные базовые абстракции.
 pub use gamlss_core as core;
+/// Post-fit diagnostics utilities.
+pub use gamlss_diagnostics as diagnostics;
 /// Распределения и реализации likelihood.
 pub use gamlss_family as family;
 /// Spline-базисы и штрафы.
@@ -66,6 +69,7 @@ pub use gamlss_formula as formula;
 /// Наиболее часто используемые импорты.
 pub mod prelude {
     pub use gamlss_core::prelude::*;
+    pub use gamlss_diagnostics::prelude::*;
     pub use gamlss_family::prelude::*;
     pub use gamlss_spline::prelude::*;
     pub use gamlss_transform::{

@@ -10,7 +10,7 @@ mod observation;
 mod workspace;
 
 pub use layout::{
-    Diagnostics, ParameterCoefficients, ParameterLayout, ParameterSlice, UnpackedTheta,
+    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
 };
 pub use observation::ObservationView;
 pub use workspace::GradientWorkspace;
@@ -259,7 +259,7 @@ where
     }
 
     /// Computes training diagnostics for a candidate theta vector.
-    pub fn diagnostics(&self, theta: &[f64]) -> Result<Diagnostics, ModelError> {
+    pub fn training_diagnostics(&self, theta: &[f64]) -> Result<TrainingDiagnostics, ModelError> {
         validate_len("theta", theta.len(), self.nparams())?;
 
         let train_nll = self.blocks.train_nll(&self.family, &self.obs, theta);
@@ -274,7 +274,7 @@ where
             .sqrt();
         let nonfinite_gradient_count = grad.iter().filter(|value| !value.is_finite()).count();
 
-        Ok(Diagnostics {
+        Ok(TrainingDiagnostics {
             objective: train_nll + penalty,
             train_nll,
             penalty,
@@ -1782,13 +1782,13 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_report_train_nll_penalty_and_gradient_norm() {
+    fn training_diagnostics_report_train_nll_penalty_and_gradient_norm() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let theta = vec![1.5];
-        let diagnostics = model.diagnostics(&theta).unwrap();
+        let diagnostics = model.training_diagnostics(&theta).unwrap();
 
         assert_relative_eq!(diagnostics.train_nll, 0.25);
         assert_relative_eq!(diagnostics.penalty, 1.125);

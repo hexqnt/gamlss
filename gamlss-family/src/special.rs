@@ -47,11 +47,32 @@ pub(crate) fn digamma(value: f64) -> f64 {
         + inv2 * inv2 * inv2 * inv2 / 240.0
 }
 
+/// Standard normal CDF approximation.
+pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
+    (0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))).clamp(0.0, 1.0)
+}
+
+fn erf_approx(value: f64) -> f64 {
+    const P: f64 = 0.327_591_1;
+    const A1: f64 = 0.254_829_592;
+    const A2: f64 = -0.284_496_736;
+    const A3: f64 = 1.421_413_741;
+    const A4: f64 = -1.453_152_027;
+    const A5: f64 = 1.061_405_429;
+
+    let sign = if value < 0.0 { -1.0 } else { 1.0 };
+    let x = value.abs();
+    let t = 1.0 / (1.0 + P * x);
+    let polynomial = (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t;
+
+    sign * (1.0 - polynomial * (-x * x).exp())
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::{digamma, ln_gamma};
+    use super::{digamma, ln_gamma, unit_normal_cdf};
 
     #[test]
     fn ln_gamma_matches_known_constants() {
@@ -75,5 +96,12 @@ mod tests {
             epsilon = 1.0e-10
         );
         assert_relative_eq!(digamma(4.25), digamma(3.25) + 1.0 / 3.25, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn unit_normal_cdf_matches_reference_points() {
+        assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
+        assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
+        assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
     }
 }

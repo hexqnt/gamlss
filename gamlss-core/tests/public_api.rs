@@ -2,7 +2,7 @@ use gamlss_core::{
     DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
     HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Mu,
     NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObservationView, ParameterBlock,
-    ParameterParts, ParameterizedFamily, PredictorBlock, SoftplusScalar,
+    ParameterParts, ParameterizedFamily, PredictorBlock, SoftplusScalar, TrainingDiagnostics,
 };
 
 #[test]
@@ -14,6 +14,19 @@ fn convenience_predictor_helpers_remain_root_reexports() {
     assert_eq!(softplus.nparams(), 1);
     assert_eq!(negative.nparams(), 1);
     assert_eq!(floored.nparams(), 1);
+}
+
+#[test]
+fn training_diagnostics_remains_a_root_reexport() {
+    let diagnostics = TrainingDiagnostics {
+        objective: 1.0,
+        train_nll: 0.75,
+        penalty: 0.25,
+        gradient_norm: 0.0,
+        nonfinite_gradient_count: 0,
+    };
+
+    assert_eq!(diagnostics.objective, 1.0);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +166,14 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
 
     assert_eq!(value, 0.5);
     assert_eq!(grad, vec![-1.0, -1.0]);
+
+    let diagnostics = model
+        .training_diagnostics(&beta)
+        .expect("training diagnostics should use the public model API");
+    assert_eq!(diagnostics.objective, 0.5);
+    assert_eq!(diagnostics.train_nll, 0.5);
+    assert_eq!(diagnostics.penalty, 0.0);
+    assert_eq!(diagnostics.nonfinite_gradient_count, 0);
 
     let (nll, gradient, diagonal_fisher) =
         DependentConstraintFamily.nll_gradient_and_diagonal_fisher_eta(&[1.0, 3.0], (2.0, 0.0));

@@ -3,10 +3,12 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    DesignMatrix, Family, Gamlss, HasDeviance, HasInitialEta, Identity, LinearPredictorBlock, Link,
-    Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks, ParameterParts,
-    ParameterizedFamily, Penalty, PositiveLink, Sigma,
+    DesignMatrix, Family, Gamlss, HasCdf, HasDeviance, HasInitialEta, Identity,
+    LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
+    ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
 };
+
+use crate::special::unit_normal_cdf;
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
@@ -192,6 +194,21 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasCdf for Normal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        unit_normal_cdf((y - theta.mu) / theta.sigma)
+    }
+}
+
 impl HasInitialEta for Normal<Identity, Log> {
     fn initial_eta<'obs>(&self, y: Self::Observation<'obs>) -> Self::Eta {
         NormalEta {
@@ -265,7 +282,9 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{DenseDesign, Family, HasDeviance, HasInitialEta, NoPenalty, Objective};
+    use gamlss_core::{
+        DenseDesign, Family, HasCdf, HasDeviance, HasInitialEta, NoPenalty, Objective,
+    };
 
     use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -380,6 +399,55 @@ mod tests {
         );
 
         assert_relative_eq!(deviance, 4.0);
+    }
+
+    #[test]
+    fn normal_cdf_matches_standard_normal_reference_points() {
+        let family = DefaultNormal::new();
+        let theta = NormalTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+
+        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5, epsilon = 1.0e-7);
+        assert_relative_eq!(
+            family.cdf(theta.mu + theta.sigma, theta),
+            0.841_344_746,
+            epsilon = 1.0e-7
+        );
+        assert_relative_eq!(
+            family.cdf(theta.mu - theta.sigma, theta),
+            0.158_655_254,
+            epsilon = 1.0e-7
+        );
+    }
+
+    #[test]
+    fn normal_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultNormal::new();
+
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    NormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    f64::NAN,
+                    NormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_nan()
+        );
     }
 
     #[test]

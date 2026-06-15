@@ -328,12 +328,19 @@ where
 /// Distribution helper для CDF.
 pub trait HasCdf: Family {
     /// CDF в точке `y` для параметров на естественной шкале.
+    ///
+    /// Implementations should return a non-finite value for invalid
+    /// observation or parameter domains rather than panicking, matching the
+    /// base [`Family`] likelihood contract.
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
 }
 
 /// Distribution helper для quantile function.
 pub trait HasQuantile: Family {
     /// Квантиль уровня `p` для параметров на естественной шкале.
+    ///
+    /// Implementations should return a non-finite value for invalid
+    /// probabilities or parameter domains rather than panicking.
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
 }
 

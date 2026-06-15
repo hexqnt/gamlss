@@ -1,6 +1,10 @@
 use std::marker::PhantomData;
 
-use gamlss_core::{Family, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape};
+use gamlss_core::{
+    Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
+};
+
+use crate::special::unit_normal_cdf;
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
@@ -160,12 +164,44 @@ where
     type Links = (MuLink, ShapeLink);
 }
 
+impl<MuLink, ShapeLink> HasCdf for InverseGaussian<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if y <= 0.0
+            || !y.is_finite()
+            || theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let scale = (theta.shape / y).sqrt();
+        let ratio = y / theta.mu;
+        let first = unit_normal_cdf(scale * (ratio - 1.0));
+        let log_multiplier = 2.0 * theta.shape / theta.mu;
+        let tail = unit_normal_cdf(-scale * (ratio + 1.0));
+        let second = if tail == 0.0 {
+            0.0
+        } else {
+            log_multiplier.exp() * tail
+        };
+
+        (first + second).clamp(0.0, 1.0)
+    }
+}
+
 /// Inverse Gaussian distribution with log links for mean and shape.
 pub type DefaultInverseGaussian = InverseGaussian<Log, Log>;
 
 #[cfg(test)]
 mod tests {
-    use gamlss_core::Family;
+    use approx::assert_relative_eq;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{DefaultInverseGaussian, InverseGaussianTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -196,6 +232,46 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn inverse_gaussian_cdf_matches_reference_points() {
+        let family = DefaultInverseGaussian::new();
+        let theta = InverseGaussianTheta {
+            mu: 1.0,
+            shape: 1.0,
+        };
+
+        assert_relative_eq!(family.cdf(1.0, theta), 0.668_102, epsilon = 1.0e-6);
+        assert_relative_eq!(family.cdf(0.5, theta), 0.364_975, epsilon = 1.0e-6);
+    }
+
+    #[test]
+    fn inverse_gaussian_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultInverseGaussian::new();
+
+        assert!(
+            family
+                .cdf(
+                    0.0,
+                    InverseGaussianTheta {
+                        mu: 1.0,
+                        shape: 1.0
+                    }
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    InverseGaussianTheta {
+                        mu: 0.0,
+                        shape: 1.0
+                    }
+                )
+                .is_nan()
         );
     }
 }

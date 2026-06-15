@@ -136,6 +136,7 @@ dependencies = [
  "argmin",
  "argmin-math",
  "gamlss-core",
+ "gamlss-diagnostics",
  "gamlss-family",
  "gamlss-formula",
  "gamlss-spline",
@@ -148,6 +149,15 @@ version = "0.2.0"
 dependencies = [
  "approx",
  "thiserror",
+]
+
+[[package]]
+name = "gamlss-diagnostics"
+version = "0.2.0"
+dependencies = [
+ "approx",
+ "gamlss-core",
+ "gamlss-family",
 ]
 
 [[package]]
