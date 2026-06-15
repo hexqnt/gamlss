@@ -73,8 +73,9 @@ pub mod prelude {
     pub use gamlss_family::prelude::*;
     pub use gamlss_spline::prelude::*;
     pub use gamlss_transform::{
-        IdentityPositive, IdentityPositiveState, Log as TargetLog, LogState, Standardize,
-        StandardizeState, TargetTransform, TransformError,
+        AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log as TargetLog,
+        Log1pShift, Log1pShiftState, LogState, Standardize, StandardizeState, TargetTransform,
+        TransformError,
     };
 
     #[cfg(feature = "formula")]
