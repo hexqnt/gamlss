@@ -28,6 +28,28 @@ pub(crate) fn ln_gamma(value: f64) -> f64 {
     0.5 * (2.0 * std::f64::consts::PI).ln() + (shifted + 0.5) * t.ln() - t + x.ln()
 }
 
+/// Returns `true` for finite counts represented on the shared `f64` observation path.
+pub(crate) fn is_nonnegative_integer(value: f64) -> bool {
+    value >= 0.0 && value.is_finite() && value.fract() == 0.0
+}
+
+/// Converts a finite CDF query point into the largest included count.
+///
+/// Returning `None` keeps discrete CDF implementations from doing unbounded
+/// work for pathologically large query points.
+pub(crate) fn included_count(value: f64, max_terms: u64) -> Option<u64> {
+    if value < 0.0 {
+        return Some(0);
+    }
+
+    let count = value.floor();
+    if count > max_terms as f64 {
+        None
+    } else {
+        Some(count as u64)
+    }
+}
+
 /// Digamma function approximation for positive arguments.
 pub(crate) fn digamma(value: f64) -> f64 {
     if value <= 0.0 || !value.is_finite() {
