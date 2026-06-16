@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::model::ParameterLayout;
+
 /// Ошибки построения и проверки GAMLSS-моделей.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ModelError {
@@ -99,13 +101,15 @@ pub enum ModelError {
         nrows: usize,
     },
 
-    /// Prediction blocks имеют другую длину coefficient layout.
-    #[error("prediction blocks have parameter length {actual}, expected {expected}")]
-    PredictionParameterLength {
-        /// Ожидаемая длина theta.
-        expected: usize,
-        /// Фактическая длина prediction blocks.
-        actual: usize,
+    /// Prediction blocks имеют другой coefficient layout.
+    #[error(
+        "prediction blocks have incompatible parameter layout: expected {expected:?}, got {got:?}"
+    )]
+    PredictionLayoutMismatch {
+        /// Layout training-модели.
+        expected: ParameterLayout,
+        /// Layout переданных prediction blocks.
+        got: ParameterLayout,
     },
 
     /// Два parameter block используют пересекающиеся диапазоны beta.

@@ -102,6 +102,54 @@ where
     fn block_ranges(&self) -> Vec<Range<usize>>;
     /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
     fn parameter_layout(&self) -> ParameterLayout;
+
+    #[doc(hidden)]
+    fn parameter_slice_count(&self) -> usize {
+        self.parameter_layout().slices().len()
+    }
+
+    #[doc(hidden)]
+    fn parameter_slice_matches(
+        &self,
+        index: usize,
+        name: &'static str,
+        range: Range<usize>,
+    ) -> bool {
+        self.parameter_layout()
+            .slices()
+            .get(index)
+            .is_some_and(|slice| slice.name == name && slice.range == range)
+    }
+
+    #[doc(hidden)]
+    fn visit_parameter_slices<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        for (index, slice) in self.parameter_layout().slices().iter().enumerate() {
+            visit(index, slice.name, slice.range.clone());
+        }
+    }
+
+    #[doc(hidden)]
+    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
+    where
+        Other: GamlssBlocks<F>,
+    {
+        let expected_layout = self.parameter_layout();
+        let expected_slices = expected_layout.slices();
+        let mut got_count = 0;
+        let mut matches = true;
+
+        other.visit_parameter_slices(|index, name, range| {
+            got_count += 1;
+            matches &= expected_slices
+                .get(index)
+                .is_some_and(|slice| slice.name == name && slice.range == range);
+        });
+
+        matches && got_count == expected_slices.len()
+    }
 }
 
 /// Скомпилированная типизированная GAMLSS-модель.
@@ -361,7 +409,7 @@ where
         PBlocks: GamlssBlocks<F>,
     {
         validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(blocks, self.nparams())?;
+        validate_prediction_blocks(&self.blocks, blocks)?;
         validate_row(row, blocks.nrows())?;
         Ok(blocks.eta_row(theta, row))
     }
@@ -404,7 +452,7 @@ where
         PBlocks: GamlssBlocks<F>,
     {
         validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(blocks, self.nparams())?;
+        validate_prediction_blocks(&self.blocks, blocks)?;
         Ok((0..blocks.nrows())
             .map(|row| blocks.eta_row(theta, row))
             .collect())
@@ -426,7 +474,7 @@ where
         PBlocks: GamlssBlocks<F>,
     {
         validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(blocks, self.nparams())?;
+        validate_prediction_blocks(&self.blocks, blocks)?;
         Ok((0..blocks.nrows())
             .map(|row| self.family.theta(blocks.eta_row(theta, row)))
             .collect())
@@ -825,6 +873,50 @@ macro_rules! impl_gamlss_blocks {
                     },
                 )+])
             }
+
+            #[doc(hidden)]
+            fn parameter_slice_count(&self) -> usize {
+                $k
+            }
+
+            #[doc(hidden)]
+            fn parameter_slice_matches(
+                &self,
+                index: usize,
+                name: &'static str,
+                range: Range<usize>,
+            ) -> bool {
+                match index {
+                    $(
+                        $idx => name == <$param as ParameterName>::NAME
+                            && range == self.$idx.range(),
+                    )+
+                    _ => false,
+                }
+            }
+
+            #[doc(hidden)]
+            fn visit_parameter_slices<V>(&self, mut visit: V)
+            where
+                V: FnMut(usize, &'static str, Range<usize>),
+            {
+                $(
+                    visit($idx, <$param as ParameterName>::NAME, self.$idx.range());
+                )+
+            }
+
+            #[doc(hidden)]
+            fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
+            where
+                Other: GamlssBlocks<F>,
+            {
+                other.parameter_slice_count() == $k
+                    $(&& other.parameter_slice_matches(
+                        $idx,
+                        <$param as ParameterName>::NAME,
+                        self.$idx.range(),
+                    ))+
+            }
         }
     };
 }
@@ -1024,22 +1116,22 @@ fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     }
 }
 
-fn validate_prediction_blocks<F, Blocks>(
-    blocks: &Blocks,
-    expected_len: usize,
+fn validate_prediction_blocks<F, Blocks, PBlocks>(
+    expected_blocks: &Blocks,
+    blocks: &PBlocks,
 ) -> Result<(), ModelError>
 where
     F: Family,
     Blocks: GamlssBlocks<F>,
+    PBlocks: GamlssBlocks<F>,
 {
     blocks.validate(blocks.nrows())?;
-    let actual = blocks.len();
-    if actual == expected_len {
+    if expected_blocks.has_same_parameter_layout(blocks) {
         Ok(())
     } else {
-        Err(ModelError::PredictionParameterLength {
-            expected: expected_len,
-            actual,
+        Err(ModelError::PredictionLayoutMismatch {
+            expected: expected_blocks.parameter_layout(),
+            got: blocks.parameter_layout(),
         })
     }
 }
@@ -1050,8 +1142,9 @@ mod tests {
 
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObservationView, ParameterBlock, ParameterBlocks, ParameterName,
-        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
+        NoPenalty, Nu, Objective, ObservationView, ParameterBlock, ParameterBlocks,
+        ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
+        RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1080,6 +1173,36 @@ mod tests {
     impl ParameterizedFamily<1> for FixedSigmaNormal {
         type Params = (Mu,);
         type Links = (Identity,);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct TwoParameterMock;
+
+    impl Family for TwoParameterMock {
+        type Eta = (f64, f64);
+        type Theta = (f64, f64);
+        type NllGradientEta = (f64, f64);
+        type Observation<'obs> = f64;
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            let first = theta.0 - y;
+            let second = theta.1 - 1.0;
+            0.5 * (first * first + second * second)
+        }
+
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            let gradient = (eta.0 - y, eta.1 - 1.0);
+            (self.nll(y, eta), gradient)
+        }
+    }
+
+    impl ParameterizedFamily<2> for TwoParameterMock {
+        type Params = (Mu, Sigma);
+        type Links = (Identity, Identity);
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1324,9 +1447,62 @@ mod tests {
             model
                 .predict_eta_with_blocks(&[0.5, 0.25], &prediction_blocks)
                 .unwrap_err(),
-            ModelError::PredictionParameterLength {
-                expected: 2,
-                actual: 3,
+            ModelError::PredictionLayoutMismatch {
+                expected: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..2,
+                }]),
+                got: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..3,
+                }]),
+            }
+        );
+    }
+
+    #[test]
+    fn prediction_api_rejects_same_length_different_parameter_layout() {
+        let y = vec![1.0, 2.0];
+        let train_mu_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
+        let train_sigma_x = DenseDesign::intercept(y.len());
+        let train_mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_mu_x, NoPenalty, 0);
+        let train_sigma =
+            ParameterBlock::<Sigma, Identity, _, _>::linear(train_sigma_x, NoPenalty, 2);
+        let model = Gamlss::try_new(TwoParameterMock, (train_mu, train_sigma), &y).unwrap();
+
+        let prediction_mu_x = DenseDesign::intercept(1);
+        let prediction_sigma_x = DenseDesign::from_rows(&[[1.0, 2.0]]);
+        let prediction_mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_mu_x, NoPenalty, 0);
+        let prediction_sigma =
+            ParameterBlock::<Sigma, Identity, _, _>::linear(prediction_sigma_x, NoPenalty, 1);
+        let prediction_blocks = (prediction_mu, prediction_sigma);
+
+        assert_eq!(
+            model
+                .predict_eta_with_blocks(&[0.5, 0.25, 0.75], &prediction_blocks)
+                .unwrap_err(),
+            ModelError::PredictionLayoutMismatch {
+                expected: ParameterLayout::new(vec![
+                    ParameterSlice {
+                        name: "mu",
+                        range: 0..2,
+                    },
+                    ParameterSlice {
+                        name: "sigma",
+                        range: 2..3,
+                    },
+                ]),
+                got: ParameterLayout::new(vec![
+                    ParameterSlice {
+                        name: "mu",
+                        range: 0..1,
+                    },
+                    ParameterSlice {
+                        name: "sigma",
+                        range: 1..3,
+                    },
+                ]),
             }
         );
     }
