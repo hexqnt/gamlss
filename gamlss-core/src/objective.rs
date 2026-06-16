@@ -11,7 +11,9 @@ use crate::ModelError;
 /// Implementations validate input lengths and return recoverable errors for
 /// shape mismatches. `value` and `gradient` are allowed to reuse internal
 /// buffers; callers should not assume they are pure with respect to internal
-/// cache state.
+/// cache state. `value_gradient` is the primary first-order hot path; the
+/// default `gradient` wrapper exists for optimizer traits that request a
+/// gradient-only callback.
 pub trait Objective {
     /// Recoverable error returned by objective evaluation.
     type Error;
@@ -22,18 +24,16 @@ pub trait Objective {
     /// Objective value at `theta`.
     fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error>;
 
-    /// Writes the gradient at `theta` into preallocated `grad`.
+    /// Computes objective value and gradient at `theta`.
     ///
     /// Implementations overwrite the full gradient buffer after validating
     /// `grad.len() == dim()`. They should return an error instead of panicking
     /// for ordinary caller mistakes such as wrong vector length.
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error>;
+    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error>;
 
-    /// Computes objective value and gradient at `theta`.
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        let value = self.value(theta)?;
-        self.gradient(theta, grad)?;
-        Ok(value)
+    /// Writes the gradient at `theta` into preallocated `grad`.
+    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(theta, grad).map(|_| ())
     }
 }
 
@@ -98,14 +98,19 @@ where
     }
 
     fn gradient(&mut self, block_beta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(block_beta, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, block_beta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
         validate_block_len("theta", block_beta.len(), self.block.len())?;
         validate_block_len("gradient", grad.len(), self.block.len())?;
 
         self.update_block_beta(block_beta);
-        self.full_objective
-            .gradient(&self.working_beta, &mut self.full_grad)?;
+        let value = self
+            .full_objective
+            .value_gradient(&self.working_beta, &mut self.full_grad)?;
         grad.copy_from_slice(&self.full_grad[self.block.start..self.block.end]);
-        Ok(())
+        Ok(value)
     }
 }
 
@@ -144,9 +149,9 @@ mod tests {
             Ok(0.5 * theta.iter().map(|value| value * value).sum::<f64>())
         }
 
-        fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
             grad.copy_from_slice(theta);
-            Ok(())
+            self.value(theta)
         }
     }
 
@@ -161,7 +166,10 @@ mod tests {
         assert_eq!(objective.dim(), 2);
         assert_eq!(objective.value(&[4.0, 5.0]).unwrap(), 21.0);
 
-        objective.gradient(&[6.0, 7.0], &mut grad).unwrap();
+        assert_eq!(
+            objective.value_gradient(&[6.0, 7.0], &mut grad).unwrap(),
+            43.0
+        );
 
         assert_eq!(grad, vec![6.0, 7.0]);
         assert_eq!(objective.working_beta, vec![1.0, 6.0, 7.0]);

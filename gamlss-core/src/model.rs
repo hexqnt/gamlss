@@ -71,6 +71,9 @@ where
         workspace
     }
     /// Добавляет weighted gradient, переиспользуя временные буферы из `workspace`.
+    ///
+    /// The default implementation uses the fused value-gradient path and
+    /// discards the value.
     fn gradient_into_workspace<'obs, Obs>(
         &self,
         family: &F,
@@ -79,6 +82,21 @@ where
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
     ) where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let _ = self.value_gradient_into_workspace(family, obs, beta, grad, workspace);
+    }
+
+    /// Computes weighted objective value and gradient in one observation pass.
+    fn value_gradient_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
     /// Диапазоны коэффициентов каждого block в общем beta-векторе.
     fn block_ranges(&self) -> Vec<Range<usize>>;
@@ -416,11 +434,7 @@ where
 
     /// Проверяет длину beta и вычисляет objective.
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
-        let expected = self.nparams();
-        let actual = beta.len();
-        if actual != expected {
-            return Err(ModelError::BetaLength { expected, actual });
-        }
+        validate_len("theta", beta.len(), self.nparams())?;
 
         Ok(self.blocks.value(&self.family, &self.obs, beta))
     }
@@ -438,27 +452,41 @@ where
         grad: &mut [f64],
         workspace: &mut GradientWorkspace,
     ) -> Result<(), ModelError> {
-        let expected = self.nparams();
-        let actual_beta = beta.len();
-        if actual_beta != expected {
-            return Err(ModelError::BetaLength {
-                expected,
-                actual: actual_beta,
-            });
-        }
-
-        let actual_grad = grad.len();
-        if actual_grad != expected {
-            return Err(ModelError::GradientLength {
-                expected,
-                actual: actual_grad,
-            });
-        }
+        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
 
         grad.fill(0.0);
         self.blocks
-            .gradient_into_workspace(&self.family, &self.obs, beta, grad, workspace);
+            .value_gradient_into_workspace(&self.family, &self.obs, beta, grad, workspace);
         Ok(())
+    }
+
+    /// Проверяет размеры beta/grad и вычисляет value + gradient за один проход.
+    pub fn try_value_gradient_into(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) -> Result<f64, ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.try_value_gradient_into_workspace(beta, grad, &mut workspace)
+    }
+
+    /// Проверяет размеры beta/grad и вычисляет fused value + gradient с workspace.
+    pub fn try_value_gradient_into_workspace(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> Result<f64, ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
+
+        grad.fill(0.0);
+        Ok(self.blocks.value_gradient_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            grad,
+            workspace,
+        ))
     }
 }
 
@@ -570,7 +598,11 @@ where
     }
 
     fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.try_gradient_into(theta, grad)
+        self.try_value_gradient_into(theta, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.try_value_gradient_into(theta, grad)
     }
 }
 
@@ -592,7 +624,13 @@ where
 
     fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
         self.model
-            .try_gradient_into_workspace(theta, grad, &mut self.workspace)
+            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
+            .map(|_| ())
+    }
+
+    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.model
+            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
     }
 }
 
@@ -612,9 +650,14 @@ where
     }
 
     fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.objective.gradient(theta, grad)?;
+        self.value_gradient(theta, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        let mut value = self.objective.value_gradient(theta, grad)?;
+        value += self.penalties.value(theta);
         self.penalties.add_gradient(theta, grad);
-        Ok(())
+        Ok(value)
     }
 }
 
@@ -622,7 +665,7 @@ where
 ///
 /// Принимает арность `K`, списки parameter-типов, link-типов, design-типов и
 /// penalty-типов, а также имена внутренних переменных. На выходе даёт
-/// zero-cost реализацию `train_nll`, `gradient_into_workspace`, `penalty_value` и
+/// zero-cost реализацию `train_nll`, `value_gradient_into_workspace`, `penalty_value` и
 /// вспомогательных методов без dynamic dispatch.
 macro_rules! impl_gamlss_blocks {
     (
@@ -732,14 +775,14 @@ macro_rules! impl_gamlss_blocks {
                 workspace
             }
 
-            fn gradient_into_workspace<'obs, Obs>(
+            fn value_gradient_into_workspace<'obs, Obs>(
                 &self,
                 family: &F,
                 obs: &'obs Obs,
                 beta: &[f64],
                 grad: &mut [f64],
                 workspace: &mut GradientWorkspace,
-            )
+            ) -> f64
             where
                 Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
             {
@@ -747,22 +790,27 @@ macro_rules! impl_gamlss_blocks {
                 $(let $beta_block = &beta[$block.range()];)+
                 workspace.prepare($k);
                 $(workspace.prepare_row_gradient($idx, obs.len());)+
+                let mut loss = 0.0;
 
                 for row in 0..obs.len() {
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    let (_, gradient) = family.nll_and_gradient_eta(observation, eta);
+                    let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
                     let weight = obs.weight_at(row);
+                    loss += weight * nll;
                     $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
 
                 $(
+                    loss += $block.penalty.value($beta_block);
                     let ($row_gradient, $local_grad) =
                         workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
                     $block.x.add_gradient($row_gradient, $beta_block, $local_grad);
                     $block.penalty.add_gradient($beta_block, $local_grad);
                     add_into(&mut grad[$block.offset..$block.offset + $block.len], $local_grad);
                 )+
+
+                loss
             }
 
             fn block_ranges(&self) -> Vec<Range<usize>> {
@@ -957,6 +1005,15 @@ fn validate_len(name: &'static str, actual: usize, expected: usize) -> Result<()
     } else {
         Err(ModelError::BetaLength { expected, actual })
     }
+}
+
+fn validate_beta_and_gradient_len(
+    expected: usize,
+    beta: &[f64],
+    grad: &[f64],
+) -> Result<(), ModelError> {
+    validate_len("theta", beta.len(), expected)?;
+    validate_len("gradient", grad.len(), expected)
 }
 
 fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
@@ -1303,18 +1360,63 @@ mod tests {
             let mut workspace_grad = vec![0.0; beta.len()];
 
             model.try_gradient_into(&beta, &mut expected_grad).unwrap();
-            workspace_objective
-                .gradient(&beta, &mut workspace_grad)
+            let workspace_value = workspace_objective
+                .value_gradient(&beta, &mut workspace_grad)
                 .unwrap();
 
-            assert_relative_eq!(
-                workspace_objective.value(&beta).unwrap(),
-                model.try_value(&beta).unwrap()
-            );
+            assert_relative_eq!(workspace_value, model.try_value(&beta).unwrap());
             for (actual, expected) in workspace_grad.iter().zip(&expected_grad) {
                 assert_relative_eq!(actual, expected);
             }
         }
+    }
+
+    #[test]
+    fn value_gradient_matches_separate_value_and_gradient() {
+        let y = vec![1.0, 2.0];
+        let weights = vec![0.5, 2.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.25), 0);
+        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let beta = vec![0.75, 0.5];
+        let mut separate_grad = vec![0.0; beta.len()];
+        let mut fused_grad = vec![f64::NAN; beta.len()];
+
+        let separate_value = model.try_value(&beta).unwrap();
+        model.try_gradient_into(&beta, &mut separate_grad).unwrap();
+        let fused_value = model
+            .try_value_gradient_into(&beta, &mut fused_grad)
+            .unwrap();
+
+        assert_relative_eq!(fused_value, separate_value);
+        for (actual, expected) in fused_grad.iter().zip(&separate_grad) {
+            assert_relative_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn value_gradient_rejects_invalid_lengths() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mut grad = vec![0.0];
+
+        assert_eq!(
+            model.try_value_gradient_into(&[], &mut grad).unwrap_err(),
+            ModelError::BetaLength {
+                expected: 1,
+                actual: 0,
+            }
+        );
+
+        assert_eq!(
+            model.try_value_gradient_into(&[0.0], &mut []).unwrap_err(),
+            ModelError::GradientLength {
+                expected: 1,
+                actual: 0,
+            }
+        );
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -1831,7 +1933,7 @@ mod tests {
 
         assert_relative_eq!(model.value(&beta).unwrap(), 5.0);
 
-        model.gradient(&beta, &mut grad).unwrap();
+        assert_relative_eq!(model.value_gradient(&beta, &mut grad).unwrap(), 5.0);
 
         assert_relative_eq!(grad[0], 5.0);
         assert_relative_eq!(grad[1], -5.0);
@@ -1882,15 +1984,18 @@ mod tests {
         let nparams = model.nparams();
 
         // Scope the block objective to release the mutable borrow on model.
-        let (mu_dim, mu_grad) = {
+        let (mu_dim, mu_value, mu_grad) = {
             let mut mu_block = model.block_objective_for::<Mu>(beta.clone()).unwrap();
             let dim = mu_block.dim();
             let mut block_grad = vec![0.0; dim];
-            mu_block.gradient(&beta[..2], &mut block_grad).unwrap();
-            (dim, block_grad)
+            let value = mu_block
+                .value_gradient(&beta[..2], &mut block_grad)
+                .unwrap();
+            (dim, value, block_grad)
         };
 
         assert_eq!(mu_dim, 2);
+        assert_relative_eq!(mu_value, model.value(&beta).unwrap());
 
         let mut full_grad = vec![0.0; nparams];
         model.gradient(&beta, &mut full_grad).unwrap();
