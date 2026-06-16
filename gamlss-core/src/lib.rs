@@ -53,7 +53,9 @@ pub use family::{
     CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDeviance, HasDiagonalFisherInfo,
     HasExpectedInformation, HasInitialEta, HasQuantile, ParameterParts, ParameterizedFamily,
 };
-pub use link::{ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus};
+pub use link::{
+    ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus, UnitIntervalLink,
+};
 pub use model::{
     Gamlss, GamlssBlocks, GradientWorkspace, ObservationView, ParameterCoefficients,
     ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta, WithGlobalPenalties,
@@ -86,7 +88,7 @@ pub mod prelude {
         OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
         ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
         Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape,
-        Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnpackedTheta,
-        WithGlobalPenalties, WorkspaceGamlss,
+        Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
+        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
     };
 }

@@ -1,12 +1,22 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, Link, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Precision,
+    Family, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Precision,
+    UnitIntervalLink,
 };
 
 use crate::special::{digamma, ln_gamma};
 
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
+///
+/// The mean link must guarantee values in `(0, 1)`.
+///
+/// ```compile_fail
+/// use gamlss_core::{Identity, Log};
+/// use gamlss_family::Beta;
+///
+/// let _ = Beta::<Identity, Log>::new();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,
@@ -14,7 +24,7 @@ pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
 
 impl<MuLink, PrecisionLink> Beta<MuLink, PrecisionLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
     /// Creates a stateless beta family.
@@ -86,7 +96,7 @@ where
 
 impl<MuLink, PrecisionLink> Default for Beta<MuLink, PrecisionLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
     fn default() -> Self {
@@ -133,7 +143,7 @@ pub struct BetaTheta {
 
 impl<MuLink, PrecisionLink> Family for Beta<MuLink, PrecisionLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
     type Eta = BetaEta;
@@ -164,7 +174,7 @@ where
 
 impl<MuLink, PrecisionLink> ParameterizedFamily<2> for Beta<MuLink, PrecisionLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
     type Params = (Mu, Precision);

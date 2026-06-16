@@ -2,9 +2,20 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, HasCdf, Link, Logit, Mu, ParameterParts, ParameterizedFamily};
+use gamlss_core::{
+    Family, HasCdf, Logit, Mu, ParameterParts, ParameterizedFamily, UnitIntervalLink,
+};
 
 /// Bernoulli family parameterized by success probability.
+///
+/// The probability link must guarantee values in `(0, 1)`.
+///
+/// ```compile_fail
+/// use gamlss_core::Identity;
+/// use gamlss_family::Bernoulli;
+///
+/// let _ = Bernoulli::<Identity>::new();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bernoulli<MuLink = Logit> {
     marker: PhantomData<MuLink>,
@@ -12,7 +23,7 @@ pub struct Bernoulli<MuLink = Logit> {
 
 impl<MuLink> Bernoulli<MuLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     /// Creates a stateless Bernoulli family.
     pub fn new() -> Self {
@@ -61,7 +72,7 @@ where
 
 impl<MuLink> Default for Bernoulli<MuLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -99,7 +110,7 @@ pub struct BernoulliTheta {
 
 impl<MuLink> Family for Bernoulli<MuLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     type Eta = BernoulliEta;
     type Theta = BernoulliTheta;
@@ -129,7 +140,7 @@ where
 
 impl<MuLink> ParameterizedFamily<1> for Bernoulli<MuLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     type Params = (Mu,);
     type Links = (MuLink,);
@@ -137,7 +148,7 @@ where
 
 impl<MuLink> HasCdf for Bernoulli<MuLink>
 where
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
         if !y.is_finite() || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
@@ -158,7 +169,7 @@ where
 impl<Rng, MuLink> CanSimulate<Rng> for Bernoulli<MuLink>
 where
     Rng: rand::Rng,
-    MuLink: Link<f64>,
+    MuLink: UnitIntervalLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {

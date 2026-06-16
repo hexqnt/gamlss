@@ -1,8 +1,9 @@
 use gamlss_core::{
-    DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Mu,
+    ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Log, Logit, Mu,
     NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObservationView, ParameterBlock,
-    ParameterParts, ParameterizedFamily, PredictorBlock, SoftplusScalar, TrainingDiagnostics,
+    ParameterParts, ParameterizedFamily, PositiveLink, PredictorBlock, Softplus, SoftplusScalar,
+    TrainingDiagnostics, UnitIntervalLink,
 };
 
 #[test]
@@ -27,6 +28,17 @@ fn training_diagnostics_remains_a_root_reexport() {
     };
 
     assert_eq!(diagnostics.objective, 1.0);
+}
+
+#[test]
+fn link_domain_marker_traits_remain_root_reexports() {
+    fn assert_positive_link<L: PositiveLink<f64>>() {}
+    fn assert_unit_interval_link<L: UnitIntervalLink<f64>>() {}
+
+    assert_positive_link::<Log>();
+    assert_positive_link::<Softplus>();
+    assert_positive_link::<ClampedLog<-12, 12>>();
+    assert_unit_interval_link::<Logit>();
 }
 
 #[derive(Debug, Clone, PartialEq)]
