@@ -9,6 +9,7 @@
 //!
 //! - randomized quantile residuals;
 //! - PIT/CDF residuals;
+//! - CRPS summaries;
 //! - worm plot data;
 //! - centile curve data;
 //! - fitted parameter extraction helpers;
@@ -37,7 +38,7 @@
 //! # Ok::<_, gamlss_core::ModelError>(())
 //! ```
 
-use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, ModelError, ObservationView};
+use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView};
 
 /// CDF-based diagnostics for fitted GAMLSS models.
 pub trait CdfDiagnosticsExt {
@@ -75,6 +76,41 @@ where
             .map(|(row, parameters)| {
                 let observation = self.obs.observation_at(row);
                 self.family.cdf(observation, parameters)
+            })
+            .collect())
+    }
+}
+
+/// CRPS-based diagnostics for fitted GAMLSS models.
+pub trait CrpsDiagnosticsExt {
+    /// Returns CRPS values for training rows.
+    ///
+    /// The returned vector has one value per training observation, in row
+    /// order. Invalid observation or parameter domains are represented by the
+    /// family CRPS result, usually `NaN`.
+    fn crps_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError>;
+
+    /// Returns the arithmetic mean of [`Self::crps_values`].
+    fn mean_crps(&self, theta: &[f64]) -> Result<f64, ModelError> {
+        let values = self.crps_values(theta)?;
+        Ok(values.iter().sum::<f64>() / values.len() as f64)
+    }
+}
+
+impl<F, Blocks, Obs> CrpsDiagnosticsExt for Gamlss<F, Blocks, Obs>
+where
+    F: HasCrps + for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = f64>,
+{
+    fn crps_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError> {
+        let parameters = self.predict_theta(theta)?;
+        Ok(parameters
+            .into_iter()
+            .enumerate()
+            .map(|(row, parameters)| {
+                let observation = self.obs.observation_at(row);
+                self.family.crps(observation, parameters)
             })
             .collect())
     }
@@ -143,7 +179,7 @@ fn inverse_unit_normal_cdf(probability: f64) -> f64 {
 
 /// Common diagnostics imports.
 pub mod prelude {
-    pub use crate::CdfDiagnosticsExt;
+    pub use crate::{CdfDiagnosticsExt, CrpsDiagnosticsExt};
 }
 
 #[cfg(test)]
@@ -155,7 +191,7 @@ mod tests {
     };
     use gamlss_family::Normal;
 
-    use super::{CdfDiagnosticsExt, inverse_unit_normal_cdf};
+    use super::{CdfDiagnosticsExt, CrpsDiagnosticsExt, inverse_unit_normal_cdf};
 
     type TestModel<'a> = Gamlss<
         Normal<Identity, Log>,
@@ -231,7 +267,37 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_prelude_exposes_pit_extension_trait() {
+    fn crps_values_use_training_observations_and_fitted_parameters() {
+        let y = [0.0, 1.0];
+        let model = normal_intercept_model(&y);
+
+        let crps = model.crps_values(&[0.0, 0.0]).expect("valid theta");
+
+        assert_relative_eq!(crps[0], 0.233_694_977_255_109_13, epsilon = 1.0e-12);
+        assert_relative_eq!(crps[1], 0.602_441_337_825_803, epsilon = 1.0e-12);
+        assert_relative_eq!(
+            model.mean_crps(&[0.0, 0.0]).expect("valid theta"),
+            (crps[0] + crps[1]) / 2.0,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn crps_values_reject_wrong_theta_length() {
+        let y = [0.0];
+        let model = normal_intercept_model(&y);
+
+        assert_eq!(
+            model.crps_values(&[]).unwrap_err(),
+            ModelError::BetaLength {
+                expected: 2,
+                actual: 0
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostics_prelude_exposes_extension_traits() {
         use crate::prelude::*;
 
         let y = [0.0];
@@ -246,6 +312,11 @@ mod tests {
             model.quantile_residuals(&[0.0, 0.0]).unwrap()[0],
             0.0,
             epsilon = 1.0e-6
+        );
+        assert_relative_eq!(
+            model.mean_crps(&[0.0, 0.0]).unwrap(),
+            0.233_694_977_255_109_13,
+            epsilon = 1.0e-12
         );
     }
 }

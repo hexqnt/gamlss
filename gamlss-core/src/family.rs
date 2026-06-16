@@ -344,6 +344,15 @@ pub trait HasQuantile: Family {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
 }
 
+/// Distribution helper for continuous ranked probability score.
+pub trait HasCrps: Family {
+    /// CRPS for one observation and natural-scale parameters.
+    ///
+    /// Implementations should return a non-finite value for invalid
+    /// observation or parameter domains rather than panicking.
+    fn crps<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+}
+
 /// Distribution helper для simulation.
 pub trait CanSimulate<Rng>: Family {
     /// Генерирует одно значение для параметров на естественной шкале.

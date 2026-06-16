@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 /// Penalty для коэффициентов одного parameter block.
 ///
 /// Implementations receive the local coefficient slice for one parameter
@@ -114,6 +116,253 @@ impl MatrixPenalty for RidgePenalty {
     }
 }
 
+/// Applies a local penalty to a subrange of a larger coefficient block.
+///
+/// This is useful when one parameter predictor is composed from several terms
+/// and only one term should receive a local regularizer. The range is expressed
+/// in the local coefficient coordinates passed to [`Penalty`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentPenalty<P> {
+    range: Range<usize>,
+    penalty: P,
+}
+
+impl<P> SegmentPenalty<P> {
+    /// Creates a segment penalty over `range`.
+    #[must_use]
+    pub const fn new(range: Range<usize>, penalty: P) -> Self {
+        Self { range, penalty }
+    }
+
+    /// Returns the local coefficient range affected by this penalty.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    /// Returns the wrapped penalty.
+    #[must_use]
+    pub const fn penalty(&self) -> &P {
+        &self.penalty
+    }
+}
+
+impl<P> Penalty for SegmentPenalty<P>
+where
+    P: Penalty,
+{
+    fn value(&self, beta: &[f64]) -> f64 {
+        self.penalty.value(&beta[self.range.clone()])
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        debug_assert_eq!(beta.len(), grad.len());
+
+        let start = self.range.start;
+        let end = self.range.end;
+        self.penalty
+            .add_gradient(&beta[start..end], &mut grad[start..end]);
+    }
+}
+
+/// Weighted coefficient in a full-vector linear form.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinearTerm {
+    /// Index in the full flat coefficient vector.
+    pub index: usize,
+    /// Multiplicative coefficient for `beta[index]`.
+    pub weight: f64,
+}
+
+impl LinearTerm {
+    /// Creates a linear-form term.
+    #[must_use]
+    pub const fn new(index: usize, weight: f64) -> Self {
+        Self { index, weight }
+    }
+}
+
+/// Linear form over a full flat coefficient vector.
+///
+/// The value is `constant + sum(term.weight * beta[term.index])`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinearForm {
+    /// Coefficients participating in the form.
+    pub terms: Vec<LinearTerm>,
+    /// Additive constant.
+    pub constant: f64,
+}
+
+impl LinearForm {
+    /// Creates a linear form from terms and a constant.
+    #[must_use]
+    pub const fn new(terms: Vec<LinearTerm>, constant: f64) -> Self {
+        Self { terms, constant }
+    }
+
+    /// Evaluates the form at `beta`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a term index is out of bounds for `beta`.
+    #[must_use]
+    pub fn value(&self, beta: &[f64]) -> f64 {
+        self.terms.iter().fold(self.constant, |sum, term| {
+            sum + term.weight * beta[term.index]
+        })
+    }
+
+    fn add_scaled_gradient(&self, scale: f64, grad: &mut [f64]) {
+        for term in &self.terms {
+            grad[term.index] += scale * term.weight;
+        }
+    }
+}
+
+/// Quadratic hinge penalty `weight * max(form(beta), 0)^2`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HingeQuadraticPenalty {
+    /// Linear form whose positive part is penalized.
+    pub form: LinearForm,
+    /// Penalty weight.
+    pub weight: f64,
+}
+
+impl HingeQuadraticPenalty {
+    /// Creates a quadratic hinge penalty.
+    #[must_use]
+    pub const fn new(form: LinearForm, weight: f64) -> Self {
+        Self { form, weight }
+    }
+
+    fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
+        if !self.weight.is_finite() || self.weight <= 0.0 {
+            return PenaltyContribution::ZERO;
+        }
+
+        let form_value = self.form.value(beta);
+        if form_value.is_nan() {
+            return PenaltyContribution::new(f64::NAN, f64::NAN);
+        }
+
+        let violation = form_value.max(0.0);
+        if violation <= 0.0 {
+            return PenaltyContribution::ZERO;
+        }
+
+        PenaltyContribution::new(
+            self.weight * violation * violation,
+            2.0 * self.weight * violation,
+        )
+    }
+}
+
+impl GlobalPenalty for HingeQuadraticPenalty {
+    fn value(&self, beta: &[f64]) -> f64 {
+        self.contribution(beta).value
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        let contribution = self.contribution(beta);
+        if contribution.gradient_scale != 0.0 {
+            self.form
+                .add_scaled_gradient(contribution.gradient_scale, grad);
+        }
+    }
+}
+
+/// Relative quadratic penalty for exceeding an absolute linear-form limit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbsoluteLimitPenalty {
+    /// Linear form whose absolute value is constrained.
+    pub form: LinearForm,
+    /// Penalty weight.
+    pub weight: f64,
+    /// Converts `abs(form(beta))` into the constrained physical scale.
+    pub scale: f64,
+    /// Maximum allowed scaled absolute value.
+    pub limit: f64,
+}
+
+impl AbsoluteLimitPenalty {
+    /// Creates an absolute-limit penalty.
+    #[must_use]
+    pub const fn new(form: LinearForm, weight: f64, scale: f64, limit: f64) -> Self {
+        Self {
+            form,
+            weight,
+            scale,
+            limit,
+        }
+    }
+
+    fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
+        if !self.weight.is_finite()
+            || self.weight <= 0.0
+            || !self.scale.is_finite()
+            || self.scale <= 0.0
+            || !self.limit.is_finite()
+            || self.limit < 0.0
+        {
+            return PenaltyContribution::ZERO;
+        }
+
+        let form_value = self.form.value(beta);
+        if form_value.is_nan() {
+            return PenaltyContribution::new(f64::NAN, f64::NAN);
+        }
+
+        let abs_scaled = self.scale * form_value.abs();
+        let excess = abs_scaled - self.limit;
+        if excess <= 0.0 {
+            return PenaltyContribution::ZERO;
+        }
+
+        let denominator = self.limit.max(1.0e-12);
+        let relative = (excess / denominator).min(1.0e6);
+
+        let sign = if form_value >= 0.0 { 1.0 } else { -1.0 };
+        PenaltyContribution::new(
+            self.weight * relative * relative,
+            2.0 * self.weight * relative * self.scale * sign / denominator,
+        )
+    }
+}
+
+impl GlobalPenalty for AbsoluteLimitPenalty {
+    fn value(&self, beta: &[f64]) -> f64 {
+        self.contribution(beta).value
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        let contribution = self.contribution(beta);
+        if contribution.gradient_scale != 0.0 {
+            self.form
+                .add_scaled_gradient(contribution.gradient_scale, grad);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PenaltyContribution {
+    value: f64,
+    gradient_scale: f64,
+}
+
+impl PenaltyContribution {
+    const ZERO: Self = Self {
+        value: 0.0,
+        gradient_scale: 0.0,
+    };
+
+    const fn new(value: f64, gradient_scale: f64) -> Self {
+        Self {
+            value,
+            gradient_scale,
+        }
+    }
+}
+
 macro_rules! impl_global_penalty_tuple {
     (types = ($($ty:ident),+); indices = ($($idx:tt),+)) => {
         impl<$($ty,)+> GlobalPenalty for ($($ty,)+)
@@ -170,7 +419,10 @@ impl_global_penalty_tuple!(types = (P1, P2, P3, P4, P5, P6, P7, P8); indices = (
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::{GlobalPenalty, MatrixPenalty, NoPenalty, Penalty, RidgePenalty};
+    use super::{
+        AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearTerm,
+        MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
+    };
 
     #[derive(Debug, Clone, Copy)]
     struct LinearPenalty(f64);
@@ -220,6 +472,52 @@ mod tests {
     }
 
     #[test]
+    fn segment_penalty_applies_value_to_selected_range() {
+        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new(2.0));
+        let beta = [10.0, 1.0, -2.0, 3.0, 20.0];
+
+        assert_eq!(penalty.range(), 1..4);
+        assert_eq!(penalty.penalty(), &RidgePenalty::new(2.0));
+        assert_relative_eq!(
+            penalty.value(&beta),
+            RidgePenalty::new(2.0).value(&beta[1..4])
+        );
+    }
+
+    #[test]
+    fn segment_penalty_adds_gradient_only_inside_selected_range() {
+        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new(2.0));
+        let beta = [10.0, 1.0, -2.0, 3.0, 20.0];
+        let mut grad = [100.0, 0.0, 0.0, 0.0, 200.0];
+
+        penalty.add_gradient(&beta, &mut grad);
+
+        assert_relative_eq!(grad[0], 100.0);
+        assert_relative_eq!(grad[1], 4.0);
+        assert_relative_eq!(grad[2], -8.0);
+        assert_relative_eq!(grad[3], 12.0);
+        assert_relative_eq!(grad[4], 200.0);
+    }
+
+    #[test]
+    fn segment_penalty_tuples_compose_disjoint_ranges() {
+        let penalty = (
+            SegmentPenalty::new(0..2, RidgePenalty::new(1.0)),
+            SegmentPenalty::new(2..4, LinearPenalty(3.0)),
+        );
+        let beta = [1.0, 2.0, 3.0, 4.0];
+        let mut grad = [0.0; 4];
+
+        assert_relative_eq!(Penalty::value(&penalty, &beta), 5.0 + 21.0);
+        Penalty::add_gradient(&penalty, &beta, &mut grad);
+
+        assert_relative_eq!(grad[0], 2.0);
+        assert_relative_eq!(grad[1], 4.0);
+        assert_relative_eq!(grad[2], 3.0);
+        assert_relative_eq!(grad[3], 3.0);
+    }
+
+    #[test]
     fn eight_global_penalty_tuple_adds_values_and_gradients() {
         let penalty = (
             LinearPenalty(1.0),
@@ -237,6 +535,135 @@ mod tests {
         assert_relative_eq!(GlobalPenalty::value(&penalty, &beta), 72.0);
         GlobalPenalty::add_gradient(&penalty, &beta, &mut grad);
         assert_relative_eq!(grad[0], 37.0);
+    }
+
+    #[test]
+    fn linear_form_evaluates_full_beta_vector_terms() {
+        let form = LinearForm::new(vec![LinearTerm::new(2, 0.5), LinearTerm::new(0, -2.0)], 1.0);
+        let beta = [3.0, 10.0, 8.0];
+
+        assert_relative_eq!(form.value(&beta), -1.0);
+    }
+
+    #[test]
+    fn hinge_quadratic_penalty_gradient_matches_finite_difference() {
+        let penalty = HingeQuadraticPenalty::new(
+            LinearForm::new(
+                vec![LinearTerm::new(0, 1.0), LinearTerm::new(2, -0.5)],
+                -0.1,
+            ),
+            3.0,
+        );
+        let beta = [1.0, -2.0, 0.4];
+
+        assert_global_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn hinge_quadratic_penalty_ignores_nonpositive_side_and_invalid_weight() {
+        let inactive =
+            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -2.0), 3.0);
+        let invalid = HingeQuadraticPenalty::new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            f64::NAN,
+        );
+        let beta = [1.0];
+
+        for penalty in [inactive, invalid] {
+            let mut grad = [5.0];
+            assert_eq!(penalty.value(&beta), 0.0);
+            penalty.add_gradient(&beta, &mut grad);
+            assert_eq!(grad, [5.0]);
+        }
+    }
+
+    #[test]
+    fn hinge_quadratic_penalty_propagates_nan_form_values() {
+        let penalty =
+            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0), 3.0);
+        let beta = [f64::NAN];
+        let mut grad = [0.0];
+
+        assert!(penalty.value(&beta).is_nan());
+        penalty.add_gradient(&beta, &mut grad);
+        assert!(grad[0].is_nan());
+    }
+
+    #[test]
+    fn absolute_limit_penalty_gradient_matches_finite_difference() {
+        let penalty = AbsoluteLimitPenalty::new(
+            LinearForm::new(
+                vec![LinearTerm::new(0, 1.0), LinearTerm::new(1, -2.0)],
+                0.25,
+            ),
+            5.0,
+            1.5,
+            0.4,
+        );
+        let beta = [0.8, -0.2];
+
+        assert_global_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn absolute_limit_penalty_ignores_inactive_and_invalid_inputs() {
+        let inactive = AbsoluteLimitPenalty::new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            3.0,
+            1.0,
+            2.0,
+        );
+        let invalid = AbsoluteLimitPenalty::new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            3.0,
+            f64::NAN,
+            2.0,
+        );
+        let beta = [1.0];
+
+        for penalty in [inactive, invalid] {
+            let mut grad = [5.0];
+            assert_eq!(penalty.value(&beta), 0.0);
+            penalty.add_gradient(&beta, &mut grad);
+            assert_eq!(grad, [5.0]);
+        }
+    }
+
+    #[test]
+    fn absolute_limit_penalty_propagates_nan_form_values() {
+        let penalty = AbsoluteLimitPenalty::new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            3.0,
+            1.0,
+            0.5,
+        );
+        let beta = [f64::NAN];
+        let mut grad = [0.0];
+
+        assert!(penalty.value(&beta).is_nan());
+        penalty.add_gradient(&beta, &mut grad);
+        assert!(grad[0].is_nan());
+    }
+
+    #[test]
+    fn global_linear_penalty_tuple_composes_values_and_gradients() {
+        let penalty = (
+            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -0.5), 2.0),
+            AbsoluteLimitPenalty::new(
+                LinearForm::new(vec![LinearTerm::new(1, -1.0)], 0.0),
+                3.0,
+                2.0,
+                0.5,
+            ),
+        );
+        let beta = [1.0, -1.0];
+        let mut grad = [0.0, 0.0];
+
+        assert_relative_eq!(GlobalPenalty::value(&penalty, &beta), 0.5 + 27.0);
+        GlobalPenalty::add_gradient(&penalty, &beta, &mut grad);
+
+        assert_relative_eq!(grad[0], 2.0);
+        assert_relative_eq!(grad[1], -72.0);
     }
 
     #[test]
@@ -263,5 +690,25 @@ mod tests {
         assert_eq!(gram[5], 6.0);
         assert_eq!(gram[6], 7.0);
         assert_eq!(gram[7], 8.0);
+    }
+
+    fn assert_global_penalty_gradient_matches_finite_difference<P>(penalty: &P, beta: &[f64])
+    where
+        P: GlobalPenalty,
+    {
+        let epsilon = 1.0e-6;
+        let mut grad = vec![0.0; beta.len()];
+        penalty.add_gradient(beta, &mut grad);
+
+        for index in 0..beta.len() {
+            let mut plus = beta.to_vec();
+            plus[index] += epsilon;
+            let mut minus = beta.to_vec();
+            minus[index] -= epsilon;
+            let finite_difference =
+                (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * epsilon);
+
+            assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
     }
 }

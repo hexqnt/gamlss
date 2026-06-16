@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    DesignMatrix, Family, Gamlss, HasCdf, HasDeviance, HasInitialEta, Identity,
+    DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, Identity,
     LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
     ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
 };
@@ -11,6 +11,8 @@ use gamlss_core::{
 use crate::special::unit_normal_cdf;
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
+const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
+const INV_SQRT_PI: f64 = 0.564_189_583_547_756_3;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
 /// Нормальное распределение с типизированными link-функциями для `mu` и `sigma`.
@@ -209,6 +211,24 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasCrps for Normal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let z = (y - theta.mu) / theta.sigma;
+        let cdf = unit_normal_cdf(z);
+        let pdf = INV_SQRT_2_PI * (-0.5 * z * z).exp();
+        theta.sigma * (z * (2.0 * cdf - 1.0) + 2.0 * pdf - INV_SQRT_PI)
+    }
+}
+
 impl HasInitialEta for Normal<Identity, Log> {
     fn initial_eta<'obs>(&self, y: Self::Observation<'obs>) -> Self::Eta {
         NormalEta {
@@ -283,7 +303,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
     use gamlss_core::{
-        DenseDesign, Family, HasCdf, HasDeviance, HasInitialEta, NoPenalty, Objective,
+        DenseDesign, Family, HasCdf, HasCrps, HasDeviance, HasInitialEta, NoPenalty, Objective,
     };
 
     use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
@@ -445,6 +465,51 @@ mod tests {
                         mu: 0.0,
                         sigma: 1.0
                     }
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn normal_crps_matches_fixed_values() {
+        let family = DefaultNormal::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                NormalTheta {
+                    mu: 0.0,
+                    sigma: 2.0,
+                },
+            ),
+            0.662_807_065_409_673_2,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn normal_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultNormal::new();
+
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    NormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    f64::NAN,
+                    NormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
                 )
                 .is_nan()
         );

@@ -14,6 +14,10 @@ use crate::special::ln_gamma;
 /// `MuLink` и `SigmaLink` управляют link-функциями для параметров
 /// расположения и масштаба соответственно. По умолчанию используются
 /// `Identity` для `mu` и `Log` для `sigma`.
+///
+/// CRPS support is intentionally left out until the crate has an internal
+/// Student's t CDF/PDF implementation or an optional dependency strategy for
+/// it. This keeps the default family crate dependency-light.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = Identity, SigmaLink = Log> {
     degrees_of_freedom: f64,
