@@ -1,7 +1,10 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape,
+    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale,
+    Shape,
 };
 
 /// Weibull family parameterized by positive shape and scale.
@@ -182,13 +185,58 @@ where
     }
 }
 
+impl<ShapeLink, ScaleLink> HasQuantile for Weibull<ShapeLink, ScaleLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p)
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        theta.scale * (-(-p).ln_1p()).powf(1.0 / theta.shape)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, ShapeLink, ScaleLink> CanSimulate<Rng> for Weibull<ShapeLink, ScaleLink>
+where
+    Rng: rand::Rng,
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::Weibull::new(theta.scale, theta.shape)
+                .expect("validated weibull parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Weibull distribution with log links for shape and scale.
 pub type DefaultWeibull = Weibull<Log, Log>;
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf};
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{DefaultWeibull, WeibullTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -243,6 +291,33 @@ mod tests {
     }
 
     #[test]
+    fn weibull_quantile_inverts_cdf() {
+        let family = DefaultWeibull::new();
+        let theta = WeibullTheta {
+            shape: 2.0,
+            scale: 3.0,
+        };
+
+        assert_relative_eq!(family.quantile(0.0, theta), 0.0, epsilon = 1.0e-12);
+        assert!(family.quantile(1.0, theta).is_infinite());
+
+        let y = family.quantile(0.75, theta);
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    WeibullTheta {
+                        shape: 0.0,
+                        scale: 3.0
+                    }
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
     fn weibull_cdf_returns_nan_for_invalid_domains() {
         let family = DefaultWeibull::new();
 
@@ -264,6 +339,34 @@ mod tests {
                     WeibullTheta {
                         shape: 0.0,
                         scale: 3.0
+                    }
+                )
+                .is_nan()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn weibull_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultWeibull::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            WeibullTheta {
+                shape: 1.5,
+                scale: 0.8,
+            },
+        );
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    WeibullTheta {
+                        shape: 0.0,
+                        scale: 0.8
                     }
                 )
                 .is_nan()

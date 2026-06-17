@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape,
+    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale,
+    Shape,
 };
 
 /// Lomax (Pareto type II) family parameterized by positive shape and scale.
@@ -180,6 +181,25 @@ where
     }
 }
 
+impl<ShapeLink, ScaleLink> HasQuantile for Lomax<ShapeLink, ScaleLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p)
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        theta.scale * ((-p).ln_1p() / -theta.shape).exp_m1()
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ShapeLink, ScaleLink> CanSimulate<Rng> for Lomax<ShapeLink, ScaleLink>
 where
@@ -209,7 +229,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{DefaultLomax, LomaxTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -256,6 +276,33 @@ mod tests {
         assert_relative_eq!(family.cdf(0.0, theta), 0.0, epsilon = 1.0e-12);
         assert_relative_eq!(family.cdf(median, theta), 0.5, epsilon = 1.0e-12);
         assert!(family.cdf(-1.0, theta).is_nan());
+    }
+
+    #[test]
+    fn lomax_quantile_inverts_cdf() {
+        let family = DefaultLomax::new();
+        let theta = LomaxTheta {
+            shape: 2.0,
+            scale: 3.0,
+        };
+
+        assert_relative_eq!(family.quantile(0.0, theta), 0.0, epsilon = 1.0e-12);
+        assert!(family.quantile(1.0, theta).is_infinite());
+
+        let y = family.quantile(0.75, theta);
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    LomaxTheta {
+                        shape: 0.0,
+                        scale: 3.0
+                    }
+                )
+                .is_nan()
+        );
     }
 
     #[cfg(feature = "rand")]

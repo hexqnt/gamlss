@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, Link, Log, Mu, ParameterParts,
+    ParameterizedFamily, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use rand::RngExt;
@@ -198,6 +198,28 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasQuantile for Laplace<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p)
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        if p < 0.5 {
+            theta.mu + theta.sigma * (2.0 * p).ln()
+        } else {
+            theta.mu - theta.sigma * (2.0 * (1.0 - p)).ln()
+        }
+    }
+}
+
 impl<MuLink, SigmaLink> HasCrps for Laplace<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -240,7 +262,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasCrps};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -336,6 +358,36 @@ mod tests {
             family
                 .cdf(
                     0.0,
+                    LaplaceTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn laplace_quantile_inverts_cdf() {
+        let family = DefaultLaplace::new();
+        let theta = LaplaceTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+
+        assert_relative_eq!(family.quantile(0.5, theta), theta.mu, epsilon = 1.0e-12);
+        assert!(family.quantile(0.0, theta).is_infinite());
+        assert!(family.quantile(0.0, theta).is_sign_negative());
+        assert!(family.quantile(1.0, theta).is_infinite());
+        assert!(family.quantile(1.0, theta).is_sign_positive());
+
+        let y = family.quantile(0.25, theta);
+        assert_relative_eq!(family.cdf(y, theta), 0.25, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
                     LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0

@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
-    Sigma,
+    Family, HasCdf, HasQuantile, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily,
+    PositiveLink, Sigma,
 };
 
 /// Logistic family parameterized by location and positive scale.
@@ -193,6 +193,24 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasQuantile for Logistic<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p)
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        theta.mu + theta.sigma * (p.ln() - (-p).ln_1p())
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Logistic<MuLink, SigmaLink>
 where
@@ -218,7 +236,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{DefaultLogistic, LogisticTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -261,6 +279,35 @@ mod tests {
 
         assert_relative_eq!(family.cdf(theta.mu, theta), 0.5, epsilon = 1.0e-12);
         assert!(family.cdf(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn logistic_quantile_inverts_cdf() {
+        let family = DefaultLogistic::new();
+        let theta = LogisticTheta {
+            mu: 0.4,
+            sigma: 1.5,
+        };
+
+        assert!(family.quantile(0.0, theta).is_infinite());
+        assert!(family.quantile(0.0, theta).is_sign_negative());
+        assert!(family.quantile(1.0, theta).is_infinite());
+        assert!(family.quantile(1.0, theta).is_sign_positive());
+
+        let y = family.quantile(0.75, theta);
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    LogisticTheta {
+                        mu: 0.4,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 
     #[cfg(feature = "rand")]

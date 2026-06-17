@@ -2,8 +2,8 @@ use gamlss_core::{
     ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
     HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Log, Logit, Mu,
     NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObservationView, ParameterBlock,
-    ParameterParts, ParameterizedFamily, PositiveLink, PredictorBlock, Softplus, SoftplusScalar,
-    TrainingDiagnostics, UnitIntervalLink,
+    ParameterLayout, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink,
+    PredictorBlock, Sigma, Softplus, SoftplusScalar, TrainingDiagnostics, UnitIntervalLink,
 };
 
 #[test]
@@ -28,6 +28,26 @@ fn training_diagnostics_remains_a_root_reexport() {
     };
 
     assert_eq!(diagnostics.objective, 1.0);
+}
+
+#[test]
+fn parameter_layout_helpers_remain_root_reexports() {
+    let layout = ParameterLayout::new(vec![
+        ParameterSlice {
+            name: "mu",
+            range: 0..2,
+        },
+        ParameterSlice {
+            name: "sigma",
+            range: 2..3,
+        },
+    ]);
+
+    assert_eq!(layout.len(), 2);
+    assert!(!layout.is_empty());
+    assert_eq!(layout.ncoefficients(), 3);
+    assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
+    assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
 }
 
 #[test]

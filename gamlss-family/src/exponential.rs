@@ -2,7 +2,9 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, HasCdf, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate};
+use gamlss_core::{
+    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate,
+};
 
 /// Exponential family parameterized by positive rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,6 +145,19 @@ where
     }
 }
 
+impl<RateLink> HasQuantile for Exponential<RateLink>
+where
+    RateLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p) || theta.rate <= 0.0 || !theta.rate.is_finite() {
+            return f64::NAN;
+        }
+
+        -(-p).ln_1p() / theta.rate
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, RateLink> CanSimulate<Rng> for Exponential<RateLink>
 where
@@ -169,7 +184,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{DefaultExponential, ExponentialTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -207,6 +222,24 @@ mod tests {
             epsilon = 1.0e-12
         );
         assert!(family.cdf(-1.0, theta).is_nan());
+    }
+
+    #[test]
+    fn exponential_quantile_inverts_cdf() {
+        let family = DefaultExponential::new();
+        let theta = ExponentialTheta { rate: 2.0 };
+
+        assert_relative_eq!(family.quantile(0.0, theta), 0.0, epsilon = 1.0e-12);
+        assert!(family.quantile(1.0, theta).is_infinite());
+
+        let y = family.quantile(0.25, theta);
+        assert_relative_eq!(family.cdf(y, theta), 0.25, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(0.5, ExponentialTheta { rate: 0.0 })
+                .is_nan()
+        );
     }
 
     #[cfg(feature = "rand")]

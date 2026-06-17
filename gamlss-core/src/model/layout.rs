@@ -25,16 +25,45 @@ pub struct ParameterLayout {
 
 impl ParameterLayout {
     /// Creates a layout from named slices.
+    #[must_use]
     pub fn new(slices: Vec<ParameterSlice>) -> Self {
         Self { slices }
     }
 
+    /// Number of parameter blocks represented by this layout.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.slices.len()
+    }
+
+    /// `true` if this layout has no parameter blocks.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.slices.is_empty()
+    }
+
+    /// Minimum coefficient-vector length needed to contain every slice.
+    ///
+    /// For ordinary model layouts this is equal to the model's coefficient
+    /// count. For manually constructed layouts with gaps it returns the
+    /// largest slice end.
+    #[must_use]
+    pub fn ncoefficients(&self) -> usize {
+        self.slices
+            .iter()
+            .map(|slice| slice.range.end)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Returns all parameter slices in model order.
+    #[must_use]
     pub fn slices(&self) -> &[ParameterSlice] {
         &self.slices
     }
 
     /// Returns the coefficient range for `name`, if present.
+    #[must_use]
     pub fn slice(&self, name: &str) -> Option<Range<usize>> {
         self.slices
             .iter()
@@ -43,6 +72,7 @@ impl ParameterLayout {
     }
 
     /// Returns the coefficient range for typed parameter marker `P`, if present.
+    #[must_use]
     pub fn slice_of<P>(&self) -> Option<Range<usize>>
     where
         P: ParameterName,
@@ -75,11 +105,13 @@ pub struct UnpackedTheta {
 
 impl UnpackedTheta {
     /// Returns an unpacked coefficient block by parameter name.
+    #[must_use]
     pub fn block(&self, name: &str) -> Option<&ParameterCoefficients> {
         self.blocks.iter().find(|block| block.name == name)
     }
 
     /// Returns an unpacked coefficient block for typed parameter marker `P`.
+    #[must_use]
     pub fn block_of<P>(&self) -> Option<&ParameterCoefficients>
     where
         P: ParameterName,
@@ -88,11 +120,13 @@ impl UnpackedTheta {
     }
 
     /// Returns coefficients by parameter name.
+    #[must_use]
     pub fn coefficients(&self, name: &str) -> Option<&[f64]> {
         self.block(name).map(|block| block.coefficients.as_slice())
     }
 
     /// Returns coefficients for typed parameter marker `P`.
+    #[must_use]
     pub fn coefficients_of<P>(&self) -> Option<&[f64]>
     where
         P: ParameterName,

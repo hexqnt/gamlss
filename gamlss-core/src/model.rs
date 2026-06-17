@@ -132,23 +132,33 @@ where
     }
 
     #[doc(hidden)]
+    fn parameter_slice_of<P>(&self) -> Option<Range<usize>>
+    where
+        P: ParameterName,
+    {
+        let mut found = None;
+        self.visit_parameter_slices(|_, name, range| {
+            if name == P::NAME && found.is_none() {
+                found = Some(range);
+            }
+        });
+        found
+    }
+
+    #[doc(hidden)]
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
     where
         Other: GamlssBlocks<F>,
     {
-        let expected_layout = self.parameter_layout();
-        let expected_slices = expected_layout.slices();
         let mut got_count = 0;
         let mut matches = true;
 
         other.visit_parameter_slices(|index, name, range| {
             got_count += 1;
-            matches &= expected_slices
-                .get(index)
-                .is_some_and(|slice| slice.name == name && slice.range == range);
+            matches &= self.parameter_slice_matches(index, name, range);
         });
 
-        matches && got_count == expected_slices.len()
+        matches && got_count == self.parameter_slice_count()
     }
 }
 
@@ -301,8 +311,8 @@ where
         P: ParameterName,
     {
         let range = self
-            .parameter_layout()
-            .slice_of::<P>()
+            .blocks
+            .parameter_slice_of::<P>()
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
         Ok(BlockObjective::new(self, full_beta, range))
     }
@@ -2048,6 +2058,9 @@ mod tests {
         let layout = model.parameter_layout();
         let unpacked = model.unpack_theta(&theta).unwrap();
 
+        assert_eq!(layout.len(), 3);
+        assert!(!layout.is_empty());
+        assert_eq!(layout.ncoefficients(), theta.len());
         assert_eq!(layout.slice("mu").unwrap(), 0..1);
         assert_eq!(layout.slice_of::<Mu>().unwrap(), 0..1);
         assert_eq!(layout.slice("sigma").unwrap(), 1..2);

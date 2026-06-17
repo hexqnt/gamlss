@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Logit, Mu, ParameterParts, ParameterizedFamily, UnitIntervalLink,
+    Family, HasCdf, HasQuantile, Logit, Mu, ParameterParts, ParameterizedFamily, UnitIntervalLink,
 };
 
 /// Bernoulli family parameterized by success probability.
@@ -165,6 +165,20 @@ where
     }
 }
 
+impl<MuLink> HasQuantile for Bernoulli<MuLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&p) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        if p <= 1.0 - theta.mu { 0.0 } else { 1.0 }
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink> CanSimulate<Rng> for Bernoulli<MuLink>
 where
@@ -191,7 +205,7 @@ pub type DefaultBernoulli = Bernoulli<Logit>;
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{BernoulliTheta, DefaultBernoulli};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -224,6 +238,19 @@ mod tests {
         assert_eq!(family.cdf(0.5, theta), 0.6);
         assert_eq!(family.cdf(1.0, theta), 1.0);
         assert!(family.cdf(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn bernoulli_quantile_matches_generalized_inverse_cdf() {
+        let family = DefaultBernoulli::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(0.6, theta), 0.0);
+        assert_eq!(family.quantile(0.600_000_000_001, theta), 1.0);
+        assert_eq!(family.quantile(1.0, theta), 1.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(family.quantile(0.5, BernoulliTheta { mu: 1.0 }).is_nan());
     }
 
     #[cfg(feature = "rand")]
