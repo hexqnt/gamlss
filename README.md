@@ -19,9 +19,11 @@ Type-driven Rust crates for GAMLSS-style modeling.
 gamlss = "0.2"
 ```
 
-`gamlss` — batteries-included фасад: по умолчанию он реэкспортирует typed
-core, готовые families, spline/predictor building blocks, target transforms и
-dynamic formula/builder слой.
+`gamlss` — batteries-included фасад. Основной и наиболее стабильный путь сейчас
+идет через низкоуровневое typed API: `gamlss-core`, `gamlss-family`,
+`gamlss-spline` и `gamlss-transform`. По умолчанию фасад также реэкспортирует
+`gamlss-formula`, но этот слой пока является экспериментальным optional
+convenience crate, а не основным API библиотеки.
 
 Workspace также публикует отдельные crate-ы для более явного контроля API и
 зависимостей:
@@ -33,11 +35,15 @@ Workspace также публикует отдельные crate-ы для бо�
   residuals для supported continuous CDF families.
 - `gamlss-spline` — spline/Fourier predictors, penalties и spline metadata.
 - `gamlss-transform` — target preprocessing transforms.
-- `gamlss-formula` — dynamic formula/builder layer, который компилирует runtime
-  specifications в typed models.
+- `gamlss-formula` — экспериментальный optional formula/builder layer, который
+  компилирует runtime specifications в typed models. Он покрывает curated
+  high-level workflows и не обязан зеркалировать все families, links и
+  parameterizations, доступные в низкоуровневых crate-ах.
 
 В обычном случае достаточно зависеть от `gamlss`; остальные crate-ы будут
-подключены транзитивно.
+подключены транзитивно. Если нужен более строгий low-level surface без
+экспериментального formula слоя, используйте `default-features = false` или
+зависимости на отдельные crate-ы напрямую.
 
 ## Общая ионформация о GAMLSS
 

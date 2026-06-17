@@ -177,6 +177,7 @@ dependencies = [
  "approx",
  "gamlss-core",
  "gamlss-family",
+ "gamlss-spline",
  "thiserror",
 ]
 

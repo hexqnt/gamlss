@@ -28,7 +28,8 @@ pub use natural::{NaturalCubicSplineBasis, NaturalCubicSplineDesign};
 pub use open_uniform::{OpenUniformSplineBasis, OpenUniformSplineDesign};
 pub use order::SplineOrder;
 pub use penalty::{
-    CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty, SlopeLimitPenalty,
+    CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty, PreparedDifferencePenalty,
+    SlopeLimitPenalty,
 };
 pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
 pub use row_basis::SplineRowBasis;
@@ -41,8 +42,9 @@ pub mod prelude {
         DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
         ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection, MonotoneISplineDesign,
         NaturalCubicSplineBasis, NaturalCubicSplineDesign, OpenUniformSplineBasis,
-        OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec, SlopeLimitPenalty,
-        SplineError, SplineOrder, SplineRowBasis, TensorSplineDesign, pspline_design,
+        OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
+        PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, SplineRowBasis,
+        TensorSplineDesign, pspline_design,
     };
 }
 
@@ -56,7 +58,7 @@ mod tests {
         DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
         MSplineBasis, MonotoneDirection, MonotoneISplineDesign, NaturalCubicSplineBasis,
         OpenUniformSplineBasis, OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        SlopeLimitPenalty, SplineError, SplineOrder, TensorSplineDesign,
+        PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, TensorSplineDesign,
     };
 
     #[test]
@@ -88,6 +90,67 @@ mod tests {
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
         }
+    }
+
+    #[test]
+    fn prepared_difference_penalty_matches_unprepared() {
+        let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
+
+        for order in 0..=2 {
+            let unprepared = DifferencePenalty::new(0.7, order);
+            let prepared = PreparedDifferencePenalty::new(0.7, order);
+            let mut unprepared_grad = vec![0.0; beta.len()];
+            let mut prepared_grad = vec![0.0; beta.len()];
+
+            unprepared.add_gradient(&beta, &mut unprepared_grad);
+            prepared.add_gradient(&beta, &mut prepared_grad);
+
+            assert_relative_eq!(
+                prepared.value(&beta),
+                unprepared.value(&beta),
+                epsilon = 1.0e-12
+            );
+            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
+                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn open_uniform_basis_visitor_matches_design_row_basis() {
+        let x = [-0.25, 0.0, 0.2, 0.75, 1.25];
+        let basis = OpenUniformSplineBasis::new(0.0, 1.0, 6, SplineOrder::Cubic).unwrap();
+        let design = basis.design(&x).unwrap();
+
+        for (row, value) in x.iter().copied().enumerate() {
+            let mut from_design = Vec::new();
+            let mut from_basis = Vec::new();
+
+            super::SplineRowBasis::for_each_row_basis(&design, row, |index, weight| {
+                from_design.push((index, weight));
+            });
+            basis
+                .for_each_value_basis(value, |index, weight| {
+                    from_basis.push((index, weight));
+                })
+                .unwrap();
+
+            assert_eq!(from_basis.len(), from_design.len());
+            for ((basis_index, basis_weight), (design_index, design_weight)) in
+                from_basis.iter().zip(&from_design)
+            {
+                assert_eq!(basis_index, design_index);
+                assert_relative_eq!(basis_weight, design_weight, epsilon = 1.0e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn open_uniform_basis_visitor_rejects_non_finite_input() {
+        let basis = OpenUniformSplineBasis::new(0.0, 1.0, 6, SplineOrder::Cubic).unwrap();
+        let err = basis.for_each_value_basis(f64::NAN, |_, _| {}).unwrap_err();
+
+        assert_eq!(err, SplineError::NonFiniteValue);
     }
 
     #[test]
@@ -147,6 +210,24 @@ mod tests {
             beta[0] * phase.sin() + beta[1] * phase.cos(),
             epsilon = 1.0e-12
         );
+    }
+
+    #[test]
+    fn fourier_row_basis_matches_eta_unit_coefficients() {
+        let design = FourierDesign::new(&[0.0, 0.2, 0.7], 1.0, 3, true).unwrap();
+
+        for row in 0..design.nrows() {
+            let mut basis = vec![0.0; design.nparams()];
+            crate::SplineRowBasis::for_each_row_basis(&design, row, |index, weight| {
+                basis[index] = weight;
+            });
+
+            for index in 0..design.nparams() {
+                let mut beta = vec![0.0; design.nparams()];
+                beta[index] = 1.0;
+                assert_relative_eq!(basis[index], design.eta_row(row, &beta), epsilon = 1.0e-12);
+            }
+        }
     }
 
     #[test]

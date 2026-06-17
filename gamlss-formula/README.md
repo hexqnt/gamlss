@@ -1,14 +1,20 @@
 # gamlss-formula
 
-Optional formula and builder layer for compiling dynamic model specifications
-into typed GAMLSS models.
+Experimental optional formula/builder layer for compiling user specifications
+into typed `gamlss-core` models.
 
-> **Status:** This crate is an early MVP. It is not intended for production use
-> yet. The public API, internals, numerical behavior, and crate structure may
-> change substantially while the library is being developed.
+`gamlss-formula` is not the primary API of the project. The main direction is
+the lower-level typed stack: `gamlss-core`, `gamlss-family`, `gamlss-spline`,
+and `gamlss-transform`.
 
-This crate is the dynamic boundary layer of the workspace. It builds typed
-models from runtime model specifications and simple column-oriented data.
+This crate currently provides:
 
-Use it when integrating formula parsing, builder-style model construction, or
-higher-level modeling interfaces on top of the typed core.
+- typed `DataView`/`Col<T>` inputs;
+- curated term builders such as linear terms, factors, interactions and
+  splines;
+- selected default family specs: normal, gamma, log-normal, Weibull, inverse
+  Gaussian and beta.
+
+It intentionally does not provide string formula parsing, fit loops, optimizer
+integration, diagnostics or dataframe adapters, and it is not expected to mirror
+every low-level distribution, link or parameterization.

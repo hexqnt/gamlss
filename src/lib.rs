@@ -2,8 +2,15 @@
 //! Высокоуровневый crate для Rust-native GAMLSS.
 //!
 //! `gamlss` реэкспортирует typed core, готовые distribution families,
-//! spline/predictor building blocks, target transforms и, по умолчанию,
-//! dynamic formula/builder слой.
+//! spline/predictor building blocks и target transforms. Основной подход сейчас
+//! — низкоуровневое typed API через [`core`], [`family`], [`spline`] и
+//! [`transform`].
+//!
+//! При включённой feature `formula` также доступен [`formula`] namespace. Этот
+//! слой является экспериментальным optional convenience API: он компилирует
+//! curated high-level builder specifications в typed core models, но не является
+//! основным API и не обещает покрывать все distributions, links и
+//! parameterizations из низкоуровневых crate-ов.
 //!
 //! # Основные возможности
 //!
@@ -14,8 +21,8 @@
 //!   [`core::Gamlss::try_new_weighted`];
 //! - prediction API для training rows и совместимых prediction blocks;
 //! - post-fit diagnostics namespace через [`diagnostics`];
-//! - formula builders через [`formula::ModelSpec`] при включённой feature
-//!   `formula`.
+//! - experimental formula builders через [`formula::ModelSpec`] при включённой
+//!   feature `formula`.
 //!
 //! # Example
 //!
@@ -63,7 +70,7 @@ pub use gamlss_spline as spline;
 pub use gamlss_transform as transform;
 
 #[cfg(feature = "formula")]
-/// Динамический formula/builder слой.
+/// Экспериментальный optional formula/builder слой.
 pub use gamlss_formula as formula;
 
 /// Наиболее часто используемые импорты.

@@ -11,6 +11,7 @@ pub struct DifferencePenalty {
 
 impl DifferencePenalty {
     /// Создаёт difference penalty.
+    #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
     }
@@ -23,44 +24,56 @@ impl DifferencePenalty {
 impl Penalty for DifferencePenalty {
     fn value(&self, beta: &[f64]) -> f64 {
         let coefficients = self.coefficients();
-        if beta.len() < coefficients.len() {
-            return 0.0;
-        }
-
-        let mut sum = 0.0;
-        for window in beta.windows(coefficients.len()) {
-            let diff = coefficients
-                .iter()
-                .copied()
-                .zip(window.iter().copied())
-                .map(|(coefficient, beta)| coefficient * beta)
-                .sum::<f64>();
-            sum += diff * diff;
-        }
-
-        self.lambda * sum
+        difference_penalty_value(self.lambda, &coefficients, beta)
     }
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(beta.len(), grad.len());
-
         let coefficients = self.coefficients();
-        if beta.len() < coefficients.len() {
-            return;
-        }
+        add_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+}
 
-        for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
-            let diff = coefficients
-                .iter()
-                .copied()
-                .zip(beta_window.iter().copied())
-                .map(|(coefficient, beta)| coefficient * beta)
-                .sum::<f64>();
+/// Difference penalty with finite-difference coefficients computed once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedDifferencePenalty {
+    /// Вес penalty.
+    pub lambda: f64,
+    /// Порядок finite difference.
+    pub order: usize,
+    coefficients: Vec<f64>,
+}
 
-            for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-                grad[start + offset] += 2.0 * self.lambda * diff * coefficient;
-            }
+impl PreparedDifferencePenalty {
+    /// Creates a prepared difference penalty.
+    #[must_use]
+    pub fn new(lambda: f64, order: usize) -> Self {
+        Self {
+            lambda,
+            order,
+            coefficients: difference_coefficients(order),
         }
+    }
+
+    /// Returns the cached finite-difference coefficients.
+    #[must_use]
+    pub fn coefficients(&self) -> &[f64] {
+        &self.coefficients
+    }
+}
+
+impl From<DifferencePenalty> for PreparedDifferencePenalty {
+    fn from(value: DifferencePenalty) -> Self {
+        Self::new(value.lambda, value.order)
+    }
+}
+
+impl Penalty for PreparedDifferencePenalty {
+    fn value(&self, beta: &[f64]) -> f64 {
+        difference_penalty_value(self.lambda, &self.coefficients, beta)
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        add_difference_penalty_gradient(self.lambda, &self.coefficients, beta, grad);
     }
 }
 
@@ -81,6 +94,7 @@ impl CyclicDifferencePenalty {
     /// Создаёт cyclic difference penalty.
     ///
     /// `lambda` задаёт силу штрафа, `order` — порядок конечной разности.
+    #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
     }
@@ -133,6 +147,51 @@ impl Penalty for CyclicDifferencePenalty {
 
 fn cyclic_value(values: &[f64], index: usize) -> f64 {
     values[index % values.len()]
+}
+
+fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if beta.len() < coefficients.len() {
+        return 0.0;
+    }
+
+    let mut sum = 0.0;
+    for window in beta.windows(coefficients.len()) {
+        let diff = coefficients
+            .iter()
+            .copied()
+            .zip(window.iter().copied())
+            .map(|(coefficient, beta)| coefficient * beta)
+            .sum::<f64>();
+        sum += diff * diff;
+    }
+
+    lambda * sum
+}
+
+fn add_difference_penalty_gradient(
+    lambda: f64,
+    coefficients: &[f64],
+    beta: &[f64],
+    grad: &mut [f64],
+) {
+    debug_assert_eq!(beta.len(), grad.len());
+
+    if beta.len() < coefficients.len() {
+        return;
+    }
+
+    for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
+        let diff = coefficients
+            .iter()
+            .copied()
+            .zip(beta_window.iter().copied())
+            .map(|(coefficient, beta)| coefficient * beta)
+            .sum::<f64>();
+
+        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
+            grad[start + offset] += 2.0 * lambda * diff * coefficient;
+        }
+    }
 }
 
 /// Квадратичный штраф за нарушение монотонности на краях сплайна.

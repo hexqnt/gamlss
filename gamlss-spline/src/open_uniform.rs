@@ -94,6 +94,27 @@ impl OpenUniformSplineBasis {
         })
     }
 
+    /// Visits non-zero basis values for one input coordinate without allocating.
+    ///
+    /// The callback receives `(basis_index, weight)` pairs in the same
+    /// coefficient order as [`OpenUniformSplineDesign`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] if `x` is not finite.
+    pub fn for_each_value_basis(
+        &self,
+        x: f64,
+        f: impl FnMut(usize, f64),
+    ) -> Result<(), SplineError> {
+        if !x.is_finite() {
+            return Err(SplineError::NonFiniteValue);
+        }
+
+        self.local_basis(x).for_each(f);
+        Ok(())
+    }
+
     /// Нижняя граница диапазона basis-а.
     #[must_use]
     pub fn min(&self) -> f64 {
@@ -120,6 +141,15 @@ impl OpenUniformSplineBasis {
 
     fn span(&self) -> f64 {
         self.max - self.min
+    }
+
+    fn local_basis(&self, x: f64) -> LocalBasis {
+        let u = (x - self.min) / self.span();
+        self.local_basis_for_unit(u)
+    }
+
+    fn local_basis_for_unit(&self, u: f64) -> LocalBasis {
+        open_uniform_local_basis(u, self.order, self.n_basis, self.n_intervals)
     }
 }
 
@@ -174,17 +204,11 @@ impl OpenUniformSplineDesign {
     }
 
     fn basis_for_row(&self, row: usize) -> LocalBasis {
-        let u = (self.x[row] - self.basis.min) / self.basis.span();
-        self.basis_for_unit(u)
+        self.basis.local_basis(self.x[row])
     }
 
     fn basis_for_unit(&self, u: f64) -> LocalBasis {
-        open_uniform_local_basis(
-            u,
-            self.basis.order,
-            self.basis.n_basis,
-            self.basis.n_intervals,
-        )
+        self.basis.local_basis_for_unit(u)
     }
 
     /// Производная predictor contribution по исходной координате `x`.
