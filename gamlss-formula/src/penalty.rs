@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gamlss_core::{Penalty, SegmentPenalty};
-use gamlss_spline::{CyclicDifferencePenalty, PreparedDifferencePenalty};
+use gamlss_spline::{PreparedCyclicDifferencePenalty, PreparedDifferencePenalty};
 
 use crate::FittedTerm;
 
@@ -14,7 +14,7 @@ pub struct FormulaPenalty {
 #[derive(Debug, Clone, PartialEq)]
 enum SegmentPenaltyKind {
     Difference(PreparedDifferencePenalty),
-    Cyclic(CyclicDifferencePenalty),
+    Cyclic(PreparedCyclicDifferencePenalty),
 }
 
 impl Penalty for SegmentPenaltyKind {
@@ -44,7 +44,7 @@ impl FormulaPenalty {
     pub(crate) fn add_cyclic_spline(&mut self, range: Range<usize>, lambda: f64, order: usize) {
         self.spline_segments.push(SegmentPenalty::new(
             range,
-            SegmentPenaltyKind::Cyclic(CyclicDifferencePenalty::new(lambda, order)),
+            SegmentPenaltyKind::Cyclic(PreparedCyclicDifferencePenalty::new(lambda, order)),
         ));
     }
 }

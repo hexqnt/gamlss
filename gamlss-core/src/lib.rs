@@ -57,9 +57,9 @@ pub use link::{
     ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus, UnitIntervalLink,
 };
 pub use model::{
-    Gamlss, GamlssBlocks, GradientWorkspace, ObservationView, ParameterCoefficients,
-    ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta, WithGlobalPenalties,
-    WorkspaceGamlss,
+    Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale, ObservationView,
+    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
+    WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -67,8 +67,8 @@ pub use param::{
     Rate, Scale, Shape, Sigma, Tau,
 };
 pub use penalty::{
-    AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearTerm,
-    MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
+    AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
+    LinearTerm, MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
 };
 pub use predictor::{
     CoefficientTransform, FloorSoftplusScalar, HasDesignMatrix, LinearPredictorBlock,
@@ -83,12 +83,13 @@ pub mod prelude {
         CoefficientTransform, DenseDesign, DenseInformation, DesignMatrix, Family, Gamlss,
         GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDesignMatrix,
         HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasQuantile,
-        HingeQuadraticPenalty, Identity, LinearForm, LinearPredictorBlock, LinearTerm, Link, Log,
-        LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, ObservationView,
-        OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
-        ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
-        Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape,
-        Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
-        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+        HingeQuadraticPenalty, Identity, LinearForm, LinearFormBuilder, LinearPredictorBlock,
+        LinearTerm, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu,
+        Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
+        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
+        RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Softplus, SumBlock, Tau,
+        TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedTheta,
+        WithGlobalPenalties, WorkspaceGamlss,
     };
 }

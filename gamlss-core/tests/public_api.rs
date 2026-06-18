@@ -1,9 +1,10 @@
 use gamlss_core::{
     ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, Log, Logit, Mu,
-    NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObservationView, ParameterBlock,
-    ParameterLayout, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink,
-    PredictorBlock, Sigma, Softplus, SoftplusScalar, TrainingDiagnostics, UnitIntervalLink,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, LinearForm,
+    LinearFormBuilder, Log, Logit, Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective,
+    ObjectiveScale, ObservationView, ParameterBlock, ParameterLayout, ParameterParts,
+    ParameterSlice, ParameterizedFamily, PositiveLink, PredictorBlock, Sigma, Softplus,
+    SoftplusScalar, TrainingDiagnostics, UnitIntervalLink,
 };
 
 #[test]
@@ -28,6 +29,23 @@ fn training_diagnostics_remains_a_root_reexport() {
     };
 
     assert_eq!(diagnostics.objective, 1.0);
+}
+
+#[test]
+fn objective_scale_and_linear_form_builder_remain_root_reexports() {
+    let form = LinearForm::builder()
+        .weighted_range(2..4, [0.5, -1.0])
+        .constant(0.25)
+        .build();
+    let explicit = LinearFormBuilder::new()
+        .term(2, 0.5)
+        .term(3, -1.0)
+        .constant(0.25)
+        .build();
+
+    assert_eq!(ObjectiveScale::default(), ObjectiveScale::Sum);
+    assert_eq!(form, explicit);
+    assert_eq!(form.value(&[0.0, 0.0, 2.0, 0.5]), 0.75);
 }
 
 #[test]

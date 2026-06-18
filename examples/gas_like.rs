@@ -5,7 +5,7 @@
 //! - Композиция предикторов через `SumBlock` (intercept + сплайн + линейные эффекты).
 //! - Link-функции на уровне типов: `Identity` для μ (без ограничений),
 //!   `ClampedLog<-12,12>` для σ (строгая положительность + численная защита).
-//! - Штрафы как часть `ParameterBlock`: `CyclicDifferencePenalty` на вторые разности
+//! - Штрафы как часть `ParameterBlock`: `PreparedCyclicDifferencePenalty` на вторые разности
 //!   сглаживает сезонный профиль волатильности.
 //! - Адаптер `ArgminObjective<O>`: `RefCell` разрешает несовместимость `&self`/`&mut self`
 //!   между argmin и gamlss-core без копирования буферов на каждом вызове.
@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     use gamlss::family::Normal;
     use gamlss::spline::{
-        CyclicDifferencePenalty, CyclicSplineDesign, OpenUniformSplineDesign, SplineOrder,
+        CyclicSplineDesign, OpenUniformSplineDesign, PreparedCyclicDifferencePenalty, SplineOrder,
     };
 
     // Синтетические данные: истинная зависимость — квадратичная по температуре
@@ -54,8 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mu = ParameterBlock::<Mu, Identity, _, _>::new(mu_predictor, NoPenalty, 0);
     let sigma = ParameterBlock::<Sigma, ClampedLog<-12, 12>, _, _>::new(
         sigma_predictor,
-        CyclicDifferencePenalty::new(0.05, 2), // λ=0.05, d=2 — сглаживание вторых разностей
-        mu.len(),                              // σ-параметры идут после μ-параметров в θ
+        PreparedCyclicDifferencePenalty::new(0.05, 2), // λ=0.05, d=2 — сглаживание вторых разностей
+        mu.len(),                                      // σ-параметры идут после μ-параметров в θ
     );
 
     // try_new проверяет согласованность размерностей (строки дизайн-матриц = длина y,

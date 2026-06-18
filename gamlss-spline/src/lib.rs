@@ -29,8 +29,8 @@ pub use natural::{NaturalCubicSplineBasis, NaturalCubicSplineDesign};
 pub use open_uniform::{OpenUniformSplineBasis, OpenUniformSplineDesign};
 pub use order::SplineOrder;
 pub use penalty::{
-    CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty, PreparedDifferencePenalty,
-    SlopeLimitPenalty,
+    CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty,
+    PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
 };
 pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
 pub use row_basis::SplineRowBasis;
@@ -45,8 +45,9 @@ pub mod prelude {
         ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection, MonotoneISplineDesign,
         NaturalCubicSplineBasis, NaturalCubicSplineDesign, OpenUniformSplineBasis,
         OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, SplineRowBasis,
-        TensorSplineDesign, TruncatedPowerBasis, TruncatedPowerDesign, pspline_design,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty, SplineError,
+        SplineOrder, SplineRowBasis, TensorSplineDesign, TruncatedPowerBasis, TruncatedPowerDesign,
+        pspline_design,
     };
 }
 
@@ -60,8 +61,8 @@ mod tests {
         DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
         MSplineBasis, MonotoneDirection, MonotoneISplineDesign, NaturalCubicSplineBasis,
         OpenUniformSplineBasis, OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, TensorSplineDesign,
-        TruncatedPowerBasis,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty, SplineError,
+        SplineOrder, TensorSplineDesign, TruncatedPowerBasis,
     };
 
     #[test]
@@ -377,6 +378,30 @@ mod tests {
         let penalty = CyclicDifferencePenalty::new(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn prepared_cyclic_difference_penalty_matches_unprepared() {
+        let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
+
+        for order in 0..=2 {
+            let unprepared = CyclicDifferencePenalty::new(0.7, order);
+            let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
+            let mut unprepared_grad = vec![0.0; beta.len()];
+            let mut prepared_grad = vec![0.0; beta.len()];
+
+            unprepared.add_gradient(&beta, &mut unprepared_grad);
+            prepared.add_gradient(&beta, &mut prepared_grad);
+
+            assert_relative_eq!(
+                prepared.value(&beta),
+                unprepared.value(&beta),
+                epsilon = 1.0e-12
+            );
+            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
+                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
+            }
+        }
     }
 
     #[test]

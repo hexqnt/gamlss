@@ -52,6 +52,14 @@ where
         F: Family;
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
+    /// Adds the local penalty gradient into an existing full gradient vector.
+    ///
+    /// Implementations with local penalties should override this method. It is
+    /// used by objective scaling to rescale likelihood gradients without
+    /// changing the meaning of penalty weights. The default implementation is
+    /// correct only for block collections whose [`penalty_value`](Self::penalty_value)
+    /// has zero gradient.
+    fn add_penalty_gradient(&self, _beta: &[f64], _grad: &mut [f64]) {}
     /// Значение weighted negative log-likelihood плюс penalties.
     fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
@@ -171,6 +179,33 @@ where
     }
 }
 
+/// Scaling convention for the likelihood part of a compiled objective.
+///
+/// Local and global penalties are not scaled. This keeps penalty weights on a
+/// stable scale when switching between summed and mean likelihood objectives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ObjectiveScale {
+    /// Use the weighted likelihood sum.
+    #[default]
+    Sum,
+    /// Use the weighted likelihood mean.
+    ///
+    /// For weighted observations the denominator is the sum of observation
+    /// weights. If all weights are zero, the likelihood contribution is left
+    /// unscaled at zero.
+    Mean,
+}
+
+impl ObjectiveScale {
+    fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
+        match self {
+            Self::Sum => 1.0,
+            Self::Mean if weight_sum > 0.0 => 1.0 / weight_sum,
+            Self::Mean => 1.0,
+        }
+    }
+}
+
 /// Скомпилированная типизированная GAMLSS-модель.
 ///
 /// `F` задаёт распределение response, а `Blocks` задаёт по одному predictor
@@ -188,6 +223,8 @@ pub struct Gamlss<F, Blocks, Obs> {
     pub blocks: Blocks,
     /// Observation view used for training objective evaluation.
     pub obs: Obs,
+    /// Scaling applied to the likelihood part of the objective.
+    pub objective_scale: ObjectiveScale,
 }
 
 /// GAMLSS objective with reusable gradient buffers.
@@ -252,6 +289,7 @@ where
             family,
             blocks,
             obs,
+            objective_scale: ObjectiveScale::Sum,
         })
     }
 
@@ -263,6 +301,28 @@ where
     /// Число коэффициентов в общем beta-векторе.
     pub fn nparams(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// Returns the likelihood scaling convention used by this objective.
+    pub fn objective_scale(&self) -> ObjectiveScale {
+        self.objective_scale
+    }
+
+    /// Returns `self` with a different likelihood scaling convention.
+    #[must_use]
+    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+        self.objective_scale = objective_scale;
+        self
+    }
+
+    /// Updates the likelihood scaling convention in place.
+    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+        self.objective_scale = objective_scale;
+    }
+
+    fn likelihood_multiplier(&self) -> f64 {
+        self.objective_scale
+            .likelihood_multiplier(observation_weight_sum(&self.obs))
     }
 
     /// Нулевой initial beta-вектор нужной длины.
@@ -364,7 +424,9 @@ where
     pub fn training_diagnostics(&self, theta: &[f64]) -> Result<TrainingDiagnostics, ModelError> {
         validate_len("theta", theta.len(), self.nparams())?;
 
-        let train_nll = self.blocks.train_nll(&self.family, &self.obs, theta);
+        let likelihood_multiplier = self.likelihood_multiplier();
+        let train_nll =
+            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, theta);
         let penalty = self.blocks.penalty_value(theta);
         let mut grad = vec![0.0; self.nparams()];
         self.try_gradient_into(theta, &mut grad)?;
@@ -520,7 +582,9 @@ where
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
         validate_len("theta", beta.len(), self.nparams())?;
 
-        Ok(self.blocks.value(&self.family, &self.obs, beta))
+        let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
+        let penalty = self.blocks.penalty_value(beta);
+        Ok(self.likelihood_multiplier() * train_nll + penalty)
     }
 
     /// Проверяет размеры beta/grad и записывает gradient.
@@ -539,8 +603,14 @@ where
         validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
 
         grad.fill(0.0);
-        self.blocks
-            .value_gradient_into_workspace(&self.family, &self.obs, beta, grad, workspace);
+        let value = self.blocks.value_gradient_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            grad,
+            workspace,
+        );
+        self.scale_value_gradient(beta, grad, workspace, value);
         Ok(())
     }
 
@@ -564,13 +634,38 @@ where
         validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
 
         grad.fill(0.0);
-        Ok(self.blocks.value_gradient_into_workspace(
+        let value = self.blocks.value_gradient_into_workspace(
             &self.family,
             &self.obs,
             beta,
             grad,
             workspace,
-        ))
+        );
+        Ok(self.scale_value_gradient(beta, grad, workspace, value))
+    }
+
+    fn scale_value_gradient(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+        unscaled_value: f64,
+    ) -> f64 {
+        let likelihood_multiplier = self.likelihood_multiplier();
+        if likelihood_multiplier == 1.0 {
+            return unscaled_value;
+        }
+
+        let penalty = self.blocks.penalty_value(beta);
+        let penalty_grad = workspace.penalty_gradient_mut(self.nparams());
+        self.blocks.add_penalty_gradient(beta, penalty_grad);
+
+        for (grad_value, penalty_grad_value) in grad.iter_mut().zip(penalty_grad.iter().copied()) {
+            *grad_value = (*grad_value - penalty_grad_value)
+                .mul_add(likelihood_multiplier, penalty_grad_value);
+        }
+
+        (unscaled_value - penalty).mul_add(likelihood_multiplier, penalty)
     }
 }
 
@@ -629,6 +724,23 @@ where
     /// Consumes the workspace-backed objective and returns the wrapped model.
     pub fn into_model(self) -> Gamlss<F, Blocks, Obs> {
         self.model
+    }
+
+    /// Returns the likelihood scaling convention used by this objective.
+    pub fn objective_scale(&self) -> ObjectiveScale {
+        self.model.objective_scale()
+    }
+
+    /// Returns `self` with a different likelihood scaling convention.
+    #[must_use]
+    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+        self.model.set_objective_scale(objective_scale);
+        self
+    }
+
+    /// Updates the likelihood scaling convention in place.
+    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+        self.model.set_objective_scale(objective_scale);
     }
 
     /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
@@ -852,6 +964,18 @@ macro_rules! impl_gamlss_blocks {
                 $(let $beta_block = &beta[$block.range()];)+
 
                 0.0 $(+ $block.penalty.value($beta_block))+
+            }
+
+            fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+                $(let $block = &self.$idx;)+
+                $(let $beta_block = &beta[$block.range()];)+
+
+                $(
+                    $block.penalty.add_gradient(
+                        $beta_block,
+                        &mut grad[$block.offset..$block.offset + $block.len],
+                    );
+                )+
             }
 
             fn gradient_workspace(&self, y_len: usize) -> GradientWorkspace {
@@ -1142,6 +1266,13 @@ fn add_into(out: &mut [f64], values: &[f64]) {
     }
 }
 
+fn observation_weight_sum<Obs>(obs: &Obs) -> f64
+where
+    for<'row> Obs: ObservationView<'row>,
+{
+    (0..obs.len()).map(|row| obs.weight_at(row)).sum()
+}
+
 /// Проверяет длину вектора (beta или gradient) и возвращает typed error.
 fn validate_len(name: &'static str, actual: usize, expected: usize) -> Result<(), ModelError> {
     if actual == expected {
@@ -1196,7 +1327,7 @@ mod tests {
 
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObservationView, ParameterBlock, ParameterBlocks,
+        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, ParameterBlock, ParameterBlocks,
         ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
         RidgePenalty, Sigma, SumBlock, Tau,
     };
@@ -1639,6 +1770,26 @@ mod tests {
         for (actual, expected) in fused_grad.iter().zip(&separate_grad) {
             assert_relative_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn mean_objective_scales_likelihood_but_not_penalties() {
+        let y = vec![0.0, 3.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
+            .unwrap()
+            .with_objective_scale(ObjectiveScale::Mean)
+            .with_global_penalties(GlobalSquarePenalty { lambda: 2.0 });
+        let beta = vec![1.0];
+        let mut grad = vec![0.0];
+
+        let value = model.clone().value(&beta).unwrap();
+        let fused_value = model.clone().value_gradient(&beta, &mut grad).unwrap();
+
+        assert_relative_eq!(value, 3.75);
+        assert_relative_eq!(fused_value, value);
+        assert_relative_eq!(grad[0], 4.5);
     }
 
     #[test]
@@ -2218,6 +2369,21 @@ mod tests {
             let slope = 2.0 * self.lambda * diff;
             grad[0] += slope;
             grad[1] -= slope;
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct GlobalSquarePenalty {
+        lambda: f64,
+    }
+
+    impl GlobalPenalty for GlobalSquarePenalty {
+        fn value(&self, beta: &[f64]) -> f64 {
+            self.lambda * beta[0] * beta[0]
+        }
+
+        fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+            grad[0] += 2.0 * self.lambda * beta[0];
         }
     }
 

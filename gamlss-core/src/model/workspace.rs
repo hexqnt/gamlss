@@ -9,6 +9,7 @@
 pub struct GradientWorkspace {
     row_gradients: Vec<Vec<f64>>,
     local_gradients: Vec<Vec<f64>>,
+    penalty_gradient: Vec<f64>,
 }
 
 impl GradientWorkspace {
@@ -54,5 +55,11 @@ impl GradientWorkspace {
             self.row_gradients[index].as_slice(),
             local_gradient.as_mut_slice(),
         )
+    }
+
+    pub(crate) fn penalty_gradient_mut(&mut self, len: usize) -> &mut [f64] {
+        self.penalty_gradient.resize(len, 0.0);
+        self.penalty_gradient.fill(0.0);
+        &mut self.penalty_gradient
     }
 }

@@ -103,50 +103,107 @@ impl CyclicDifferencePenalty {
 impl Penalty for CyclicDifferencePenalty {
     fn value(&self, beta: &[f64]) -> f64 {
         let coefficients = difference_coefficients(self.order);
-        if beta.is_empty() || beta.len() < coefficients.len() {
-            return 0.0;
-        }
-
-        let n = beta.len();
-        let mut sum = 0.0;
-        for start in 0..n {
-            let diff = coefficients
-                .iter()
-                .enumerate()
-                .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-                .sum::<f64>();
-            sum += diff * diff;
-        }
-
-        self.lambda * sum / n as f64
+        cyclic_difference_penalty_value(self.lambda, &coefficients, beta)
     }
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(beta.len(), grad.len());
-
         let coefficients = difference_coefficients(self.order);
-        if beta.is_empty() || beta.len() < coefficients.len() {
-            return;
-        }
+        add_cyclic_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+}
 
-        let n = beta.len();
-        let scale = self.lambda / n as f64;
-        for start in 0..n {
-            let diff = coefficients
-                .iter()
-                .enumerate()
-                .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-                .sum::<f64>();
+/// Cyclic difference penalty with finite-difference coefficients computed once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedCyclicDifferencePenalty {
+    /// Вес penalty.
+    pub lambda: f64,
+    /// Порядок finite difference.
+    pub order: usize,
+    coefficients: Vec<f64>,
+}
 
-            for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-                grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
-            }
+impl PreparedCyclicDifferencePenalty {
+    /// Creates a prepared cyclic difference penalty.
+    #[must_use]
+    pub fn new(lambda: f64, order: usize) -> Self {
+        Self {
+            lambda,
+            order,
+            coefficients: difference_coefficients(order),
         }
+    }
+
+    /// Returns the cached finite-difference coefficients.
+    #[must_use]
+    pub fn coefficients(&self) -> &[f64] {
+        &self.coefficients
+    }
+}
+
+impl From<CyclicDifferencePenalty> for PreparedCyclicDifferencePenalty {
+    fn from(value: CyclicDifferencePenalty) -> Self {
+        Self::new(value.lambda, value.order)
+    }
+}
+
+impl Penalty for PreparedCyclicDifferencePenalty {
+    fn value(&self, beta: &[f64]) -> f64 {
+        cyclic_difference_penalty_value(self.lambda, &self.coefficients, beta)
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        add_cyclic_difference_penalty_gradient(self.lambda, &self.coefficients, beta, grad);
     }
 }
 
 fn cyclic_value(values: &[f64], index: usize) -> f64 {
     values[index % values.len()]
+}
+
+fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if beta.is_empty() || beta.len() < coefficients.len() {
+        return 0.0;
+    }
+
+    let n = beta.len();
+    let mut sum = 0.0;
+    for start in 0..n {
+        let diff = coefficients
+            .iter()
+            .enumerate()
+            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
+            .sum::<f64>();
+        sum += diff * diff;
+    }
+
+    lambda * sum / n as f64
+}
+
+fn add_cyclic_difference_penalty_gradient(
+    lambda: f64,
+    coefficients: &[f64],
+    beta: &[f64],
+    grad: &mut [f64],
+) {
+    debug_assert_eq!(beta.len(), grad.len());
+
+    if beta.is_empty() || beta.len() < coefficients.len() {
+        return;
+    }
+
+    let n = beta.len();
+    let scale = lambda / n as f64;
+    for start in 0..n {
+        let diff = coefficients
+            .iter()
+            .enumerate()
+            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
+            .sum::<f64>();
+
+        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
+            grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
+        }
+    }
 }
 
 fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {

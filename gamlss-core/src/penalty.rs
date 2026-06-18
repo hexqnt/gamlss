@@ -211,6 +211,27 @@ impl LinearForm {
         Self { terms, constant }
     }
 
+    /// Creates a builder for a linear form over the full beta vector.
+    #[must_use]
+    pub fn builder() -> LinearFormBuilder {
+        LinearFormBuilder::new()
+    }
+
+    /// Converts this form into `weight * max(form(beta), 0)^2`.
+    ///
+    /// This represents a soft quadratic penalty for constraints written as
+    /// `form(beta) <= 0`.
+    #[must_use]
+    pub const fn hinge_le(self, weight: f64) -> HingeQuadraticPenalty {
+        HingeQuadraticPenalty::new(self, weight)
+    }
+
+    /// Converts this form into a relative quadratic absolute-limit penalty.
+    #[must_use]
+    pub const fn absolute_limit(self, weight: f64, scale: f64, limit: f64) -> AbsoluteLimitPenalty {
+        AbsoluteLimitPenalty::new(self, weight, scale, limit)
+    }
+
     /// Evaluates the form at `beta`.
     ///
     /// # Panics
@@ -227,6 +248,85 @@ impl LinearForm {
         for term in &self.terms {
             grad[term.index] += scale * term.weight;
         }
+    }
+}
+
+/// Builder for [`LinearForm`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LinearFormBuilder {
+    terms: Vec<LinearTerm>,
+    constant: f64,
+}
+
+impl LinearFormBuilder {
+    /// Creates an empty linear-form builder.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            terms: Vec::new(),
+            constant: 0.0,
+        }
+    }
+
+    /// Adds one weighted coefficient.
+    #[must_use]
+    pub fn term(mut self, index: usize, weight: f64) -> Self {
+        self.terms.push(LinearTerm::new(index, weight));
+        self
+    }
+
+    /// Adds pre-built weighted terms.
+    #[must_use]
+    pub fn terms(mut self, terms: impl IntoIterator<Item = LinearTerm>) -> Self {
+        self.terms.extend(terms);
+        self
+    }
+
+    /// Adds consecutive weighted coefficients starting at `start`.
+    ///
+    /// The first weight is applied to `beta[start]`, the second to
+    /// `beta[start + 1]`, and so on.
+    #[must_use]
+    pub fn weighted_terms(mut self, start: usize, weights: impl IntoIterator<Item = f64>) -> Self {
+        self.terms.extend(
+            weights
+                .into_iter()
+                .enumerate()
+                .map(|(offset, weight)| LinearTerm::new(start + offset, weight)),
+        );
+        self
+    }
+
+    /// Adds weighted coefficients inside `range`.
+    ///
+    /// Extra weights are ignored after `range` is exhausted. If fewer weights
+    /// are provided than `range.len()`, only the corresponding prefix of the
+    /// range is added.
+    #[must_use]
+    pub fn weighted_range(
+        mut self,
+        range: Range<usize>,
+        weights: impl IntoIterator<Item = f64>,
+    ) -> Self {
+        self.terms.extend(
+            range
+                .zip(weights)
+                .map(|(index, weight)| LinearTerm::new(index, weight)),
+        );
+        self
+    }
+
+    /// Sets the additive constant.
+    #[must_use]
+    pub const fn constant(mut self, constant: f64) -> Self {
+        self.constant = constant;
+        self
+    }
+
+    /// Builds the linear form.
+    #[must_use]
+    pub fn build(self) -> LinearForm {
+        LinearForm::new(self.terms, self.constant)
     }
 }
 
@@ -431,8 +531,8 @@ mod tests {
     use approx::assert_relative_eq;
 
     use super::{
-        AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearTerm,
-        MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
+        AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
+        LinearTerm, MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -554,6 +654,53 @@ mod tests {
         let beta = [3.0, 10.0, 8.0];
 
         assert_relative_eq!(form.value(&beta), -1.0);
+    }
+
+    #[test]
+    fn linear_form_builder_adds_terms_weighted_terms_and_constant() {
+        let form = LinearForm::builder()
+            .term(2, 0.5)
+            .weighted_terms(0, [-2.0, 0.25])
+            .weighted_range(3..5, [1.25, -1.5, 100.0])
+            .terms([LinearTerm::new(1, 0.75)])
+            .constant(1.0)
+            .build();
+        let explicit = LinearForm::new(
+            vec![
+                LinearTerm::new(2, 0.5),
+                LinearTerm::new(0, -2.0),
+                LinearTerm::new(1, 0.25),
+                LinearTerm::new(3, 1.25),
+                LinearTerm::new(4, -1.5),
+                LinearTerm::new(1, 0.75),
+            ],
+            1.0,
+        );
+        let beta = [3.0, 10.0, 8.0, -2.0, 0.5];
+
+        assert_eq!(
+            LinearFormBuilder::new().build(),
+            LinearForm::new(Vec::new(), 0.0)
+        );
+        assert_eq!(form, explicit);
+        assert_relative_eq!(form.value(&beta), explicit.value(&beta));
+    }
+
+    #[test]
+    fn linear_form_helpers_create_global_penalties() {
+        let hinge = LinearForm::builder()
+            .term(0, 1.0)
+            .constant(-0.5)
+            .build()
+            .hinge_le(2.0);
+        let limit = LinearForm::builder()
+            .term(1, -1.0)
+            .build()
+            .absolute_limit(3.0, 2.0, 0.5);
+        let beta = [1.0, -1.0];
+
+        assert_relative_eq!(hinge.value(&beta), 0.5);
+        assert_relative_eq!(limit.value(&beta), 27.0);
     }
 
     #[test]
