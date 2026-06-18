@@ -171,14 +171,16 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
+        if !y.is_finite()
             || theta.shape <= 0.0
             || !theta.shape.is_finite()
             || theta.scale <= 0.0
             || !theta.scale.is_finite()
         {
             return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
         }
 
         -(-(y / theta.scale).powf(theta.shape)).exp_m1()
@@ -321,10 +323,32 @@ mod tests {
     fn weibull_cdf_returns_nan_for_invalid_domains() {
         let family = DefaultWeibull::new();
 
+        assert_relative_eq!(
+            family.cdf(
+                0.0,
+                WeibullTheta {
+                    shape: 2.0,
+                    scale: 3.0
+                }
+            ),
+            0.0,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.cdf(
+                -1.0,
+                WeibullTheta {
+                    shape: 2.0,
+                    scale: 3.0
+                }
+            ),
+            0.0,
+            epsilon = 1.0e-12
+        );
         assert!(
             family
                 .cdf(
-                    0.0,
+                    f64::NAN,
                     WeibullTheta {
                         shape: 2.0,
                         scale: 3.0

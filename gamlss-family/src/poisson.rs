@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink};
 
-use crate::special::{included_count, is_nonnegative_integer, ln_gamma};
+use crate::special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
@@ -69,10 +69,18 @@ where
         let Some(max_count) = included_count(y, MAX_CDF_TERMS) else {
             return f64::NAN;
         };
-        let mut term = (-theta.mu).exp();
+        let term = (-theta.mu).exp();
+        if term.is_finite() && term > 0.0 {
+            return Self::cdf_by_recurrence(theta.mu, max_count, term);
+        }
+
+        Self::cdf_by_log_sum(theta.mu, max_count)
+    }
+
+    fn cdf_by_recurrence(mu: f64, max_count: u64, mut term: f64) -> f64 {
         let mut sum = term;
         for count in 1..=max_count {
-            term *= theta.mu / count as f64;
+            term *= mu / count as f64;
             sum += term;
             if term <= f64::EPSILON * sum {
                 break;
@@ -80,6 +88,18 @@ where
         }
 
         sum.clamp(0.0, 1.0)
+    }
+
+    fn cdf_by_log_sum(mu: f64, max_count: u64) -> f64 {
+        let log_mu = mu.ln();
+        let mut log_sum = f64::NEG_INFINITY;
+        for count in 0..=max_count {
+            let count_f = count as f64;
+            let log_term = -mu + count_f * log_mu - ln_gamma(count_f + 1.0);
+            log_sum = log_add_exp(log_sum, log_term);
+        }
+
+        log_sum.exp().clamp(0.0, 1.0)
     }
 }
 
@@ -229,6 +249,15 @@ mod tests {
                 .cdf((super::MAX_CDF_TERMS + 1) as f64, theta)
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn poisson_cdf_is_stable_for_large_mean() {
+        let family = DefaultPoisson::new();
+        let cdf = family.cdf(1000.0, PoissonTheta { mu: 1000.0 });
+
+        assert!(cdf.is_finite());
+        assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
     }
 
     #[cfg(feature = "rand")]

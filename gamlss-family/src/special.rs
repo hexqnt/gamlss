@@ -50,6 +50,19 @@ pub(crate) fn included_count(value: f64, max_terms: u64) -> Option<u64> {
     }
 }
 
+/// Stable two-term log-space addition.
+pub(crate) fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
+    if log_left == f64::NEG_INFINITY {
+        return log_right;
+    }
+    if log_right == f64::NEG_INFINITY {
+        return log_left;
+    }
+
+    let max = log_left.max(log_right);
+    max + ((log_left - max).exp() + (log_right - max).exp()).ln()
+}
+
 /// Digamma function approximation for positive arguments.
 pub(crate) fn digamma(value: f64) -> f64 {
     if value <= 0.0 || !value.is_finite() {
@@ -94,7 +107,7 @@ fn erf_approx(value: f64) -> f64 {
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::{digamma, ln_gamma, unit_normal_cdf};
+    use super::{digamma, ln_gamma, log_add_exp, unit_normal_cdf};
 
     #[test]
     fn ln_gamma_matches_known_constants() {
@@ -125,5 +138,17 @@ mod tests {
         assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
+    }
+
+    #[test]
+    fn log_add_exp_combines_log_terms_without_underflow() {
+        assert_relative_eq!(
+            log_add_exp(-1000.0, -1001.0),
+            -1000.0 + (-1.0_f64).exp().ln_1p(),
+            epsilon = 1.0e-12
+        );
+
+        let combined = log_add_exp(f64::NEG_INFINITY, -3.0);
+        assert_relative_eq!(combined, -3.0, epsilon = 1.0e-12);
     }
 }

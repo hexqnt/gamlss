@@ -170,14 +170,16 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
+        if !y.is_finite()
             || theta.mu <= 0.0
             || !theta.mu.is_finite()
             || theta.shape <= 0.0
             || !theta.shape.is_finite()
         {
             return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
         }
 
         let scale = (theta.shape / y).sqrt();
@@ -188,7 +190,7 @@ where
         let second = if tail == 0.0 {
             0.0
         } else {
-            log_multiplier.exp() * tail
+            (log_multiplier + tail.ln()).exp()
         };
 
         (first + second).clamp(0.0, 1.0)
@@ -251,10 +253,30 @@ mod tests {
     fn inverse_gaussian_cdf_returns_nan_for_invalid_domains() {
         let family = DefaultInverseGaussian::new();
 
+        assert_eq!(
+            family.cdf(
+                0.0,
+                InverseGaussianTheta {
+                    mu: 1.0,
+                    shape: 1.0
+                }
+            ),
+            0.0
+        );
+        assert_eq!(
+            family.cdf(
+                -1.0,
+                InverseGaussianTheta {
+                    mu: 1.0,
+                    shape: 1.0
+                }
+            ),
+            0.0
+        );
         assert!(
             family
                 .cdf(
-                    0.0,
+                    f64::NAN,
                     InverseGaussianTheta {
                         mu: 1.0,
                         shape: 1.0
@@ -273,5 +295,20 @@ mod tests {
                 )
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn inverse_gaussian_cdf_is_finite_for_extreme_shape_ratio() {
+        let family = DefaultInverseGaussian::new();
+        let cdf = family.cdf(
+            1.0,
+            InverseGaussianTheta {
+                mu: 1.0,
+                shape: 1000.0,
+            },
+        );
+
+        assert!(cdf.is_finite());
+        assert!((0.0..=1.0).contains(&cdf));
     }
 }

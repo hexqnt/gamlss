@@ -6,7 +6,7 @@ use gamlss_core::{
     Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
 };
 
-use crate::special::{digamma, included_count, is_nonnegative_integer, ln_gamma};
+use crate::special::{digamma, included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
@@ -102,11 +102,29 @@ where
         };
         let success_probability = theta.shape / (theta.shape + theta.mu);
         let failure_probability = theta.mu / (theta.shape + theta.mu);
-        let mut term = (theta.shape * success_probability.ln()).exp();
+        let term = (theta.shape * success_probability.ln()).exp();
+        if term.is_finite() && term > 0.0 {
+            return Self::cdf_by_recurrence(theta.shape, failure_probability, max_count, term);
+        }
+
+        Self::cdf_by_log_sum(
+            theta.shape,
+            success_probability,
+            failure_probability,
+            max_count,
+        )
+    }
+
+    fn cdf_by_recurrence(
+        shape: f64,
+        failure_probability: f64,
+        max_count: u64,
+        mut term: f64,
+    ) -> f64 {
         let mut sum = term;
         for count in 1..=max_count {
             let previous_count = (count - 1) as f64;
-            term *= ((previous_count + theta.shape) / count as f64) * failure_probability;
+            term *= ((previous_count + shape) / count as f64) * failure_probability;
             sum += term;
             if term <= f64::EPSILON * sum {
                 break;
@@ -114,6 +132,28 @@ where
         }
 
         sum.clamp(0.0, 1.0)
+    }
+
+    fn cdf_by_log_sum(
+        shape: f64,
+        success_probability: f64,
+        failure_probability: f64,
+        max_count: u64,
+    ) -> f64 {
+        let log_success = success_probability.ln();
+        let log_failure = failure_probability.ln();
+        let log_shape_gamma = ln_gamma(shape);
+        let mut log_sum = f64::NEG_INFINITY;
+
+        for count in 0..=max_count {
+            let count_f = count as f64;
+            let log_term = ln_gamma(count_f + shape) - log_shape_gamma - ln_gamma(count_f + 1.0)
+                + shape * log_success
+                + count_f * log_failure;
+            log_sum = log_add_exp(log_sum, log_term);
+        }
+
+        log_sum.exp().clamp(0.0, 1.0)
     }
 }
 
@@ -315,6 +355,21 @@ mod tests {
                 .cdf((super::MAX_CDF_TERMS + 1) as f64, theta)
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn negative_binomial_cdf_is_stable_for_large_parameters() {
+        let family = DefaultNegativeBinomial::new();
+        let cdf = family.cdf(
+            1000.0,
+            NegativeBinomialTheta {
+                mu: 1000.0,
+                shape: 1000.0,
+            },
+        );
+
+        assert!(cdf.is_finite());
+        assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
     }
 
     #[cfg(feature = "rand")]

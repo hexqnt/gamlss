@@ -62,10 +62,17 @@ where
     O: Objective,
 {
     /// Создаёт block objective поверх полного objective.
+    ///
+    /// This is a low-level constructor. Callers must pass a full parameter
+    /// vector whose length equals `full_objective.dim()` and a block range
+    /// contained in that vector. Prefer typed model helpers such as
+    /// [`crate::Gamlss::block_objective_for`], which validate these invariants
+    /// and return recoverable errors for ordinary caller mistakes.
     pub fn new(full_objective: &'a mut O, full_beta: Vec<f64>, block: Range<usize>) -> Self {
         let full_grad = vec![0.0; full_objective.dim()];
         debug_assert!(block.end <= full_beta.len());
         debug_assert!(block.end <= full_grad.len());
+        debug_assert_eq!(full_beta.len(), full_grad.len());
         Self {
             full_objective,
             working_beta: full_beta,

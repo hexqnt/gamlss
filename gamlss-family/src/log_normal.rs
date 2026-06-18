@@ -174,13 +174,12 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
         {
             return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
         }
 
         unit_normal_cdf((y.ln() - theta.mu) / theta.sigma)
@@ -285,10 +284,30 @@ mod tests {
     fn log_normal_cdf_returns_nan_for_invalid_domains() {
         let family = DefaultLogNormal::new();
 
+        assert_eq!(
+            family.cdf(
+                0.0,
+                LogNormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0
+                }
+            ),
+            0.0
+        );
+        assert_eq!(
+            family.cdf(
+                -1.0,
+                LogNormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0
+                }
+            ),
+            0.0
+        );
         assert!(
             family
                 .cdf(
-                    0.0,
+                    f64::NAN,
                     LogNormalTheta {
                         mu: 0.0,
                         sigma: 1.0

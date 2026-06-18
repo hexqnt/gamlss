@@ -100,20 +100,31 @@ pub trait MatrixPenalty: Penalty {
     /// of coefficients in the parameter block. Implementations should add
     /// their contribution — the caller is responsible for zeroing `gram`
     /// before the first call.
-    fn add_penalty_matrix(&self, gram: &mut [f64]);
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]);
 }
 
 impl MatrixPenalty for NoPenalty {
-    fn add_penalty_matrix(&self, _gram: &mut [f64]) {}
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        debug_assert_matrix_shape(dim, gram);
+    }
 }
 
 impl MatrixPenalty for RidgePenalty {
-    fn add_penalty_matrix(&self, gram: &mut [f64]) {
-        let dim = (gram.len() as f64).sqrt() as usize;
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        debug_assert_matrix_shape(dim, gram);
+
+        if dim == 0 {
+            return;
+        }
+
         for (row, row_values) in gram.chunks_exact_mut(dim).enumerate() {
             row_values[row] += self.lambda;
         }
     }
+}
+
+fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
+    debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
 
 /// Applies a local penalty to a subrange of a larger coefficient block.
@@ -669,8 +680,18 @@ mod tests {
     #[test]
     fn no_penalty_matrix_adds_nothing() {
         let mut gram = vec![1.0, 2.0, 3.0, 4.0];
-        NoPenalty.add_penalty_matrix(&mut gram);
+        NoPenalty.add_penalty_matrix(2, &mut gram);
         assert_eq!(gram, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn matrix_penalties_accept_empty_matrices() {
+        let mut gram = Vec::new();
+
+        NoPenalty.add_penalty_matrix(0, &mut gram);
+        RidgePenalty::new(3.0).add_penalty_matrix(0, &mut gram);
+
+        assert!(gram.is_empty());
     }
 
     #[test]
@@ -678,7 +699,7 @@ mod tests {
         let penalty = RidgePenalty::new(3.0);
         // 3x3 Gram matrix: [[1,2,3], [4,5,6], [7,8,9]]
         let mut gram = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
-        penalty.add_penalty_matrix(&mut gram);
+        penalty.add_penalty_matrix(3, &mut gram);
         // Diagonal += lambda: [4, 2, 3, 4, 8, 6, 7, 8, 12]
         assert_eq!(gram[0], 4.0);
         assert_eq!(gram[4], 8.0);

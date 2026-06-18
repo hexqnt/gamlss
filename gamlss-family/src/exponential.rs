@@ -137,8 +137,11 @@ where
     RateLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if y < 0.0 || !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
             return f64::NAN;
+        }
+        if y < 0.0 {
+            return 0.0;
         }
 
         -(-theta.rate * y).exp_m1()
@@ -221,7 +224,9 @@ mod tests {
             0.5,
             epsilon = 1.0e-12
         );
-        assert!(family.cdf(-1.0, theta).is_nan());
+        assert_eq!(family.cdf(-1.0, theta), 0.0);
+        assert!(family.cdf(f64::NAN, theta).is_nan());
+        assert!(family.cdf(1.0, ExponentialTheta { rate: 0.0 }).is_nan());
     }
 
     #[test]

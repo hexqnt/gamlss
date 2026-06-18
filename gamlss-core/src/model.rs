@@ -310,6 +310,7 @@ where
     where
         P: ParameterName,
     {
+        validate_len("theta", full_beta.len(), self.nparams())?;
         let range = self
             .blocks
             .parameter_slice_of::<P>()
@@ -622,6 +623,7 @@ where
     where
         P: ParameterName,
     {
+        validate_len("theta", full_beta.len(), self.dim())?;
         let range = self
             .model
             .parameter_layout()
@@ -799,9 +801,13 @@ macro_rules! impl_gamlss_blocks {
                 let mut loss = 0.0;
 
                 for row in 0..obs.len() {
+                    let weight = obs.weight_at(row);
+                    if weight == 0.0 {
+                        continue;
+                    }
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
-                    loss += obs.weight_at(row) * family.nll_eta(observation, eta);
+                    loss += weight * family.nll_eta(observation, eta);
                 }
 
                 loss
@@ -851,10 +857,14 @@ macro_rules! impl_gamlss_blocks {
                 let mut loss = 0.0;
 
                 for row in 0..obs.len() {
+                    let weight = obs.weight_at(row);
+                    if weight == 0.0 {
+                        $(workspace.set_row_gradient($idx, row, 0.0);)+
+                        continue;
+                    }
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
                     let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
-                    let weight = obs.weight_at(row);
                     loss += weight * nll;
                     $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
@@ -1334,6 +1344,23 @@ mod tests {
     #[test]
     fn zero_weight_excludes_observation_from_value_and_gradient() {
         let y = vec![1.0, 10.0];
+        let weights = vec![1.0, 0.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let beta = vec![1.0];
+        let mut grad = vec![f64::NAN];
+
+        assert_relative_eq!(model.try_value(&beta).unwrap(), 0.0);
+
+        model.try_gradient_into(&beta, &mut grad).unwrap();
+
+        assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn zero_weight_excludes_invalid_observation_from_value_and_gradient() {
+        let y = vec![1.0, f64::NAN];
         let weights = vec![1.0, 0.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
@@ -2191,6 +2218,39 @@ mod tests {
 
         assert_relative_eq!(mu_grad[0], full_grad[0]);
         assert_relative_eq!(mu_grad[1], full_grad[1]);
+    }
+
+    #[test]
+    fn block_objective_for_rejects_wrong_full_beta_length() {
+        let y = vec![1.0, 2.0];
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+
+        assert_eq!(
+            model.block_objective_for::<Mu>(Vec::new()).unwrap_err(),
+            ModelError::BetaLength {
+                expected: 1,
+                actual: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_block_objective_for_rejects_wrong_full_beta_length() {
+        let y = vec![1.0, 2.0];
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mut objective = model.into_workspace_objective();
+
+        assert_eq!(
+            objective.block_objective_for::<Mu>(Vec::new()).unwrap_err(),
+            ModelError::BetaLength {
+                expected: 1,
+                actual: 0,
+            }
+        );
     }
 
     fn softplus(value: f64) -> f64 {

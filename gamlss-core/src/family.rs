@@ -329,9 +329,11 @@ where
 pub trait HasCdf: Family {
     /// CDF в точке `y` для параметров на естественной шкале.
     ///
-    /// Implementations should return a non-finite value for invalid
-    /// observation or parameter domains rather than panicking, matching the
-    /// base [`Family`] likelihood contract.
+    /// Implementations should return a non-finite value for invalid query
+    /// points or parameter domains rather than panicking, matching the base
+    /// [`Family`] likelihood contract. For finite query points outside but
+    /// below the distribution support, implementations should return the
+    /// boundary probability `0.0`.
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
 }
 
