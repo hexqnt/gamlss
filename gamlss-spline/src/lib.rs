@@ -16,6 +16,7 @@ pub mod penalty;
 pub mod periodic;
 pub mod row_basis;
 pub mod tensor;
+pub mod truncated_power;
 
 pub use bspline::{BSplineBasis, pspline_design};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
@@ -34,6 +35,7 @@ pub use penalty::{
 pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
 pub use row_basis::SplineRowBasis;
 pub use tensor::TensorSplineDesign;
+pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
 
 /// Наиболее часто используемые импорты из `gamlss-spline`.
 pub mod prelude {
@@ -44,7 +46,7 @@ pub mod prelude {
         NaturalCubicSplineBasis, NaturalCubicSplineDesign, OpenUniformSplineBasis,
         OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
         PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, SplineRowBasis,
-        TensorSplineDesign, pspline_design,
+        TensorSplineDesign, TruncatedPowerBasis, TruncatedPowerDesign, pspline_design,
     };
 }
 
@@ -59,6 +61,7 @@ mod tests {
         MSplineBasis, MonotoneDirection, MonotoneISplineDesign, NaturalCubicSplineBasis,
         OpenUniformSplineBasis, OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
         PreparedDifferencePenalty, SlopeLimitPenalty, SplineError, SplineOrder, TensorSplineDesign,
+        TruncatedPowerBasis,
     };
 
     #[test]
@@ -444,6 +447,82 @@ mod tests {
     }
 
     #[test]
+    fn truncated_power_basis_uses_documented_column_order() {
+        let basis = TruncatedPowerBasis::new(vec![0.25, 0.75], SplineOrder::Cubic, true).unwrap();
+        let values = basis.evaluate(1.25);
+
+        assert_eq!(basis.n_basis(), 6);
+        assert_eq!(basis.order(), SplineOrder::Cubic);
+        assert!(basis.include_intercept());
+        assert_relative_eq!(values[0], 1.0, epsilon = 1.0e-12);
+        assert_relative_eq!(values[1], 1.25, epsilon = 1.0e-12);
+        assert_relative_eq!(values[2], 1.25_f64.powi(2), epsilon = 1.0e-12);
+        assert_relative_eq!(values[3], 1.25_f64.powi(3), epsilon = 1.0e-12);
+        assert_relative_eq!(values[4], 1.0, epsilon = 1.0e-12);
+        assert_relative_eq!(values[5], 0.5_f64.powi(3), epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn truncated_power_basis_validates_inputs_and_builds_uniform_knots() {
+        assert_eq!(
+            TruncatedPowerBasis::new(vec![0.0, 0.0], SplineOrder::Linear, true).unwrap_err(),
+            SplineError::InvalidKnots
+        );
+        assert_eq!(
+            TruncatedPowerBasis::uniform_from_data(&[0.0, f64::NAN], 1, SplineOrder::Linear, true)
+                .unwrap_err(),
+            SplineError::NonFiniteValue
+        );
+
+        let basis =
+            TruncatedPowerBasis::uniform_from_data(&[0.0, 0.5, 1.0], 2, SplineOrder::Linear, false)
+                .unwrap();
+        assert_relative_eq!(basis.knots()[0], 1.0 / 3.0, epsilon = 1.0e-12);
+        assert_relative_eq!(basis.knots()[1], 2.0 / 3.0, epsilon = 1.0e-12);
+        assert_eq!(basis.n_basis(), 3);
+    }
+
+    #[test]
+    fn truncated_power_buffer_evaluation_clears_stale_values() {
+        let basis = TruncatedPowerBasis::new(vec![0.25, 0.75], SplineOrder::Cubic, true).unwrap();
+        let mut values = vec![42.0; basis.n_basis()];
+
+        basis.evaluate_into(0.0, &mut values);
+
+        assert_relative_eq!(values[0], 1.0, epsilon = 1.0e-12);
+        for value in &values[1..] {
+            assert_relative_eq!(*value, 0.0, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn truncated_power_design_gradient_matches_finite_difference() {
+        let design = TruncatedPowerBasis::new(vec![0.25, 0.75], SplineOrder::Cubic, true)
+            .unwrap()
+            .design(&[-0.2, 0.1, 0.5, 1.2])
+            .unwrap();
+        assert_predictor_gradient_matches_finite_difference(
+            &design,
+            &[0.2, -0.4, 0.7, 0.1, -0.3, 0.9],
+            &[0.3, -0.8, 0.5, 1.0],
+        );
+        assert_row_basis_matches_evaluate(&design, |row| design.basis().evaluate(design.x()[row]));
+
+        let mut visited = Vec::new();
+        crate::SplineRowBasis::for_each_row_basis(&design, 1, |index, weight| {
+            visited.push((index, weight));
+        });
+        assert_eq!(visited.len(), 4);
+        for ((actual_index, actual_weight), (expected_index, expected_weight)) in visited
+            .iter()
+            .zip([(0, 1.0), (1, 0.1), (2, 0.01), (3, 0.001)])
+        {
+            assert_eq!(*actual_index, expected_index);
+            assert_relative_eq!(*actual_weight, expected_weight, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
     fn spline_derivatives_match_finite_difference() {
         let x = [0.1, 0.25, 0.6, 0.9];
         let beta = vec![0.1, -0.4, 0.7, 0.2, -0.1, 0.5];
@@ -482,8 +561,26 @@ mod tests {
             &natural_beta,
         );
 
+        let truncated = TruncatedPowerBasis::new(vec![0.3, 0.7], SplineOrder::Cubic, true)
+            .unwrap()
+            .design(&x)
+            .unwrap();
+        let truncated_beta = vec![0.1, -0.4, 0.7, 0.2, -0.1, 0.5];
+        assert_eta_derivative_matches_coordinate_difference(
+            |points| {
+                TruncatedPowerBasis::new(vec![0.3, 0.7], SplineOrder::Cubic, true)
+                    .unwrap()
+                    .design(points)
+                    .unwrap()
+            },
+            |design, row, beta| design.eta_derivative_row(row, beta),
+            &x,
+            &truncated_beta,
+        );
+
         assert!(cyclic.eta_derivative_row(0, &beta).is_finite());
         assert!(natural.eta_derivative_row(0, &natural_beta).is_finite());
+        assert!(truncated.eta_derivative_row(0, &truncated_beta).is_finite());
     }
 
     #[test]
