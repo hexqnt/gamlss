@@ -77,7 +77,7 @@ pub use spec::{
 pub use terms::{
     CyclicPSplineTerm, FittedTerm, FourierTerm, MonotoneTerm, PSplineTerm, TensorPSplineTerm,
     TermExpr, TermSpec, cyclic_pspline, factor, fourier, indicator, interaction, intercept, linear,
-    monotone, offset, pspline, tensor_pspline,
+    monotone, no_intercept, offset, pspline, tensor_pspline,
 };
 
 /// Common imports for the typed formula layer.
@@ -91,8 +91,8 @@ pub mod prelude {
         ModelSchema, ModelSpec, MonotoneTerm, NormalSpec, NumericCol, NumericResponse, PSplineTerm,
         ParameterTerms, PredictionDesign, ResponseSchema, TensorPSplineTerm, TermExpr, TermSpec,
         WeibullSpec, beta, col, cyclic_pspline, factor, fourier, gamma, indicator, interaction,
-        intercept, inverse_gaussian, linear, log_normal, monotone, normal, offset, pspline,
-        tensor_pspline, weibull,
+        intercept, inverse_gaussian, linear, log_normal, monotone, no_intercept, normal, offset,
+        pspline, tensor_pspline, weibull,
     };
 }
 

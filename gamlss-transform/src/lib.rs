@@ -32,6 +32,15 @@ pub enum TransformError {
     /// Standardize transform получил нулевую дисперсию.
     #[error("target scale must be positive")]
     ZeroScale,
+
+    /// Output buffer length does not match the input length.
+    #[error("output length is {actual}, expected {expected}")]
+    LengthMismatch {
+        /// Expected output length.
+        expected: usize,
+        /// Actual output length.
+        actual: usize,
+    },
 }
 
 /// Transform целевой переменной с состоянием, оцениваемым на обучающем target.
@@ -70,7 +79,27 @@ pub trait TargetTransform {
     /// `NaN` или infinity. Конкретные transform-ы могут усиливать проверку
     /// domain-а, например требовать строго положительные значения.
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        map_slice(y, validate_finite, |value| Self::transform(state, value))
+        let mut out = vec![0.0; y.len()];
+        Self::transform_into(state, y, &mut out)?;
+        Ok(out)
+    }
+
+    /// Преобразует срез target в caller-provided output buffer.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает [`TransformError::LengthMismatch`], если длина `out` не
+    /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
+    /// если вход содержит `NaN` или infinity. Конкретные transform-ы могут
+    /// усиливать проверку domain-а.
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_slice_into(y, out, validate_finite, |value| {
+            Self::transform(state, value)
+        })
     }
 
     /// Возвращает срез значений на исходную шкалу в новый `Vec`.
@@ -80,17 +109,49 @@ pub trait TargetTransform {
     /// Возвращает [`TransformError::NonFiniteValue`], если значения на
     /// transform-шкале содержат `NaN` или infinity.
     fn inverse_slice(state: &Self::State, values: &[f64]) -> Result<Vec<f64>, TransformError> {
-        map_slice(values, validate_finite, |value| Self::inverse(state, value))
+        let mut out = vec![0.0; values.len()];
+        Self::inverse_into(state, values, &mut out)?;
+        Ok(out)
+    }
+
+    /// Возвращает transform-scale values на исходную шкалу в caller-provided buffer.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает [`TransformError::LengthMismatch`], если длина `out` не
+    /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
+    /// если вход содержит `NaN` или infinity.
+    fn inverse_into(
+        state: &Self::State,
+        values: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_slice_into(values, out, validate_finite, |value| {
+            Self::inverse(state, value)
+        })
     }
 }
 
-pub(crate) fn map_slice(
+pub(crate) fn map_slice_into(
     values: &[f64],
+    out: &mut [f64],
     validate: impl FnOnce(&[f64]) -> Result<(), TransformError>,
-    map: impl FnMut(f64) -> f64,
-) -> Result<Vec<f64>, TransformError> {
+    mut map: impl FnMut(f64) -> f64,
+) -> Result<(), TransformError> {
+    validate_output_len(values.len(), out.len())?;
     validate(values)?;
-    Ok(values.iter().copied().map(map).collect())
+    for (out, value) in out.iter_mut().zip(values.iter().copied()) {
+        *out = map(value);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_output_len(expected: usize, actual: usize) -> Result<(), TransformError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(TransformError::LengthMismatch { expected, actual })
+    }
 }
 
 pub(crate) fn validate_non_empty_finite(values: &[f64]) -> Result<(), TransformError> {

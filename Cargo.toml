@@ -45,7 +45,14 @@ documentation.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "examples/**/*", "Cargo.toml", "README.md", "LICENSE*"]
+include = [
+    "src/**/*",
+    "docs/**/*",
+    "examples/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE*",
+]
 
 [features]
 default = ["formula"]

@@ -41,7 +41,11 @@
 use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView};
 
 /// CDF-based diagnostics for fitted GAMLSS models.
-pub trait CdfDiagnosticsExt {
+pub trait CdfDiagnosticsExt<F, Blocks>
+where
+    F: HasCdf + for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
     /// Returns probability integral transform values for training rows.
     ///
     /// The returned vector has one value per training observation, in row
@@ -49,6 +53,17 @@ pub trait CdfDiagnosticsExt {
     /// family CDF result, usually `NaN`, rather than an additional diagnostics
     /// error.
     fn pit_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError>;
+
+    /// Returns PIT values for supplied compatible prediction blocks and observations.
+    fn pit_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs;
 
     /// Returns normalized quantile residuals for training rows.
     ///
@@ -60,9 +75,24 @@ pub trait CdfDiagnosticsExt {
         self.pit_values(theta)
             .map(|values| values.into_iter().map(inverse_unit_normal_cdf).collect())
     }
+
+    /// Returns normalized quantile residuals for supplied prediction rows.
+    fn quantile_residuals_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        self.pit_values_with_blocks(theta, blocks, obs)
+            .map(|values| values.into_iter().map(inverse_unit_normal_cdf).collect())
+    }
 }
 
-impl<F, Blocks, Obs> CdfDiagnosticsExt for Gamlss<F, Blocks, Obs>
+impl<F, Blocks, Obs> CdfDiagnosticsExt<F, Blocks> for Gamlss<F, Blocks, Obs>
 where
     F: HasCdf + for<'row> Family<Observation<'row> = f64>,
     Blocks: GamlssBlocks<F>,
@@ -70,19 +100,39 @@ where
 {
     fn pit_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError> {
         let parameters = self.predict_theta(theta)?;
-        Ok(parameters
-            .into_iter()
-            .enumerate()
-            .map(|(row, parameters)| {
-                let observation = self.obs.observation_at(row);
-                self.family.cdf(observation, parameters)
-            })
-            .collect())
+        Ok(map_diagnostic_values(
+            parameters,
+            &self.obs,
+            |observation, parameters| self.family.cdf(observation, parameters),
+        ))
+    }
+
+    fn pit_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        validate_prediction_observations(blocks.nrows(), obs)?;
+        let parameters = self.predict_theta_with_blocks(theta, blocks)?;
+        Ok(map_diagnostic_values(
+            parameters,
+            obs,
+            |observation, parameters| self.family.cdf(observation, parameters),
+        ))
     }
 }
 
 /// CRPS-based diagnostics for fitted GAMLSS models.
-pub trait CrpsDiagnosticsExt {
+pub trait CrpsDiagnosticsExt<F, Blocks>
+where
+    F: HasCrps + for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
     /// Returns CRPS values for training rows.
     ///
     /// The returned vector has one value per training observation, in row
@@ -90,14 +140,30 @@ pub trait CrpsDiagnosticsExt {
     /// family CRPS result, usually `NaN`.
     fn crps_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError>;
 
+    /// Returns CRPS values for supplied compatible prediction blocks and observations.
+    fn crps_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs;
+
     /// Returns the arithmetic mean of [`Self::crps_values`].
     fn mean_crps(&self, theta: &[f64]) -> Result<f64, ModelError> {
         let values = self.crps_values(theta)?;
         Ok(values.iter().sum::<f64>() / values.len() as f64)
     }
+
+    /// Returns the observation-weighted mean CRPS for training rows.
+    ///
+    /// If all observation weights are zero, returns `NaN`.
+    fn weighted_mean_crps(&self, theta: &[f64]) -> Result<f64, ModelError>;
 }
 
-impl<F, Blocks, Obs> CrpsDiagnosticsExt for Gamlss<F, Blocks, Obs>
+impl<F, Blocks, Obs> CrpsDiagnosticsExt<F, Blocks> for Gamlss<F, Blocks, Obs>
 where
     F: HasCrps + for<'row> Family<Observation<'row> = f64>,
     Blocks: GamlssBlocks<F>,
@@ -105,15 +171,72 @@ where
 {
     fn crps_values(&self, theta: &[f64]) -> Result<Vec<f64>, ModelError> {
         let parameters = self.predict_theta(theta)?;
-        Ok(parameters
-            .into_iter()
-            .enumerate()
-            .map(|(row, parameters)| {
-                let observation = self.obs.observation_at(row);
-                self.family.crps(observation, parameters)
-            })
-            .collect())
+        Ok(map_diagnostic_values(
+            parameters,
+            &self.obs,
+            |observation, parameters| self.family.crps(observation, parameters),
+        ))
     }
+
+    fn crps_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        theta: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        validate_prediction_observations(blocks.nrows(), obs)?;
+        let parameters = self.predict_theta_with_blocks(theta, blocks)?;
+        Ok(map_diagnostic_values(
+            parameters,
+            obs,
+            |observation, parameters| self.family.crps(observation, parameters),
+        ))
+    }
+
+    fn weighted_mean_crps(&self, theta: &[f64]) -> Result<f64, ModelError> {
+        let values = self.crps_values(theta)?;
+        let mut weighted_sum = 0.0;
+        let mut weight_sum = 0.0;
+        for (row, value) in values.iter().copied().enumerate() {
+            let weight = self.obs.weight_at(row);
+            weighted_sum += weight * value;
+            weight_sum += weight;
+        }
+        Ok(weighted_sum / weight_sum)
+    }
+}
+
+fn map_diagnostic_values<'obs, Theta, Obs>(
+    parameters: Vec<Theta>,
+    obs: &'obs Obs,
+    mut evaluate: impl FnMut(f64, Theta) -> f64,
+) -> Vec<f64>
+where
+    Obs: ObservationView<'obs, Observation = f64> + 'obs,
+{
+    parameters
+        .into_iter()
+        .enumerate()
+        .map(|(row, parameters)| evaluate(obs.observation_at(row), parameters))
+        .collect()
+}
+
+fn validate_prediction_observations<'obs, Obs>(
+    expected: usize,
+    obs: &'obs Obs,
+) -> Result<(), ModelError>
+where
+    Obs: ObservationView<'obs, Observation = f64> + 'obs,
+{
+    let actual = obs.len();
+    if actual != expected {
+        return Err(ModelError::ResponseLength { expected, actual });
+    }
+    obs.validate()
 }
 
 fn inverse_unit_normal_cdf(probability: f64) -> f64 {
@@ -280,6 +403,99 @@ mod tests {
             (crps[0] + crps[1]) / 2.0,
             epsilon = 1.0e-12
         );
+    }
+
+    #[test]
+    fn diagnostics_with_blocks_match_training_helpers_for_training_blocks() {
+        let y = [-1.0, 0.0, 1.0];
+        let model = normal_intercept_model(&y);
+        let theta = [0.0, 0.0];
+        let obs = &y[..];
+
+        assert_eq!(
+            model
+                .pit_values_with_blocks(&theta, &model.blocks, &obs)
+                .unwrap(),
+            model.pit_values(&theta).unwrap()
+        );
+        assert_eq!(
+            model
+                .quantile_residuals_with_blocks(&theta, &model.blocks, &obs)
+                .unwrap(),
+            model.quantile_residuals(&theta).unwrap()
+        );
+        assert_eq!(
+            model
+                .crps_values_with_blocks(&theta, &model.blocks, &obs)
+                .unwrap(),
+            model.crps_values(&theta).unwrap()
+        );
+    }
+
+    #[test]
+    fn diagnostics_with_blocks_reject_observation_row_mismatch() {
+        let y = [0.0, 1.0];
+        let model = normal_intercept_model(&y);
+        let obs = &[0.0][..];
+
+        assert_eq!(
+            model
+                .pit_values_with_blocks(&[0.0, 0.0], &model.blocks, &obs)
+                .unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 2,
+                actual: 1
+            }
+        );
+    }
+
+    #[test]
+    fn weighted_mean_crps_uses_observation_weights() {
+        let y = [0.0, 1.0];
+        let weights = [0.0, 2.0];
+        let blocks = ParameterBlocks::new((
+            ParameterBlock::<Mu, Identity, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+            ParameterBlock::<Sigma, Log, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+        ));
+        let model =
+            Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, &y, &weights).unwrap();
+        let crps = model.crps_values(&[0.0, 0.0]).unwrap();
+
+        assert_relative_eq!(
+            model.weighted_mean_crps(&[0.0, 0.0]).unwrap(),
+            crps[1],
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn weighted_mean_crps_returns_nan_when_all_weights_are_zero() {
+        let y = [0.0, 1.0];
+        let weights = [0.0, 0.0];
+        let blocks = ParameterBlocks::new((
+            ParameterBlock::<Mu, Identity, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+            ParameterBlock::<Sigma, Log, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+        ));
+        let model =
+            Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, &y, &weights).unwrap();
+
+        assert!(model.weighted_mean_crps(&[0.0, 0.0]).unwrap().is_nan());
     }
 
     #[test]

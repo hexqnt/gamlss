@@ -1,4 +1,4 @@
-use crate::{TargetTransform, TransformError, map_slice, validate_positive};
+use crate::{TargetTransform, TransformError, map_slice_into, validate_positive};
 
 /// Log transform for strictly positive targets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -25,7 +25,19 @@ impl TargetTransform for Log {
     }
 
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        map_slice(y, validate_positive, |value| Self::transform(state, value))
+        let mut out = vec![0.0; y.len()];
+        Self::transform_into(state, y, &mut out)?;
+        Ok(out)
+    }
+
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_slice_into(y, out, validate_positive, |value| {
+            Self::transform(state, value)
+        })
     }
 }
 

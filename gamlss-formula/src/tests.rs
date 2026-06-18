@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
-use gamlss_core::Objective;
+use gamlss_core::{Objective, Penalty};
 use gamlss_spline::{SplineError, SplineOrder};
 
 use super::*;
@@ -104,6 +104,25 @@ fn builds_normal_with_typed_columns_and_metadata() {
     assert_eq!(built.schema().response.col, y);
     assert_eq!(built.terms()[0].terms[1].range(), 1..2);
     assert!(built.model_mut().value(&beta).unwrap().is_finite());
+}
+
+#[test]
+fn no_intercept_builds_parameter_without_implicit_intercept() {
+    let data = TestData::borrowed(&[("y", &[0.0, 1.0, 2.0]), ("x", &[2.0, 3.0, 4.0])]);
+    let built = normal()
+        .response(col("y"))
+        .mu(no_intercept() + linear(col("x")))
+        .sigma(intercept())
+        .build(&data)
+        .unwrap();
+
+    assert_eq!(built.coefficient_names(), vec!["mu.x", "sigma.(Intercept)"]);
+    assert_eq!(built.layout().slice("mu").unwrap(), 0..1);
+    assert_eq!(built.layout().slice("sigma").unwrap(), 1..2);
+
+    let predicted = built.predict_theta(&[0.5, 0.0], &data).unwrap();
+    assert_relative_eq!(predicted[0].mu, 1.0);
+    assert_relative_eq!(predicted[2].mu, 2.0);
 }
 
 #[test]
@@ -614,6 +633,32 @@ fn formula_penalty_changes_objective_and_gradient() {
 
     assert!(objective > baseline);
     assert!(grad[..6].iter().any(|value| value.abs() > 1.0e-8));
+}
+
+#[test]
+fn cyclic_pspline_prediction_blocks_preserve_penalty_metadata() {
+    let data = TestData::borrowed(&[
+        ("y", &[0.1, 0.2, 0.3, 0.4, 0.5]),
+        ("phase", &[0.0, 0.2, 0.4, 0.6, 0.8]),
+    ]);
+    let built = normal()
+        .response(col("y"))
+        .mu(cyclic_pspline(col("phase"))
+            .k(6)
+            .lambda(2.0)
+            .penalty_order(1))
+        .sigma(intercept())
+        .build(&data)
+        .unwrap();
+    let blocks = built.prediction_blocks(&data).unwrap();
+    let theta = [0.0, 1.0, -1.0, 0.5, 0.25, -0.25];
+    let mut grad = [0.0; 6];
+
+    let value = blocks.0.penalty.value(&theta);
+    blocks.0.penalty.add_gradient(&theta, &mut grad);
+
+    assert!(value > 0.0);
+    assert!(grad.iter().any(|value| value.abs() > 1.0e-8));
 }
 
 #[test]

@@ -62,6 +62,13 @@ impl ParameterLayout {
         &self.slices
     }
 
+    /// Visits parameter slices in model order without allocating.
+    pub fn visit_slices(&self, mut visit: impl FnMut(usize, &'static str, Range<usize>)) {
+        for (index, slice) in self.slices.iter().enumerate() {
+            visit(index, slice.name, slice.range.clone());
+        }
+    }
+
     /// Returns the coefficient range for `name`, if present.
     #[must_use]
     pub fn slice(&self, name: &str) -> Option<Range<usize>> {

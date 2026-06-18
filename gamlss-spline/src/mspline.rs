@@ -103,9 +103,30 @@ impl MSplineBasis {
     /// Evaluates all basis functions at `x`.
     #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
-        (0..self.n_basis)
-            .map(|index| self.evaluate_one(index, x))
-            .collect()
+        let mut values = vec![0.0; self.n_basis];
+        self.evaluate_into(x, &mut values);
+        values
+    }
+
+    /// Writes all basis-function values at `x` into `out`.
+    ///
+    /// `out.len()` must equal [`Self::n_basis`].
+    pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), self.n_basis);
+
+        for (index, value) in out.iter_mut().enumerate() {
+            *value = self.evaluate_one(index, x);
+        }
+    }
+
+    /// Visits non-zero basis-function values at `x` without allocating.
+    pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
+        for index in 0..self.n_basis {
+            let weight = self.evaluate_one(index, x);
+            if weight != 0.0 {
+                f(index, weight);
+            }
+        }
     }
 
     /// Evaluates one basis function at `x`.
@@ -160,12 +181,11 @@ impl MSplineDesign {
     }
 
     fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
-        self.basis
-            .evaluate(x)
-            .iter()
-            .zip(beta)
-            .map(|(basis, beta)| basis * beta)
-            .sum()
+        let mut value = 0.0;
+        self.basis.for_each_basis(x, |index, weight| {
+            value += beta[index] * weight;
+        });
+        value
     }
 }
 
@@ -225,11 +245,7 @@ impl SplineRowBasis for MSplineDesign {
     }
 
     fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        for (index, weight) in self.basis.evaluate(self.x[row]).into_iter().enumerate() {
-            if weight != 0.0 {
-                f(index, weight);
-            }
-        }
+        self.basis.for_each_basis(self.x[row], &mut f);
     }
 }
 

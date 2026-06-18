@@ -7,23 +7,45 @@ use gamlss_spline::{
 use crate::{Category, Col};
 
 /// Pre-data term expression for one parameter predictor.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TermExpr {
     terms: Vec<TermSpec>,
+    default_intercept_if_empty: bool,
 }
 
 impl TermExpr {
     /// Creates an expression from one term.
     #[must_use]
     pub fn new(term: TermSpec) -> Self {
-        Self { terms: vec![term] }
+        Self {
+            terms: vec![term],
+            default_intercept_if_empty: false,
+        }
+    }
+
+    /// Creates an explicit empty expression with no implicit intercept.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            terms: Vec::new(),
+            default_intercept_if_empty: false,
+        }
     }
 
     pub(crate) fn into_terms(mut self) -> Vec<TermSpec> {
-        if self.terms.is_empty() {
+        if self.terms.is_empty() && self.default_intercept_if_empty {
             self.terms.push(TermSpec::Intercept);
         }
         self.terms
+    }
+}
+
+impl Default for TermExpr {
+    fn default() -> Self {
+        Self {
+            terms: Vec::new(),
+            default_intercept_if_empty: true,
+        }
     }
 }
 
@@ -32,6 +54,9 @@ impl Add for TermExpr {
 
     fn add(mut self, mut rhs: Self) -> Self::Output {
         self.terms.append(&mut rhs.terms);
+        if !rhs.default_intercept_if_empty {
+            self.default_intercept_if_empty = false;
+        }
         self
     }
 }
@@ -84,6 +109,12 @@ pub enum TermSpec {
 #[must_use]
 pub fn intercept() -> TermExpr {
     TermExpr::new(TermSpec::Intercept)
+}
+
+/// Creates an explicit empty term expression without an intercept.
+#[must_use]
+pub fn no_intercept() -> TermExpr {
+    TermExpr::empty()
 }
 
 /// Creates a linear term expression.

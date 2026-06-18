@@ -154,6 +154,48 @@ mod tests {
     }
 
     #[test]
+    fn allocating_and_buffer_basis_evaluation_match() {
+        let x = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let b = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let m = MSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let i = ISplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let natural = NaturalCubicSplineBasis::new(vec![0.0, 0.5, 1.0]).unwrap();
+
+        let mut buffer = vec![0.0; b.n_basis()];
+        b.evaluate_into(0.4, &mut buffer);
+        assert_eq!(buffer, b.evaluate(0.4));
+
+        buffer.resize(m.n_basis(), 0.0);
+        m.evaluate_into(0.4, &mut buffer);
+        assert_eq!(buffer, m.evaluate(0.4));
+
+        buffer.resize(i.n_basis(), 0.0);
+        i.evaluate_into(0.4, &mut buffer);
+        assert_eq!(buffer, i.evaluate(0.4));
+
+        buffer.resize(natural.n_basis(), 0.0);
+        natural.evaluate_into(0.4, &mut buffer);
+        assert_eq!(buffer, natural.evaluate(0.4));
+
+        natural.evaluate_derivative_into(0.4, &mut buffer);
+        assert_eq!(buffer, natural.evaluate_derivative(0.4));
+    }
+
+    #[test]
+    fn spline_row_basis_visitors_match_allocating_evaluate_values() {
+        let x = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let m = MSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let i = ISplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let natural = NaturalCubicSplineBasis::new(vec![0.0, 0.5, 1.0]).unwrap();
+
+        assert_row_basis_matches_evaluate(&m.design(&x).unwrap(), |row| m.evaluate(x[row]));
+        assert_row_basis_matches_evaluate(&i.design(&x).unwrap(), |row| i.evaluate(x[row]));
+        assert_row_basis_matches_evaluate(&natural.design(&x).unwrap(), |row| {
+            natural.evaluate(x[row])
+        });
+    }
+
+    #[test]
     fn cyclic_spline_design_wraps_and_partitions_unity() {
         let design =
             CyclicSplineDesign::new(&[0.0, 0.25, 1.0, -0.25], 8, SplineOrder::Cubic).unwrap();
@@ -642,6 +684,22 @@ mod tests {
                 finite_difference,
                 epsilon = 1.0e-5
             );
+        }
+    }
+
+    fn assert_row_basis_matches_evaluate<B>(basis: &B, evaluate: impl Fn(usize) -> Vec<f64>)
+    where
+        B: super::SplineRowBasis,
+    {
+        for row in 0..basis.nrows() {
+            let expected = evaluate(row);
+            let mut actual = vec![0.0; basis.nparams()];
+            basis.for_each_row_basis(row, |index, weight| {
+                actual[index] = weight;
+            });
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+            }
         }
     }
 }

@@ -91,6 +91,13 @@ impl BSplineBasis {
         values
     }
 
+    /// Writes all basis-function values at `x` into `out`.
+    ///
+    /// `out.len()` must equal [`Self::n_basis`].
+    pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
+        self.fill_values(x, out);
+    }
+
     /// Dense design matrix, где каждая строка содержит `evaluate(x_i)`.
     pub fn design_matrix(&self, x: &[f64]) -> Result<DenseDesign, SplineError> {
         if x.iter().any(|value| !value.is_finite()) {
@@ -101,13 +108,13 @@ impl BSplineBasis {
         let mut values = Vec::with_capacity(x.len() * n_basis);
         values.resize(x.len() * n_basis, 0.0);
         for (row, value) in values.chunks_exact_mut(n_basis).zip(x.iter().copied()) {
-            self.evaluate_into(value, row);
+            self.fill_values(value, row);
         }
 
         Ok(DenseDesign::from_row_major(x.len(), n_basis, values)?)
     }
 
-    fn evaluate_into(&self, x: f64, out: &mut [f64]) {
+    fn fill_values(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis());
 
         for (index, value) in out.iter_mut().enumerate() {

@@ -1,5 +1,6 @@
 use crate::{
-    TargetTransform, TransformError, validate_non_empty_finite, validate_shifted_non_negative,
+    TargetTransform, TransformError, validate_non_empty_finite, validate_output_len,
+    validate_shifted_non_negative,
 };
 
 /// `log1p` transform with a fitted shift for targets that may contain zero or
@@ -50,11 +51,22 @@ impl TargetTransform for Log1pShift {
     }
 
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
+        let mut out = vec![0.0; y.len()];
+        Self::transform_into(state, y, &mut out)?;
+        Ok(out)
+    }
+
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        validate_output_len(y.len(), out.len())?;
         validate_shifted_non_negative(y, state.shift)?;
-        Ok(y.iter()
-            .copied()
-            .map(|value| Self::transform(state, value))
-            .collect())
+        for (out, value) in out.iter_mut().zip(y.iter().copied()) {
+            *out = Self::transform(state, value);
+        }
+        Ok(())
     }
 }
 

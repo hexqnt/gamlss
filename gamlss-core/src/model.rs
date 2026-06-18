@@ -103,7 +103,16 @@ where
     /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
     fn parameter_layout(&self) -> ParameterLayout;
 
-    #[doc(hidden)]
+    /// Visits coefficient ranges for each parameter block in model order without allocating.
+    fn visit_block_ranges<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        for (index, range) in self.block_ranges().into_iter().enumerate() {
+            visit(index, range);
+        }
+    }
+
     fn parameter_slice_count(&self) -> usize {
         self.parameter_layout().slices().len()
     }
@@ -121,7 +130,7 @@ where
             .is_some_and(|slice| slice.name == name && slice.range == range)
     }
 
-    #[doc(hidden)]
+    /// Visits named parameter slices in model order without allocating.
     fn visit_parameter_slices<V>(&self, mut visit: V)
     where
         V: FnMut(usize, &'static str, Range<usize>),
@@ -285,9 +294,25 @@ where
         self.blocks.block_ranges()
     }
 
+    /// Visits coefficient ranges for each parameter block in model order without allocating.
+    pub fn visit_block_ranges<V>(&self, visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        self.blocks.visit_block_ranges(visit);
+    }
+
     /// Layout of named parameter blocks inside theta.
     pub fn parameter_layout(&self) -> ParameterLayout {
         self.blocks.parameter_layout()
+    }
+
+    /// Visits named parameter slices in model order without allocating.
+    pub fn visit_parameter_slices<V>(&self, visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        self.blocks.visit_parameter_slices(visit);
     }
 
     /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
@@ -626,8 +651,8 @@ where
         validate_len("theta", full_beta.len(), self.dim())?;
         let range = self
             .model
-            .parameter_layout()
-            .slice_of::<P>()
+            .blocks
+            .parameter_slice_of::<P>()
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
         Ok(BlockObjective::new(self, full_beta, range))
     }
@@ -883,6 +908,15 @@ macro_rules! impl_gamlss_blocks {
 
             fn block_ranges(&self) -> Vec<Range<usize>> {
                 vec![$(self.$idx.range(),)+]
+            }
+
+            fn visit_block_ranges<V>(&self, mut visit: V)
+            where
+                V: FnMut(usize, Range<usize>),
+            {
+                $(
+                    visit($idx, self.$idx.range());
+                )+
             }
 
             fn parameter_layout(&self) -> ParameterLayout {
@@ -2099,6 +2133,57 @@ mod tests {
         assert_eq!(unpacked.block_of::<Mu>().unwrap().name, "mu");
         assert_eq!(unpacked.coefficients("sigma").unwrap(), &[0.5]);
         assert_eq!(unpacked.coefficients("nu").unwrap(), &[-0.5]);
+    }
+
+    #[test]
+    fn visitor_apis_match_allocating_layout_helpers() {
+        let y = vec![2.0];
+        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            0,
+        );
+        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            1,
+        );
+        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            NoPenalty,
+            2,
+        );
+        let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
+
+        let mut visited_ranges = Vec::new();
+        model.visit_block_ranges(|index, range| visited_ranges.push((index, range)));
+        assert_eq!(
+            visited_ranges,
+            model
+                .block_ranges()
+                .into_iter()
+                .enumerate()
+                .collect::<Vec<_>>()
+        );
+
+        let mut visited_slices = Vec::new();
+        model.visit_parameter_slices(|index, name, range| {
+            visited_slices.push((index, name, range));
+        });
+        let layout = model.parameter_layout();
+        assert_eq!(
+            visited_slices,
+            layout
+                .slices()
+                .iter()
+                .enumerate()
+                .map(|(index, slice)| (index, slice.name, slice.range.clone()))
+                .collect::<Vec<_>>()
+        );
+
+        let mut layout_visited = Vec::new();
+        layout.visit_slices(|index, name, range| layout_visited.push((index, name, range)));
+        assert_eq!(layout_visited, visited_slices);
     }
 
     #[test]

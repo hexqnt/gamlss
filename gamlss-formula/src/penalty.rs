@@ -69,14 +69,20 @@ impl Penalty for FormulaPenalty {
 pub(crate) fn prediction_penalty(terms: &[FittedTerm]) -> FormulaPenalty {
     let mut penalty = FormulaPenalty::default();
     for term in terms {
-        if let FittedTerm::PSpline {
-            range,
-            lambda,
-            penalty_order,
-            ..
-        } = term
-        {
-            penalty.add_spline(range.clone(), *lambda, *penalty_order);
+        match term {
+            FittedTerm::PSpline {
+                range,
+                lambda,
+                penalty_order,
+                ..
+            } => penalty.add_spline(range.clone(), *lambda, *penalty_order),
+            FittedTerm::CyclicPSpline {
+                range,
+                lambda,
+                penalty_order,
+                ..
+            } => penalty.add_cyclic_spline(range.clone(), *lambda, *penalty_order),
+            _ => {}
         }
     }
     penalty

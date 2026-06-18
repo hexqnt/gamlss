@@ -57,6 +57,8 @@
 //! assert_eq!(fitted.len(), y.len());
 //! # Ok::<_, gamlss::core::ModelError>(())
 //! ```
+//!
+#![doc = include_str!("../docs/project-structure.md")]
 
 /// Типизированные базовые абстракции.
 pub use gamlss_core as core;
