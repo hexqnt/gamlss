@@ -7,7 +7,7 @@ use crate::row_basis::SplineRowBasis;
 #[derive(Debug, Clone, PartialEq)]
 pub struct NaturalCubicSplineBasis {
     knots: Vec<f64>,
-    second_derivatives: Vec<Vec<f64>>,
+    second_derivatives: Vec<f64>,
 }
 
 impl NaturalCubicSplineBasis {
@@ -151,8 +151,8 @@ impl NaturalCubicSplineBasis {
         let b = (x - x0) / h;
         let y0 = f64::from(basis == interval);
         let y1 = f64::from(basis == interval + 1);
-        let m0 = self.second_derivatives[basis][interval];
-        let m1 = self.second_derivatives[basis][interval + 1];
+        let m0 = self.second_derivative(basis, interval);
+        let m1 = self.second_derivative(basis, interval + 1);
 
         a * y0 + b * y1 + ((a * a * a - a) * m0 + (b * b * b - b) * m1) * h * h / 6.0
     }
@@ -175,10 +175,18 @@ impl NaturalCubicSplineBasis {
         let b = (clamped_x - x0) / h;
         let y0 = f64::from(basis == interval);
         let y1 = f64::from(basis == interval + 1);
-        let m0 = self.second_derivatives[basis][interval];
-        let m1 = self.second_derivatives[basis][interval + 1];
+        let m0 = self.second_derivative(basis, interval);
+        let m1 = self.second_derivative(basis, interval + 1);
 
         (y1 - y0) / h + h * ((1.0 - 3.0 * a * a) * m0 + (3.0 * b * b - 1.0) * m1) / 6.0
+    }
+
+    fn second_derivative(&self, basis: usize, knot: usize) -> f64 {
+        let n = self.knots.len();
+        debug_assert!(basis < n);
+        debug_assert!(knot < n);
+        debug_assert_eq!(self.second_derivatives.len(), n * n);
+        self.second_derivatives[basis * n + knot]
     }
 
     fn interval(&self, x: f64) -> (usize, bool, bool) {
@@ -318,20 +326,20 @@ fn validate_strict_knots(knots: &[f64]) -> Result<(), SplineError> {
     Ok(())
 }
 
-fn precompute_second_derivatives(knots: &[f64]) -> Vec<Vec<f64>> {
+fn precompute_second_derivatives(knots: &[f64]) -> Vec<f64> {
     let n = knots.len();
-    (0..n)
-        .map(|basis| {
-            let y = (0..n)
-                .map(|index| f64::from(index == basis))
-                .collect::<Vec<_>>();
-            natural_second_derivatives(knots, &y)
-        })
-        .collect()
+    let mut second_derivatives = Vec::with_capacity(n * n);
+    for basis in 0..n {
+        second_derivatives.extend(natural_basis_second_derivatives(knots, basis));
+    }
+    debug_assert_eq!(second_derivatives.len(), n * n);
+    second_derivatives
 }
 
-fn natural_second_derivatives(x: &[f64], y: &[f64]) -> Vec<f64> {
+fn natural_basis_second_derivatives(x: &[f64], basis: usize) -> Vec<f64> {
     let n = x.len();
+    debug_assert!(basis < n);
+
     let mut second = vec![0.0; n];
     if n <= 2 {
         return second;
@@ -350,7 +358,10 @@ fn natural_second_derivatives(x: &[f64], y: &[f64]) -> Vec<f64> {
         lower[row] = h0;
         diag[row] = 2.0 * (h0 + h1);
         upper[row] = h1;
-        rhs[row] = 6.0 * ((y[i + 1] - y[i]) / h1 - (y[i] - y[i - 1]) / h0);
+        let y_prev = f64::from(i - 1 == basis);
+        let y = f64::from(i == basis);
+        let y_next = f64::from(i + 1 == basis);
+        rhs[row] = 6.0 * ((y_next - y) / h1 - (y - y_prev) / h0);
     }
 
     for row in 1..m {
