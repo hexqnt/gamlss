@@ -37,5 +37,5 @@ jobs:
       - name: Tests without default features
         run: cargo test --workspace --no-default-features --locked
 
-      - name: Package workspace
-        run: cargo package --workspace --locked
+      - name: Check package contents
+        run: cargo package --workspace --locked --list

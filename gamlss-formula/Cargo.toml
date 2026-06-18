@@ -2,12 +2,12 @@
 name = "gamlss-formula"
 version.workspace = true
 edition.workspace = true
-description = "Formula and builder layer for typed GAMLSS models"
+description = "Experimental optional formula and builder layer for typed GAMLSS models"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/gamlss-formula"
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 include = ["src/**/*", "Cargo.toml", "README.md"]
@@ -15,6 +15,7 @@ include = ["src/**/*", "Cargo.toml", "README.md"]
 [dependencies]
 gamlss-core.workspace = true
 gamlss-family.workspace = true
+gamlss-spline.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

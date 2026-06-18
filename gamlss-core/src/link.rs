@@ -9,8 +9,17 @@ pub trait Link<S> {
     fn derivative_inverse(eta: S) -> S;
 }
 
-/// Маркер для link-функций, гарантирующих положительный результат.
+/// Маркер для link-функций, гарантирующих результат в `(0, +inf)`.
+///
+/// Этот контракт подходит для scale/rate/shape-like параметров без верхней
+/// границы. Для вероятностей используйте [`UnitIntervalLink`].
 pub trait PositiveLink<S>: Link<S> {}
+
+/// Маркер для link-функций, гарантирующих результат в `(0, 1)`.
+///
+/// Этот контракт подходит для вероятностных параметров, таких как Bernoulli
+/// success probability или beta mean.
+pub trait UnitIntervalLink<S>: Link<S> {}
 
 /// Identity link: `theta = eta`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -98,7 +107,7 @@ impl Link<f64> for Logit {
     }
 }
 
-impl PositiveLink<f64> for Logit {}
+impl UnitIntervalLink<f64> for Logit {}
 
 /// Сдвинутый log link: `theta = OFFSET + exp(eta)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -115,8 +124,6 @@ impl<const OFFSET: i64> Link<f64> for LogPlus<OFFSET> {
         eta.exp()
     }
 }
-
-impl<const OFFSET: i64> PositiveLink<f64> for LogPlus<OFFSET> {}
 
 /// Clamped log link: `theta = exp(clamp(eta, MIN, MAX))`.
 ///

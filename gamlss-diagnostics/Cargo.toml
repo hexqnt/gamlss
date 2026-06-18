@@ -1,0 +1,20 @@
+[package]
+name = "gamlss-diagnostics"
+version.workspace = true
+edition.workspace = true
+description = "Post-fit diagnostics utilities for GAMLSS modeling"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-diagnostics"
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "Cargo.toml", "README.md"]
+
+[dependencies]
+gamlss-core.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+gamlss-family.workspace = true

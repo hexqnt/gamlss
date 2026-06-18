@@ -1,15 +1,23 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, Identity, Link, Log, ModelError, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
     Sigma,
 };
+
+use crate::special::ln_gamma;
 
 /// Student's t location-scale family с фиксированным числом степеней свободы.
 ///
 /// `MuLink` и `SigmaLink` управляют link-функциями для параметров
 /// расположения и масштаба соответственно. По умолчанию используются
 /// `Identity` для `mu` и `Log` для `sigma`.
+///
+/// CRPS support is intentionally left out until the crate has an internal
+/// Student's t CDF/PDF implementation or an optional dependency strategy for
+/// it. This keeps the default family crate dependency-light.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = Identity, SigmaLink = Log> {
     degrees_of_freedom: f64,
@@ -52,10 +60,12 @@ where
 
     /// Negative log-likelihood одного наблюдения на естественной шкале.
     ///
-    /// Возвращает `INFINITY` при неположительном sigma.
+    /// Возвращает `INFINITY` при non-finite observation/location или
+    /// неположительном sigma.
     #[inline(always)]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
             return f64::INFINITY;
         }
 
@@ -64,14 +74,23 @@ where
         student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
     }
 
-    /// Вычисляет NLL и score по eta для одного наблюдения.
+    /// Вычисляет NLL и gradient по eta для одного наблюдения.
     ///
     /// Использует аналитические производные с учётом фиксированного `nu`
     /// и домножает на производные link-функций (chain rule).
     #[inline(always)]
-    fn nll_and_score_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
+    fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = self.nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                StudentTEta {
+                    mu: f64::NAN,
+                    sigma: f64::NAN,
+                },
+            );
+        }
 
         let nu = self.degrees_of_freedom;
         let sigma = theta.sigma;
@@ -80,12 +99,12 @@ where
         let d_nll_d_mu = -slope / sigma;
         let d_nll_d_sigma = (1.0 - slope * z) / sigma;
 
-        let score_eta = StudentTEta {
+        let gradient_eta = StudentTEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
-        (nll, score_eta)
+        (nll, gradient_eta)
     }
 }
 
@@ -143,7 +162,8 @@ where
 {
     type Eta = StudentTEta;
     type Theta = StudentTTheta;
-    type ScoreEta = StudentTEta;
+    type NllGradientEta = StudentTEta;
+    type Observation<'obs> = f64;
 
     #[inline(always)]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
@@ -161,8 +181,8 @@ where
     }
 
     #[inline(always)]
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta) {
-        self.nll_and_score_eta_values(y, eta)
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        self.nll_and_gradient_eta_values(y, eta)
     }
 }
 
@@ -175,6 +195,27 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for StudentT<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let z = rand_distr::Distribution::sample(
+            &rand_distr::StudentT::new(self.degrees_of_freedom)
+                .expect("validated degrees_of_freedom must construct"),
+            rng,
+        );
+        theta.mu + theta.sigma * z
+    }
+}
+
 /// Распределение Стьюдента с `Identity` link для `mu` и `Log` link для `sigma`.
 pub type DefaultStudentT = StudentT<Identity, Log>;
 
@@ -183,43 +224,14 @@ fn student_t_constant(nu: f64) -> f64 {
     0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
 }
 
-/// Приближение логарифма гамма-функции (алгоритм Lanczos).
-///
-/// Используется для вычисления нормировочной константы плотности
-/// распределения Стьюдента. Точность достаточна для типовых приложений.
-fn ln_gamma(value: f64) -> f64 {
-    const COEFFICIENTS: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
-
-    if value < 0.5 {
-        return std::f64::consts::PI.ln()
-            - (std::f64::consts::PI * value).sin().ln()
-            - ln_gamma(1.0 - value);
-    }
-
-    let shifted = value - 1.0;
-    let mut x = COEFFICIENTS[0];
-    for (index, coefficient) in COEFFICIENTS.iter().copied().enumerate().skip(1) {
-        x += coefficient / (shifted + index as f64);
-    }
-    let t = shifted + 7.5;
-
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (shifted + 0.5) * t.ln() - t + x.ln()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::DefaultStudentT;
-    use crate::test_support::assert_score_matches_finite_difference;
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+    use gamlss_core::Family;
+
+    use super::{DefaultStudentT, StudentTEta, StudentTTheta};
+    use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn student_t_rejects_invalid_degrees_of_freedom() {
@@ -228,8 +240,84 @@ mod tests {
     }
 
     #[test]
-    fn student_t_score_matches_finite_difference() {
+    fn student_t_gradient_matches_finite_difference() {
         let family = DefaultStudentT::try_new(5.0).unwrap();
-        assert_score_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn student_t_rejects_non_finite_domain_and_returns_nan_gradient() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        assert!(family.nll(1.7, theta).is_finite());
+        assert!(family.nll(f64::NEG_INFINITY, theta).is_infinite());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    StudentTTheta {
+                        mu: f64::NAN,
+                        sigma: theta.sigma,
+                    },
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    StudentTTheta {
+                        mu: theta.mu,
+                        sigma: 0.0,
+                    },
+                )
+                .is_infinite()
+        );
+
+        let (nll, gradient) = family.nll_and_gradient_eta(
+            1.7,
+            StudentTEta {
+                mu: 0.4,
+                sigma: f64::NEG_INFINITY,
+            },
+        );
+        assert!(nll.is_infinite());
+        assert!(gradient.mu.is_nan());
+        assert!(gradient.sigma.is_nan());
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn student_t_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 1.0
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
     }
 }

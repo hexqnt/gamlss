@@ -4,27 +4,144 @@
 /// роли параметров и совместимость link-функций задаются через
 /// [`ParameterizedFamily`], поэтому hot path остаётся типизированным без
 /// dynamic lookup.
+///
+/// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
+/// contributions for one observation. Invalid observation or parameter domains
+/// should be represented by `f64::INFINITY` rather than panicking, so
+/// optimizers can reject the candidate point. `NaN` inputs may propagate as
+/// `NaN`; callers can inspect diagnostics for non-finite values.
 pub trait Family {
+    /// Observation representation consumed by this family.
+    ///
+    /// Univariate families usually use `f64`. Multivariate, censored,
+    /// interval, or mixture families can use small arrays, tuples, or custom
+    /// row-view structs without changing the compiled model machinery. The
+    /// lifetime parameter allows families to consume borrowed observations,
+    /// such as `&'obs [f64]`, without forcing row copies.
+    type Observation<'obs>;
     /// Аддитивные предикторы на link-шкале.
     type Eta;
     /// Параметры распределения на естественной шкале.
     type Theta;
     /// Градиент negative log-likelihood по `Eta`.
-    type ScoreEta;
+    type NllGradientEta;
 
     /// Преобразует предикторы с link-шкалы в параметры распределения.
+    ///
+    /// Per-parameter links are a convenient way to express independent scalar
+    /// constraints, such as positive scales. Dependent constraints between
+    /// parameters — for example correlations, covariance factors, ordered
+    /// cutpoints, or simplex weights — should be handled here by transforming
+    /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
     /// Negative log-likelihood для одного наблюдения на естественной шкале.
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64;
+    fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
     /// Negative log-likelihood для одного наблюдения на link-шкале.
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, self.theta(eta))
+    fn nll_eta<'obs>(&self, observation: Self::Observation<'obs>, eta: Self::Eta) -> f64 {
+        self.nll(observation, self.theta(eta))
     }
-    /// Negative log-likelihood и score по `Eta` для одного наблюдения.
-    fn nll_and_score_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::ScoreEta);
+    /// Negative log-likelihood и NLL-gradient по `Eta` для одного наблюдения.
+    ///
+    /// `NllGradientEta` is the gradient of the negative log-likelihood with
+    /// respect to the link-scale predictors `Eta`, after applying the chain
+    /// rule for the family links. It must have the same arity and ordering as
+    /// `Eta`.
+    fn nll_and_gradient_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta);
 }
 
-/// Контейнер для eta или score у family с фиксированной арностью `K`.
+/// Dense expected information matrix for a fixed-arity family.
+///
+/// This is an extension-point container for second-order fitting algorithms.
+/// The core model hot path does not consume it directly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DenseInformation<const K: usize> {
+    values: [[f64; K]; K],
+}
+
+impl<const K: usize> DenseInformation<K> {
+    /// Creates a dense information matrix from row-major values.
+    #[must_use]
+    pub const fn new(values: [[f64; K]; K]) -> Self {
+        Self { values }
+    }
+
+    /// Creates a diagonal information matrix.
+    #[must_use]
+    pub fn diagonal(diagonal: [f64; K]) -> Self {
+        let mut values = [[0.0; K]; K];
+        let mut index = 0;
+        while index < K {
+            values[index][index] = diagonal[index];
+            index += 1;
+        }
+        Self { values }
+    }
+
+    /// Returns the matrix entry at `row`, `col`.
+    #[must_use]
+    pub fn get(&self, row: usize, col: usize) -> f64 {
+        self.values[row][col]
+    }
+
+    /// Returns the underlying dense matrix.
+    #[must_use]
+    pub const fn as_array(&self) -> &[[f64; K]; K] {
+        &self.values
+    }
+}
+
+/// Extension trait for families that provide diagonal Fisher information.
+///
+/// Families implementing this trait can be used with Fisher Scoring solvers
+/// (Rigby–Stasinopoulos algorithm). The diagonal Fisher information is the
+/// expected negative second derivative `E[-∂²ℓ/∂η²]` on the link scale.
+///
+/// Currently no built-in family implements this trait. It exists as an
+/// explicit extension point for future solver integrations — add
+/// implementations when you need Fisher Scoring for specific families.
+pub trait HasDiagonalFisherInfo: Family {
+    /// Negative log-likelihood, NLL gradient, and diagonal Fisher information per
+    /// observation on the link scale.
+    ///
+    /// The `fisher` component must have the same arity and ordering as
+    /// [`Family::Eta`] and [`Family::NllGradientEta`]. Each element is
+    /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
+    /// respect to the k-th link-scale predictor, given the observation.
+    fn nll_gradient_and_diagonal_fisher_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta, Self::NllGradientEta);
+}
+
+/// Extension trait for families that provide dense expected information.
+///
+/// This trait covers families whose second-order structure has cross-parameter
+/// terms. It is intentionally not wired into [`crate::Gamlss`] evaluation yet;
+/// optimizer integrations can opt into it when they need expected information.
+pub trait HasExpectedInformation<const K: usize>: Family
+where
+    Self::Eta: ParameterParts<K>,
+    Self::NllGradientEta: ParameterParts<K>,
+{
+    /// Negative log-likelihood, NLL gradient, and dense expected information
+    /// per observation on the link scale.
+    fn nll_gradient_and_expected_information_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
+}
+
+/// Контейнер для eta или NLL-gradient у family с фиксированной арностью `K`.
+///
+/// `part(index)` is used in the model hot path after compile-time arity
+/// selection. Callers pass `index < K`; implementations may use `unreachable!`
+/// for out-of-range indices instead of returning a recoverable error.
 pub trait ParameterParts<const K: usize>: Sized {
     /// Собирает контейнер из `K` scalar-частей.
     fn from_array(values: [f64; K]) -> Self;
@@ -100,13 +217,107 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
     }
 }
 
+impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 5]) -> Self {
+        (values[0], values[1], values[2], values[3], values[4])
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            _ => unreachable!("five-parameter parts only have indices 0 through 4"),
+        }
+    }
+}
+
+impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 6]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            _ => unreachable!("six-parameter parts only have indices 0 through 5"),
+        }
+    }
+}
+
+impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 7]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            6 => self.6,
+            _ => unreachable!("seven-parameter parts only have indices 0 through 6"),
+        }
+    }
+}
+
+impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
+    #[inline(always)]
+    fn from_array(values: [f64; 8]) -> Self {
+        (
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
+        )
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.0,
+            1 => self.1,
+            2 => self.2,
+            3 => self.3,
+            4 => self.4,
+            5 => self.5,
+            6 => self.6,
+            7 => self.7,
+            _ => unreachable!("eight-parameter parts only have indices 0 through 7"),
+        }
+    }
+}
+
 /// Family с фиксированным числом параметров, ролями параметров и link-функциями.
 ///
 /// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
+/// Their order defines the order of predictor blocks, gradient parts and flat
+/// coefficient ranges in compiled models.
+///
+/// `Links` describe the independent scalar link contracts for parameter
+/// blocks. More complex dependent constraints are still expressed by
+/// [`Family::theta`], which sees the full link-scale parameter set.
 pub trait ParameterizedFamily<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::ScoreEta: ParameterParts<K>,
+    Self::NllGradientEta: ParameterParts<K>,
 {
     /// Роли параметров family.
     type Params;
@@ -117,17 +328,63 @@ where
 /// Distribution helper для CDF.
 pub trait HasCdf: Family {
     /// CDF в точке `y` для параметров на естественной шкале.
+    ///
+    /// Implementations should return a non-finite value for invalid query
+    /// points or parameter domains rather than panicking, matching the base
+    /// [`Family`] likelihood contract. For finite query points outside but
+    /// below the distribution support, implementations should return the
+    /// boundary probability `0.0`.
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
 }
 
 /// Distribution helper для quantile function.
 pub trait HasQuantile: Family {
     /// Квантиль уровня `p` для параметров на естественной шкале.
+    ///
+    /// Implementations should return a non-finite value for invalid
+    /// probabilities or parameter domains rather than panicking.
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
+}
+
+/// Distribution helper for continuous ranked probability score.
+pub trait HasCrps: Family {
+    /// CRPS for one observation and natural-scale parameters.
+    ///
+    /// Implementations should return a non-finite value for invalid
+    /// observation or parameter domains rather than panicking.
+    fn crps<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
 }
 
 /// Distribution helper для simulation.
 pub trait CanSimulate<Rng>: Family {
     /// Генерирует одно значение для параметров на естественной шкале.
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
+}
+
+/// Distribution helper для per-observation deviance.
+///
+/// This is intentionally separate from [`Family`] so compiled likelihood
+/// evaluation remains minimal. Diagnostics and residual tooling can opt into
+/// this trait when a family has a meaningful deviance definition.
+pub trait HasDeviance: Family {
+    /// Deviance contribution for one observation on the natural parameter scale.
+    ///
+    /// Implementations should return a non-finite value for invalid observation
+    /// or parameter domains rather than panicking, matching the rest of the
+    /// family helper contracts.
+    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+}
+
+/// Distribution helper для family-specific link-scale initialization.
+///
+/// This gives future fit layers a typed place to ask the family for starting
+/// predictors without hard-coding distribution heuristics outside the family
+/// implementation.
+pub trait HasInitialEta: Family {
+    /// Initial link-scale predictors for one observation.
+    ///
+    /// Implementations should return finite values when the observation is
+    /// inside the supported domain. Unsupported or invalid observations may
+    /// produce non-finite components instead of panicking.
+    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta;
 }
