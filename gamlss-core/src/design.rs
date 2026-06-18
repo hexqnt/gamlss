@@ -19,6 +19,7 @@ pub trait DesignMatrix {
     /// Default implementation materializes scaled weights. Matrix
     /// implementations used in hot paths should override this method when they
     /// can fuse scaling into their transpose multiply.
+    #[inline]
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), multiplier.len());
 
@@ -41,6 +42,7 @@ pub trait DesignMatrix {
     /// [`Self::dot_row`] и [`Self::add_t_mul_vec`]. Реализации
     /// с прямым доступом к значениям (dense, sparse) должны переопределить
     /// этот метод для избежания аллокаций и ускорения через SIMD.
+    #[inline]
     fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
         let ncols = self.ncols();
         let nrows = self.nrows();
@@ -105,6 +107,7 @@ impl DenseDesign {
 
     /// Создаёт dense matrix из массива строк фиксированной ширины.
     #[must_use]
+    #[inline]
     pub fn from_rows<const C: usize>(rows: &[[f64; C]]) -> Self {
         let values = rows.iter().flat_map(|row| row.iter().copied()).collect();
         Self {
@@ -116,6 +119,7 @@ impl DenseDesign {
 
     /// Создаёт design matrix из одного intercept-столбца.
     #[must_use]
+    #[inline]
     pub fn intercept(nrows: usize) -> Self {
         Self {
             nrows,
@@ -126,6 +130,7 @@ impl DenseDesign {
 
     /// Создаёт design matrix из одного пользовательского столбца.
     #[must_use]
+    #[inline]
     pub fn column(values: &[f64]) -> Self {
         Self {
             nrows: values.len(),
@@ -185,6 +190,7 @@ impl DenseDesign {
 
     /// Возвращает row-major значения матрицы.
     #[must_use]
+    #[inline]
     pub fn values(&self) -> &[f64] {
         &self.values
     }
@@ -197,14 +203,17 @@ fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usiz
 }
 
 impl DesignMatrix for DenseDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn ncols(&self) -> usize {
         self.ncols
     }
 
+    #[inline]
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.nrows);
         debug_assert_eq!(beta.len(), self.ncols);
@@ -217,6 +226,7 @@ impl DesignMatrix for DenseDesign {
             .sum()
     }
 
+    #[inline]
     fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
@@ -230,6 +240,7 @@ impl DesignMatrix for DenseDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), self.nrows);
         debug_assert_eq!(multiplier.len(), self.nrows);

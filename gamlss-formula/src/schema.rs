@@ -52,12 +52,14 @@ impl<Blocks> PredictionDesign<Blocks> {
 
     /// Returns typed prediction parameter blocks.
     #[must_use]
+    #[inline(always)]
     pub fn blocks(&self) -> &Blocks {
         &self.blocks
     }
 
     /// Consumes the design and returns typed prediction parameter blocks.
     #[must_use]
+    #[inline]
     pub fn into_blocks(self) -> Blocks {
         self.blocks
     }
@@ -74,36 +76,42 @@ impl<M> BuiltModel<M> {
 
     /// Returns the compiled core model.
     #[must_use]
+    #[inline(always)]
     pub fn model(&self) -> &M {
         &self.model
     }
 
     /// Returns the compiled core model mutably.
     #[must_use]
+    #[inline(always)]
     pub fn model_mut(&mut self) -> &mut M {
         &mut self.model
     }
 
     /// Consumes the artifact and returns the compiled core model.
     #[must_use]
+    #[inline]
     pub fn into_model(self) -> M {
         self.model
     }
 
     /// Returns formula schema metadata.
     #[must_use]
+    #[inline(always)]
     pub fn schema(&self) -> &ModelSchema {
         &self.schema
     }
 
     /// Returns fitted terms grouped by distribution parameter.
     #[must_use]
+    #[inline(always)]
     pub fn terms(&self) -> &[ParameterTerms] {
         &self.schema.parameters
     }
 
     /// Returns fitted terms for one distribution parameter.
     #[must_use]
+    #[inline]
     pub fn terms_for(&self, parameter: &str) -> Option<&[FittedTerm]> {
         self.schema
             .parameters
@@ -126,6 +134,7 @@ impl<M> BuiltModel<M> {
 
     /// Returns core parameter layout.
     #[must_use]
+    #[inline(always)]
     pub fn layout(&self) -> &ParameterLayout {
         &self.layout
     }

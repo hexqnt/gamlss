@@ -28,6 +28,7 @@ where
     PrecisionLink: PositiveLink<f64>,
 {
     /// Creates a stateless beta family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

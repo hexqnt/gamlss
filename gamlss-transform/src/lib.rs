@@ -65,6 +65,7 @@ pub trait TargetTransform {
     /// # Errors
     ///
     /// Возвращает ошибку из [`Self::fit`] или [`Self::transform_slice`].
+    #[inline]
     fn fit_transform(y: &[f64]) -> Result<(Self::State, Vec<f64>), TransformError> {
         let state = Self::fit(y)?;
         let transformed = Self::transform_slice(&state, y)?;
@@ -78,6 +79,7 @@ pub trait TargetTransform {
     /// Возвращает [`TransformError::NonFiniteValue`], если вход содержит
     /// `NaN` или infinity. Конкретные transform-ы могут усиливать проверку
     /// domain-а, например требовать строго положительные значения.
+    #[inline]
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; y.len()];
         Self::transform_into(state, y, &mut out)?;
@@ -92,6 +94,7 @@ pub trait TargetTransform {
     /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
     /// если вход содержит `NaN` или infinity. Конкретные transform-ы могут
     /// усиливать проверку domain-а.
+    #[inline]
     fn transform_into(
         state: &Self::State,
         y: &[f64],
@@ -108,6 +111,7 @@ pub trait TargetTransform {
     ///
     /// Возвращает [`TransformError::NonFiniteValue`], если значения на
     /// transform-шкале содержат `NaN` или infinity.
+    #[inline]
     fn inverse_slice(state: &Self::State, values: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; values.len()];
         Self::inverse_into(state, values, &mut out)?;
@@ -121,6 +125,7 @@ pub trait TargetTransform {
     /// Возвращает [`TransformError::LengthMismatch`], если длина `out` не
     /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
     /// если вход содержит `NaN` или infinity.
+    #[inline]
     fn inverse_into(
         state: &Self::State,
         values: &[f64],

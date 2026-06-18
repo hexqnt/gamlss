@@ -46,12 +46,14 @@ impl CyclicSplineSpec {
 
     /// Число spline-коэффициентов.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.n_basis
     }
 
     /// Порядок spline.
     #[must_use]
+    #[inline(always)]
     pub fn order(&self) -> SplineOrder {
         self.order
     }
@@ -74,28 +76,33 @@ impl CyclicSplineDesign {
 
     /// Number of spline coefficients.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.spec.n_basis()
     }
 
     /// Metadata basis-а, пригодная для построения design на новых данных.
     #[must_use]
+    #[inline(always)]
     pub fn spec(&self) -> CyclicSplineSpec {
         self.spec
     }
 
     /// Возвращает исходные фазы design-а.
     #[must_use]
+    #[inline(always)]
     pub fn phi(&self) -> &[f64] {
         &self.phi
     }
 
+    #[inline]
     fn basis_for_row(&self, row: usize) -> LocalBasis {
         cyclic_local_basis(self.phi[row], self.spec.order, self.spec.n_basis)
     }
 
     /// Производная predictor contribution по фазе `phi`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         let h = 1.0e-6;
         let phi = self.phi[row];
@@ -106,18 +113,22 @@ impl CyclicSplineDesign {
 }
 
 impl PredictorBlock for CyclicSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.phi.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.spec.n_basis
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.basis_for_row(row).dot(beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.phi.len());
         debug_assert_eq!(grad.len(), self.spec.n_basis);
@@ -127,6 +138,7 @@ impl PredictorBlock for CyclicSplineDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -145,14 +157,17 @@ impl PredictorBlock for CyclicSplineDesign {
 }
 
 impl SplineRowBasis for CyclicSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.phi.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.spec.n_basis
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         self.basis_for_row(row).for_each(f);
     }

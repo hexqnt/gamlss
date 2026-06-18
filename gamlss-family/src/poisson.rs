@@ -19,6 +19,7 @@ where
     MuLink: PositiveLink<f64>,
 {
     /// Creates a stateless Poisson family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

@@ -65,12 +65,14 @@ pub struct DenseInformation<const K: usize> {
 impl<const K: usize> DenseInformation<K> {
     /// Creates a dense information matrix from row-major values.
     #[must_use]
+    #[inline]
     pub const fn new(values: [[f64; K]; K]) -> Self {
         Self { values }
     }
 
     /// Creates a diagonal information matrix.
     #[must_use]
+    #[inline]
     pub fn diagonal(diagonal: [f64; K]) -> Self {
         let mut values = [[0.0; K]; K];
         let mut index = 0;
@@ -83,12 +85,14 @@ impl<const K: usize> DenseInformation<K> {
 
     /// Returns the matrix entry at `row`, `col`.
     #[must_use]
+    #[inline(always)]
     pub fn get(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
 
     /// Returns the underlying dense matrix.
     #[must_use]
+    #[inline(always)]
     pub const fn as_array(&self) -> &[[f64; K]; K] {
         &self.values
     }

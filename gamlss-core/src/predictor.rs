@@ -26,6 +26,7 @@ pub trait PredictorBlock {
     /// Default implementation materializes scaled scores and delegates to
     /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
     /// this method when they can fuse the multiplier into their gradient pass.
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -49,6 +50,7 @@ pub trait PredictorBlock {
     ///
     /// Returns [`ModelError`] when internal dimensions or invariants do not
     /// match the block contract.
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -67,12 +69,14 @@ pub struct LinearPredictorBlock<X> {
 impl<X> LinearPredictorBlock<X> {
     /// Wraps a design matrix as a predictor block.
     #[must_use]
+    #[inline]
     pub const fn new(x: X) -> Self {
         Self { x }
     }
 
     /// Returns the wrapped design matrix.
     #[must_use]
+    #[inline]
     pub fn into_inner(self) -> X {
         self.x
     }
@@ -82,22 +86,27 @@ impl<X> PredictorBlock for LinearPredictorBlock<X>
 where
     X: DesignMatrix,
 {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.nrows()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.x.ncols()
     }
 
+    #[inline(always)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.x.dot_row(row, beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         self.x.add_t_mul_vec(scores, grad);
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -130,6 +139,7 @@ pub trait HasDesignMatrix: PredictorBlock {
 impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     type Matrix = X;
 
+    #[inline(always)]
     fn design(&self) -> &Self::Matrix {
         &self.x
     }
@@ -186,6 +196,7 @@ pub struct TransformedScalar<T> {
 impl<T> TransformedScalar<T> {
     /// Creates a transformed scalar predictor for `nrows` observations.
     #[must_use]
+    #[inline]
     pub const fn new(nrows: usize) -> Self {
         Self {
             nrows,
@@ -198,18 +209,22 @@ impl<T> PredictorBlock for TransformedScalar<T>
 where
     T: CoefficientTransform,
 {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         1
     }
 
+    #[inline(always)]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         T::value(beta[0])
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(beta.len(), 1);
@@ -221,6 +236,7 @@ where
             .mul_add(T::derivative(beta[0]), grad[0]);
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -261,24 +277,29 @@ pub struct FloorSoftplusScalar {
 impl FloorSoftplusScalar {
     /// Creates a floor-plus-softplus scalar predictor.
     #[must_use]
+    #[inline]
     pub const fn new(nrows: usize, floor: f64) -> Self {
         Self { nrows, floor }
     }
 }
 
 impl PredictorBlock for FloorSoftplusScalar {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         1
     }
 
+    #[inline(always)]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         self.floor + Softplus::inverse(beta[0])
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(beta.len(), 1);
@@ -290,6 +311,7 @@ impl PredictorBlock for FloorSoftplusScalar {
             .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -319,26 +341,32 @@ pub struct OffsetBlock {
 impl OffsetBlock {
     /// Creates a constant predictor block.
     #[must_use]
+    #[inline]
     pub const fn new(nrows: usize, value: f64) -> Self {
         Self { nrows, value }
     }
 }
 
 impl PredictorBlock for OffsetBlock {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         0
     }
 
+    #[inline(always)]
     fn eta_row(&self, _: usize, _: &[f64]) -> f64 {
         self.value
     }
 
+    #[inline(always)]
     fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {}
 
+    #[inline(always)]
     fn add_weighted_gradient(&self, _: &[f64], _: &[f64], _: &[f64], _: &mut [f64]) {}
 }
 
@@ -354,12 +382,14 @@ pub struct ProductBlock<X> {
 impl<X> ProductBlock<X> {
     /// Creates a product predictor block.
     #[must_use]
+    #[inline]
     pub const fn new(multiplier: Vec<f64>, inner: X) -> Self {
         Self { multiplier, inner }
     }
 
     /// Consumes the wrapper and returns `(multiplier, inner)`.
     #[must_use]
+    #[inline]
     pub fn into_inner(self) -> (Vec<f64>, X) {
         (self.multiplier, self.inner)
     }
@@ -369,18 +399,22 @@ impl<X> PredictorBlock for ProductBlock<X>
 where
     X: PredictorBlock,
 {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.inner.nrows()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.inner.nparams()
     }
 
+    #[inline(always)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.multiplier[row] * self.inner.eta_row(row, beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.nrows());
         debug_assert_eq!(self.multiplier.len(), self.nrows());
@@ -389,6 +423,7 @@ where
             .add_weighted_gradient(scores, &self.multiplier, beta, grad);
     }
 
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         self.inner.validate()?;
         if self.multiplier.len() == self.inner.nrows() {
@@ -403,6 +438,7 @@ where
     }
 }
 
+#[inline]
 fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
     scores
         .iter()
@@ -424,6 +460,7 @@ pub struct SumBlock<Terms> {
 impl<Terms> SumBlock<Terms> {
     /// Creates a summed predictor from tuple terms.
     #[must_use]
+    #[inline]
     pub const fn new(terms: Terms) -> Self {
         Self { terms }
     }
@@ -440,14 +477,17 @@ macro_rules! impl_sum_block {
         where
             $($term: PredictorBlock,)+
         {
+            #[inline(always)]
             fn nrows(&self) -> usize {
                 self.terms.0.nrows()
             }
 
+            #[inline(always)]
             fn nparams(&self) -> usize {
                 0 $(+ self.terms.$idx.nparams())+
             }
 
+            #[inline]
             fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
                 let mut start = 0;
                 let mut eta = 0.0;
@@ -461,6 +501,7 @@ macro_rules! impl_sum_block {
                 eta
             }
 
+            #[inline]
             fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
                 let mut start = 0;
                 $(
@@ -472,6 +513,7 @@ macro_rules! impl_sum_block {
                 let _ = start;
             }
 
+            #[inline]
             fn add_weighted_gradient(
                 &self,
                 scores: &[f64],
@@ -494,6 +536,7 @@ macro_rules! impl_sum_block {
                 let _ = start;
             }
 
+            #[inline]
             fn validate(&self) -> Result<(), ModelError> {
                 let expected_rows = self.terms.0.nrows();
                 $(

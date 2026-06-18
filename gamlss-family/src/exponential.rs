@@ -17,6 +17,7 @@ where
     RateLink: PositiveLink<f64>,
 {
     /// Creates a stateless exponential family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

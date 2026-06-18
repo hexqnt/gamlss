@@ -30,10 +30,12 @@ impl TargetTransform for AsinhScale {
         Ok(AsinhScaleState { scale })
     }
 
+    #[inline(always)]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y / state.scale).asinh()
     }
 
+    #[inline(always)]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.sinh() * state.scale
     }

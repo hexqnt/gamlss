@@ -24,6 +24,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     /// Creates a stateless negative binomial family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

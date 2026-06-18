@@ -63,16 +63,19 @@ pub struct RidgePenalty {
 impl RidgePenalty {
     /// Создаёт ridge penalty с заданным `lambda`.
     #[must_use]
+    #[inline]
     pub const fn new(lambda: f64) -> Self {
         Self { lambda }
     }
 }
 
 impl Penalty for RidgePenalty {
+    #[inline]
     fn value(&self, beta: &[f64]) -> f64 {
         self.lambda * beta.iter().map(|value| value * value).sum::<f64>()
     }
 
+    #[inline]
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(beta.len(), grad.len());
 
@@ -104,12 +107,14 @@ pub trait MatrixPenalty: Penalty {
 }
 
 impl MatrixPenalty for NoPenalty {
+    #[inline(always)]
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
         debug_assert_matrix_shape(dim, gram);
     }
 }
 
 impl MatrixPenalty for RidgePenalty {
+    #[inline]
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
         debug_assert_matrix_shape(dim, gram);
 
@@ -123,6 +128,7 @@ impl MatrixPenalty for RidgePenalty {
     }
 }
 
+#[inline]
 fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
     debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
@@ -141,18 +147,21 @@ pub struct SegmentPenalty<P> {
 impl<P> SegmentPenalty<P> {
     /// Creates a segment penalty over `range`.
     #[must_use]
+    #[inline]
     pub const fn new(range: Range<usize>, penalty: P) -> Self {
         Self { range, penalty }
     }
 
     /// Returns the local coefficient range affected by this penalty.
     #[must_use]
+    #[inline]
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }
 
     /// Returns the wrapped penalty.
     #[must_use]
+    #[inline]
     pub const fn penalty(&self) -> &P {
         &self.penalty
     }
@@ -162,10 +171,12 @@ impl<P> Penalty for SegmentPenalty<P>
 where
     P: Penalty,
 {
+    #[inline]
     fn value(&self, beta: &[f64]) -> f64 {
         self.penalty.value(&beta[self.range.clone()])
     }
 
+    #[inline]
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(beta.len(), grad.len());
 
@@ -188,6 +199,7 @@ pub struct LinearTerm {
 impl LinearTerm {
     /// Creates a linear-form term.
     #[must_use]
+    #[inline]
     pub const fn new(index: usize, weight: f64) -> Self {
         Self { index, weight }
     }
@@ -207,12 +219,14 @@ pub struct LinearForm {
 impl LinearForm {
     /// Creates a linear form from terms and a constant.
     #[must_use]
+    #[inline]
     pub const fn new(terms: Vec<LinearTerm>, constant: f64) -> Self {
         Self { terms, constant }
     }
 
     /// Creates a builder for a linear form over the full beta vector.
     #[must_use]
+    #[inline]
     pub fn builder() -> LinearFormBuilder {
         LinearFormBuilder::new()
     }
@@ -222,12 +236,14 @@ impl LinearForm {
     /// This represents a soft quadratic penalty for constraints written as
     /// `form(beta) <= 0`.
     #[must_use]
+    #[inline]
     pub const fn hinge_le(self, weight: f64) -> HingeQuadraticPenalty {
         HingeQuadraticPenalty::new(self, weight)
     }
 
     /// Converts this form into a relative quadratic absolute-limit penalty.
     #[must_use]
+    #[inline]
     pub const fn absolute_limit(self, weight: f64, scale: f64, limit: f64) -> AbsoluteLimitPenalty {
         AbsoluteLimitPenalty::new(self, weight, scale, limit)
     }
@@ -238,12 +254,14 @@ impl LinearForm {
     ///
     /// Panics if a term index is out of bounds for `beta`.
     #[must_use]
+    #[inline]
     pub fn value(&self, beta: &[f64]) -> f64 {
         self.terms.iter().fold(self.constant, |sum, term| {
             sum + term.weight * beta[term.index]
         })
     }
 
+    #[inline]
     fn add_scaled_gradient(&self, scale: f64, grad: &mut [f64]) {
         for term in &self.terms {
             grad[term.index] += scale * term.weight;
@@ -261,6 +279,7 @@ pub struct LinearFormBuilder {
 impl LinearFormBuilder {
     /// Creates an empty linear-form builder.
     #[must_use]
+    #[inline]
     pub const fn new() -> Self {
         Self {
             terms: Vec::new(),
@@ -270,6 +289,7 @@ impl LinearFormBuilder {
 
     /// Adds one weighted coefficient.
     #[must_use]
+    #[inline]
     pub fn term(mut self, index: usize, weight: f64) -> Self {
         self.terms.push(LinearTerm::new(index, weight));
         self
@@ -277,6 +297,7 @@ impl LinearFormBuilder {
 
     /// Adds pre-built weighted terms.
     #[must_use]
+    #[inline]
     pub fn terms(mut self, terms: impl IntoIterator<Item = LinearTerm>) -> Self {
         self.terms.extend(terms);
         self
@@ -287,6 +308,7 @@ impl LinearFormBuilder {
     /// The first weight is applied to `beta[start]`, the second to
     /// `beta[start + 1]`, and so on.
     #[must_use]
+    #[inline]
     pub fn weighted_terms(mut self, start: usize, weights: impl IntoIterator<Item = f64>) -> Self {
         self.terms.extend(
             weights
@@ -303,6 +325,7 @@ impl LinearFormBuilder {
     /// are provided than `range.len()`, only the corresponding prefix of the
     /// range is added.
     #[must_use]
+    #[inline]
     pub fn weighted_range(
         mut self,
         range: Range<usize>,
@@ -318,6 +341,7 @@ impl LinearFormBuilder {
 
     /// Sets the additive constant.
     #[must_use]
+    #[inline]
     pub const fn constant(mut self, constant: f64) -> Self {
         self.constant = constant;
         self
@@ -325,6 +349,7 @@ impl LinearFormBuilder {
 
     /// Builds the linear form.
     #[must_use]
+    #[inline]
     pub fn build(self) -> LinearForm {
         LinearForm::new(self.terms, self.constant)
     }
@@ -342,10 +367,12 @@ pub struct HingeQuadraticPenalty {
 impl HingeQuadraticPenalty {
     /// Creates a quadratic hinge penalty.
     #[must_use]
+    #[inline]
     pub const fn new(form: LinearForm, weight: f64) -> Self {
         Self { form, weight }
     }
 
+    #[inline]
     fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
         if !self.weight.is_finite() || self.weight <= 0.0 {
             return PenaltyContribution::ZERO;
@@ -369,10 +396,12 @@ impl HingeQuadraticPenalty {
 }
 
 impl GlobalPenalty for HingeQuadraticPenalty {
+    #[inline]
     fn value(&self, beta: &[f64]) -> f64 {
         self.contribution(beta).value
     }
 
+    #[inline]
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let contribution = self.contribution(beta);
         if contribution.gradient_scale != 0.0 {
@@ -398,6 +427,7 @@ pub struct AbsoluteLimitPenalty {
 impl AbsoluteLimitPenalty {
     /// Creates an absolute-limit penalty.
     #[must_use]
+    #[inline]
     pub const fn new(form: LinearForm, weight: f64, scale: f64, limit: f64) -> Self {
         Self {
             form,
@@ -407,6 +437,7 @@ impl AbsoluteLimitPenalty {
         }
     }
 
+    #[inline]
     fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
         if !self.weight.is_finite()
             || self.weight <= 0.0
@@ -441,10 +472,12 @@ impl AbsoluteLimitPenalty {
 }
 
 impl GlobalPenalty for AbsoluteLimitPenalty {
+    #[inline]
     fn value(&self, beta: &[f64]) -> f64 {
         self.contribution(beta).value
     }
 
+    #[inline]
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let contribution = self.contribution(beta);
         if contribution.gradient_scale != 0.0 {
@@ -466,6 +499,7 @@ impl PenaltyContribution {
         gradient_scale: 0.0,
     };
 
+    #[inline]
     const fn new(value: f64, gradient_scale: f64) -> Self {
         Self {
             value,
@@ -480,10 +514,12 @@ macro_rules! impl_global_penalty_tuple {
         where
             $($ty: GlobalPenalty,)+
         {
+            #[inline]
             fn value(&self, beta: &[f64]) -> f64 {
                 0.0 $(+ self.$idx.value(beta))+
             }
 
+            #[inline]
             fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
                 $(self.$idx.add_gradient(beta, grad);)+
             }
@@ -497,10 +533,12 @@ macro_rules! impl_penalty_tuple {
         where
             $($ty: Penalty,)+
         {
+            #[inline]
             fn value(&self, beta: &[f64]) -> f64 {
                 0.0 $(+ self.$idx.value(beta))+
             }
 
+            #[inline]
             fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
                 $(self.$idx.add_gradient(beta, grad);)+
             }

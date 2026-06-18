@@ -55,25 +55,30 @@ impl FourierDesign {
     }
 
     /// Число гармоник.
+    #[inline(always)]
     pub fn order(&self) -> usize {
         self.order
     }
 
     /// Период Fourier basis.
+    #[inline(always)]
     pub fn period(&self) -> f64 {
         std::f64::consts::TAU / self.omega
     }
 
     /// Возвращает `true`, если predictor содержит intercept.
+    #[inline(always)]
     pub fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Возвращает исходные координаты.
+    #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
+    #[inline]
     fn for_each_basis_at(&self, row: usize, mut f: impl FnMut(usize, f64)) {
         let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
         let mut harmonic_sin = base_sin;
@@ -99,6 +104,7 @@ impl FourierDesign {
         }
     }
 
+    #[inline]
     fn add_row_gradient(&self, row: usize, score: f64, grad: &mut [f64]) {
         self.for_each_basis_at(row, |index, basis| {
             grad[index] += score * basis;
@@ -107,14 +113,17 @@ impl FourierDesign {
 }
 
 impl PredictorBlock for FourierDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.nparams
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.nparams);
@@ -126,6 +135,7 @@ impl PredictorBlock for FourierDesign {
         value
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.nparams);
@@ -135,6 +145,7 @@ impl PredictorBlock for FourierDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -153,14 +164,17 @@ impl PredictorBlock for FourierDesign {
 }
 
 impl SplineRowBasis for FourierDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.nparams
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         debug_assert!(row < self.x.len());
         self.for_each_basis_at(row, f);

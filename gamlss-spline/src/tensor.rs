@@ -46,24 +46,28 @@ where
 
     /// Left basis.
     #[must_use]
+    #[inline(always)]
     pub fn left(&self) -> &A {
         &self.left
     }
 
     /// Right basis.
     #[must_use]
+    #[inline(always)]
     pub fn right(&self) -> &B {
         &self.right
     }
 
     /// Number of parameters in the left basis.
     #[must_use]
+    #[inline(always)]
     pub fn left_nparams(&self) -> usize {
         self.nparams / self.right_nparams
     }
 
     /// Number of parameters in the right basis.
     #[must_use]
+    #[inline(always)]
     pub fn right_nparams(&self) -> usize {
         self.right_nparams
     }
@@ -74,14 +78,17 @@ where
     A: SplineRowBasis,
     B: SplineRowBasis,
 {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.nparams
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.nrows);
         debug_assert_eq!(beta.len(), self.nparams);
@@ -93,6 +100,7 @@ where
         value
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(grad.len(), self.nparams);
@@ -104,6 +112,7 @@ where
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -128,14 +137,17 @@ where
     A: SplineRowBasis,
     B: SplineRowBasis,
 {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.nparams
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
         self.left
             .for_each_row_basis(row, |left_index, left_weight| {

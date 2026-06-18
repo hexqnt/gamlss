@@ -40,10 +40,12 @@ impl TargetTransform for Standardize {
         Ok(StandardizeState { center, scale })
     }
 
+    #[inline(always)]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y - state.center) / state.scale
     }
 
+    #[inline(always)]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.mul_add(state.scale, state.center)
     }

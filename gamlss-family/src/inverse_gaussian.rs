@@ -20,6 +20,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     /// Creates a stateless inverse Gaussian family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

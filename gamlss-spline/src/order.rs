@@ -12,11 +12,13 @@ pub enum SplineOrder {
 
 impl SplineOrder {
     /// Степень полинома.
+    #[inline(always)]
     pub fn degree(self) -> usize {
         self as usize
     }
 
     /// Минимальное число коэффициентов для данного порядка.
+    #[inline(always)]
     pub fn min_basis(self) -> usize {
         self.degree() + 1
     }

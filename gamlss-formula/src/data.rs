@@ -18,6 +18,7 @@ pub struct Col<T> {
 impl<T> Col<T> {
     /// Returns the external column name.
     #[must_use]
+    #[inline(always)]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -31,6 +32,7 @@ impl<T> fmt::Debug for Col<T> {
 
 /// Creates a typed column reference.
 #[must_use]
+#[inline]
 pub fn col<T>(name: impl Into<Arc<str>>) -> Col<T> {
     Col {
         name: name.into(),
@@ -50,6 +52,7 @@ pub enum NumericCol<'a> {
 impl<'a> NumericCol<'a> {
     /// Returns the column as a slice.
     #[must_use]
+    #[inline(always)]
     pub fn as_slice(&self) -> &[f64] {
         match self {
             Self::Borrowed(values) => values,
@@ -77,6 +80,7 @@ pub enum BoolCol<'a> {
 impl BoolCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
+    #[inline(always)]
     pub fn as_slice(&self) -> &[bool] {
         match self {
             Self::Borrowed(values) => values,
@@ -97,6 +101,7 @@ pub enum CatCol<'a> {
 impl CatCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
+    #[inline(always)]
     pub fn as_slice(&self) -> &[String] {
         match self {
             Self::Borrowed(values) => values,
@@ -152,6 +157,7 @@ pub enum NumericResponse<'a> {
 impl NumericResponse<'_> {
     /// Returns response values as a slice.
     #[must_use]
+    #[inline(always)]
     pub fn as_slice(&self) -> &[f64] {
         match self {
             Self::Borrowed(values) => values,
@@ -162,6 +168,7 @@ impl NumericResponse<'_> {
 
     /// Returns observation weights when present.
     #[must_use]
+    #[inline(always)]
     pub fn weights(&self) -> Option<&[f64]> {
         match self {
             Self::Borrowed(_) | Self::Owned(_) => None,
@@ -173,10 +180,12 @@ impl NumericResponse<'_> {
 impl<'row> ObservationView<'row> for NumericResponse<'_> {
     type Observation = f64;
 
+    #[inline(always)]
     fn len(&self) -> usize {
         self.as_slice().len()
     }
 
+    #[inline(always)]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.as_slice()[row]
     }

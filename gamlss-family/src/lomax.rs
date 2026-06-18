@@ -19,6 +19,7 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     /// Creates a stateless Lomax family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

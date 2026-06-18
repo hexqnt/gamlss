@@ -26,6 +26,7 @@ where
     MuLink: UnitIntervalLink<f64>,
 {
     /// Creates a stateless Bernoulli family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

@@ -29,6 +29,7 @@ impl ParameterBlocks {
     /// Assigns sequential offsets starting at zero.
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
+    #[inline]
     pub fn new<Blocks>(blocks: Blocks) -> Blocks
     where
         Blocks: AssignParameterOffsets,
@@ -38,6 +39,7 @@ impl ParameterBlocks {
 
     /// Assigns sequential offsets starting at `start`.
     #[must_use]
+    #[inline]
     pub fn with_start<Blocks>(start: usize, blocks: Blocks) -> Blocks
     where
         Blocks: AssignParameterOffsets,
@@ -137,6 +139,7 @@ where
 {
     /// Создаёт блок и берёт `len` из `x.nparams()`.
     #[must_use]
+    #[inline]
     pub fn new(x: X, penalty: Penalty, offset: usize) -> Self {
         let len = x.nparams();
         Self::from_len(x, penalty, offset, len)
@@ -147,6 +150,7 @@ where
     /// Это синоним [`Self::new`], оставленный для кода, где явное слово
     /// `predictor` делает вызов читаемее.
     #[must_use]
+    #[inline]
     pub fn from_predictor(x: X, penalty: Penalty, offset: usize) -> Self {
         Self::new(x, penalty, offset)
     }
@@ -158,12 +162,14 @@ where
 {
     /// Создаёт линейный block из design matrix.
     #[must_use]
+    #[inline]
     pub fn linear(x: X, penalty: Penalty, offset: usize) -> Self {
         Self::new(LinearPredictorBlock::new(x), penalty, offset)
     }
 }
 
 impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
+    #[inline]
     fn from_len(x: X, penalty: Penalty, offset: usize, len: usize) -> Self {
         Self {
             x,
@@ -176,6 +182,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
 
     /// Возвращает копию блока с новым offset.
     #[must_use]
+    #[inline]
     pub fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
@@ -188,6 +195,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// Panics if `offset + len` overflows. Use [`Self::try_range`] when the
     /// offset may come from unchecked external input.
     #[must_use]
+    #[inline]
     pub fn range(&self) -> Range<usize> {
         self.offset..self.end()
     }
@@ -199,6 +207,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
     /// recoverable validation.
     #[must_use]
+    #[inline]
     pub fn end(&self) -> usize {
         self.offset
             .checked_add(self.len)
@@ -207,12 +216,14 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
 
     /// Число коэффициентов блока.
     #[must_use]
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// `true`, если block не содержит коэффициентов.
     #[must_use]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -228,6 +239,7 @@ where
     ///
     /// Возвращает [`ModelError::BlockRangeOverflow`], если `offset + len` не
     /// помещается в `usize`.
+    #[inline]
     pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
         let end = self
             .offset
@@ -250,6 +262,7 @@ macro_rules! impl_assign_offsets {
         where
             $($block: OffsetAssignable,)+
         {
+            #[inline]
             fn assign_offsets(self, start: usize) -> Self {
                 let ($($var,)+) = self;
                 let mut offset = start;

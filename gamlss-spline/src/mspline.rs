@@ -84,18 +84,21 @@ impl MSplineBasis {
 
     /// Knot vector.
     #[must_use]
+    #[inline(always)]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Degree.
     #[must_use]
+    #[inline(always)]
     pub fn degree(&self) -> usize {
         self.degree
     }
 
     /// Number of basis functions.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.n_basis
     }
@@ -111,6 +114,7 @@ impl MSplineBasis {
     /// Writes all basis-function values at `x` into `out`.
     ///
     /// `out.len()` must equal [`Self::n_basis`].
+    #[inline]
     pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis);
 
@@ -120,6 +124,7 @@ impl MSplineBasis {
     }
 
     /// Visits non-zero basis-function values at `x` without allocating.
+    #[inline]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         for index in 0..self.n_basis {
             let weight = self.evaluate_one(index, x);
@@ -131,6 +136,7 @@ impl MSplineBasis {
 
     /// Evaluates one basis function at `x`.
     #[must_use]
+    #[inline]
     pub fn evaluate_one(&self, index: usize, x: f64) -> f64 {
         let denom = self.knots[index + self.degree + 1] - self.knots[index];
         if denom <= 0.0 {
@@ -151,24 +157,28 @@ pub struct MSplineDesign {
 impl MSplineDesign {
     /// Returns the basis metadata.
     #[must_use]
+    #[inline(always)]
     pub fn basis(&self) -> &MSplineBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
+    #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -180,6 +190,7 @@ impl MSplineDesign {
         (plus - minus) / (2.0 * h)
     }
 
+    #[inline]
     fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.basis.for_each_basis(x, |index, weight| {
@@ -190,14 +201,17 @@ impl MSplineDesign {
 }
 
 impl PredictorBlock for MSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -205,6 +219,7 @@ impl PredictorBlock for MSplineDesign {
         self.dot_at(self.x[row], beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
@@ -216,6 +231,7 @@ impl PredictorBlock for MSplineDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -236,14 +252,17 @@ impl PredictorBlock for MSplineDesign {
 }
 
 impl SplineRowBasis for MSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
         self.basis.for_each_basis(self.x[row], &mut f);
     }

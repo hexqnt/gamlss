@@ -19,6 +19,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     /// Creates a stateless logistic family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

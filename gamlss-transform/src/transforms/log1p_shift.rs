@@ -25,6 +25,7 @@ pub struct Log1pShiftState {
 impl Log1pShiftState {
     /// Lower bound accepted by [`Log1pShift::transform_slice`].
     #[must_use]
+    #[inline(always)]
     pub fn lower_bound(self) -> f64 {
         -self.shift
     }
@@ -42,20 +43,24 @@ impl TargetTransform for Log1pShift {
         Ok(Log1pShiftState { shift, margin })
     }
 
+    #[inline(always)]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y + state.shift).ln_1p()
     }
 
+    #[inline(always)]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.exp_m1() - state.shift
     }
 
+    #[inline]
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; y.len()];
         Self::transform_into(state, y, &mut out)?;
         Ok(out)
     }
 
+    #[inline]
     fn transform_into(
         state: &Self::State,
         y: &[f64],

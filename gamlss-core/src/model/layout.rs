@@ -26,18 +26,21 @@ pub struct ParameterLayout {
 impl ParameterLayout {
     /// Creates a layout from named slices.
     #[must_use]
+    #[inline]
     pub fn new(slices: Vec<ParameterSlice>) -> Self {
         Self { slices }
     }
 
     /// Number of parameter blocks represented by this layout.
     #[must_use]
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.slices.len()
     }
 
     /// `true` if this layout has no parameter blocks.
     #[must_use]
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.slices.is_empty()
     }
@@ -48,6 +51,7 @@ impl ParameterLayout {
     /// count. For manually constructed layouts with gaps it returns the
     /// largest slice end.
     #[must_use]
+    #[inline]
     pub fn ncoefficients(&self) -> usize {
         self.slices
             .iter()
@@ -58,11 +62,13 @@ impl ParameterLayout {
 
     /// Returns all parameter slices in model order.
     #[must_use]
+    #[inline(always)]
     pub fn slices(&self) -> &[ParameterSlice] {
         &self.slices
     }
 
     /// Visits parameter slices in model order without allocating.
+    #[inline]
     pub fn visit_slices(&self, mut visit: impl FnMut(usize, &'static str, Range<usize>)) {
         for (index, slice) in self.slices.iter().enumerate() {
             visit(index, slice.name, slice.range.clone());
@@ -71,6 +77,7 @@ impl ParameterLayout {
 
     /// Returns the coefficient range for `name`, if present.
     #[must_use]
+    #[inline]
     pub fn slice(&self, name: &str) -> Option<Range<usize>> {
         self.slices
             .iter()
@@ -80,6 +87,7 @@ impl ParameterLayout {
 
     /// Returns the coefficient range for typed parameter marker `P`, if present.
     #[must_use]
+    #[inline]
     pub fn slice_of<P>(&self) -> Option<Range<usize>>
     where
         P: ParameterName,
@@ -113,12 +121,14 @@ pub struct UnpackedTheta {
 impl UnpackedTheta {
     /// Returns an unpacked coefficient block by parameter name.
     #[must_use]
+    #[inline]
     pub fn block(&self, name: &str) -> Option<&ParameterCoefficients> {
         self.blocks.iter().find(|block| block.name == name)
     }
 
     /// Returns an unpacked coefficient block for typed parameter marker `P`.
     #[must_use]
+    #[inline]
     pub fn block_of<P>(&self) -> Option<&ParameterCoefficients>
     where
         P: ParameterName,
@@ -128,12 +138,14 @@ impl UnpackedTheta {
 
     /// Returns coefficients by parameter name.
     #[must_use]
+    #[inline]
     pub fn coefficients(&self, name: &str) -> Option<&[f64]> {
         self.block(name).map(|block| block.coefficients.as_slice())
     }
 
     /// Returns coefficients for typed parameter marker `P`.
     #[must_use]
+    #[inline]
     pub fn coefficients_of<P>(&self) -> Option<&[f64]>
     where
         P: ParameterName,

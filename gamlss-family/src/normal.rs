@@ -30,6 +30,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     /// Создаёт stateless значение family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

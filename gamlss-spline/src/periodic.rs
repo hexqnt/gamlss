@@ -48,18 +48,21 @@ impl PeriodicSplineSpec {
 
     /// Number of spline coefficients.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.cyclic.n_basis()
     }
 
     /// Period.
     #[must_use]
+    #[inline(always)]
     pub fn period(&self) -> f64 {
         self.period
     }
 
     /// Origin.
     #[must_use]
+    #[inline(always)]
     pub fn origin(&self) -> f64 {
         self.origin
     }
@@ -87,24 +90,28 @@ impl PeriodicSplineDesign {
 
     /// Input coordinates.
     #[must_use]
+    #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.spec.n_basis()
     }
 
     /// Metadata.
     #[must_use]
+    #[inline(always)]
     pub fn spec(&self) -> PeriodicSplineSpec {
         self.spec
     }
 
     /// Predictor derivative with respect to the original coordinate.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.n_basis());
@@ -114,22 +121,27 @@ impl PeriodicSplineDesign {
 }
 
 impl PredictorBlock for PeriodicSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         PredictorBlock::nrows(&self.phase_design)
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         PredictorBlock::nparams(&self.phase_design)
     }
 
+    #[inline(always)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.phase_design.eta_row(row, beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
         self.phase_design.add_gradient(scores, beta, grad);
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -143,14 +155,17 @@ impl PredictorBlock for PeriodicSplineDesign {
 }
 
 impl SplineRowBasis for PeriodicSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         SplineRowBasis::nrows(&self.phase_design)
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         SplineRowBasis::nparams(&self.phase_design)
     }
 
+    #[inline(always)]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         self.phase_design.for_each_row_basis(row, f);
     }

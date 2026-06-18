@@ -14,6 +14,7 @@ pub struct GradientWorkspace {
 
 impl GradientWorkspace {
     /// Creates an empty workspace. Buffers are allocated lazily on first use.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }

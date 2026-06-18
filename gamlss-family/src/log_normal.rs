@@ -23,6 +23,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     /// Creates a stateless log-normal family.
+    #[inline]
     pub fn new() -> Self {
         Self {
             marker: PhantomData,

@@ -16,20 +16,24 @@ impl TargetTransform for Log {
         Ok(LogState)
     }
 
+    #[inline(always)]
     fn transform(_: &Self::State, y: f64) -> f64 {
         y.ln()
     }
 
+    #[inline(always)]
     fn inverse(_: &Self::State, value: f64) -> f64 {
         value.exp()
     }
 
+    #[inline]
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; y.len()];
         Self::transform_into(state, y, &mut out)?;
         Ok(out)
     }
 
+    #[inline]
     fn transform_into(
         state: &Self::State,
         y: &[f64],

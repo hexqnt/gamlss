@@ -101,24 +101,28 @@ impl TruncatedPowerBasis {
 
     /// Truncated-power knots.
     #[must_use]
+    #[inline(always)]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Spline order.
     #[must_use]
+    #[inline(always)]
     pub fn order(&self) -> SplineOrder {
         self.order
     }
 
     /// Returns `true` if the first coefficient is an intercept.
     #[must_use]
+    #[inline(always)]
     pub fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Number of basis functions.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.n_basis
     }
@@ -134,6 +138,7 @@ impl TruncatedPowerBasis {
     /// Writes all basis-function values at `x` into `out`.
     ///
     /// `out.len()` must equal [`Self::n_basis`].
+    #[inline]
     pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis);
         for value in out.iter_mut() {
@@ -143,6 +148,7 @@ impl TruncatedPowerBasis {
     }
 
     /// Visits non-zero basis-function values at `x` without allocating.
+    #[inline]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -177,6 +183,7 @@ impl TruncatedPowerBasis {
     /// Writes first derivatives of all basis functions at `x` into `out`.
     ///
     /// `out.len()` must equal [`Self::n_basis`].
+    #[inline]
     pub fn evaluate_derivative_into(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis);
 
@@ -187,6 +194,7 @@ impl TruncatedPowerBasis {
     }
 
     /// Visits non-zero first derivatives at `x` without allocating.
+    #[inline]
     pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -237,24 +245,28 @@ impl TruncatedPowerDesign {
 
     /// Returns the basis metadata.
     #[must_use]
+    #[inline(always)]
     pub fn basis(&self) -> &TruncatedPowerBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
+    #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -269,14 +281,17 @@ impl TruncatedPowerDesign {
 }
 
 impl PredictorBlock for TruncatedPowerDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -288,6 +303,7 @@ impl PredictorBlock for TruncatedPowerDesign {
         value
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
@@ -299,6 +315,7 @@ impl PredictorBlock for TruncatedPowerDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -319,14 +336,17 @@ impl PredictorBlock for TruncatedPowerDesign {
 }
 
 impl SplineRowBasis for TruncatedPowerDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         debug_assert!(row < self.x.len());
         self.basis.for_each_basis(self.x[row], f);
@@ -356,6 +376,7 @@ fn coefficient_count(
         .ok_or(SplineError::ParameterOverflow)
 }
 
+#[inline]
 fn pow_usize(value: f64, power: usize) -> f64 {
     (0..power).fold(1.0, |product, _| product * value)
 }

@@ -197,6 +197,7 @@ pub enum ObjectiveScale {
 }
 
 impl ObjectiveScale {
+    #[inline(always)]
     fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
         match self {
             Self::Sum => 1.0,

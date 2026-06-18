@@ -117,37 +117,44 @@ impl OpenUniformSplineBasis {
 
     /// Нижняя граница диапазона basis-а.
     #[must_use]
+    #[inline(always)]
     pub fn min(&self) -> f64 {
         self.min
     }
 
     /// Верхняя граница диапазона basis-а.
     #[must_use]
+    #[inline(always)]
     pub fn max(&self) -> f64 {
         self.max
     }
 
     /// Число spline-коэффициентов.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.n_basis
     }
 
     /// Порядок spline.
     #[must_use]
+    #[inline(always)]
     pub fn order(&self) -> SplineOrder {
         self.order
     }
 
+    #[inline(always)]
     fn span(&self) -> f64 {
         self.max - self.min
     }
 
+    #[inline]
     fn local_basis(&self, x: f64) -> LocalBasis {
         let u = (x - self.min) / self.span();
         self.local_basis_for_unit(u)
     }
 
+    #[inline]
     fn local_basis_for_unit(&self, u: f64) -> LocalBasis {
         open_uniform_local_basis(u, self.order, self.n_basis, self.n_intervals)
     }
@@ -187,32 +194,38 @@ impl OpenUniformSplineDesign {
 
     /// Число spline-коэффициентов.
     #[must_use]
+    #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Metadata basis-а, пригодная для построения design на новых данных.
     #[must_use]
+    #[inline(always)]
     pub fn basis(&self) -> OpenUniformSplineBasis {
         self.basis
     }
 
     /// Возвращает исходные координаты design-а.
     #[must_use]
+    #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
+    #[inline]
     fn basis_for_row(&self, row: usize) -> LocalBasis {
         self.basis.local_basis(self.x[row])
     }
 
+    #[inline]
     fn basis_for_unit(&self, u: f64) -> LocalBasis {
         self.basis.local_basis_for_unit(u)
     }
 
     /// Производная predictor contribution по исходной координате `x`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         let span = self.basis.span();
         let h = 1.0e-6_f64.max(span.abs() * 1.0e-6);
@@ -225,19 +238,23 @@ impl OpenUniformSplineDesign {
 }
 
 impl PredictorBlock for OpenUniformSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         let basis = self.basis_for_row(row);
         basis.dot(beta)
     }
 
+    #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis);
@@ -247,6 +264,7 @@ impl PredictorBlock for OpenUniformSplineDesign {
         }
     }
 
+    #[inline]
     fn add_weighted_gradient(
         &self,
         scores: &[f64],
@@ -265,14 +283,17 @@ impl PredictorBlock for OpenUniformSplineDesign {
 }
 
 impl SplineRowBasis for OpenUniformSplineDesign {
+    #[inline(always)]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline(always)]
     fn nparams(&self) -> usize {
         self.basis.n_basis
     }
 
+    #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         self.basis_for_row(row).for_each(f);
     }
