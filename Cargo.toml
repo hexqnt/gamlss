@@ -57,6 +57,7 @@ include = [
 [features]
 default = ["formula"]
 formula = ["dep:gamlss-formula"]
+rand = ["gamlss-family/rand"]
 
 [dependencies]
 gamlss-core.workspace = true

@@ -45,6 +45,13 @@ Workspace также публикует отдельные crate-ы для бо�
 экспериментального formula слоя, используйте `default-features = false` или
 зависимости на отдельные crate-ы напрямую.
 
+## Cargo features
+
+- `formula` включена по умолчанию и реэкспортирует экспериментальный
+  `gamlss-formula` namespace из facade crate.
+- `rand` включает sampling API в `gamlss-family` через facade crate:
+  `rand = ["gamlss-family/rand"]`.
+
 ## Общая ионформация о GAMLSS
 
 GAMLSS можно читать как distributional regression: модель описывает не только

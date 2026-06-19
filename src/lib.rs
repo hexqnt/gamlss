@@ -12,6 +12,9 @@
 //! основным API и не обещает покрывать все distributions, links и
 //! parameterizations из низкоуровневых crate-ов.
 //!
+//! Feature `rand` включает sampling API в [`family`] и соответствует feature
+//! `gamlss-family/rand`.
+//!
 //! # Основные возможности
 //!
 //! - typed [`core::ParameterBlock`] для каждого параметра распределения;
