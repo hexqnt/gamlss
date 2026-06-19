@@ -19,6 +19,15 @@ pub trait PredictorBlock {
     fn nparams(&self) -> usize;
     /// Predictor contribution for one row.
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Writes a constant predictor start into the local coefficient slice.
+    ///
+    /// Implementations should return `true` only when the write makes this
+    /// block contribute `value` for every row with the rest of the local slice
+    /// left at zero. Unsupported blocks should leave `beta` unchanged.
+    #[inline]
+    fn set_constant_start(&self, _value: f64, _beta: &mut [f64]) -> bool {
+        false
+    }
     /// Adds the gradient contribution implied by `scores` into `grad`.
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
     /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
@@ -104,6 +113,11 @@ where
     #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         self.x.add_t_mul_vec(scores, grad);
+    }
+
+    #[inline]
+    fn set_constant_start(&self, value: f64, beta: &mut [f64]) -> bool {
+        self.x.set_constant_start(value, beta)
     }
 
     #[inline]
@@ -511,6 +525,21 @@ macro_rules! impl_sum_block {
                     start = end;
                 )+
                 let _ = start;
+            }
+
+            #[inline]
+            fn set_constant_start(&self, value: f64, beta: &mut [f64]) -> bool {
+                let mut start = 0;
+                $(
+                    let $var = &self.terms.$idx;
+                    let end = start + $var.nparams();
+                    if $var.set_constant_start(value, &mut beta[start..end]) {
+                        return true;
+                    }
+                    start = end;
+                )+
+                let _ = start;
+                false
             }
 
             #[inline]

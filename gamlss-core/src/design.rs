@@ -14,6 +14,17 @@ pub trait DesignMatrix {
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
     /// Добавляет `X^T weights` в `out`.
     fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
+    /// Writes a constant predictor start into `out` when this matrix has an
+    /// intercept-like coefficient.
+    ///
+    /// The default is conservative and leaves `out` unchanged. Matrix
+    /// implementations should return `true` only when setting a local
+    /// coefficient to `value` makes the block contribution constant across
+    /// rows with all other local coefficients left at zero.
+    #[inline]
+    fn set_constant_start(&self, _value: f64, _out: &mut [f64]) -> bool {
+        false
+    }
     /// Добавляет `X^T (weights * multiplier)` в `out`.
     ///
     /// Default implementation materializes scaled weights. Matrix
@@ -238,6 +249,25 @@ impl DesignMatrix for DenseDesign {
                 *out_value = x.mul_add(weight, *out_value);
             }
         }
+    }
+
+    #[inline]
+    fn set_constant_start(&self, value: f64, out: &mut [f64]) -> bool {
+        debug_assert_eq!(out.len(), self.ncols);
+        if self.ncols == 0 || out.is_empty() {
+            return false;
+        }
+
+        let has_intercept = (0..self.nrows).all(|row| {
+            let first_value = self.values[row * self.ncols];
+            first_value == 1.0
+        });
+        if !has_intercept {
+            return false;
+        }
+
+        out[0] = value;
+        true
     }
 
     #[inline]

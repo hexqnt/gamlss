@@ -3,11 +3,14 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
-    Scale, Shape,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape,
 };
 
+use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values};
 use crate::special::{ln_gamma, regularized_gamma_lower};
+
+const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
 
 /// Weibull family parameterized by positive shape and scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,11 +164,34 @@ where
 
 impl<ShapeLink, ScaleLink> ParameterizedFamily<2> for Weibull<ShapeLink, ScaleLink>
 where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Shape, Scale);
     type Links = (ShapeLink, ScaleLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let log_values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
+        let Some(summary) = weighted_summary(&log_values) else {
+            return WeibullEta::from_array([0.0, 0.0]);
+        };
+
+        let shape = if summary.variance <= VARIANCE_FLOOR {
+            10.0
+        } else {
+            positive_floor(std::f64::consts::PI / (6.0 * summary.variance).sqrt())
+        };
+        let scale = positive_floor((summary.mean + EULER_GAMMA / shape).exp());
+
+        WeibullEta {
+            shape: ShapeLink::initial_eta_from_theta(shape),
+            scale: ScaleLink::initial_eta_from_theta(scale),
+        }
+    }
 }
 
 impl<ShapeLink, ScaleLink> HasCdf for Weibull<ShapeLink, ScaleLink>

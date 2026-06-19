@@ -55,7 +55,8 @@ pub use family::{
     ParameterParts, ParameterizedFamily,
 };
 pub use link::{
-    ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus, UnitIntervalLink,
+    ClampedLog, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink, Softplus,
+    UnitIntervalLink,
 };
 pub use model::{
     Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale, ObservationView,
@@ -84,13 +85,13 @@ pub mod prelude {
         CoefficientTransform, DenseDesign, DenseInformation, DesignMatrix, Family, Gamlss,
         GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDensity,
         HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta,
-        HasLogDensity, HasQuantile, HingeQuadraticPenalty, Identity, LinearForm, LinearFormBuilder,
-        LinearPredictorBlock, LinearTerm, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock,
-        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
-        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock,
-        ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Softplus, SumBlock,
-        Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedTheta,
-        WithGlobalPenalties, WorkspaceGamlss,
+        HasLogDensity, HasQuantile, HingeQuadraticPenalty, Identity, InitialEtaFromTheta,
+        LinearForm, LinearFormBuilder, LinearPredictorBlock, LinearTerm, Link, Log, LogPlus, Logit,
+        MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
+        OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
+        ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
+        Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape,
+        Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
+        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
     };
 }

@@ -1,3 +1,5 @@
+use crate::model::ObservationView;
+
 /// Контракт распределения для скомпилированного GAMLSS-objective.
 ///
 /// Пользовательские распределения реализуют этот trait. Арность параметров,
@@ -327,6 +329,18 @@ where
     type Params;
     /// Link-функции параметров family.
     type Links;
+
+    /// Sample-aware initial predictors on the link scale.
+    ///
+    /// Built-in families override this with robust distribution-specific
+    /// heuristics. The default keeps custom families source-compatible and
+    /// starts all optimizer parameters at zero.
+    fn initial_eta_from_observations<'obs, Obs>(&self, _obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        Self::Eta::from_array([0.0; K])
+    }
 }
 
 /// Distribution helper для CDF.

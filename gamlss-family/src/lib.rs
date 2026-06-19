@@ -11,6 +11,7 @@ pub mod exponential;
 pub mod gamma;
 /// Maximum-type Gumbel distribution.
 pub mod gumbel;
+mod initial;
 /// Inverse Gaussian distribution.
 pub mod inverse_gaussian;
 /// Распределение Лапласа.
@@ -150,5 +151,67 @@ pub(crate) mod test_support {
             }
         }
         low
+    }
+}
+
+#[cfg(test)]
+mod initializer_tests {
+    use gamlss_core::{Family, ParameterParts, ParameterizedFamily};
+
+    use crate::{
+        DefaultBernoulli, DefaultBeta, DefaultExponential, DefaultGamma, DefaultGumbel,
+        DefaultInverseGaussian, DefaultLaplace, DefaultLogNormal, DefaultLogistic, DefaultLomax,
+        DefaultNegativeBinomial, DefaultNormal, DefaultPoisson, DefaultStudentT, DefaultWeibull,
+    };
+
+    fn assert_finite_initial_eta<F, const K: usize>(family: F, data: &[f64], probe: f64)
+    where
+        F: for<'obs> Family<Observation<'obs> = f64> + ParameterizedFamily<K>,
+        F::Eta: Copy + ParameterParts<K>,
+        F::NllGradientEta: ParameterParts<K>,
+    {
+        let obs: &[f64] = data;
+        let eta = family.initial_eta_from_observations(&obs);
+        for index in 0..K {
+            assert!(
+                eta.part(index).is_finite(),
+                "initializer component {index} is not finite"
+            );
+        }
+        assert!(
+            family.nll_eta(probe, eta).is_finite(),
+            "initialized eta should produce finite nll"
+        );
+    }
+
+    #[test]
+    fn built_in_initializers_return_finite_eta_and_likelihood() {
+        assert_finite_initial_eta::<_, 1>(DefaultBernoulli::new(), &[0.0, 1.0, 1.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(DefaultBeta::new(), &[0.1, 0.5, 0.9], 0.5);
+        assert_finite_initial_eta::<_, 1>(DefaultExponential::new(), &[0.2, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(DefaultGamma::new(), &[0.2, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(DefaultGumbel::new(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 2>(DefaultInverseGaussian::new(), &[0.5, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(DefaultLaplace::new(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 2>(DefaultLogNormal::new(), &[0.5, 1.0, 4.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(DefaultLogistic::new(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 2>(DefaultLomax::new(), &[0.0, 1.0, 3.0, 8.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(
+            DefaultNegativeBinomial::new(),
+            &[0.0, 1.0, 4.0, 6.0],
+            1.0,
+        );
+        assert_finite_initial_eta::<_, 2>(DefaultNormal::new(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 1>(DefaultPoisson::new(), &[0.0, 2.0, 4.0], 2.0);
+        assert_finite_initial_eta::<_, 2>(DefaultStudentT::default(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 2>(DefaultWeibull::new(), &[0.5, 1.5, 3.0], 1.5);
+    }
+
+    #[test]
+    fn initializers_handle_edge_samples_without_nonfinite_eta() {
+        assert_finite_initial_eta::<_, 2>(DefaultBeta::new(), &[0.0, 1.0, f64::NAN], 0.5);
+        assert_finite_initial_eta::<_, 2>(DefaultGamma::new(), &[2.0, 2.0, f64::INFINITY], 2.0);
+        assert_finite_initial_eta::<_, 2>(DefaultNegativeBinomial::new(), &[0.0, 0.0, 0.0], 0.0);
+        assert_finite_initial_eta::<_, 1>(DefaultPoisson::new(), &[0.0, 0.0, 0.0], 0.0);
     }
 }

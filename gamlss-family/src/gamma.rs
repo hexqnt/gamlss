@@ -3,10 +3,13 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
-    Rate, Shape,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Rate, Shape,
 };
 
+use crate::initial::{
+    LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
+};
 use crate::special::{digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower};
 
 /// Gamma family parameterized by positive shape and rate.
@@ -157,11 +160,36 @@ where
 
 impl<ShapeLink, RateLink> ParameterizedFamily<2> for Gamma<ShapeLink, RateLink>
 where
-    ShapeLink: PositiveLink<f64>,
-    RateLink: PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    RateLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Shape, Rate);
     type Links = (ShapeLink, RateLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return GammaEta::from_array([0.0, 0.0]);
+        };
+
+        let mean = positive_floor(summary.mean);
+        let (shape, rate) = if summary.variance <= VARIANCE_FLOOR {
+            (LARGE_SHAPE, LARGE_SHAPE / mean)
+        } else {
+            let shape = positive_floor(mean * mean / summary.variance);
+            let rate = positive_floor(mean / summary.variance);
+            (shape, rate)
+        };
+
+        GammaEta {
+            shape: ShapeLink::initial_eta_from_theta(shape),
+            rate: RateLink::initial_eta_from_theta(rate),
+        }
+    }
 }
 
 impl<ShapeLink, RateLink> HasCdf for Gamma<ShapeLink, RateLink>

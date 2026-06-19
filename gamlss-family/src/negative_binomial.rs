@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
+    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Mu, ObservationView, ParameterParts,
+    ParameterizedFamily, PositiveLink, Shape,
 };
 
+use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 use crate::special::{
     digamma, discrete_quantile, included_count, is_nonnegative_integer, ln_gamma, log_add_exp,
 };
@@ -240,11 +242,32 @@ where
 
 impl<MuLink, ShapeLink> ParameterizedFamily<2> for NegativeBinomial<MuLink, ShapeLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Shape);
     type Links = (MuLink, ShapeLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| is_nonnegative_integer(y).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return NegativeBinomialEta::from_array([0.0, 0.0]);
+        };
+
+        let mu = positive_floor(summary.mean);
+        let shape = if summary.variance <= mu {
+            LARGE_SHAPE
+        } else {
+            positive_floor(mu * mu / (summary.variance - mu))
+        };
+        NegativeBinomialEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
+    }
 }
 
 impl<MuLink, ShapeLink> HasCdf for NegativeBinomial<MuLink, ShapeLink>

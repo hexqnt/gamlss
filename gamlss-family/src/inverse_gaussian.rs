@@ -3,10 +3,13 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink, Shape,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Shape,
 };
 
+use crate::initial::{
+    LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
+};
 use crate::special::{integrate_finite, invert_positive_cdf, unit_normal_cdf};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -161,11 +164,34 @@ where
 
 impl<MuLink, ShapeLink> ParameterizedFamily<2> for InverseGaussian<MuLink, ShapeLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Shape);
     type Links = (MuLink, ShapeLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return InverseGaussianEta::from_array([0.0, 0.0]);
+        };
+
+        let mu = positive_floor(summary.mean);
+        let shape = if summary.variance <= VARIANCE_FLOOR {
+            LARGE_SHAPE
+        } else {
+            positive_floor(mu * mu * mu / summary.variance)
+        };
+
+        InverseGaussianEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
+    }
 }
 
 impl<MuLink, ShapeLink> HasCdf for InverseGaussian<MuLink, ShapeLink>

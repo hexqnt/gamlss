@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &data.y,
     )?;
 
-    let initial_theta = model.initial_theta()?;
+    let initial_parameters = model.initial_parameters()?;
 
     // into_workspace_objective переиспользует gradient buffers между вызовами optimizer-а.
     let problem = ArgminObjective::new(model.into_workspace_objective());
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_tolerance_cost(1.0e-10)?;
 
     let result = Executor::new(problem, solver)
-        .configure(|state| state.param(initial_theta).max_iters(100))
+        .configure(|state| state.param(initial_parameters).max_iters(100))
         .run()?;
 
     // Извлекаем финальные параметры и считаем норму градиента для проверки optimality.

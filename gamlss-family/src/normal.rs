@@ -4,10 +4,12 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
-    Identity, LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock,
-    ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
+    Identity, InitialEtaFromTheta, LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty,
+    ObservationView, ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty,
+    PositiveLink, Sigma,
 };
 
+use crate::initial::{robust_location_scale, weighted_values};
 use crate::special::{unit_normal_cdf, unit_normal_quantile};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -174,11 +176,26 @@ where
 
 impl<MuLink, SigmaLink> ParameterizedFamily<2> for Normal<MuLink, SigmaLink>
 where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Sigma);
     type Links = (MuLink, SigmaLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return NormalEta::from_array([0.0, 0.0]);
+        };
+
+        NormalEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+        }
+    }
 }
 
 impl<MuLink, SigmaLink> HasDeviance for Normal<MuLink, SigmaLink>

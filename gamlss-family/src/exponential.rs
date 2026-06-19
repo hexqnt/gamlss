@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
-    Rate,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Rate,
 };
+
+use crate::initial::{positive_floor, weighted_mean, weighted_values};
 
 /// Exponential family parameterized by positive rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -128,10 +130,25 @@ where
 
 impl<RateLink> ParameterizedFamily<1> for Exponential<RateLink>
 where
-    RateLink: PositiveLink<f64>,
+    RateLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Rate,);
     type Links = (RateLink,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let Some(mean) = weighted_mean(&values) else {
+            return ExponentialEta::from_array([0.0]);
+        };
+        let rate = 1.0 / positive_floor(mean);
+        ExponentialEta {
+            rate: RateLink::initial_eta_from_theta(rate),
+        }
+    }
 }
 
 impl<RateLink> HasCdf for Exponential<RateLink>

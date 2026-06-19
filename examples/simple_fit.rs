@@ -20,20 +20,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, mu.len());
     let mut model = Gamlss::try_new(Normal::<Identity, Log>::new(), (mu, sigma), &y)?;
 
-    let mut theta = model.initial_theta()?;
+    let mut parameters = model.initial_parameters()?;
     let mut grad = vec![0.0; model.dim()];
 
     for _ in 0..2_000 {
-        model.gradient(&theta, &mut grad)?;
-        for (theta_value, grad_value) in theta.iter_mut().zip(&grad) {
-            *theta_value -= 0.02 * grad_value;
+        model.gradient(&parameters, &mut grad)?;
+        for (parameter, grad_value) in parameters.iter_mut().zip(&grad) {
+            *parameter -= 0.02 * grad_value;
         }
     }
 
-    let diagnostics = model.training_diagnostics(&theta)?;
-    let pit = model.pit_values(&theta)?;
-    let residuals = model.quantile_residuals(&theta)?;
-    let coefficients = model.unpack_theta(&theta)?;
+    let diagnostics = model.training_diagnostics(&parameters)?;
+    let pit = model.pit_values(&parameters)?;
+    let residuals = model.quantile_residuals(&parameters)?;
+    let coefficients = model.unpack_theta(&parameters)?;
     let mu_hat = coefficients
         .coefficients_of::<Mu>()
         .and_then(|values| values.first().copied())

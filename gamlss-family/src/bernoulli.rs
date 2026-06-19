@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Logit, Mu, ParameterParts, ParameterizedFamily,
-    UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Logit, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, UnitIntervalLink,
 };
+
+use crate::initial::probability_floor;
 
 /// Bernoulli family parameterized by success probability.
 ///
@@ -142,10 +144,36 @@ where
 
 impl<MuLink> ParameterizedFamily<1> for Bernoulli<MuLink>
 where
-    MuLink: UnitIntervalLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
     type Params = (Mu,);
     type Links = (MuLink,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let mut success_weight = 0.0;
+        let mut total_weight = 0.0;
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let y = obs.observation_at(row);
+            if weight <= 0.0 || !weight.is_finite() || !Self::valid_binary(y) {
+                continue;
+            }
+            success_weight += weight * y;
+            total_weight += weight;
+        }
+
+        if total_weight <= 0.0 {
+            return BernoulliEta::from_array([0.0]);
+        }
+
+        let mu = probability_floor((success_weight + 0.5) / (total_weight + 1.0));
+        BernoulliEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+        }
+    }
 }
 
 impl<MuLink> HasCdf for Bernoulli<MuLink>

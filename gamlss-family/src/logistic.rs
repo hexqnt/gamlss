@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Identity, Link, Log, Mu, ParameterParts,
-    ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu,
+    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
+
+use crate::initial::{robust_location_scale, weighted_values};
 
 /// Logistic family parameterized by location and positive scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,11 +174,26 @@ where
 
 impl<MuLink, SigmaLink> ParameterizedFamily<2> for Logistic<MuLink, SigmaLink>
 where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Sigma);
     type Links = (MuLink, SigmaLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return LogisticEta::from_array([0.0, 0.0]);
+        };
+
+        LogisticEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+        }
+    }
 }
 
 impl<MuLink, SigmaLink> HasCdf for Logistic<MuLink, SigmaLink>

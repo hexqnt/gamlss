@@ -3,10 +3,13 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, Logit, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink, Precision, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Precision, UnitIntervalLink,
 };
 
+use crate::initial::{
+    VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary, weighted_values,
+};
 use crate::special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
@@ -177,11 +180,32 @@ where
 
 impl<MuLink, PrecisionLink> ParameterizedFamily<2> for Beta<MuLink, PrecisionLink>
 where
-    MuLink: UnitIntervalLink<f64>,
-    PrecisionLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+    PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Precision);
     type Links = (MuLink, PrecisionLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(probability_floor(y)));
+        let Some(summary) = weighted_summary(&values) else {
+            return BetaEta::from_array([0.0, 0.0]);
+        };
+
+        let mu = probability_floor(summary.mean);
+        let max_variance = (mu * (1.0 - mu)).max(VARIANCE_FLOOR);
+        let variance = summary.variance.clamp(VARIANCE_FLOOR, max_variance * 0.99);
+        let precision = positive_floor(max_variance / variance - 1.0);
+
+        BetaEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            precision: PrecisionLink::initial_eta_from_theta(precision),
+        }
+    }
 }
 
 impl<MuLink, PrecisionLink> HasCdf for Beta<MuLink, PrecisionLink>

@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale,
-    Shape,
+    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, ObservationView, ParameterParts,
+    ParameterizedFamily, PositiveLink, Scale, Shape,
 };
+
+use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 
 /// Lomax (Pareto type II) family parameterized by positive shape and scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -155,11 +157,37 @@ where
 
 impl<ShapeLink, ScaleLink> ParameterizedFamily<2> for Lomax<ShapeLink, ScaleLink>
 where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Shape, Scale);
     type Links = (ShapeLink, ScaleLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let Some(q50) = weighted_quantile(&values, 0.5) else {
+            return LomaxEta::from_array([0.0, 0.0]);
+        };
+        let q75 = weighted_quantile(&values, 0.75).unwrap_or(q50);
+
+        let (shape, scale) = if q50 > 0.0 && q75 > q50 {
+            let ratio = (q75 / q50).max(2.0 + 1.0e-6);
+            let shape = positive_floor(std::f64::consts::LN_2 / (ratio - 1.0).ln());
+            let scale = positive_floor(q50 / (2.0_f64.powf(1.0 / shape) - 1.0));
+            (shape, scale)
+        } else {
+            (2.0, positive_floor(q50.max(1.0)))
+        };
+
+        LomaxEta {
+            shape: ShapeLink::initial_eta_from_theta(shape),
+            scale: ScaleLink::initial_eta_from_theta(scale),
+        }
+    }
 }
 
 impl<ShapeLink, ScaleLink> HasCdf for Lomax<ShapeLink, ScaleLink>

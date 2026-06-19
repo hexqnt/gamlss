@@ -3,10 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink,
 };
 
+use crate::initial::{positive_floor, weighted_mean, weighted_values};
 use crate::special::{
     discrete_quantile, included_count, is_nonnegative_integer, ln_gamma, log_add_exp,
 };
@@ -244,10 +245,24 @@ where
 
 impl<MuLink> ParameterizedFamily<1> for Poisson<MuLink>
 where
-    MuLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu,);
     type Links = (MuLink,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| is_nonnegative_integer(y).then_some(y));
+        let Some(mean) = weighted_mean(&values) else {
+            return PoissonEta::from_array([0.0]);
+        };
+
+        PoissonEta {
+            mu: MuLink::initial_eta_from_theta(positive_floor(mean)),
+        }
+    }
 }
 
 impl<MuLink> HasCdf for Poisson<MuLink>

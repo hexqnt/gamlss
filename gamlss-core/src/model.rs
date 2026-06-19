@@ -52,6 +52,11 @@ where
         F: Family;
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
+    /// Creates a flat optimizer-parameter start vector from family-level
+    /// link-scale initial predictors.
+    fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
     /// Adds the local penalty gradient into an existing full gradient vector.
     ///
     /// Implementations with local penalties should override this method. It is
@@ -326,14 +331,18 @@ where
             .likelihood_multiplier(observation_weight_sum(&self.obs))
     }
 
-    /// Нулевой initial beta-вектор нужной длины.
+    /// Zero-valued initial optimizer parameter vector of the right length.
     pub fn initial_zeros(&self) -> Vec<f64> {
         vec![0.0; self.nparams()]
     }
 
-    /// Initial theta vector for external optimizers.
-    pub fn initial_theta(&self) -> Result<Vec<f64>, ModelError> {
-        Ok(self.initial_zeros())
+    /// Initial optimizer parameter vector for external optimizers.
+    ///
+    /// The returned vector is the flat predictor-coefficient vector, commonly
+    /// denoted `beta`, laid out according to this model's parameter blocks. It
+    /// is not the natural-scale distribution parameter `theta`.
+    pub fn initial_parameters(&self) -> Result<Vec<f64>, ModelError> {
+        Ok(self.blocks.initial_parameters(&self.family, &self.obs))
     }
 
     /// Creates reusable gradient buffers sized for this model.
@@ -967,6 +976,21 @@ macro_rules! impl_gamlss_blocks {
                 0.0 $(+ $block.penalty.value($beta_block))+
             }
 
+            fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+            where
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+            {
+                let eta = family.initial_eta_from_observations(obs);
+                let mut beta = vec![0.0; 0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+];
+                $(
+                    let $block = &self.$idx;
+                    $block
+                        .x
+                        .set_constant_start(eta.part($idx), &mut beta[$block.range()]);
+                )+
+                beta
+            }
+
             fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
@@ -1391,6 +1415,40 @@ mod tests {
         type Links = (Identity, Identity);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct InitializingLocation;
+
+    impl Family for InitializingLocation {
+        type Eta = f64;
+        type Theta = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            0.5 * (theta - y) * (theta - y)
+        }
+
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            (self.nll(y, eta), eta - y)
+        }
+    }
+
+    impl ParameterizedFamily<1> for InitializingLocation {
+        type Params = (Mu,);
+        type Links = (Identity,);
+
+        fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            2.0
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct ShiftedObservations<'a> {
         y: &'a [f64],
@@ -1428,6 +1486,51 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn initial_parameters_default_to_zero_for_custom_family() {
+        let y = vec![1.0, 2.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
+    }
+
+    #[test]
+    fn initial_parameters_write_intercept_like_constant() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let beta = model.initial_parameters().unwrap();
+
+        assert_eq!(beta.len(), model.nparams());
+        assert_eq!(beta, vec![2.0]);
+        assert!(model.value(&beta).unwrap().is_finite());
+    }
+
+    #[test]
+    fn initial_parameters_leave_no_intercept_design_zero() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
+    }
+
+    #[test]
+    fn initial_parameters_write_first_compatible_sum_term() {
+        let y = vec![1.0, 2.0, 3.0];
+        let first = LinearPredictorBlock::new(DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]));
+        let second = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
+        let predictor = SumBlock::new((first, second));
+        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0, 2.0]);
     }
 
     #[test]
