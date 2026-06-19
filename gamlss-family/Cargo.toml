@@ -23,4 +23,5 @@ rand_distr = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx.workspace = true
+proptest = "1.9.0"
 statrs = "0.18"

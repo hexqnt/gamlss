@@ -52,6 +52,20 @@ Workspace также публикует отдельные crate-ы для бо�
 - `rand` включает sampling API в `gamlss-family` через facade crate:
   `rand = ["gamlss-family/rand"]`.
 
+## Запуск тестов
+
+Общие тесты:
+
+```bash
+cargo test --workspace --all-features
+```
+
+Численные тесты для `gamlss-family` можно запускать отдельно:
+
+```bash
+cargo test -p gamlss-family --test numerical_validation --all-features
+```
+
 ## Общая ионформация о GAMLSS
 
 GAMLSS можно читать как distributional regression: модель описывает не только
