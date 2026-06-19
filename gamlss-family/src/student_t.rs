@@ -15,9 +15,8 @@ use crate::special::{invert_real_cdf, ln_gamma, regularized_beta};
 /// расположения и масштаба соответственно. По умолчанию используются
 /// `Identity` для `mu` и `Log` для `sigma`.
 ///
-/// CRPS support is intentionally left out until the crate has an internal
-/// Student's t CDF/PDF implementation or an optional dependency strategy for
-/// it. This keeps the default family crate dependency-light.
+/// CRPS support is intentionally left out until the crate has a settled domain
+/// policy for `nu <= 1` and a dependency-light numerical strategy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = Identity, SigmaLink = Log> {
     degrees_of_freedom: f64,

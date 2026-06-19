@@ -7,18 +7,18 @@ Legend: ✓ implemented, ✗ not implemented.
 
 | Family             | NLL | Gradient | CDF | PDF | Quantile | CRPS | Sampling |
 | ------------------ | --- | -------- | --- | --- | -------- | ---- | -------- |
-| `Bernoulli`        | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Bernoulli`        | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Beta`             | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `Exponential`      | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Exponential`      | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Gamma`            | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Gumbel`           | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `InverseGaussian`  | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Laplace`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `LogNormal`        | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `Logistic`         | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `LogNormal`        | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Logistic`         | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Lomax`            | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `NegativeBinomial` | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Normal`           | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Poisson`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Poisson`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `StudentT`         | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `Weibull`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Weibull`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |

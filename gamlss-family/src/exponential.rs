@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate,
+    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
+    Rate,
 };
 
 /// Exponential family parameterized by positive rate.
@@ -162,6 +163,19 @@ where
     }
 }
 
+impl<RateLink> HasCrps for Exponential<RateLink>
+where
+    RateLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
+            return f64::NAN;
+        }
+
+        y + 2.0 * (-theta.rate * y).exp() / theta.rate - 1.5 / theta.rate
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, RateLink> CanSimulate<Rng> for Exponential<RateLink>
 where
@@ -188,7 +202,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{DefaultExponential, ExponentialTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -246,6 +260,37 @@ mod tests {
                 .quantile(0.5, ExponentialTheta { rate: 0.0 })
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn exponential_crps_matches_fixed_values() {
+        let family = DefaultExponential::new();
+
+        assert_relative_eq!(
+            family.crps(1.0, ExponentialTheta { rate: 2.0 }),
+            0.385_335_283_236_612_7,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(0.0, ExponentialTheta { rate: 2.0 }),
+            0.25,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn exponential_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultExponential::new();
+
+        assert!(family.crps(-1.0, ExponentialTheta { rate: 2.0 }).is_nan());
+        assert!(family.crps(1.0, ExponentialTheta { rate: 0.0 }).is_nan());
+    }
+
+    #[test]
+    fn exponential_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultExponential::new();
+
+        assert!(family.crps(1.0, ExponentialTheta { rate: 2.0 }) >= 0.0);
     }
 
     #[cfg(feature = "rand")]

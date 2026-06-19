@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Logit, Mu, ParameterParts, ParameterizedFamily, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, Logit, Mu, ParameterParts, ParameterizedFamily,
+    UnitIntervalLink,
 };
 
 /// Bernoulli family parameterized by success probability.
@@ -180,6 +181,20 @@ where
     }
 }
 
+impl<MuLink> HasCrps for Bernoulli<MuLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !Self::valid_binary(y) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let residual = theta.mu - y;
+        residual * residual
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink> CanSimulate<Rng> for Bernoulli<MuLink>
 where
@@ -204,9 +219,10 @@ pub type DefaultBernoulli = Bernoulli<Logit>;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{BernoulliTheta, DefaultBernoulli};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -252,6 +268,33 @@ mod tests {
         assert_eq!(family.quantile(1.0, theta), 1.0);
         assert!(family.quantile(f64::NAN, theta).is_nan());
         assert!(family.quantile(0.5, BernoulliTheta { mu: 1.0 }).is_nan());
+    }
+
+    #[test]
+    fn bernoulli_crps_matches_squared_binary_error() {
+        let family = DefaultBernoulli::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert_relative_eq!(family.crps(1.0, theta), 0.36, epsilon = 1.0e-12);
+        assert_relative_eq!(family.crps(0.0, theta), 0.16, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn bernoulli_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultBernoulli::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert!(family.crps(0.5, theta).is_nan());
+        assert!(family.crps(1.0, BernoulliTheta { mu: 1.0 }).is_nan());
+    }
+
+    #[test]
+    fn bernoulli_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultBernoulli::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert!(family.crps(1.0, theta) >= 0.0);
+        assert!(family.crps(0.0, theta) >= 0.0);
     }
 
     #[cfg(feature = "rand")]

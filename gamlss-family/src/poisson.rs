@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
+    Family, HasCdf, HasCrps, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily,
+    PositiveLink,
 };
 
 use crate::special::{
@@ -11,6 +12,9 @@ use crate::special::{
 };
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
+const MAX_BESSEL_SERIES_TERMS: usize = 10_000;
+const BESSEL_SERIES_EPSILON: f64 = 1.0e-15;
+const DIRECT_BESSEL_MU_LIMIT: f64 = 350.0;
 
 /// Poisson family parameterized by positive mean.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,6 +109,68 @@ where
         }
 
         log_sum.exp().clamp(0.0, 1.0)
+    }
+
+    #[inline]
+    fn pmf_theta(y: f64, theta: PoissonTheta) -> f64 {
+        if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        (-theta.mu + y * theta.mu.ln() - ln_gamma(y + 1.0)).exp()
+    }
+
+    #[inline]
+    fn half_gini_mean_difference(mu: f64) -> f64 {
+        mu * Self::scaled_bessel_i0_plus_i1_two_mu(mu)
+    }
+
+    fn scaled_bessel_i0_plus_i1_two_mu(mu: f64) -> f64 {
+        if mu <= DIRECT_BESSEL_MU_LIMIT {
+            return Self::scaled_bessel_i0_plus_i1_by_series(mu);
+        }
+
+        Self::scaled_bessel_i0_plus_i1_asymptotic(2.0 * mu)
+    }
+
+    fn scaled_bessel_i0_plus_i1_by_series(mu: f64) -> f64 {
+        let mu2 = mu * mu;
+        let scale = (-2.0 * mu).exp();
+
+        let mut i0_term = scale;
+        let mut i0_sum = i0_term;
+        for count in 1..=MAX_BESSEL_SERIES_TERMS {
+            let count_f = count as f64;
+            i0_term *= mu2 / (count_f * count_f);
+            i0_sum += i0_term;
+            if i0_term.abs() <= BESSEL_SERIES_EPSILON * i0_sum.abs() {
+                break;
+            }
+        }
+
+        let mut i1_term = scale * mu;
+        let mut i1_sum = i1_term;
+        for count in 1..=MAX_BESSEL_SERIES_TERMS {
+            let count_f = count as f64;
+            i1_term *= mu2 / (count_f * (count_f + 1.0));
+            i1_sum += i1_term;
+            if i1_term.abs() <= BESSEL_SERIES_EPSILON * i1_sum.abs() {
+                break;
+            }
+        }
+
+        i0_sum + i1_sum
+    }
+
+    fn scaled_bessel_i0_plus_i1_asymptotic(x: f64) -> f64 {
+        let inv = 1.0 / (8.0 * x);
+        let inv2 = inv * inv;
+        let inv3 = inv2 * inv;
+        let inv4 = inv2 * inv2;
+        let i0 = 1.0 + inv + 9.0 * inv2 / 2.0 + 225.0 * inv3 / 6.0 + 11_025.0 * inv4 / 24.0;
+        let i1 = 1.0 - 3.0 * inv - 15.0 * inv2 / 2.0 - 315.0 * inv3 / 6.0 - 14_175.0 * inv4 / 24.0;
+
+        (i0 + i1) / (2.0 * std::f64::consts::PI * x).sqrt()
     }
 }
 
@@ -208,6 +274,26 @@ where
     }
 }
 
+impl<MuLink> HasCrps for Poisson<MuLink>
+where
+    MuLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let cdf = Self::cdf_theta(y, theta);
+        let pmf = Self::pmf_theta(y, theta);
+        let half_gini = Self::half_gini_mean_difference(theta.mu);
+        if !cdf.is_finite() || !pmf.is_finite() || !half_gini.is_finite() {
+            return f64::NAN;
+        }
+
+        (y - theta.mu) * (2.0 * cdf - 1.0) + 2.0 * theta.mu * pmf - half_gini
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink> CanSimulate<Rng> for Poisson<MuLink>
 where
@@ -231,9 +317,10 @@ pub type DefaultPoisson = Poisson<Log>;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{DiscreteCDF, Poisson as StatrsPoisson};
 
     use super::{DefaultPoisson, PoissonTheta};
@@ -313,6 +400,77 @@ mod tests {
                 assert!(family.cdf(q - 1.0, theta) < p);
             }
         }
+    }
+
+    #[test]
+    fn poisson_crps_matches_fixed_values() {
+        let family = DefaultPoisson::new();
+        let theta = PoissonTheta { mu: 2.0 };
+
+        assert_relative_eq!(
+            family.crps(3.0, theta),
+            0.664_529_576_806_184_1,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(0.0, theta),
+            1.228_494_478_547_156,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn poisson_crps_matches_truncated_expectation_identity() {
+        let family = DefaultPoisson::new();
+        let theta = PoissonTheta { mu: 6.0 };
+
+        assert_relative_eq!(
+            family.crps(5.0, theta),
+            poisson_crps_by_truncated_expectations(5, theta.mu),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn poisson_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultPoisson::new();
+        let theta = PoissonTheta { mu: 2.0 };
+
+        assert!(family.crps(-1.0, theta).is_nan());
+        assert!(family.crps(1.5, theta).is_nan());
+        assert!(family.crps(3.0, PoissonTheta { mu: 0.0 }).is_nan());
+        assert!(
+            family
+                .crps((super::MAX_CDF_TERMS + 1) as f64, theta)
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn poisson_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultPoisson::new();
+
+        assert!(family.crps(3.0, PoissonTheta { mu: 2.0 }) >= 0.0);
+        assert!(family.crps(1000.0, PoissonTheta { mu: 1000.0 }) >= 0.0);
+    }
+
+    fn poisson_crps_by_truncated_expectations(y: u64, mu: f64) -> f64 {
+        let mut term = (-mu).exp();
+        let mut cdf = term;
+        let mut expected_absolute_error = y as f64 * term;
+        let mut half_gini = cdf * (1.0 - cdf);
+
+        for count in 1_u64..=10_000 {
+            term *= mu / count as f64;
+            cdf += term;
+            expected_absolute_error += count.abs_diff(y) as f64 * term;
+            half_gini += cdf * (1.0 - cdf);
+            if term <= 1.0e-15 && 1.0 - cdf <= 1.0e-15 {
+                break;
+            }
+        }
+
+        expected_absolute_error - half_gini
     }
 
     #[cfg(feature = "rand")]

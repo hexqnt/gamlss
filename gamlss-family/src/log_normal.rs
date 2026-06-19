@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, Link, Log, Mu, ParameterParts,
+    ParameterizedFamily, PositiveLink, Sigma,
 };
 
 use crate::special::{unit_normal_cdf, unit_normal_quantile};
@@ -201,6 +201,34 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasCrps for LogNormal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if y < 0.0
+            || !y.is_finite()
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let mean = (theta.mu + 0.5 * theta.sigma * theta.sigma).exp();
+        let gini_cdf = unit_normal_cdf(theta.sigma / std::f64::consts::SQRT_2);
+        let half_gini = mean * (2.0 * gini_cdf - 1.0);
+        if y == 0.0 {
+            return mean - half_gini;
+        }
+
+        let z = (y.ln() - theta.mu) / theta.sigma;
+        y * (2.0 * unit_normal_cdf(z) - 1.0)
+            - 2.0 * mean * (unit_normal_cdf(z - theta.sigma) + gini_cdf - 1.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for LogNormal<MuLink, SigmaLink>
 where
@@ -229,7 +257,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
     use super::{DefaultLogNormal, LogNormalTheta};
@@ -380,6 +408,77 @@ mod tests {
                 epsilon = 1.0e-6
             );
         }
+    }
+
+    #[test]
+    fn log_normal_crps_matches_fixed_values() {
+        let family = DefaultLogNormal::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                LogNormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ),
+            0.267_405_207_040_811,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                LogNormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ),
+            0.790_561_822_418_728_5,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn log_normal_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultLogNormal::new();
+
+        assert!(
+            family
+                .crps(
+                    -1.0,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    LogNormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn log_normal_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultLogNormal::new();
+
+        assert!(
+            family.crps(
+                1.0,
+                LogNormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ) >= 0.0
+        );
     }
 
     #[cfg(feature = "rand")]

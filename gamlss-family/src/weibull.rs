@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale,
-    Shape,
+    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
+    Scale, Shape,
 };
+
+use crate::special::{ln_gamma, regularized_gamma_lower};
 
 /// Weibull family parameterized by positive shape and scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -207,6 +209,35 @@ where
     }
 }
 
+impl<ShapeLink, ScaleLink> HasCrps for Weibull<ShapeLink, ScaleLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if y < 0.0
+            || !y.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let a = 1.0 + 1.0 / theta.shape;
+        let mean = theta.scale * ln_gamma(a).exp();
+        let t = if y == 0.0 {
+            0.0
+        } else {
+            (y / theta.scale).powf(theta.shape)
+        };
+        let cdf = -(-t).exp_m1();
+        y * (2.0 * cdf - 1.0) - 2.0 * mean * regularized_gamma_lower(a, t)
+            + mean * 2.0_f64.powf(-1.0 / theta.shape)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ShapeLink, ScaleLink> CanSimulate<Rng> for Weibull<ShapeLink, ScaleLink>
 where
@@ -239,7 +270,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{DefaultWeibull, WeibullTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -367,6 +398,77 @@ mod tests {
                     }
                 )
                 .is_nan()
+        );
+    }
+
+    #[test]
+    fn weibull_crps_matches_fixed_values() {
+        let family = DefaultWeibull::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                WeibullTheta {
+                    shape: 1.0,
+                    scale: 0.5,
+                },
+            ),
+            0.385_335_283_236_612_7,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                WeibullTheta {
+                    shape: 1.0,
+                    scale: 0.5,
+                },
+            ),
+            0.25,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn weibull_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultWeibull::new();
+
+        assert!(
+            family
+                .crps(
+                    -1.0,
+                    WeibullTheta {
+                        shape: 2.0,
+                        scale: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    WeibullTheta {
+                        shape: 0.0,
+                        scale: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn weibull_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultWeibull::new();
+
+        assert!(
+            family.crps(
+                1.0,
+                WeibullTheta {
+                    shape: 2.0,
+                    scale: 3.0,
+                },
+            ) >= 0.0
         );
     }
 
