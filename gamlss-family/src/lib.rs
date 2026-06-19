@@ -131,4 +131,24 @@ pub(crate) mod test_support {
             assert_relative_eq!(actual, finite_difference, epsilon = tolerance);
         }
     }
+
+    pub(crate) fn statrs_discrete_quantile<F>(p: f64, mut cdf: F) -> u64
+    where
+        F: FnMut(u64) -> f64,
+    {
+        let mut high = 1_u64;
+        while cdf(high) < p {
+            high *= 2;
+        }
+        let mut low = 0_u64;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if cdf(mid) < p {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    }
 }

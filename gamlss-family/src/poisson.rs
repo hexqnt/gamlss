@@ -2,9 +2,13 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink};
+use gamlss_core::{
+    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
+};
 
-use crate::special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use crate::special::{
+    discrete_quantile, included_count, is_nonnegative_integer, ln_gamma, log_add_exp,
+};
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
@@ -189,6 +193,21 @@ where
     }
 }
 
+impl<MuLink> HasQuantile for Poisson<MuLink>
+where
+    MuLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0 || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        discrete_quantile(p, MAX_CDF_TERMS, |count| {
+            Self::cdf_theta(count as f64, theta)
+        })
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink> CanSimulate<Rng> for Poisson<MuLink>
 where
@@ -214,10 +233,13 @@ pub type DefaultPoisson = Poisson<Log>;
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{DiscreteCDF, Poisson as StatrsPoisson};
 
     use super::{DefaultPoisson, PoissonTheta};
-    use crate::test_support::assert_gradient_matches_finite_difference;
+    use crate::test_support::{
+        assert_gradient_matches_finite_difference, statrs_discrete_quantile,
+    };
 
     #[test]
     fn poisson_gradient_matches_finite_difference() {
@@ -259,6 +281,38 @@ mod tests {
 
         assert!(cdf.is_finite());
         assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
+    }
+
+    #[test]
+    fn poisson_quantile_matches_statrs_reference() {
+        let family = DefaultPoisson::new();
+        let theta = PoissonTheta { mu: 2.0 };
+        let reference = StatrsPoisson::new(theta.mu).unwrap();
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_eq!(
+                family.quantile(p, theta),
+                statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
+            );
+        }
+
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(family.quantile(0.5, PoissonTheta { mu: 0.0 }).is_nan());
+    }
+
+    #[test]
+    fn poisson_quantile_is_generalized_inverse_cdf() {
+        let family = DefaultPoisson::new();
+        let theta = PoissonTheta { mu: 6.0 };
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            let q = family.quantile(p, theta);
+            assert!(family.cdf(q, theta) >= p);
+            if q > 0.0 {
+                assert!(family.cdf(q - 1.0, theta) < p);
+            }
+        }
     }
 
     #[cfg(feature = "rand")]

@@ -1,8 +1,8 @@
 use gamlss_core::{
-    ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, Identity, LinearForm,
-    LinearFormBuilder, Log, Logit, Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective,
-    ObjectiveScale, ObservationView, ParameterBlock, ParameterLayout, ParameterParts,
+    ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDensity,
+    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
+    Identity, LinearForm, LinearFormBuilder, Log, Logit, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
+    Objective, ObjectiveScale, ObservationView, ParameterBlock, ParameterLayout, ParameterParts,
     ParameterSlice, ParameterizedFamily, PositiveLink, PredictorBlock, Sigma, Softplus,
     SoftplusScalar, TrainingDiagnostics, UnitIntervalLink,
 };
@@ -185,6 +185,17 @@ impl HasInitialEta for DependentConstraintFamily {
     fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta {
         (Self::target(observation), 0.0)
     }
+}
+
+#[test]
+fn public_api_supports_default_log_density_helper() {
+    let theta = DependentConstraintFamily.theta((2.0, 0.0));
+
+    assert_eq!(
+        DependentConstraintFamily.log_density(&[1.0, 3.0], theta),
+        -DependentConstraintFamily.nll(&[1.0, 3.0], theta)
+    );
+    assert_eq!(DependentConstraintFamily.density(&[1.0, 3.0], theta), 1.0);
 }
 
 #[test]

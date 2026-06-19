@@ -2,9 +2,12 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate, Shape};
+use gamlss_core::{
+    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate,
+    Shape,
+};
 
-use crate::special::{digamma, ln_gamma};
+use crate::special::{digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower};
 
 /// Gamma family parameterized by positive shape and rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +164,46 @@ where
     type Links = (ShapeLink, RateLink);
 }
 
+impl<ShapeLink, RateLink> HasCdf for Gamma<ShapeLink, RateLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.rate <= 0.0
+            || !theta.rate.is_finite()
+        {
+            return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
+        }
+
+        regularized_gamma_lower(theta.shape, theta.rate * y)
+    }
+}
+
+impl<ShapeLink, RateLink> HasQuantile for Gamma<ShapeLink, RateLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.rate <= 0.0
+            || !theta.rate.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        invert_positive_cdf(p, |y| self.cdf(y, theta))
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ShapeLink, RateLink> CanSimulate<Rng> for Gamma<ShapeLink, RateLink>
 where
@@ -190,9 +233,11 @@ pub type DefaultGamma = Gamma<Log, Log>;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, Link, Log};
+    use gamlss_core::{Family, HasCdf, HasQuantile, Link, Log};
+    use statrs::distribution::{ContinuousCDF, Gamma as StatrsGamma};
 
     use super::{DefaultGamma, GammaTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -223,6 +268,53 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn gamma_cdf_and_quantile_match_statrs_reference() {
+        let family = DefaultGamma::new();
+        let theta = GammaTheta {
+            shape: 2.5,
+            rate: 1.7,
+        };
+        let reference = StatrsGamma::new(theta.shape, theta.rate).unwrap();
+
+        for y in [0.05, 0.25, 1.0, 2.0, 8.0] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-8
+            );
+        }
+    }
+
+    #[test]
+    fn gamma_cdf_and_quantile_handle_boundaries_and_invalid_domains() {
+        let family = DefaultGamma::new();
+        let theta = GammaTheta {
+            shape: 2.0,
+            rate: 3.0,
+        };
+
+        assert_eq!(family.cdf(0.0, theta), 0.0);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    GammaTheta {
+                        shape: 0.0,
+                        rate: 1.0,
+                    },
+                )
+                .is_nan()
         );
     }
 

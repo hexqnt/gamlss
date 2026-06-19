@@ -1,10 +1,12 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
+    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
 };
 
-use crate::special::unit_normal_cdf;
+use crate::special::{invert_positive_cdf, unit_normal_cdf};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
@@ -198,13 +200,57 @@ where
     }
 }
 
+impl<MuLink, ShapeLink> HasQuantile for InverseGaussian<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        invert_positive_cdf(p, |y| self.cdf(y, theta))
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for InverseGaussian<MuLink, ShapeLink>
+where
+    Rng: rand::Rng,
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::InverseGaussian::new(theta.mu, theta.shape)
+                .expect("validated inverse Gaussian parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Inverse Gaussian distribution with log links for mean and shape.
 pub type DefaultInverseGaussian = InverseGaussian<Log, Log>;
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf};
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{DefaultInverseGaussian, InverseGaussianTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -311,5 +357,63 @@ mod tests {
 
         assert!(cdf.is_finite());
         assert!((0.0..=1.0).contains(&cdf));
+    }
+
+    #[test]
+    fn inverse_gaussian_quantile_inverts_cdf() {
+        let family = DefaultInverseGaussian::new();
+        let theta = InverseGaussianTheta {
+            mu: 1.5,
+            shape: 0.8,
+        };
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            let y = family.quantile(p, theta);
+            assert_relative_eq!(family.cdf(y, theta), p, epsilon = 1.0e-10);
+        }
+
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    InverseGaussianTheta {
+                        mu: 0.0,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn inverse_gaussian_sampling_returns_positive_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultInverseGaussian::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            InverseGaussianTheta {
+                mu: 1.5,
+                shape: 0.8,
+            },
+        );
+
+        assert!(sample > 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    InverseGaussianTheta {
+                        mu: 0.0,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
+        );
     }
 }

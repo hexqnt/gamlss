@@ -1,11 +1,13 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Precision,
-    UnitIntervalLink,
+    Family, HasCdf, HasQuantile, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
+    Precision, UnitIntervalLink,
 };
 
-use crate::special::{digamma, ln_gamma};
+use crate::special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
 ///
@@ -182,12 +184,89 @@ where
     type Links = (MuLink, PrecisionLink);
 }
 
+impl<MuLink, PrecisionLink> HasCdf for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite()
+            || theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
+        }
+        if y >= 1.0 {
+            return 1.0;
+        }
+
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        regularized_beta(alpha, beta, y)
+    }
+}
+
+impl<MuLink, PrecisionLink> HasQuantile for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        invert_bounded_cdf(p, 0.0, 1.0, |y| self.cdf(y, theta))
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, PrecisionLink> CanSimulate<Rng> for Beta<MuLink, PrecisionLink>
+where
+    Rng: rand::Rng,
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        rand_distr::Distribution::sample(
+            &rand_distr::Beta::new(alpha, beta).expect("validated beta parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Beta distribution with logit link for mean and log link for precision.
 pub type DefaultBeta = Beta<Logit, Log>;
 
 #[cfg(test)]
 mod tests {
-    use gamlss_core::Family;
+    use approx::assert_relative_eq;
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{Beta as StatrsBeta, ContinuousCDF};
 
     use super::{BetaTheta, DefaultBeta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -219,6 +298,85 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn beta_cdf_and_quantile_match_statrs_reference() {
+        let family = DefaultBeta::new();
+        let theta = BetaTheta {
+            mu: 0.4,
+            precision: 3.0,
+        };
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        let reference = StatrsBeta::new(alpha, beta).unwrap();
+
+        for y in [0.01, 0.2, 0.4, 0.8, 0.99] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-10
+            );
+        }
+    }
+
+    #[test]
+    fn beta_cdf_and_quantile_handle_boundaries_and_invalid_domains() {
+        let family = DefaultBeta::new();
+        let theta = BetaTheta {
+            mu: 0.4,
+            precision: 3.0,
+        };
+
+        assert_eq!(family.cdf(0.0, theta), 0.0);
+        assert_eq!(family.cdf(1.0, theta), 1.0);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), 1.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .cdf(
+                    0.5,
+                    BetaTheta {
+                        mu: 0.0,
+                        precision: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn beta_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = DefaultBeta::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            BetaTheta {
+                mu: 0.4,
+                precision: 3.0,
+            },
+        );
+
+        assert!(sample > 0.0 && sample < 1.0);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    BetaTheta {
+                        mu: 0.0,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
         );
     }
 }

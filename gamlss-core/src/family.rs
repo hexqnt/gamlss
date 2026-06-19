@@ -350,6 +350,34 @@ pub trait HasQuantile: Family {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
 }
 
+/// Distribution helper for log-density or log-mass evaluation.
+///
+/// The default implementation reuses the family likelihood contract:
+/// `log_density = -nll`. Continuous families expose a log-PDF through this
+/// trait, while discrete families expose a log-PMF.
+pub trait HasLogDensity: Family {
+    /// Log-density or log-mass at `observation` for natural-scale parameters.
+    fn log_density<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        -self.nll(observation, theta)
+    }
+}
+
+impl<T> HasLogDensity for T where T: Family {}
+
+/// Distribution helper for density or mass evaluation.
+///
+/// The default implementation exponentiates [`HasLogDensity::log_density`].
+/// This may underflow to zero in far tails; fitting code should continue to use
+/// [`Family::nll`] and [`Family::nll_and_gradient_eta`].
+pub trait HasDensity: HasLogDensity {
+    /// Density or mass at `observation` for natural-scale parameters.
+    fn density<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        self.log_density(observation, theta).exp()
+    }
+}
+
+impl<T> HasDensity for T where T: HasLogDensity {}
+
 /// Distribution helper for continuous ranked probability score.
 pub trait HasCrps: Family {
     /// CRPS for one observation and natural-scale parameters.

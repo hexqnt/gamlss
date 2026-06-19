@@ -3,12 +3,12 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, Identity,
-    LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
-    ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
+    DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
+    Identity, LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock,
+    ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
 };
 
-use crate::special::unit_normal_cdf;
+use crate::special::{unit_normal_cdf, unit_normal_quantile};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
@@ -212,6 +212,20 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasQuantile for Normal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        theta.mu + theta.sigma * unit_normal_quantile(p)
+    }
+}
+
 impl<MuLink, SigmaLink> HasCrps for Normal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -304,8 +318,10 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
     use gamlss_core::{
-        DenseDesign, Family, HasCdf, HasCrps, HasDeviance, HasInitialEta, NoPenalty, Objective,
+        DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
+        HasLogDensity, HasQuantile, NoPenalty, Objective,
     };
+    use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
     use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -469,6 +485,53 @@ mod tests {
                 )
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn density_helpers_reuse_nll() {
+        let family = DefaultNormal::new();
+        let theta = NormalTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+        let nll = family.nll(1.7, theta);
+
+        assert_relative_eq!(family.log_density(1.7, theta), -nll, epsilon = 1.0e-12);
+        assert_relative_eq!(family.density(1.7, theta), (-nll).exp(), epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn normal_quantile_inverts_cdf() {
+        let family = DefaultNormal::new();
+        let theta = NormalTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+
+        let y = family.quantile(0.75, theta);
+
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-7);
+        assert_eq!(family.quantile(0.0, theta), f64::NEG_INFINITY);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn normal_quantile_matches_statrs_reference() {
+        let family = DefaultNormal::new();
+        let theta = NormalTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+        let reference = StatrsNormal::new(theta.mu, theta.sigma).unwrap();
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-6
+            );
+        }
     }
 
     #[test]

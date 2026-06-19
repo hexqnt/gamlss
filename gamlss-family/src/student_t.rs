@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, Identity, Link, Log, ModelError, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
-    Sigma,
+    Family, HasCdf, HasQuantile, Identity, Link, Log, ModelError, Mu, ParameterParts,
+    ParameterizedFamily, PositiveLink, Sigma,
 };
 
-use crate::special::ln_gamma;
+use crate::special::{invert_real_cdf, ln_gamma, regularized_beta};
 
 /// Student's t location-scale family с фиксированным числом степеней свободы.
 ///
@@ -106,6 +106,40 @@ where
 
         (nll, gradient_eta)
     }
+
+    fn standard_cdf(&self, t: f64) -> f64 {
+        if !t.is_finite() {
+            return if t.is_sign_negative() { 0.0 } else { 1.0 };
+        }
+        if t == 0.0 {
+            return 0.5;
+        }
+
+        let nu = self.degrees_of_freedom;
+        let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
+        if t < 0.0 {
+            0.5 * beta
+        } else {
+            1.0 - 0.5 * beta
+        }
+    }
+
+    fn standard_quantile(&self, p: f64) -> f64 {
+        if p < 0.0 || !p.is_finite() || p > 1.0 {
+            return f64::NAN;
+        }
+        if p == 0.0 {
+            return f64::NEG_INFINITY;
+        }
+        if p == 1.0 {
+            return f64::INFINITY;
+        }
+        if p == 0.5 {
+            return 0.0;
+        }
+
+        invert_real_cdf(p, |t| self.standard_cdf(t))
+    }
 }
 
 impl<MuLink, SigmaLink> Default for StudentT<MuLink, SigmaLink>
@@ -195,6 +229,35 @@ where
     type Links = (MuLink, SigmaLink);
 }
 
+impl<MuLink, SigmaLink> HasCdf for StudentT<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        self.standard_cdf((y - theta.mu) / theta.sigma)
+    }
+}
+
+impl<MuLink, SigmaLink> HasQuantile for StudentT<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        theta.mu + theta.sigma * self.standard_quantile(p)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for StudentT<MuLink, SigmaLink>
 where
@@ -226,9 +289,11 @@ fn student_t_constant(nu: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::Family;
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{ContinuousCDF, StudentsT};
 
     use super::{DefaultStudentT, StudentTEta, StudentTTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -288,6 +353,93 @@ mod tests {
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
         assert!(gradient.sigma.is_nan());
+    }
+
+    #[test]
+    fn student_t_cdf_matches_reference_points() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5, epsilon = 1.0e-12);
+        assert_relative_eq!(
+            family.cdf(theta.mu + theta.sigma, theta),
+            0.818_391_266_175_438_7,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.cdf(theta.mu - theta.sigma, theta),
+            0.181_608_733_824_561_27,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn student_t_cdf_and_quantile_match_statrs_reference() {
+        let family = DefaultStudentT::try_new(7.0).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+        let reference = StudentsT::new(theta.mu, theta.sigma, 7.0).unwrap();
+
+        for y in [-2.0, -0.3, 0.4, 1.2, 3.0] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-10
+            );
+        }
+    }
+
+    #[test]
+    fn student_t_quantile_inverts_cdf() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        let y = family.quantile(0.75, theta);
+
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
+        assert_eq!(family.quantile(0.0, theta), f64::NEG_INFINITY);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn student_t_cdf_returns_nan_for_invalid_domains() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+
+        assert!(
+            family
+                .cdf(
+                    1.0,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .cdf(
+                    f64::NAN,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
     }
 
     #[cfg(feature = "rand")]

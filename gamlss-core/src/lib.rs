@@ -50,8 +50,9 @@ pub mod predictor;
 pub use design::{DenseDesign, DesignMatrix};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDeviance, HasDiagonalFisherInfo,
-    HasExpectedInformation, HasInitialEta, HasQuantile, ParameterParts, ParameterizedFamily,
+    CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDensity, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
+    ParameterParts, ParameterizedFamily,
 };
 pub use link::{
     ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus, UnitIntervalLink,
@@ -81,15 +82,15 @@ pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
         CoefficientTransform, DenseDesign, DenseInformation, DesignMatrix, Family, Gamlss,
-        GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDesignMatrix,
-        HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasQuantile,
-        HingeQuadraticPenalty, Identity, LinearForm, LinearFormBuilder, LinearPredictorBlock,
-        LinearTerm, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu,
-        Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
-        RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Softplus, SumBlock, Tau,
-        TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedTheta,
+        GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDensity,
+        HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta,
+        HasLogDensity, HasQuantile, HingeQuadraticPenalty, Identity, LinearForm, LinearFormBuilder,
+        LinearPredictorBlock, LinearTerm, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu,
+        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock,
+        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
+        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock,
+        ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Softplus, SumBlock,
+        Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedTheta,
         WithGlobalPenalties, WorkspaceGamlss,
     };
 }

@@ -3,10 +3,12 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
+    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
 };
 
-use crate::special::{digamma, included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use crate::special::{
+    digamma, discrete_quantile, included_count, is_nonnegative_integer, ln_gamma, log_add_exp,
+};
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
@@ -255,6 +257,26 @@ where
     }
 }
 
+impl<MuLink, ShapeLink> HasQuantile for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        discrete_quantile(p, MAX_CDF_TERMS, |count| {
+            Self::cdf_theta(count as f64, theta)
+        })
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for NegativeBinomial<MuLink, ShapeLink>
 where
@@ -290,10 +312,13 @@ pub type DefaultNegativeBinomial = NegativeBinomial<Log, Log>;
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{DiscreteCDF, NegativeBinomial as StatrsNegativeBinomial};
 
     use super::{DefaultNegativeBinomial, NegativeBinomialTheta};
-    use crate::test_support::assert_gradient_matches_finite_difference;
+    use crate::test_support::{
+        assert_gradient_matches_finite_difference, statrs_discrete_quantile,
+    };
 
     #[test]
     fn negative_binomial_gradient_matches_finite_difference() {
@@ -371,6 +396,55 @@ mod tests {
 
         assert!(cdf.is_finite());
         assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
+    }
+
+    #[test]
+    fn negative_binomial_quantile_matches_statrs_reference() {
+        let family = DefaultNegativeBinomial::new();
+        let theta = NegativeBinomialTheta {
+            mu: 2.0,
+            shape: 1.5,
+        };
+        let success_probability = theta.shape / (theta.shape + theta.mu);
+        let reference = StatrsNegativeBinomial::new(theta.shape, success_probability).unwrap();
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_eq!(
+                family.quantile(p, theta),
+                statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
+            );
+        }
+
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    NegativeBinomialTheta {
+                        mu: 0.0,
+                        shape: 1.5,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn negative_binomial_quantile_is_generalized_inverse_cdf() {
+        let family = DefaultNegativeBinomial::new();
+        let theta = NegativeBinomialTheta {
+            mu: 6.0,
+            shape: 2.5,
+        };
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            let q = family.quantile(p, theta);
+            assert!(family.cdf(q, theta) >= p);
+            if q > 0.0 {
+                assert!(family.cdf(q - 1.0, theta) < p);
+            }
+        }
     }
 
     #[cfg(feature = "rand")]

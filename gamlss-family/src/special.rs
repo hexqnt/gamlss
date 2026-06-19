@@ -82,9 +82,335 @@ pub(crate) fn digamma(value: f64) -> f64 {
         + inv2 * inv2 * inv2 * inv2 / 240.0
 }
 
+/// Regularized incomplete beta function `I_x(a, b)` for positive `a`, `b`.
+pub(crate) fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
+    if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    if x == 1.0 {
+        return 1.0;
+    }
+
+    let log_front = ln_gamma(a + b) - ln_gamma(a) - ln_gamma(b) + a * x.ln() + b * (1.0 - x).ln();
+    let front = log_front.exp();
+
+    if x < (a + 1.0) / (a + b + 2.0) {
+        front * beta_continued_fraction(a, b, x) / a
+    } else {
+        1.0 - front * beta_continued_fraction(b, a, 1.0 - x) / b
+    }
+    .clamp(0.0, 1.0)
+}
+
+/// Regularized lower incomplete gamma function `P(a, x)`.
+pub(crate) fn regularized_gamma_lower(a: f64, x: f64) -> f64 {
+    if a <= 0.0 || !a.is_finite() || x < 0.0 || !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+
+    if x < a + 1.0 {
+        gamma_lower_series(a, x)
+    } else {
+        1.0 - gamma_upper_continued_fraction(a, x)
+    }
+    .clamp(0.0, 1.0)
+}
+
+fn gamma_lower_series(a: f64, x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-14;
+
+    let mut term = 1.0 / a;
+    let mut sum = term;
+    let mut ap = a;
+    for _ in 0..MAX_ITERATIONS {
+        ap += 1.0;
+        term *= x / ap;
+        sum += term;
+        if term.abs() <= sum.abs() * EPSILON {
+            break;
+        }
+    }
+
+    sum * (-x + a * x.ln() - ln_gamma(a)).exp()
+}
+
+fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-14;
+    const TINY: f64 = 1.0e-300;
+
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / TINY;
+    if b.abs() < TINY {
+        b = TINY;
+    }
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for iteration in 1..=MAX_ITERATIONS {
+        let i = iteration as f64;
+        let an = -i * (i - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < TINY {
+            d = TINY;
+        }
+        c = b + an / c;
+        if c.abs() < TINY {
+            c = TINY;
+        }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() < EPSILON {
+            break;
+        }
+    }
+
+    (-x + a * x.ln() - ln_gamma(a)).exp() * h
+}
+
+pub(crate) fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
+where
+    F: FnMut(u64) -> f64,
+{
+    if p < 0.0 || !p.is_finite() || p > 1.0 {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return 0.0;
+    }
+
+    let mut high = 1_u64;
+    while high < max_count && cdf(high) < p {
+        high = high.saturating_mul(2).min(max_count);
+    }
+    if cdf(high) < p {
+        return f64::NAN;
+    }
+
+    let mut low = 0_u64;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if cdf(mid) < p {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    low as f64
+}
+
+pub(crate) fn invert_bounded_cdf<F>(p: f64, lower: f64, upper: f64, mut cdf: F) -> f64
+where
+    F: FnMut(f64) -> f64,
+{
+    if p < 0.0 || !p.is_finite() || p > 1.0 || !lower.is_finite() || !upper.is_finite() {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return lower;
+    }
+    if p == 1.0 {
+        return upper;
+    }
+
+    let mut low = lower;
+    let mut high = upper;
+    for _ in 0..120 {
+        let mid = 0.5 * (low + high);
+        if cdf(mid) < p {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    0.5 * (low + high)
+}
+
+pub(crate) fn invert_positive_cdf<F>(p: f64, mut cdf: F) -> f64
+where
+    F: FnMut(f64) -> f64,
+{
+    if p < 0.0 || !p.is_finite() || p > 1.0 {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return 0.0;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+
+    let mut high = 1.0;
+    while cdf(high) < p {
+        high *= 2.0;
+        if !high.is_finite() {
+            return f64::INFINITY;
+        }
+    }
+
+    invert_bounded_cdf(p, 0.0, high, cdf)
+}
+
+pub(crate) fn invert_real_cdf<F>(p: f64, mut cdf: F) -> f64
+where
+    F: FnMut(f64) -> f64,
+{
+    if p < 0.0 || !p.is_finite() || p > 1.0 {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+
+    let mut low = -1.0;
+    while cdf(low) > p {
+        low *= 2.0;
+        if !low.is_finite() {
+            return f64::NEG_INFINITY;
+        }
+    }
+
+    let mut high = 1.0;
+    while cdf(high) < p {
+        high *= 2.0;
+        if !high.is_finite() {
+            return f64::INFINITY;
+        }
+    }
+
+    invert_bounded_cdf(p, low, high, cdf)
+}
+
+fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 200;
+    const EPSILON: f64 = 3.0e-14;
+    const TINY: f64 = 1.0e-300;
+
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
+    let mut c = 1.0;
+    let mut d = 1.0 - qab * x / qap;
+    if d.abs() < TINY {
+        d = TINY;
+    }
+    d = 1.0 / d;
+    let mut h = d;
+
+    for iteration in 1..=MAX_ITERATIONS {
+        let m = iteration as f64;
+        let m2 = 2.0 * m;
+
+        let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < TINY {
+            d = TINY;
+        }
+        c = 1.0 + aa / c;
+        if c.abs() < TINY {
+            c = TINY;
+        }
+        d = 1.0 / d;
+        h *= d * c;
+
+        let aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < TINY {
+            d = TINY;
+        }
+        c = 1.0 + aa / c;
+        if c.abs() < TINY {
+            c = TINY;
+        }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() < EPSILON {
+            break;
+        }
+    }
+
+    h
+}
+
 /// Standard normal CDF approximation.
 pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
     (0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))).clamp(0.0, 1.0)
+}
+
+/// Standard normal quantile approximation.
+pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
+    if p < 0.0 || !p.is_finite() || p > 1.0 {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+
+    const A: [f64; 6] = [
+        -3.969_683_028_665_376e1,
+        2.209_460_984_245_205e2,
+        -2.759_285_104_469_687e2,
+        1.383_577_518_672_69e2,
+        -3.066_479_806_614_716e1,
+        2.506_628_277_459_239,
+    ];
+    const B: [f64; 5] = [
+        -5.447_609_879_822_406e1,
+        1.615_858_368_580_409e2,
+        -1.556_989_798_598_866e2,
+        6.680_131_188_771_972e1,
+        -1.328_068_155_288_572e1,
+    ];
+    const C: [f64; 6] = [
+        -7.784_894_002_430_293e-3,
+        -3.223_964_580_411_365e-1,
+        -2.400_758_277_161_838,
+        -2.549_732_539_343_734,
+        4.374_664_141_464_968,
+        2.938_163_982_698_783,
+    ];
+    const D: [f64; 4] = [
+        7.784_695_709_041_462e-3,
+        3.224_671_290_700_398e-1,
+        2.445_134_137_142_996,
+        3.754_408_661_907_416,
+    ];
+
+    const P_LOW: f64 = 0.024_25;
+    const P_HIGH: f64 = 1.0 - P_LOW;
+
+    if p < P_LOW {
+        let q = (-2.0 * p.ln()).sqrt();
+        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+    } else if p <= P_HIGH {
+        let q = p - 0.5;
+        let r = q * q;
+        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
+    } else {
+        let q = (-2.0 * (1.0 - p).ln()).sqrt();
+        -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+    }
 }
 
 fn erf_approx(value: f64) -> f64 {
@@ -107,7 +433,11 @@ fn erf_approx(value: f64) -> f64 {
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::{digamma, ln_gamma, log_add_exp, unit_normal_cdf};
+    use super::{
+        digamma, discrete_quantile, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf,
+        ln_gamma, log_add_exp, regularized_beta, regularized_gamma_lower, unit_normal_cdf,
+        unit_normal_quantile,
+    };
 
     #[test]
     fn ln_gamma_matches_known_constants() {
@@ -138,6 +468,66 @@ mod tests {
         assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
+    }
+
+    #[test]
+    fn unit_normal_quantile_matches_reference_points() {
+        assert_relative_eq!(unit_normal_quantile(0.5), 0.0, epsilon = 1.0e-9);
+        assert_relative_eq!(unit_normal_quantile(0.841_344_746), 1.0, epsilon = 1.0e-6);
+        assert_relative_eq!(unit_normal_quantile(0.158_655_254), -1.0, epsilon = 1.0e-6);
+    }
+
+    #[test]
+    fn regularized_beta_matches_simple_cases() {
+        assert_relative_eq!(regularized_beta(1.0, 1.0, 0.25), 0.25, epsilon = 1.0e-14);
+        assert_relative_eq!(regularized_beta(2.0, 1.0, 0.5), 0.25, epsilon = 1.0e-14);
+        assert_relative_eq!(regularized_beta(1.0, 2.0, 0.5), 0.75, epsilon = 1.0e-14);
+    }
+
+    #[test]
+    fn regularized_gamma_lower_matches_simple_cases() {
+        assert_relative_eq!(regularized_gamma_lower(1.0, 2.0), 1.0 - (-2.0_f64).exp());
+        assert_relative_eq!(
+            regularized_gamma_lower(2.0, 2.0),
+            1.0 - 3.0 * (-2.0_f64).exp(),
+            epsilon = 1.0e-14
+        );
+        assert_eq!(regularized_gamma_lower(2.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn regularized_gamma_lower_is_bounded_near_continued_fraction_singularity() {
+        let value = regularized_gamma_lower(2.5, 1.5);
+
+        assert!(value.is_finite());
+        assert!((0.0..=1.0).contains(&value));
+    }
+
+    #[test]
+    fn discrete_quantile_returns_generalized_inverse() {
+        assert_eq!(discrete_quantile(0.1, 10, |k| (k + 1) as f64 / 10.0), 0.0);
+        assert_eq!(discrete_quantile(0.2, 10, |k| (k + 1) as f64 / 10.0), 1.0);
+        assert_eq!(discrete_quantile(1.0, 9, |k| (k + 1) as f64 / 10.0), 9.0);
+        assert!(discrete_quantile(1.0, 8, |k| (k + 1) as f64 / 10.0).is_nan());
+    }
+
+    #[test]
+    fn cdf_inversion_helpers_find_quantiles() {
+        assert_relative_eq!(
+            invert_bounded_cdf(0.25, 0.0, 1.0, |x| x),
+            0.25,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            invert_positive_cdf(0.75, |x| 1.0 - (-x).exp()),
+            -(0.25_f64).ln(),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            invert_real_cdf(0.75, unit_normal_cdf),
+            unit_normal_quantile(0.75),
+            epsilon = 1.0e-6
+        );
     }
 
     #[test]

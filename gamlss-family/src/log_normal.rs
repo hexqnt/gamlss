@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
-    Sigma,
+    Family, HasCdf, HasQuantile, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily,
+    PositiveLink, Sigma,
 };
 
-use crate::special::unit_normal_cdf;
+use crate::special::{unit_normal_cdf, unit_normal_quantile};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
@@ -187,6 +187,20 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasQuantile for LogNormal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        (theta.mu + theta.sigma * unit_normal_quantile(p)).exp()
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for LogNormal<MuLink, SigmaLink>
 where
@@ -215,7 +229,8 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
     use super::{DefaultLogNormal, LogNormalTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -327,6 +342,44 @@ mod tests {
                 )
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn log_normal_quantile_inverts_cdf() {
+        let family = DefaultLogNormal::new();
+        let theta = LogNormalTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+
+        let y = family.quantile(0.75, theta);
+
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-7);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn log_normal_cdf_and_quantile_match_statrs_reference() {
+        let family = DefaultLogNormal::new();
+        let theta = LogNormalTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+        let reference = StatrsLogNormal::new(theta.mu, theta.sigma).unwrap();
+
+        for y in [0.05, 0.25, 1.0, 2.0, 8.0] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-7);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-6
+            );
+        }
     }
 
     #[cfg(feature = "rand")]
