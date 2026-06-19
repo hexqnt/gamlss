@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, Link, Log, ModelError, Mu, ParameterParts,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, Link, Log, ModelError, Mu, ParameterParts,
     ParameterizedFamily, PositiveLink, Sigma,
 };
 
-use crate::special::{invert_real_cdf, ln_gamma, regularized_beta};
+use crate::special::{invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
 /// Student's t location-scale family с фиксированным числом степеней свободы.
 ///
@@ -15,8 +15,6 @@ use crate::special::{invert_real_cdf, ln_gamma, regularized_beta};
 /// расположения и масштаба соответственно. По умолчанию используются
 /// `Identity` для `mu` и `Log` для `sigma`.
 ///
-/// CRPS support is intentionally left out until the crate has a settled domain
-/// policy for `nu <= 1` and a dependency-light numerical strategy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = Identity, SigmaLink = Log> {
     degrees_of_freedom: f64,
@@ -139,6 +137,24 @@ where
 
         invert_real_cdf(p, |t| self.standard_cdf(t))
     }
+
+    fn standard_density(&self, t: f64) -> f64 {
+        if !t.is_finite() {
+            return 0.0;
+        }
+
+        let nu = self.degrees_of_freedom;
+        (-student_t_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()).exp()
+    }
+
+    fn standard_crps_constant(&self) -> f64 {
+        let nu = self.degrees_of_freedom;
+        let log_beta_half_nu_minus_half = ln_beta(0.5, nu - 0.5);
+        let log_beta_half_nu_half = ln_beta(0.5, 0.5 * nu);
+
+        2.0 * nu.sqrt() / (nu - 1.0)
+            * (log_beta_half_nu_minus_half - 2.0 * log_beta_half_nu_half).exp()
+    }
 }
 
 impl<MuLink, SigmaLink> Default for StudentT<MuLink, SigmaLink>
@@ -257,6 +273,31 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasCrps for StudentT<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !y.is_finite()
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || self.degrees_of_freedom <= 1.0
+        {
+            return f64::NAN;
+        }
+
+        let nu = self.degrees_of_freedom;
+        let z = (y - theta.mu) / theta.sigma;
+        let cdf = self.standard_cdf(z);
+        let density = self.standard_density(z);
+        let tail_moment = 2.0 * density * (nu + z * z) / (nu - 1.0);
+
+        theta.sigma * (z * (2.0 * cdf - 1.0) + tail_moment - self.standard_crps_constant())
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for StudentT<MuLink, SigmaLink>
 where
@@ -291,7 +332,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, StudentsT};
 
     use super::{DefaultStudentT, StudentTEta, StudentTTheta};
@@ -438,6 +479,112 @@ mod tests {
                     },
                 )
                 .is_nan()
+        );
+    }
+
+    #[test]
+    fn student_t_crps_matches_fixed_values() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                StudentTTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ),
+            0.603_830_562_748_23,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                StudentTTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ),
+            0.257_025_362_900_647_5,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn student_t_crps_scales_with_sigma() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+
+        assert_relative_eq!(
+            family.crps(
+                2.0,
+                StudentTTheta {
+                    mu: 0.0,
+                    sigma: 2.0,
+                },
+            ),
+            2.0 * family.crps(
+                1.0,
+                StudentTTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn student_t_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+
+        assert!(
+            family
+                .crps(
+                    f64::NAN,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            DefaultStudentT::try_new(1.0)
+                .unwrap()
+                .crps(
+                    1.0,
+                    StudentTTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn student_t_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultStudentT::try_new(5.0).unwrap();
+
+        assert!(
+            family.crps(
+                1.0,
+                StudentTTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+            ) >= 0.0
         );
     }
 

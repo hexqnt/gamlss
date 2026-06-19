@@ -28,6 +28,15 @@ pub(crate) fn ln_gamma(value: f64) -> f64 {
     0.5 * (2.0 * std::f64::consts::PI).ln() + (shifted + 0.5) * t.ln() - t + x.ln()
 }
 
+/// Natural logarithm of the beta function for positive finite arguments.
+pub(crate) fn ln_beta(a: f64, b: f64) -> f64 {
+    if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() {
+        return f64::NAN;
+    }
+
+    ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
+}
+
 /// Returns `true` for finite counts represented on the shared `f64` observation path.
 pub(crate) fn is_nonnegative_integer(value: f64) -> bool {
     value >= 0.0 && value.is_finite() && value.fract() == 0.0
@@ -94,7 +103,7 @@ pub(crate) fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
         return 1.0;
     }
 
-    let log_front = ln_gamma(a + b) - ln_gamma(a) - ln_gamma(b) + a * x.ln() + b * (1.0 - x).ln();
+    let log_front = -ln_beta(a, b) + a * x.ln() + b * (1.0 - x).ln();
     let front = log_front.exp();
 
     if x < (a + 1.0) / (a + b + 2.0) {
@@ -295,6 +304,96 @@ where
     invert_bounded_cdf(p, low, high, cdf)
 }
 
+pub(crate) fn integrate_finite<F>(lower: f64, upper: f64, mut function: F) -> f64
+where
+    F: FnMut(f64) -> f64,
+{
+    const EPSILON: f64 = 1.0e-10;
+    const MAX_DEPTH: u32 = 24;
+
+    if !lower.is_finite() || !upper.is_finite() || lower > upper {
+        return f64::NAN;
+    }
+    if lower == upper {
+        return 0.0;
+    }
+
+    let mid = 0.5 * (lower + upper);
+    let f_lower = function(lower);
+    let f_mid = function(mid);
+    let f_upper = function(upper);
+    if !f_lower.is_finite() || !f_mid.is_finite() || !f_upper.is_finite() {
+        return f64::NAN;
+    }
+
+    let whole = simpson(lower, upper, f_lower, f_mid, f_upper);
+    adaptive_simpson(
+        &mut function,
+        lower,
+        upper,
+        [f_lower, f_mid, f_upper],
+        whole,
+        EPSILON,
+        MAX_DEPTH,
+    )
+}
+
+fn adaptive_simpson<F>(
+    function: &mut F,
+    lower: f64,
+    upper: f64,
+    values: [f64; 3],
+    whole: f64,
+    epsilon: f64,
+    depth: u32,
+) -> f64
+where
+    F: FnMut(f64) -> f64,
+{
+    let [f_lower, f_mid, f_upper] = values;
+    let mid = 0.5 * (lower + upper);
+    let left_mid = 0.5 * (lower + mid);
+    let right_mid = 0.5 * (mid + upper);
+    let f_left_mid = function(left_mid);
+    let f_right_mid = function(right_mid);
+    if !f_left_mid.is_finite() || !f_right_mid.is_finite() {
+        return f64::NAN;
+    }
+
+    let left = simpson(lower, mid, f_lower, f_left_mid, f_mid);
+    let right = simpson(mid, upper, f_mid, f_right_mid, f_upper);
+    let delta = left + right - whole;
+    if depth == 0 || delta.abs() <= 15.0 * epsilon {
+        return left + right + delta / 15.0;
+    }
+
+    let left_integral = adaptive_simpson(
+        function,
+        lower,
+        mid,
+        [f_lower, f_left_mid, f_mid],
+        left,
+        0.5 * epsilon,
+        depth - 1,
+    );
+    let right_integral = adaptive_simpson(
+        function,
+        mid,
+        upper,
+        [f_mid, f_right_mid, f_upper],
+        right,
+        0.5 * epsilon,
+        depth - 1,
+    );
+
+    left_integral + right_integral
+}
+
+#[inline(always)]
+fn simpson(lower: f64, upper: f64, f_lower: f64, f_mid: f64, f_upper: f64) -> f64 {
+    (upper - lower) * (f_lower + 4.0 * f_mid + f_upper) / 6.0
+}
+
 fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
     const MAX_ITERATIONS: usize = 200;
     const EPSILON: f64 = 3.0e-14;
@@ -434,9 +533,9 @@ mod tests {
     use approx::assert_relative_eq;
 
     use super::{
-        digamma, discrete_quantile, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf,
-        ln_gamma, log_add_exp, regularized_beta, regularized_gamma_lower, unit_normal_cdf,
-        unit_normal_quantile,
+        digamma, discrete_quantile, integrate_finite, invert_bounded_cdf, invert_positive_cdf,
+        invert_real_cdf, ln_beta, ln_gamma, log_add_exp, regularized_beta, regularized_gamma_lower,
+        unit_normal_cdf, unit_normal_quantile,
     };
 
     #[test]
@@ -448,6 +547,17 @@ mod tests {
             epsilon = 1.0e-12
         );
         assert_relative_eq!(ln_gamma(5.0), 24.0_f64.ln(), epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn ln_beta_matches_known_constants() {
+        assert_relative_eq!(ln_beta(1.0, 1.0), 0.0, epsilon = 1.0e-12);
+        assert_relative_eq!(
+            ln_beta(0.5, 0.5),
+            std::f64::consts::PI.ln(),
+            epsilon = 1.0e-12
+        );
+        assert!(ln_beta(0.0, 1.0).is_nan());
     }
 
     #[test]
@@ -528,6 +638,17 @@ mod tests {
             unit_normal_quantile(0.75),
             epsilon = 1.0e-6
         );
+    }
+
+    #[test]
+    fn integrate_finite_matches_polynomial_and_handles_invalid_bounds() {
+        assert_relative_eq!(
+            integrate_finite(0.0, 1.0, |x| x * x),
+            1.0 / 3.0,
+            epsilon = 1.0e-10
+        );
+        assert_eq!(integrate_finite(2.0, 2.0, |_| 1.0), 0.0);
+        assert!(integrate_finite(2.0, 1.0, |_| 1.0).is_nan());
     }
 
     #[test]

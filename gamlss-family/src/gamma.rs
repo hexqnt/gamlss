@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Rate,
-    Shape,
+    Family, HasCdf, HasCrps, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink,
+    Rate, Shape,
 };
 
-use crate::special::{digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower};
+use crate::special::{digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower};
 
 /// Gamma family parameterized by positive shape and rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,6 +204,31 @@ where
     }
 }
 
+impl<ShapeLink, RateLink> HasCrps for Gamma<ShapeLink, RateLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if y < 0.0
+            || !y.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.rate <= 0.0
+            || !theta.rate.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let f_shape = regularized_gamma_lower(theta.shape, theta.rate * y);
+        let f_next_shape = regularized_gamma_lower(theta.shape + 1.0, theta.rate * y);
+        let mean = theta.shape / theta.rate;
+        let beta_term = ln_beta(theta.shape + 0.5, 0.5).exp() / (std::f64::consts::PI * theta.rate);
+
+        y * (2.0 * f_shape - 1.0) - mean * (2.0 * f_next_shape - 1.0) - beta_term
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ShapeLink, RateLink> CanSimulate<Rng> for Gamma<ShapeLink, RateLink>
 where
@@ -236,7 +261,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile, Link, Log};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Link, Log};
     use statrs::distribution::{ContinuousCDF, Gamma as StatrsGamma};
 
     use super::{DefaultGamma, GammaTheta};
@@ -315,6 +340,77 @@ mod tests {
                     },
                 )
                 .is_nan()
+        );
+    }
+
+    #[test]
+    fn gamma_crps_matches_fixed_values() {
+        let family = DefaultGamma::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                GammaTheta {
+                    shape: 1.0,
+                    rate: 2.0,
+                },
+            ),
+            0.385_335_283_236_612_7,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                GammaTheta {
+                    shape: 1.0,
+                    rate: 2.0,
+                },
+            ),
+            0.25,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn gamma_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultGamma::new();
+
+        assert!(
+            family
+                .crps(
+                    -1.0,
+                    GammaTheta {
+                        shape: 2.0,
+                        rate: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    GammaTheta {
+                        shape: 0.0,
+                        rate: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn gamma_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultGamma::new();
+
+        assert!(
+            family.crps(
+                1.0,
+                GammaTheta {
+                    shape: 2.0,
+                    rate: 3.0,
+                },
+            ) >= 0.0
         );
     }
 

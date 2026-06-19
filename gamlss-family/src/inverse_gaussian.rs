@@ -3,10 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
+    Family, HasCdf, HasCrps, HasQuantile, Log, Mu, ParameterParts, ParameterizedFamily,
+    PositiveLink, Shape,
 };
 
-use crate::special::{invert_positive_cdf, unit_normal_cdf};
+use crate::special::{integrate_finite, invert_positive_cdf, unit_normal_cdf};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
@@ -218,6 +219,41 @@ where
     }
 }
 
+impl<MuLink, ShapeLink> HasCrps for InverseGaussian<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if y < 0.0
+            || !y.is_finite()
+            || theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let left = integrate_finite(0.0, y, |x| {
+            let cdf = self.cdf(x, theta);
+            cdf * cdf
+        });
+        let right = integrate_finite(0.0, 1.0, |u| {
+            if u == 1.0 {
+                return 0.0;
+            }
+
+            let one_minus_u = 1.0 - u;
+            let x = y + u / one_minus_u;
+            let survival = 1.0 - self.cdf(x, theta);
+            survival * survival / (one_minus_u * one_minus_u)
+        });
+
+        left + right
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for InverseGaussian<MuLink, ShapeLink>
 where
@@ -250,7 +286,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{DefaultInverseGaussian, InverseGaussianTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -385,6 +421,77 @@ mod tests {
                     },
                 )
                 .is_nan()
+        );
+    }
+
+    #[test]
+    fn inverse_gaussian_crps_matches_fixed_values() {
+        let family = DefaultInverseGaussian::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                InverseGaussianTheta {
+                    mu: 1.0,
+                    shape: 1.0,
+                },
+            ),
+            0.215_550_872_022_949_15,
+            epsilon = 1.0e-7
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                InverseGaussianTheta {
+                    mu: 1.0,
+                    shape: 1.0,
+                },
+            ),
+            0.543_142_867_130_266_3,
+            epsilon = 1.0e-6
+        );
+    }
+
+    #[test]
+    fn inverse_gaussian_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultInverseGaussian::new();
+
+        assert!(
+            family
+                .crps(
+                    -1.0,
+                    InverseGaussianTheta {
+                        mu: 1.0,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    InverseGaussianTheta {
+                        mu: 0.0,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn inverse_gaussian_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultInverseGaussian::new();
+
+        assert!(
+            family.crps(
+                1.0,
+                InverseGaussianTheta {
+                    mu: 1.0,
+                    shape: 1.0,
+                },
+            ) >= 0.0
         );
     }
 

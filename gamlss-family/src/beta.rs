@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
-    Precision, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, Log, Logit, Mu, ParameterParts, ParameterizedFamily,
+    PositiveLink, Precision, UnitIntervalLink,
 };
 
-use crate::special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
+use crate::special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
 ///
@@ -231,6 +231,36 @@ where
     }
 }
 
+impl<MuLink, PrecisionLink> HasCrps for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&y)
+            || !y.is_finite()
+            || theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let left = integrate_finite(0.0, y, |x| {
+            let cdf = self.cdf(x, theta);
+            cdf * cdf
+        });
+        let right = integrate_finite(y, 1.0, |x| {
+            let survival = 1.0 - self.cdf(x, theta);
+            survival * survival
+        });
+
+        left + right
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, PrecisionLink> CanSimulate<Rng> for Beta<MuLink, PrecisionLink>
 where
@@ -265,7 +295,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{Beta as StatrsBeta, ContinuousCDF};
 
     use super::{BetaTheta, DefaultBeta};
@@ -348,6 +378,77 @@ mod tests {
                     },
                 )
                 .is_nan()
+        );
+    }
+
+    #[test]
+    fn beta_crps_matches_fixed_values() {
+        let family = DefaultBeta::new();
+
+        assert_relative_eq!(
+            family.crps(
+                0.4,
+                BetaTheta {
+                    mu: 0.5,
+                    precision: 2.0,
+                },
+            ),
+            0.093_333_333_333_333_34,
+            epsilon = 1.0e-10
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                BetaTheta {
+                    mu: 0.5,
+                    precision: 2.0,
+                },
+            ),
+            0.333_333_333_333_333_3,
+            epsilon = 1.0e-10
+        );
+    }
+
+    #[test]
+    fn beta_crps_returns_nan_for_invalid_domains() {
+        let family = DefaultBeta::new();
+
+        assert!(
+            family
+                .crps(
+                    -0.1,
+                    BetaTheta {
+                        mu: 0.4,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    0.4,
+                    BetaTheta {
+                        mu: 1.0,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn beta_crps_is_nonnegative_for_valid_domains() {
+        let family = DefaultBeta::new();
+
+        assert!(
+            family.crps(
+                0.4,
+                BetaTheta {
+                    mu: 0.4,
+                    precision: 3.0,
+                },
+            ) >= 0.0
         );
     }
 
