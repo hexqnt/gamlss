@@ -16,7 +16,7 @@ Type-driven Rust crates for GAMLSS-style modeling.
 
 ```toml
 [dependencies]
-gamlss = "0.2"
+gamlss = "*"
 ```
 
 `gamlss` — batteries-included фасад. Основной и наиболее стабильный путь сейчас
