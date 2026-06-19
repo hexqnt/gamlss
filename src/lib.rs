@@ -55,9 +55,9 @@
 //!     &weights,
 //! )?;
 //!
-//! let theta = vec![0.0, 0.5, -0.2];
-//! let fitted = model.predict_theta(&theta)?;
-//! assert_eq!(fitted.len(), y.len());
+//! let parameters = model.initial_parameters()?;
+//! let fitted_theta = model.predict_theta(&parameters)?;
+//! assert_eq!(fitted_theta.len(), y.len());
 //! # Ok::<_, gamlss::core::ModelError>(())
 //! ```
 //!

@@ -81,8 +81,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .configure(|state| state.param(initial_parameters).max_iters(100))
         .run()?;
 
-    // Извлекаем финальные параметры и считаем норму градиента для проверки optimality.
-    let theta = result
+    // Извлекаем финальные optimizer parameters и считаем норму градиента для проверки optimality.
+    let parameters = result
         .state
         .get_best_param()
         .or_else(|| result.state.get_param())
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .problem
         .expect("argmin returns the original problem");
     let mut grad = vec![0.0; objective.dim()];
-    let loss = objective.value_gradient(theta, &mut grad)?;
+    let loss = objective.value_gradient(parameters, &mut grad)?;
 
     println!(
         "gas_like argmin l-bfgs: loss={loss:.6}, iterations={}, grad_norm={:.6}",
@@ -130,11 +130,11 @@ impl<O> ArgminObjective<O> {
         self.objective.borrow().dim()
     }
 
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, O::Error>
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, O::Error>
     where
         O: Objective,
     {
-        self.objective.get_mut().value_gradient(theta, grad)
+        self.objective.get_mut().value_gradient(parameters, grad)
     }
 }
 

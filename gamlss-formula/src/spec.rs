@@ -220,24 +220,24 @@ macro_rules! define_spec {
             /// Predicts natural-scale distribution parameters with reusable prediction design.
             pub fn predict_theta_with_design(
                 &self,
-                theta: &[f64],
+                parameters: &[f64],
                 design: &PredictionDesign<$blocks>,
             ) -> Result<Vec<<$family as gamlss_core::Family>::Theta>, FormulaError>
             {
-                Ok(self.model().predict_theta_with_blocks(theta, design.blocks())?)
+                Ok(self.model().predict_theta_with_blocks(parameters, design.blocks())?)
             }
 
             /// Predicts natural-scale distribution parameters for new rows.
             pub fn predict_theta<D>(
                 &self,
-                theta: &[f64],
+                parameters: &[f64],
                 data: &D,
             ) -> Result<Vec<<$family as gamlss_core::Family>::Theta>, FormulaError>
             where
                 D: DataView + ?Sized,
             {
                 let design = self.prediction_design(data)?;
-                self.predict_theta_with_design(theta, &design)
+                self.predict_theta_with_design(parameters, &design)
             }
         }
     };

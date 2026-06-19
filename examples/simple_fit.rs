@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let diagnostics = model.training_diagnostics(&parameters)?;
     let pit = model.pit_values(&parameters)?;
     let residuals = model.quantile_residuals(&parameters)?;
-    let coefficients = model.unpack_theta(&parameters)?;
+    let coefficients = model.unpack_parameters(&parameters)?;
     let mu_hat = coefficients
         .coefficients_of::<Mu>()
         .and_then(|values| values.first().copied())

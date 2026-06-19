@@ -98,7 +98,7 @@ impl ParameterLayout {
 
 /// Коэффициенты одного распакованного параметрического блока.
 ///
-/// Возвращается методом [`crate::Gamlss::unpack_theta`] для human-readable
+/// Возвращается методом [`crate::Gamlss::unpack_parameters`] для human-readable
 /// представления плоского beta-вектора.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterCoefficients {
@@ -108,17 +108,17 @@ pub struct ParameterCoefficients {
     pub coefficients: Vec<f64>,
 }
 
-/// Человекочитаемое представление плоского beta-вектора.
+/// Человекочитаемое представление плоского optimizer-parameter вектора.
 ///
 /// Содержит по одному [`ParameterCoefficients`] для каждого параметра
 /// распределения в порядке модели.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnpackedTheta {
+pub struct UnpackedParameters {
     /// Parameter blocks in model order.
     pub blocks: Vec<ParameterCoefficients>,
 }
 
-impl UnpackedTheta {
+impl UnpackedParameters {
     /// Returns an unpacked coefficient block by parameter name.
     #[must_use]
     #[inline]
@@ -154,7 +154,7 @@ impl UnpackedTheta {
     }
 }
 
-/// Training diagnostics for a candidate theta vector.
+/// Training diagnostics for a candidate optimizer-parameter vector.
 ///
 /// Содержит значения objective, scaled training negative log-likelihood (без
 /// штрафов), суммарный штраф, норму градиента и число не-finite компонент

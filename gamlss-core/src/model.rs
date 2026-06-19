@@ -10,7 +10,7 @@ mod observation;
 mod workspace;
 
 pub use layout::{
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
+    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
 pub use observation::ObservationView;
 pub use workspace::GradientWorkspace;
@@ -341,6 +341,10 @@ where
     /// The returned vector is the flat predictor-coefficient vector, commonly
     /// denoted `beta`, laid out according to this model's parameter blocks. It
     /// is not the natural-scale distribution parameter `theta`.
+    ///
+    /// Currently this falls back to zero components for unsupported predictor
+    /// blocks or non-finite family starts. Future projection-based
+    /// initializers may return recoverable errors.
     pub fn initial_parameters(&self) -> Result<Vec<f64>, ModelError> {
         Ok(self.blocks.initial_parameters(&self.family, &self.obs))
     }
@@ -372,7 +376,7 @@ where
         self.blocks.visit_block_ranges(visit);
     }
 
-    /// Layout of named parameter blocks inside theta.
+    /// Layout of named parameter blocks inside the flat optimizer-parameter vector.
     pub fn parameter_layout(&self) -> ParameterLayout {
         self.blocks.parameter_layout()
     }
@@ -405,7 +409,7 @@ where
     where
         P: ParameterName,
     {
-        validate_len("theta", full_beta.len(), self.nparams())?;
+        validate_len("parameters", full_beta.len(), self.nparams())?;
         let range = self
             .blocks
             .parameter_slice_of::<P>()
@@ -413,9 +417,9 @@ where
         Ok(BlockObjective::new(self, full_beta, range))
     }
 
-    /// Unpacks a flat theta vector into named coefficient blocks.
-    pub fn unpack_theta(&self, theta: &[f64]) -> Result<UnpackedTheta, ModelError> {
-        validate_len("theta", theta.len(), self.nparams())?;
+    /// Unpacks a flat optimizer-parameter vector into named coefficient blocks.
+    pub fn unpack_parameters(&self, parameters: &[f64]) -> Result<UnpackedParameters, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams())?;
 
         let blocks = self
             .parameter_layout()
@@ -423,23 +427,26 @@ where
             .iter()
             .map(|slice| ParameterCoefficients {
                 name: slice.name,
-                coefficients: theta[slice.range.clone()].to_vec(),
+                coefficients: parameters[slice.range.clone()].to_vec(),
             })
             .collect();
 
-        Ok(UnpackedTheta { blocks })
+        Ok(UnpackedParameters { blocks })
     }
 
-    /// Computes training diagnostics for a candidate theta vector.
-    pub fn training_diagnostics(&self, theta: &[f64]) -> Result<TrainingDiagnostics, ModelError> {
-        validate_len("theta", theta.len(), self.nparams())?;
+    /// Computes training diagnostics for a candidate optimizer-parameter vector.
+    pub fn training_diagnostics(
+        &self,
+        parameters: &[f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams())?;
 
         let likelihood_multiplier = self.likelihood_multiplier();
         let train_nll =
-            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, theta);
-        let penalty = self.blocks.penalty_value(theta);
+            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, parameters);
+        let penalty = self.blocks.penalty_value(parameters);
         let mut grad = vec![0.0; self.nparams()];
-        self.try_gradient_into(theta, &mut grad)?;
+        self.try_gradient_into(parameters, &mut grad)?;
         let (finite_gradient_sum_squares, nonfinite_gradient_count) =
             grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
                 if value.is_finite() {
@@ -460,42 +467,42 @@ where
     }
 
     /// Predicts link-scale distribution predictors for one training row.
-    pub fn predict_eta_row(&self, theta: &[f64], row: usize) -> Result<F::Eta, ModelError>
+    pub fn predict_eta_row(&self, parameters: &[f64], row: usize) -> Result<F::Eta, ModelError>
     where
         F: Family,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         validate_row(row, self.nobs())?;
-        Ok(self.blocks.eta_row(theta, row))
+        Ok(self.blocks.eta_row(parameters, row))
     }
 
     /// Predicts natural-scale distribution parameters for one training row.
-    pub fn predict_theta_row(&self, theta: &[f64], row: usize) -> Result<F::Theta, ModelError>
+    pub fn predict_theta_row(&self, parameters: &[f64], row: usize) -> Result<F::Theta, ModelError>
     where
         F: Family,
     {
-        Ok(self.family.theta(self.predict_eta_row(theta, row)?))
+        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
     }
 
     /// Predicts link-scale distribution predictors for all training rows.
-    pub fn predict_eta(&self, theta: &[f64]) -> Result<Vec<F::Eta>, ModelError>
+    pub fn predict_eta(&self, parameters: &[f64]) -> Result<Vec<F::Eta>, ModelError>
     where
         F: Family,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         Ok((0..self.nobs())
-            .map(|row| self.blocks.eta_row(theta, row))
+            .map(|row| self.blocks.eta_row(parameters, row))
             .collect())
     }
 
     /// Predicts natural-scale distribution parameters for all training rows.
-    pub fn predict_theta(&self, theta: &[f64]) -> Result<Vec<F::Theta>, ModelError>
+    pub fn predict_theta(&self, parameters: &[f64]) -> Result<Vec<F::Theta>, ModelError>
     where
         F: Family,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         Ok((0..self.nobs())
-            .map(|row| self.family.theta(self.blocks.eta_row(theta, row)))
+            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
             .collect())
     }
 
@@ -503,12 +510,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if `theta` has the wrong length, if `blocks` do not
+    /// Returns an error if `parameters` has the wrong length, if `blocks` do not
     /// match this model's parameter layout, or if `row` is out of bounds for
     /// the supplied prediction blocks.
     pub fn predict_eta_row_with_blocks<PBlocks>(
         &self,
-        theta: &[f64],
+        parameters: &[f64],
         blocks: &PBlocks,
         row: usize,
     ) -> Result<F::Eta, ModelError>
@@ -516,22 +523,22 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         validate_prediction_blocks(&self.blocks, blocks)?;
         validate_row(row, blocks.nrows())?;
-        Ok(blocks.eta_row(theta, row))
+        Ok(blocks.eta_row(parameters, row))
     }
 
     /// Predicts natural-scale distribution parameters for one row from compatible prediction blocks.
     ///
     /// # Errors
     ///
-    /// Returns an error if `theta` has the wrong length, if `blocks` do not
+    /// Returns an error if `parameters` has the wrong length, if `blocks` do not
     /// match this model's parameter layout, or if `row` is out of bounds for
     /// the supplied prediction blocks.
     pub fn predict_theta_row_with_blocks<PBlocks>(
         &self,
-        theta: &[f64],
+        parameters: &[f64],
         blocks: &PBlocks,
         row: usize,
     ) -> Result<F::Theta, ModelError>
@@ -541,28 +548,28 @@ where
     {
         Ok(self
             .family
-            .theta(self.predict_eta_row_with_blocks(theta, blocks, row)?))
+            .theta(self.predict_eta_row_with_blocks(parameters, blocks, row)?))
     }
 
     /// Predicts link-scale distribution predictors for all rows in compatible prediction blocks.
     ///
     /// # Errors
     ///
-    /// Returns an error if `theta` has the wrong length or if `blocks` do not
+    /// Returns an error if `parameters` has the wrong length or if `blocks` do not
     /// match this model's parameter layout.
     pub fn predict_eta_with_blocks<PBlocks>(
         &self,
-        theta: &[f64],
+        parameters: &[f64],
         blocks: &PBlocks,
     ) -> Result<Vec<F::Eta>, ModelError>
     where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         validate_prediction_blocks(&self.blocks, blocks)?;
         Ok((0..blocks.nrows())
-            .map(|row| blocks.eta_row(theta, row))
+            .map(|row| blocks.eta_row(parameters, row))
             .collect())
     }
 
@@ -570,27 +577,27 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if `theta` has the wrong length or if `blocks` do not
+    /// Returns an error if `parameters` has the wrong length or if `blocks` do not
     /// match this model's parameter layout.
     pub fn predict_theta_with_blocks<PBlocks>(
         &self,
-        theta: &[f64],
+        parameters: &[f64],
         blocks: &PBlocks,
     ) -> Result<Vec<F::Theta>, ModelError>
     where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("theta", theta.len(), self.nparams())?;
+        validate_len("parameters", parameters.len(), self.nparams())?;
         validate_prediction_blocks(&self.blocks, blocks)?;
         Ok((0..blocks.nrows())
-            .map(|row| self.family.theta(blocks.eta_row(theta, row)))
+            .map(|row| self.family.theta(blocks.eta_row(parameters, row)))
             .collect())
     }
 
     /// Проверяет длину beta и вычисляет objective.
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
-        validate_len("theta", beta.len(), self.nparams())?;
+        validate_len("parameters", beta.len(), self.nparams())?;
 
         let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
         let penalty = self.blocks.penalty_value(beta);
@@ -770,7 +777,7 @@ where
     where
         P: ParameterName,
     {
-        validate_len("theta", full_beta.len(), self.dim())?;
+        validate_len("parameters", full_beta.len(), self.dim())?;
         let range = self
             .model
             .blocks
@@ -800,16 +807,16 @@ where
         self.nparams()
     }
 
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        self.try_value(theta)
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        self.try_value(parameters)
     }
 
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.try_value_gradient_into(theta, grad).map(|_| ())
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.try_value_gradient_into(parameters, grad).map(|_| ())
     }
 
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        self.try_value_gradient_into(theta, grad)
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.try_value_gradient_into(parameters, grad)
     }
 }
 
@@ -825,19 +832,19 @@ where
         self.model.nparams()
     }
 
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        self.model.try_value(theta)
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        self.model.try_value(parameters)
     }
 
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
         self.model
-            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
+            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)
             .map(|_| ())
     }
 
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
         self.model
-            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
+            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)
     }
 }
 
@@ -852,18 +859,18 @@ where
         self.objective.dim()
     }
 
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        Ok(self.objective.value(theta)? + self.penalties.value(theta))
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        Ok(self.objective.value(parameters)? + self.penalties.value(parameters))
     }
 
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.value_gradient(theta, grad).map(|_| ())
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(parameters, grad).map(|_| ())
     }
 
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        let mut value = self.objective.value_gradient(theta, grad)?;
-        value += self.penalties.value(theta);
-        self.penalties.add_gradient(theta, grad);
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        let mut value = self.objective.value_gradient(parameters, grad)?;
+        value += self.penalties.value(parameters);
+        self.penalties.add_gradient(parameters, grad);
         Ok(value)
     }
 }
@@ -984,9 +991,12 @@ macro_rules! impl_gamlss_blocks {
                 let mut beta = vec![0.0; 0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+];
                 $(
                     let $block = &self.$idx;
-                    $block
-                        .x
-                        .set_constant_start(eta.part($idx), &mut beta[$block.range()]);
+                    let value = eta.part($idx);
+                    if value.is_finite() {
+                        $block
+                            .x
+                            .set_constant_start(value, &mut beta[$block.range()]);
+                    }
                 )+
                 beta
             }
@@ -1314,7 +1324,7 @@ fn validate_beta_and_gradient_len(
     beta: &[f64],
     grad: &[f64],
 ) -> Result<(), ModelError> {
-    validate_len("theta", beta.len(), expected)?;
+    validate_len("parameters", beta.len(), expected)?;
     validate_len("gradient", grad.len(), expected)
 }
 
@@ -1352,9 +1362,9 @@ mod tests {
 
     use crate::{
         DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, ParameterBlock, ParameterBlocks,
-        ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
-        RidgePenalty, Sigma, SumBlock, Tau,
+        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock,
+        ParameterBlocks, ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily,
+        PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1449,6 +1459,40 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct NonFiniteInitializingLocation;
+
+    impl Family for NonFiniteInitializingLocation {
+        type Eta = f64;
+        type Theta = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            0.5 * (theta - y) * (theta - y)
+        }
+
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            (self.nll(y, eta), eta - y)
+        }
+    }
+
+    impl ParameterizedFamily<1> for NonFiniteInitializingLocation {
+        type Params = (Mu,);
+        type Links = (Identity,);
+
+        fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            f64::NAN
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct ShiftedObservations<'a> {
         y: &'a [f64],
@@ -1531,6 +1575,30 @@ mod tests {
         let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
 
         assert_eq!(model.initial_parameters().unwrap(), vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn initial_parameters_account_for_sum_block_constant_baselines() {
+        let y = vec![1.0, 2.0, 3.0];
+        let offset = OffsetBlock::new(y.len(), 10.0);
+        let intercept = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
+        let predictor = SumBlock::new((offset, intercept));
+        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let beta = model.initial_parameters().unwrap();
+
+        assert_eq!(beta, vec![-8.0]);
+        assert_eq!(model.predict_eta(&beta).unwrap(), vec![2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn initial_parameters_ignore_nonfinite_family_starts() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(NonFiniteInitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
     }
 
     #[test]
@@ -1687,7 +1755,7 @@ mod tests {
     }
 
     #[test]
-    fn prediction_api_rejects_invalid_theta_length_and_row() {
+    fn prediction_api_rejects_invalid_parameter_length_and_row() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
@@ -2370,13 +2438,13 @@ mod tests {
             2,
         );
         let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
-        let theta = vec![1.5, 0.5, -0.5];
+        let parameters = vec![1.5, 0.5, -0.5];
         let layout = model.parameter_layout();
-        let unpacked = model.unpack_theta(&theta).unwrap();
+        let unpacked = model.unpack_parameters(&parameters).unwrap();
 
         assert_eq!(layout.len(), 3);
         assert!(!layout.is_empty());
-        assert_eq!(layout.ncoefficients(), theta.len());
+        assert_eq!(layout.ncoefficients(), parameters.len());
         assert_eq!(layout.slice("mu").unwrap(), 0..1);
         assert_eq!(layout.slice_of::<Mu>().unwrap(), 0..1);
         assert_eq!(layout.slice("sigma").unwrap(), 1..2);
@@ -2447,8 +2515,8 @@ mod tests {
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
-        let theta = vec![1.5];
-        let diagnostics = model.training_diagnostics(&theta).unwrap();
+        let parameters = vec![1.5];
+        let diagnostics = model.training_diagnostics(&parameters).unwrap();
 
         assert_relative_eq!(diagnostics.train_nll, 0.25);
         assert_relative_eq!(diagnostics.penalty, 1.125);

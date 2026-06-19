@@ -21,19 +21,19 @@ pub trait Objective {
     /// Dimension of the flat parameter vector accepted by this objective.
     fn dim(&self) -> usize;
 
-    /// Objective value at `theta`.
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error>;
+    /// Objective value at `parameters`.
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error>;
 
-    /// Computes objective value and gradient at `theta`.
+    /// Computes objective value and gradient at `parameters`.
     ///
     /// Implementations overwrite the full gradient buffer after validating
     /// `grad.len() == dim()`. They should return an error instead of panicking
     /// for ordinary caller mistakes such as wrong vector length.
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error>;
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error>;
 
-    /// Writes the gradient at `theta` into preallocated `grad`.
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.value_gradient(theta, grad).map(|_| ())
+    /// Writes the gradient at `parameters` into preallocated `grad`.
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(parameters, grad).map(|_| ())
     }
 }
 
@@ -98,7 +98,7 @@ where
     }
 
     fn value(&mut self, block_beta: &[f64]) -> Result<f64, Self::Error> {
-        validate_block_len("theta", block_beta.len(), self.block.len())?;
+        validate_block_len("parameters", block_beta.len(), self.block.len())?;
 
         self.update_block_beta(block_beta);
         self.full_objective.value(&self.working_beta)
@@ -109,7 +109,7 @@ where
     }
 
     fn value_gradient(&mut self, block_beta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        validate_block_len("theta", block_beta.len(), self.block.len())?;
+        validate_block_len("parameters", block_beta.len(), self.block.len())?;
         validate_block_len("gradient", grad.len(), self.block.len())?;
 
         self.update_block_beta(block_beta);
@@ -152,13 +152,17 @@ mod tests {
             self.dim
         }
 
-        fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-            Ok(0.5 * theta.iter().map(|value| value * value).sum::<f64>())
+        fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+            Ok(0.5 * parameters.iter().map(|value| value * value).sum::<f64>())
         }
 
-        fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-            grad.copy_from_slice(theta);
-            self.value(theta)
+        fn value_gradient(
+            &mut self,
+            parameters: &[f64],
+            grad: &mut [f64],
+        ) -> Result<f64, Self::Error> {
+            grad.copy_from_slice(parameters);
+            self.value(parameters)
         }
     }
 

@@ -60,8 +60,8 @@ pub use link::{
 };
 pub use model::{
     Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale, ObservationView,
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
-    WithGlobalPenalties, WorkspaceGamlss,
+    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics,
+    UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -92,6 +92,6 @@ pub mod prelude {
         ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
         Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape,
         Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
-        UnpackedTheta, WithGlobalPenalties, WorkspaceGamlss,
+        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
     };
 }

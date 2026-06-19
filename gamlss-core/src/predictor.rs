@@ -28,6 +28,16 @@ pub trait PredictorBlock {
     fn set_constant_start(&self, _value: f64, _beta: &mut [f64]) -> bool {
         false
     }
+    /// Constant contribution when all local coefficients are zero.
+    ///
+    /// Returns `None` when the zero-coefficient contribution is not constant
+    /// across rows or cannot be determined cheaply. [`SumBlock`] uses this to
+    /// account for offsets and transformed scalar baselines when constructing
+    /// constant starts.
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        None
+    }
     /// Adds the gradient contribution implied by `scores` into `grad`.
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
     /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
@@ -129,6 +139,11 @@ where
         grad: &mut [f64],
     ) {
         self.x.add_weighted_t_mul_vec(scores, multiplier, grad);
+    }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
     }
 }
 
@@ -265,6 +280,12 @@ where
 
         grad[0] = weighted_sum(scores, multiplier).mul_add(T::derivative(beta[0]), grad[0]);
     }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let value = T::value(0.0);
+        value.is_finite().then_some(value)
+    }
 }
 
 /// Convenience predictor block alias for `softplus(beta)`.
@@ -341,6 +362,12 @@ impl PredictorBlock for FloorSoftplusScalar {
         grad[0] = weighted_sum(scores, multiplier)
             .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let value = self.floor + Softplus::inverse(0.0);
+        value.is_finite().then_some(value)
+    }
 }
 
 /// Zero-coefficient constant predictor block.
@@ -382,6 +409,11 @@ impl PredictorBlock for OffsetBlock {
 
     #[inline(always)]
     fn add_weighted_gradient(&self, _: &[f64], _: &[f64], _: &[f64], _: &mut [f64]) {}
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        self.value.is_finite().then_some(self.value)
+    }
 }
 
 /// Product/interacted predictor block: `multiplier[row] * inner.eta_row(row)`.
@@ -449,6 +481,22 @@ where
                 actual_rows: self.multiplier.len(),
             })
         }
+    }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let inner = self.inner.zero_beta_constant_contribution()?;
+        if inner == 0.0 {
+            return Some(0.0);
+        }
+
+        let first = self.multiplier.first().copied()?;
+        if !first.is_finite() || !self.multiplier.iter().all(|value| *value == first) {
+            return None;
+        }
+
+        let value = first * inner;
+        value.is_finite().then_some(value)
     }
 }
 
@@ -529,17 +577,34 @@ macro_rules! impl_sum_block {
 
             #[inline]
             fn set_constant_start(&self, value: f64, beta: &mut [f64]) -> bool {
+                let baselines = [$(self.terms.$idx.zero_beta_constant_contribution(),)+];
                 let mut start = 0;
                 $(
                     let $var = &self.terms.$idx;
                     let end = start + $var.nparams();
-                    if $var.set_constant_start(value, &mut beta[start..end]) {
-                        return true;
+                    let other_baseline = baselines
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != $idx)
+                        .try_fold(0.0, |sum, (_, baseline)| baseline.map(|value| sum + value));
+                    if let Some(other_baseline) = other_baseline {
+                        if $var.set_constant_start(value - other_baseline, &mut beta[start..end]) {
+                            return true;
+                        }
                     }
                     start = end;
                 )+
                 let _ = start;
                 false
+            }
+
+            #[inline]
+            fn zero_beta_constant_contribution(&self) -> Option<f64> {
+                let mut contribution = 0.0;
+                $(
+                    contribution += self.terms.$idx.zero_beta_constant_contribution()?;
+                )+
+                contribution.is_finite().then_some(contribution)
             }
 
             #[inline]

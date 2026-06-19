@@ -14,6 +14,9 @@ pub trait Link<S> {
 /// This is the opposite direction of [`Link::inverse`]. It is deliberately
 /// used for constructing robust starts and may clamp boundary values to keep
 /// optimizer starts finite.
+///
+/// Custom links used with built-in families must implement this trait to
+/// participate in [`crate::ParameterizedFamily`] and model initialization.
 pub trait InitialEtaFromTheta<S>: Link<S> {
     /// Converts a natural-scale parameter value into a finite link-scale start.
     fn initial_eta_from_theta(theta: S) -> S;

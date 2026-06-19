@@ -10,12 +10,12 @@ This crate provides post-fit diagnostics without expanding the base
 ```rust
 use gamlss::prelude::*;
 
-# fn run<M>(model: &M, theta: &[f64]) -> Result<(), gamlss::core::ModelError>
+# fn run<M>(model: &M, parameters: &[f64]) -> Result<(), gamlss::core::ModelError>
 # where
 #     M: CdfDiagnosticsExt,
 # {
-let pit = model.pit_values(theta)?;
-let residuals = model.quantile_residuals(theta)?;
+let pit = model.pit_values(parameters)?;
+let residuals = model.quantile_residuals(parameters)?;
 # let _ = (pit, residuals);
 # Ok(())
 # }
