@@ -1,13 +1,13 @@
 use gamlss_core::{Family, HasCdf, HasDensity, HasQuantile, ParameterParts};
 use gamlss_family::{
-    BernoulliEta, BernoulliTheta, BetaEta, BetaTheta, DefaultBernoulli, DefaultBeta,
-    DefaultExponential, DefaultGamma, DefaultGumbel, DefaultInverseGaussian, DefaultLaplace,
-    DefaultLogNormal, DefaultLogistic, DefaultLomax, DefaultNegativeBinomial, DefaultNormal,
-    DefaultPoisson, DefaultStudentT, DefaultWeibull, ExponentialEta, ExponentialTheta, GammaEta,
-    GammaTheta, GumbelEta, GumbelTheta, InverseGaussianEta, InverseGaussianTheta, LaplaceEta,
-    LaplaceTheta, LogNormalEta, LogNormalTheta, LogisticEta, LogisticTheta, LomaxEta, LomaxTheta,
+    BernoulliEta, BernoulliTheta, BetaEta, BetaTheta, DefaultBernoulli, DefaultBeta, DefaultGumbel,
+    DefaultInverseGaussian, DefaultLaplace, DefaultLogistic, DefaultLomax, DefaultNegativeBinomial,
+    DefaultNormal, DefaultPoisson, DefaultStudentT, ExponentialRate, ExponentialRateEta,
+    ExponentialRateTheta, GammaEta, GammaShapeRate, GammaTheta, GumbelEta, GumbelTheta,
+    InverseGaussianEta, InverseGaussianTheta, LaplaceEta, LaplaceTheta, LogNormalEta,
+    LogNormalLogLocationLogSd, LogNormalTheta, LogisticEta, LogisticTheta, LomaxEta, LomaxTheta,
     NegativeBinomialEta, NegativeBinomialTheta, NormalEta, NormalTheta, PoissonEta, PoissonTheta,
-    StudentTEta, StudentTTheta, WeibullEta, WeibullTheta,
+    StudentTEta, StudentTTheta, WeibullEta, WeibullScaleShape, WeibullTheta,
 };
 use proptest::prelude::*;
 use statrs::distribution::{
@@ -270,12 +270,12 @@ proptest! {
         assert_gradient_matches_finite_difference::<_, 2>(&DefaultLogistic::new(), y_real, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&DefaultStudentT::default(), y_real, [eta1, eta2]);
 
-        assert_gradient_matches_finite_difference::<_, 1>(&DefaultExponential::new(), y_positive, [eta1]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultGamma::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&DefaultInverseGaussian::new(), y_positive, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultLogNormal::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LogNormalLogLocationLogSd::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&DefaultLomax::new(), y_positive, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultWeibull::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&WeibullScaleShape::new(), y_positive, [eta1, eta2]);
 
         assert_gradient_matches_finite_difference::<_, 2>(&DefaultBeta::new(), y_unit, [eta1, eta2]);
     }
@@ -309,12 +309,12 @@ proptest! {
         assert_continuous_inverse(&DefaultLogistic::new(), p, LogisticTheta { mu: location, sigma: scale }, 2.0e-10);
         assert_continuous_inverse(&DefaultStudentT::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-7);
 
-        assert_continuous_inverse(&DefaultExponential::new(), p, ExponentialTheta { rate: shape }, 2.0e-10);
-        assert_continuous_inverse(&DefaultGamma::new(), p, GammaTheta { shape, rate: scale }, 2.0e-7);
+        assert_continuous_inverse(&ExponentialRate::new(), p, ExponentialRateTheta { rate: shape }, 2.0e-10);
+        assert_continuous_inverse(&GammaShapeRate::new(), p, GammaTheta { shape, rate: scale }, 2.0e-7);
         assert_continuous_inverse(&DefaultInverseGaussian::new(), p, InverseGaussianTheta { mu: scale, shape }, 2.0e-7);
-        assert_continuous_inverse(&DefaultLogNormal::new(), p, LogNormalTheta { mu: location, sigma: scale }, 2.0e-7);
+        assert_continuous_inverse(&LogNormalLogLocationLogSd::new(), p, LogNormalTheta { log_location: location, log_sd: scale }, 2.0e-7);
         assert_continuous_inverse(&DefaultLomax::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
-        assert_continuous_inverse(&DefaultWeibull::new(), p, WeibullTheta { shape, scale }, 2.0e-10);
+        assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullTheta { shape, scale }, 2.0e-10);
 
         assert_continuous_inverse(&DefaultBeta::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 2.0e-7);
     }
@@ -386,13 +386,13 @@ fn continuous_density_integrates_approximately_to_one() {
         5.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultExponential::new(),
-        ExponentialTheta { rate: 1.4 },
+        &ExponentialRate::new(),
+        ExponentialRateTheta { rate: 1.4 },
         1.0e-4,
         2.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultGamma::new(),
+        &GammaShapeRate::new(),
         GammaTheta {
             shape: 2.4,
             rate: 1.3,
@@ -428,10 +428,10 @@ fn continuous_density_integrates_approximately_to_one() {
         2.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultLogNormal::new(),
+        &LogNormalLogLocationLogSd::new(),
         LogNormalTheta {
-            mu: 0.1,
-            sigma: 0.7,
+            log_location: 0.1,
+            log_sd: 0.7,
         },
         1.0e-4,
         8.0e-5,
@@ -464,7 +464,7 @@ fn continuous_density_integrates_approximately_to_one() {
         1.5e-4,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultWeibull::new(),
+        &WeibullScaleShape::new(),
         WeibullTheta {
             shape: 2.0,
             scale: 1.4,
@@ -544,8 +544,8 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let exponential = DefaultExponential::new();
-    let exponential_theta = ExponentialTheta { rate: 1.7 };
+    let exponential = ExponentialRate::new();
+    let exponential_theta = ExponentialRateTheta { rate: 1.7 };
     let statrs_exponential = StatrsExp::new(exponential_theta.rate).unwrap();
     assert_continuous_statrs_reference(
         &exponential,
@@ -560,7 +560,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let gamma = DefaultGamma::new();
+    let gamma = GammaShapeRate::new();
     let gamma_theta = GammaTheta {
         shape: 2.3,
         rate: 1.4,
@@ -617,13 +617,13 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let log_normal = DefaultLogNormal::new();
+    let log_normal = LogNormalLogLocationLogSd::new();
     let log_normal_theta = LogNormalTheta {
-        mu: 0.2,
-        sigma: 0.7,
+        log_location: 0.2,
+        log_sd: 0.7,
     };
     let statrs_log_normal =
-        StatrsLogNormal::new(log_normal_theta.mu, log_normal_theta.sigma).unwrap();
+        StatrsLogNormal::new(log_normal_theta.log_location, log_normal_theta.log_sd).unwrap();
     assert_continuous_statrs_reference(
         &log_normal,
         log_normal_theta,
@@ -699,7 +699,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let weibull = DefaultWeibull::new();
+    let weibull = WeibullScaleShape::new();
     let weibull_theta = WeibullTheta {
         shape: 1.7,
         scale: 1.2,
@@ -768,20 +768,23 @@ fn invalid_domains_and_boundaries_follow_public_contracts() {
     assert_eq!(beta.quantile(1.0, beta_theta), 1.0);
     assert!(beta.quantile(f64::NAN, beta_theta).is_nan());
 
-    let exponential = DefaultExponential::new();
-    assert_eq!(exponential.cdf(-1.0, ExponentialTheta { rate: 1.0 }), 0.0);
+    let exponential = ExponentialRate::new();
     assert_eq!(
-        exponential.quantile(0.0, ExponentialTheta { rate: 1.0 }),
+        exponential.cdf(-1.0, ExponentialRateTheta { rate: 1.0 }),
+        0.0
+    );
+    assert_eq!(
+        exponential.quantile(0.0, ExponentialRateTheta { rate: 1.0 }),
         0.0
     );
     assert!(
         exponential
-            .quantile(1.0, ExponentialTheta { rate: 1.0 })
+            .quantile(1.0, ExponentialRateTheta { rate: 1.0 })
             .is_infinite()
     );
     assert!(
         exponential
-            .nll(-1.0, ExponentialTheta { rate: 1.0 })
+            .nll(-1.0, ExponentialRateTheta { rate: 1.0 })
             .is_infinite()
     );
 
@@ -823,8 +826,8 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         0.5
     );
     assert_eq!(
-        DefaultExponential::new()
-            .theta(ExponentialEta { rate: 0.0 })
+        ExponentialRate::new()
+            .theta(ExponentialRateEta { rate: 0.0 })
             .rate,
         1.0
     );
@@ -839,7 +842,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultGamma::new()
+        GammaShapeRate::new()
             .theta(GammaEta {
                 shape: 0.0,
                 rate: 0.0,
@@ -875,12 +878,12 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultLogNormal::new()
+        LogNormalLogLocationLogSd::new()
             .theta(LogNormalEta {
-                mu: 0.0,
-                sigma: 0.0,
+                log_location: 0.0,
+                log_sd: 0.0,
             })
-            .sigma,
+            .log_sd,
         1.0
     );
     assert_eq!(
@@ -920,7 +923,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultWeibull::new()
+        WeibullScaleShape::new()
             .theta(WeibullEta {
                 shape: 0.0,
                 scale: 0.0,

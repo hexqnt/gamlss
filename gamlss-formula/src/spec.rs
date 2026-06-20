@@ -1,10 +1,10 @@
 use gamlss_core::{
-    Gamlss, Identity, Log, Logit, Mu, ParameterBlock, ParameterBlocks, Precision, Rate, Scale,
+    Cv, Gamlss, Identity, Log, LogSd, Logit, Mean, Mu, ParameterBlock, ParameterBlocks, Precision,
     Shape, Sigma,
 };
 use gamlss_family::{
-    DefaultBeta, DefaultGamma, DefaultInverseGaussian, DefaultLogNormal, DefaultNormal,
-    DefaultWeibull,
+    DefaultBeta, DefaultInverseGaussian, DefaultNormal, GammaMeanCv, LogNormalMeanLogSd,
+    WeibullMeanShape,
 };
 
 use crate::{
@@ -22,11 +22,11 @@ pub type FormulaBlock<P, L> = ParameterBlock<P, L, FormulaPredictorBlock, Formul
 /// Blocks for a normal formula model.
 pub type NormalBlocks = (FormulaBlock<Mu, Identity>, FormulaBlock<Sigma, Log>);
 /// Blocks for a gamma formula model.
-pub type GammaBlocks = (FormulaBlock<Shape, Log>, FormulaBlock<Rate, Log>);
+pub type GammaBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Cv, Log>);
 /// Blocks for a log-normal formula model.
-pub type LogNormalBlocks = (FormulaBlock<Mu, Identity>, FormulaBlock<Sigma, Log>);
+pub type LogNormalBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<LogSd, Log>);
 /// Blocks for a Weibull formula model.
-pub type WeibullBlocks = (FormulaBlock<Shape, Log>, FormulaBlock<Scale, Log>);
+pub type WeibullBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Shape, Log>);
 /// Blocks for an inverse Gaussian formula model.
 pub type InverseGaussianBlocks = (FormulaBlock<Mu, Log>, FormulaBlock<Shape, Log>);
 /// Blocks for a beta formula model.
@@ -35,11 +35,11 @@ pub type BetaBlocks = (FormulaBlock<Mu, Logit>, FormulaBlock<Precision, Log>);
 /// Compiled normal formula model.
 pub type CompiledNormal<'a> = Gamlss<DefaultNormal, NormalBlocks, NumericResponse<'a>>;
 /// Compiled gamma formula model.
-pub type CompiledGamma<'a> = Gamlss<DefaultGamma, GammaBlocks, NumericResponse<'a>>;
+pub type CompiledGamma<'a> = Gamlss<GammaMeanCv, GammaBlocks, NumericResponse<'a>>;
 /// Compiled log-normal formula model.
-pub type CompiledLogNormal<'a> = Gamlss<DefaultLogNormal, LogNormalBlocks, NumericResponse<'a>>;
+pub type CompiledLogNormal<'a> = Gamlss<LogNormalMeanLogSd, LogNormalBlocks, NumericResponse<'a>>;
 /// Compiled Weibull formula model.
-pub type CompiledWeibull<'a> = Gamlss<DefaultWeibull, WeibullBlocks, NumericResponse<'a>>;
+pub type CompiledWeibull<'a> = Gamlss<WeibullMeanShape, WeibullBlocks, NumericResponse<'a>>;
 /// Compiled inverse Gaussian formula model.
 pub type CompiledInverseGaussian<'a> =
     Gamlss<DefaultInverseGaussian, InverseGaussianBlocks, NumericResponse<'a>>;
@@ -253,26 +253,26 @@ define_spec!(
 
 define_spec!(
     /// Typed gamma model specification.
-    GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, DefaultGamma;
+    GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, GammaMeanCv;
     family_name = "gamma", domain = ResponseDomain::Positive;
-    first = shape_terms, shape, "shape", Shape, Log;
-    second = rate_terms, rate, "rate", Rate, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = cv_terms, cv, "cv", Cv, Log
 );
 
 define_spec!(
     /// Typed log-normal model specification.
-    LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, DefaultLogNormal;
+    LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, LogNormalMeanLogSd;
     family_name = "log-normal", domain = ResponseDomain::Positive;
-    first = mu_terms, mu, "mu", Mu, Identity;
-    second = sigma_terms, sigma, "sigma", Sigma, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = log_sd_terms, log_sd, "log_sd", LogSd, Log
 );
 
 define_spec!(
     /// Typed Weibull model specification.
-    WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, DefaultWeibull;
+    WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, WeibullMeanShape;
     family_name = "weibull", domain = ResponseDomain::Positive;
-    first = shape_terms, shape, "shape", Shape, Log;
-    second = scale_terms, scale, "scale", Scale, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = shape_terms, shape, "shape", Shape, Log
 );
 
 define_spec!(

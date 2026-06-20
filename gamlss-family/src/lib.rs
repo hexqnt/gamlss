@@ -63,8 +63,16 @@ pub mod zip;
 pub use beinf::{Beinf, BeinfEta, BeinfTheta, DefaultBeinf};
 pub use bernoulli::{Bernoulli, BernoulliEta, BernoulliTheta, DefaultBernoulli};
 pub use beta::{Beta, BetaEta, BetaTheta, DefaultBeta};
-pub use exponential::{DefaultExponential, Exponential, ExponentialEta, ExponentialTheta};
-pub use gamma::{DefaultGamma, Gamma, GammaEta, GammaTheta};
+pub use exponential::Exponential;
+pub use exponential::{
+    ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, ExponentialRate, ExponentialRateEta,
+    ExponentialRateTheta,
+};
+pub use gamma::{
+    Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape,
+    GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
+    GammaTheta,
+};
 pub use generalized_gamma::{
     DefaultGeneralizedGamma, GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaTheta,
 };
@@ -75,7 +83,12 @@ pub use inverse_gaussian::{
 };
 pub use johnson_su::{DefaultJohnsonSu, JohnsonSu, JohnsonSuEta, JohnsonSuTheta};
 pub use laplace::{DefaultLaplace, Laplace, LaplaceEta, LaplaceTheta};
-pub use log_normal::{DefaultLogNormal, LogNormal, LogNormalEta, LogNormalTheta};
+pub use log_normal::{
+    LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
+    LogNormalLogLocationLogSdTheta, LogNormalMeanLogSd, LogNormalMeanLogSdEta,
+    LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdEta,
+    LogNormalMedianLogSdTheta, LogNormalTheta,
+};
 pub use logistic::{DefaultLogistic, Logistic, LogisticEta, LogisticTheta};
 pub use lomax::{DefaultLomax, Lomax, LomaxEta, LomaxTheta};
 pub use negative_binomial::{
@@ -92,32 +105,47 @@ pub use skew_normal::{DefaultSkewNormal, SkewNormal, SkewNormalEta, SkewNormalTh
 pub use skew_student_t::{DefaultSkewStudentT, SkewStudentT, SkewStudentTEta, SkewStudentTTheta};
 pub use student_t::{DefaultStudentT, StudentT, StudentTEta, StudentTTheta};
 pub use tweedie::{DefaultTweedie, Tweedie, TweedieEta, TweedieTheta};
-pub use weibull::{DefaultWeibull, Weibull, WeibullEta, WeibullTheta};
+pub use weibull::{
+    Weibull, WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
+    WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta,
+};
 pub use zaga::{DefaultZaga, Zaga, ZagaEta, ZagaTheta};
 pub use zinb::{DefaultZinb, Zinb, ZinbEta, ZinbTheta};
 pub use zip::{DefaultZip, Zip, ZipEta, ZipTheta};
+
+/// Beta distribution parameterized by mean and precision.
+pub type BetaMeanPrecision = Beta<gamlss_core::Logit, gamlss_core::Log>;
+/// Negative binomial distribution parameterized by mean and size.
+pub type NegativeBinomialMeanSize = NegativeBinomial<gamlss_core::Log, gamlss_core::Log>;
 
 /// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
     pub use crate::{
         Beinf, BeinfEta, BeinfTheta, Bernoulli, BernoulliEta, BernoulliTheta, Beta, BetaEta,
-        BetaTheta, DefaultBeinf, DefaultBernoulli, DefaultBeta, DefaultExponential, DefaultGamma,
-        DefaultGed, DefaultGeneralizedGamma, DefaultGev, DefaultGumbel, DefaultInverseGaussian,
-        DefaultJohnsonSu, DefaultLaplace, DefaultLogNormal, DefaultLogistic, DefaultLomax,
-        DefaultNegativeBinomial, DefaultNormal, DefaultPoisson, DefaultPowerExponential,
-        DefaultShash, DefaultSkewNormal, DefaultSkewStudentT, DefaultStudentT, DefaultTweedie,
-        DefaultWeibull, DefaultZaga, DefaultZinb, DefaultZip, Exponential, ExponentialEta,
-        ExponentialTheta, Gamma, GammaEta, GammaTheta, Ged, GeneralizedGamma, GeneralizedGammaEta,
-        GeneralizedGammaTheta, Gev, GevEta, GevTheta, Gumbel, GumbelEta, GumbelTheta,
-        InverseGaussian, InverseGaussianEta, InverseGaussianTheta, JohnsonSu, JohnsonSuEta,
-        JohnsonSuTheta, Laplace, LaplaceEta, LaplaceTheta, LogNormal, LogNormalEta, LogNormalTheta,
-        Logistic, LogisticEta, LogisticTheta, Lomax, LomaxEta, LomaxTheta, NegativeBinomial,
-        NegativeBinomialEta, NegativeBinomialTheta, Normal, NormalEta, NormalGamlss, NormalTheta,
-        Poisson, PoissonEta, PoissonTheta, PowerExponential, PowerExponentialEta,
+        BetaMeanPrecision, BetaTheta, DefaultBeinf, DefaultBernoulli, DefaultBeta, DefaultGed,
+        DefaultGeneralizedGamma, DefaultGev, DefaultGumbel, DefaultInverseGaussian,
+        DefaultJohnsonSu, DefaultLaplace, DefaultLogistic, DefaultLomax, DefaultNegativeBinomial,
+        DefaultNormal, DefaultPoisson, DefaultPowerExponential, DefaultShash, DefaultSkewNormal,
+        DefaultSkewStudentT, DefaultStudentT, DefaultTweedie, DefaultZaga, DefaultZinb, DefaultZip,
+        Exponential, ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, ExponentialRate,
+        ExponentialRateEta, ExponentialRateTheta, Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta,
+        GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate,
+        GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, Ged, GeneralizedGamma,
+        GeneralizedGammaEta, GeneralizedGammaTheta, Gev, GevEta, GevTheta, Gumbel, GumbelEta,
+        GumbelTheta, InverseGaussian, InverseGaussianEta, InverseGaussianTheta, JohnsonSu,
+        JohnsonSuEta, JohnsonSuTheta, Laplace, LaplaceEta, LaplaceTheta, LogNormal, LogNormalEta,
+        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
+        LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
+        LogisticTheta, Lomax, LomaxEta, LomaxTheta, NegativeBinomial, NegativeBinomialEta,
+        NegativeBinomialMeanSize, NegativeBinomialTheta, Normal, NormalEta, NormalGamlss,
+        NormalTheta, Poisson, PoissonEta, PoissonTheta, PowerExponential, PowerExponentialEta,
         PowerExponentialTheta, Shash, ShashEta, ShashTheta, SkewNormal, SkewNormalEta,
         SkewNormalTheta, SkewStudentT, SkewStudentTEta, SkewStudentTTheta, StudentT, StudentTEta,
-        StudentTTheta, Tweedie, TweedieEta, TweedieTheta, Weibull, WeibullEta, WeibullTheta, Zaga,
-        ZagaEta, ZagaTheta, Zinb, ZinbEta, ZinbTheta, Zip, ZipEta, ZipTheta, normal_gamlss,
+        StudentTTheta, Tweedie, TweedieEta, TweedieTheta, Weibull, WeibullEta, WeibullMeanShape,
+        WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeEta,
+        WeibullScaleShapeTheta, WeibullTheta, Zaga, ZagaEta, ZagaTheta, Zinb, ZinbEta, ZinbTheta,
+        Zip, ZipEta, ZipTheta, normal_gamlss,
     };
 }
 
@@ -209,12 +237,12 @@ mod initializer_tests {
     use gamlss_core::{Family, ParameterParts, ParameterizedFamily};
 
     use crate::{
-        DefaultBeinf, DefaultBernoulli, DefaultBeta, DefaultExponential, DefaultGamma,
-        DefaultGeneralizedGamma, DefaultGev, DefaultGumbel, DefaultInverseGaussian,
-        DefaultJohnsonSu, DefaultLaplace, DefaultLogNormal, DefaultLogistic, DefaultLomax,
-        DefaultNegativeBinomial, DefaultNormal, DefaultPoisson, DefaultPowerExponential,
-        DefaultShash, DefaultSkewNormal, DefaultSkewStudentT, DefaultStudentT, DefaultTweedie,
-        DefaultWeibull, DefaultZaga, DefaultZinb, DefaultZip,
+        DefaultBeinf, DefaultBernoulli, DefaultBeta, DefaultGeneralizedGamma, DefaultGev,
+        DefaultGumbel, DefaultInverseGaussian, DefaultJohnsonSu, DefaultLaplace, DefaultLogistic,
+        DefaultLomax, DefaultNegativeBinomial, DefaultNormal, DefaultPoisson,
+        DefaultPowerExponential, DefaultShash, DefaultSkewNormal, DefaultSkewStudentT,
+        DefaultStudentT, DefaultTweedie, DefaultZaga, DefaultZinb, DefaultZip, GammaShapeRate,
+        LogNormalLogLocationLogSd, WeibullScaleShape,
     };
 
     fn assert_finite_initial_eta<F, const K: usize>(family: F, data: &[f64], probe: f64)
@@ -242,15 +270,14 @@ mod initializer_tests {
         assert_finite_initial_eta::<_, 1>(DefaultBernoulli::new(), &[0.0, 1.0, 1.0], 1.0);
         assert_finite_initial_eta::<_, 4>(DefaultBeinf::new(), &[0.0, 0.2, 0.8, 1.0], 0.5);
         assert_finite_initial_eta::<_, 2>(DefaultBeta::new(), &[0.1, 0.5, 0.9], 0.5);
-        assert_finite_initial_eta::<_, 1>(DefaultExponential::new(), &[0.2, 1.0, 2.0], 1.0);
-        assert_finite_initial_eta::<_, 2>(DefaultGamma::new(), &[0.2, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(GammaShapeRate::new(), &[0.2, 1.0, 2.0], 1.0);
         assert_finite_initial_eta::<_, 3>(DefaultGeneralizedGamma::new(), &[0.2, 1.0, 2.0], 1.0);
         assert_finite_initial_eta::<_, 3>(DefaultGev::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(DefaultGumbel::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(DefaultInverseGaussian::new(), &[0.5, 1.0, 2.0], 1.0);
         assert_finite_initial_eta::<_, 4>(DefaultJohnsonSu::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(DefaultLaplace::new(), &[-1.0, 0.0, 3.0], 0.0);
-        assert_finite_initial_eta::<_, 2>(DefaultLogNormal::new(), &[0.5, 1.0, 4.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(LogNormalLogLocationLogSd::new(), &[0.5, 1.0, 4.0], 1.0);
         assert_finite_initial_eta::<_, 2>(DefaultLogistic::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(DefaultLomax::new(), &[0.0, 1.0, 3.0, 8.0], 1.0);
         assert_finite_initial_eta::<_, 2>(
@@ -266,7 +293,7 @@ mod initializer_tests {
         assert_finite_initial_eta::<_, 4>(DefaultSkewStudentT::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(DefaultStudentT::default(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 3>(DefaultTweedie::new(), &[0.0, 1.0, 3.0], 1.0);
-        assert_finite_initial_eta::<_, 2>(DefaultWeibull::new(), &[0.5, 1.5, 3.0], 1.5);
+        assert_finite_initial_eta::<_, 2>(WeibullScaleShape::new(), &[0.5, 1.5, 3.0], 1.5);
         assert_finite_initial_eta::<_, 3>(DefaultZaga::new(), &[0.0, 1.0, 3.0], 1.0);
         assert_finite_initial_eta::<_, 3>(DefaultZinb::new(), &[0.0, 1.0, 4.0], 1.0);
         assert_finite_initial_eta::<_, 2>(DefaultZip::new(), &[0.0, 1.0, 4.0], 1.0);
@@ -275,7 +302,7 @@ mod initializer_tests {
     #[test]
     fn initializers_handle_edge_samples_without_nonfinite_eta() {
         assert_finite_initial_eta::<_, 2>(DefaultBeta::new(), &[0.0, 1.0, f64::NAN], 0.5);
-        assert_finite_initial_eta::<_, 2>(DefaultGamma::new(), &[2.0, 2.0, f64::INFINITY], 2.0);
+        assert_finite_initial_eta::<_, 2>(GammaShapeRate::new(), &[2.0, 2.0, f64::INFINITY], 2.0);
         assert_finite_initial_eta::<_, 2>(DefaultNegativeBinomial::new(), &[0.0, 0.0, 0.0], 0.0);
         assert_finite_initial_eta::<_, 1>(DefaultPoisson::new(), &[0.0, 0.0, 0.0], 0.0);
     }

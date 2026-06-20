@@ -65,8 +65,9 @@ pub use model::{
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
-    AssignParameterOffsets, Mu, Nu, ParameterBlock, ParameterBlocks, ParameterName, Precision,
-    Rate, Scale, Shape, Sigma, Tau,
+    AssignParameterOffsets, ComponentMean, Cv, Dispersion, LogLocation, LogSd, Mean, Median, Mu,
+    Nu, OneProbability, ParameterBlock, ParameterBlocks, ParameterName, Power, Precision,
+    Probability, Rate, Scale, Shape, Sigma, Size, Tau, TotalMean, ZeroProbability,
 };
 pub use penalty::{
     AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
@@ -82,16 +83,18 @@ pub use predictor::{
 pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
-        CoefficientTransform, DenseDesign, DenseInformation, DesignMatrix, Family, Gamlss,
-        GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDensity,
-        HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta,
-        HasLogDensity, HasQuantile, HingeQuadraticPenalty, Identity, InitialEtaFromTheta,
-        LinearForm, LinearFormBuilder, LinearPredictorBlock, LinearTerm, Link, Log, LogPlus, Logit,
-        MatrixPenalty, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
-        OffsetBlock, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
+        CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation, DesignMatrix,
+        Dispersion, Family, Gamlss, GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf,
+        HasCrps, HasDensity, HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo,
+        HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile, HingeQuadraticPenalty,
+        Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder, LinearPredictorBlock,
+        LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit, MatrixPenalty, Mean, Median,
+        ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock,
+        OneProbability, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
         ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
-        Precision, PredictorBlock, ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape,
-        Sigma, Softplus, SumBlock, Tau, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
-        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+        Power, Precision, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, Scale,
+        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
+        TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedParameters,
+        WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

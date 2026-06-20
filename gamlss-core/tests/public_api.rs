@@ -1,10 +1,12 @@
 use gamlss_core::{
-    ClampedLog, DenseDesign, DenseInformation, Family, FloorSoftplusScalar, Gamlss, HasDensity,
-    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-    Identity, LinearForm, LinearFormBuilder, Log, Logit, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
-    Objective, ObjectiveScale, ObservationView, ParameterBlock, ParameterLayout, ParameterParts,
-    ParameterSlice, ParameterizedFamily, PositiveLink, PredictorBlock, Sigma, Softplus,
-    SoftplusScalar, TrainingDiagnostics, UnitIntervalLink,
+    ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion, Family,
+    FloorSoftplusScalar, Gamlss, HasDensity, HasDeviance, HasDiagonalFisherInfo,
+    HasExpectedInformation, HasInitialEta, HasLogDensity, Identity, LinearForm, LinearFormBuilder,
+    Log, LogLocation, LogSd, Logit, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
+    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterLayout,
+    ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power,
+    PredictorBlock, Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
+    TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
 };
 
 #[test]
@@ -66,6 +68,23 @@ fn parameter_layout_helpers_remain_root_reexports() {
     assert_eq!(layout.ncoefficients(), 3);
     assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
     assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
+}
+
+#[test]
+fn semantic_parameter_markers_remain_root_reexports() {
+    assert_eq!(Mean::NAME, "mean");
+    assert_eq!(Median::NAME, "median");
+    assert_eq!(ComponentMean::NAME, "component_mean");
+    assert_eq!(TotalMean::NAME, "total_mean");
+    assert_eq!(Cv::NAME, "cv");
+    assert_eq!(LogSd::NAME, "log_sd");
+    assert_eq!(LogLocation::NAME, "log_location");
+    assert_eq!(Dispersion::NAME, "dispersion");
+    assert_eq!(Size::NAME, "size");
+    assert_eq!(Probability::NAME, "probability");
+    assert_eq!(ZeroProbability::NAME, "zero_probability");
+    assert_eq!(OneProbability::NAME, "one_probability");
+    assert_eq!(Power::NAME, "power");
 }
 
 #[test]

@@ -52,9 +52,37 @@ impl ParameterBlocks {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mu;
 
+/// Marker for a mathematical mean parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mean;
+
+/// Marker for a median parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Median;
+
+/// Marker for a component mean in mixture or zero-adjusted models.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ComponentMean;
+
+/// Marker for an unconditional total mean in mixture or zero-adjusted models.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TotalMean;
+
 /// Marker for the scale parameter `sigma`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sigma;
+
+/// Marker for a coefficient of variation parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Cv;
+
+/// Marker for a log-standard-deviation parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LogSd;
+
+/// Marker for the location parameter of a log-scale distribution.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LogLocation;
 
 /// Marker for the third GAMLSS parameter `nu`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -68,13 +96,37 @@ pub struct Tau;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Rate;
 
+/// Marker for a dispersion parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Dispersion;
+
 /// Marker for the shape parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape;
 
+/// Marker for a negative-binomial size parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Size;
+
 /// Marker for the scale parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scale;
+
+/// Marker for a probability parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Probability;
+
+/// Marker for a zero-mass or zero-inflation probability parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ZeroProbability;
+
+/// Marker for a one-mass probability parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OneProbability;
+
+/// Marker for a power parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Power;
 
 /// Marker for the precision parameter of a distribution.
 ///
@@ -87,8 +139,36 @@ impl ParameterName for Mu {
     const NAME: &'static str = "mu";
 }
 
+impl ParameterName for Mean {
+    const NAME: &'static str = "mean";
+}
+
+impl ParameterName for Median {
+    const NAME: &'static str = "median";
+}
+
+impl ParameterName for ComponentMean {
+    const NAME: &'static str = "component_mean";
+}
+
+impl ParameterName for TotalMean {
+    const NAME: &'static str = "total_mean";
+}
+
 impl ParameterName for Sigma {
     const NAME: &'static str = "sigma";
+}
+
+impl ParameterName for Cv {
+    const NAME: &'static str = "cv";
+}
+
+impl ParameterName for LogSd {
+    const NAME: &'static str = "log_sd";
+}
+
+impl ParameterName for LogLocation {
+    const NAME: &'static str = "log_location";
 }
 
 impl ParameterName for Nu {
@@ -103,12 +183,36 @@ impl ParameterName for Rate {
     const NAME: &'static str = "rate";
 }
 
+impl ParameterName for Dispersion {
+    const NAME: &'static str = "dispersion";
+}
+
 impl ParameterName for Shape {
     const NAME: &'static str = "shape";
 }
 
+impl ParameterName for Size {
+    const NAME: &'static str = "size";
+}
+
 impl ParameterName for Scale {
     const NAME: &'static str = "scale";
+}
+
+impl ParameterName for Probability {
+    const NAME: &'static str = "probability";
+}
+
+impl ParameterName for ZeroProbability {
+    const NAME: &'static str = "zero_probability";
+}
+
+impl ParameterName for OneProbability {
+    const NAME: &'static str = "one_probability";
+}
+
+impl ParameterName for Power {
+    const NAME: &'static str = "power";
 }
 
 impl ParameterName for Precision {

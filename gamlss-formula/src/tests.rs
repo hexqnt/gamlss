@@ -187,8 +187,8 @@ fn numeric_inputs_response_domains_and_weights_are_validated() {
     let invalid_gamma = TestData::borrowed(&[("y", &[0.0, 1.0])]);
     let err = gamma()
         .response(col("y"))
-        .shape(intercept())
-        .rate(intercept())
+        .mean(intercept())
+        .cv(intercept())
         .build(&invalid_gamma)
         .unwrap_err();
     assert_eq!(
@@ -283,30 +283,30 @@ fn builds_supported_default_families() {
 
     let gamma = gamma()
         .response(y_pos.clone())
-        .shape(intercept() + linear(x.clone()))
-        .rate(intercept())
+        .mean(intercept() + linear(x.clone()))
+        .cv(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(gamma.layout().slice("shape").unwrap(), 0..2);
-    assert_eq!(gamma.layout().slice("rate").unwrap(), 2..3);
+    assert_eq!(gamma.layout().slice("mean").unwrap(), 0..2);
+    assert_eq!(gamma.layout().slice("cv").unwrap(), 2..3);
 
     let log_normal = log_normal()
         .response(y_pos.clone())
-        .mu(intercept())
-        .sigma(intercept() + linear(x.clone()))
+        .mean(intercept())
+        .log_sd(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(log_normal.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(log_normal.layout().slice("sigma").unwrap(), 1..3);
+    assert_eq!(log_normal.layout().slice("mean").unwrap(), 0..1);
+    assert_eq!(log_normal.layout().slice("log_sd").unwrap(), 1..3);
 
     let weibull = weibull()
         .response(y_pos.clone())
+        .mean(intercept() + linear(x.clone()))
         .shape(intercept())
-        .scale(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(weibull.layout().slice("shape").unwrap(), 0..1);
-    assert_eq!(weibull.layout().slice("scale").unwrap(), 1..3);
+    assert_eq!(weibull.layout().slice("mean").unwrap(), 0..2);
+    assert_eq!(weibull.layout().slice("shape").unwrap(), 2..3);
 
     let inverse_gaussian = inverse_gaussian()
         .response(y_pos)
