@@ -72,6 +72,46 @@ pub(crate) fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
     max + ((log_left - max).exp() + (log_right - max).exp()).ln()
 }
 
+/// Standard normal log-density.
+pub(crate) fn unit_normal_log_pdf(z: f64) -> f64 {
+    const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
+    -HALF_LOG_2_PI - 0.5 * z * z
+}
+
+/// Student-t normalizing constant on the negative log-density scale.
+pub(crate) fn student_t_nll_constant(nu: f64) -> f64 {
+    0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
+}
+
+/// Standard Student-t log-density.
+pub(crate) fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
+    if nu <= 0.0 || !nu.is_finite() || !t.is_finite() {
+        return f64::NEG_INFINITY;
+    }
+
+    -student_t_nll_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()
+}
+
+/// Standard Student-t CDF.
+pub(crate) fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
+    if nu <= 0.0 || !nu.is_finite() {
+        return f64::NAN;
+    }
+    if !t.is_finite() {
+        return if t.is_sign_negative() { 0.0 } else { 1.0 };
+    }
+    if t == 0.0 {
+        return 0.5;
+    }
+
+    let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
+    if t < 0.0 {
+        0.5 * beta
+    } else {
+        1.0 - 0.5 * beta
+    }
+}
+
 /// Digamma function approximation for positive arguments.
 pub(crate) fn digamma(value: f64) -> f64 {
     if value <= 0.0 || !value.is_finite() {
@@ -449,6 +489,32 @@ fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
 /// Standard normal CDF approximation.
 pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
     (0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))).clamp(0.0, 1.0)
+}
+
+/// Owen's T function `T(h, a)`.
+///
+/// This is primarily used for skew-normal CDF evaluation. The implementation
+/// uses adaptive Simpson integration, which is accurate enough for family
+/// helper APIs while keeping production dependencies unchanged.
+pub(crate) fn owens_t(h: f64, a: f64) -> f64 {
+    if !h.is_finite() || !a.is_finite() {
+        return f64::NAN;
+    }
+    if a == 0.0 {
+        return 0.0;
+    }
+
+    let sign = a.signum();
+    let upper = a.abs();
+    if upper > 50.0 {
+        return sign * 0.5 * (1.0 - unit_normal_cdf(h.abs()));
+    }
+
+    let h2 = h * h;
+    let integral = integrate_finite(0.0, upper, |x| {
+        (-0.5 * h2 * (1.0 + x * x)).exp() / (1.0 + x * x)
+    });
+    sign * integral / (2.0 * std::f64::consts::PI)
 }
 
 /// Standard normal quantile approximation.
