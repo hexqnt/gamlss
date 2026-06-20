@@ -7,6 +7,7 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 
+use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 
 /// Maximum-type Gumbel family parameterized by location and positive scale.
@@ -37,9 +38,13 @@ where
     }
 
     #[inline(always)]
+    fn valid_theta(theta: GumbelTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma)
+    }
+
+    #[inline(always)]
     fn nll_theta(y: f64, theta: GumbelTheta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -190,8 +195,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -206,11 +210,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-        {
+        if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -226,7 +226,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite() {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 

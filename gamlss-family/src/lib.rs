@@ -7,6 +7,7 @@ pub mod beinf;
 pub mod bernoulli;
 /// Beta distribution.
 pub mod beta;
+mod domain;
 /// Exponential distribution.
 pub mod exponential;
 /// Gamma distribution.

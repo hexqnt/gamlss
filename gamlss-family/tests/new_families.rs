@@ -212,6 +212,16 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
     };
     assert!(zip.cdf(0.0, zip_theta) > 0.3);
     assert_eq!(zip.quantile(0.1, zip_theta), 0.0);
+    assert!(
+        zip.quantile(
+            0.5,
+            ZipTheta {
+                mu: 0.0,
+                sigma: 0.3,
+            },
+        )
+        .is_nan()
+    );
 
     let zinb = DefaultZinb::new();
     let zinb_theta = ZinbTheta {
@@ -221,6 +231,17 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
     };
     assert!(zinb.cdf(0.0, zinb_theta) > 0.25);
     assert_eq!(zinb.quantile(0.1, zinb_theta), 0.0);
+    assert!(
+        zinb.quantile(
+            0.5,
+            ZinbTheta {
+                mu: 2.0,
+                shape: 0.0,
+                nu: 0.25,
+            },
+        )
+        .is_nan()
+    );
 
     let zaga = DefaultZaga::new();
     let zaga_theta = ZagaTheta {

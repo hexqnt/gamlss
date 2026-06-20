@@ -11,6 +11,7 @@ use rand::RngExt;
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
+use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
 
 /// Laplace location-scale family.
@@ -44,14 +45,18 @@ where
         }
     }
 
+    #[inline(always)]
+    fn valid_theta(theta: LaplaceTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma)
+    }
+
     /// Negative log-likelihood for a single observation on the natural scale.
     ///
     /// Returns `INFINITY` for non-finite observation/location or non-positive
     /// sigma.
     #[inline(always)]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -203,8 +208,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -223,11 +227,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-        {
+        if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -245,8 +245,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -263,7 +262,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 

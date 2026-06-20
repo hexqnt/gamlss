@@ -5,6 +5,7 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma, UnitIntervalLink,
 };
 
+use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{
@@ -226,6 +227,10 @@ where
     SigmaLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !is_positive_finite(theta.mu) || !is_strict_probability(theta.sigma) {
+            return f64::NAN;
+        }
+
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Self::cdf_theta(count as f64, theta)
         })

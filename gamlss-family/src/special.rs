@@ -1,3 +1,5 @@
+use crate::domain::is_probability;
+
 /// Natural logarithm of the gamma function via the Lanczos approximation.
 pub(crate) fn ln_gamma(value: f64) -> f64 {
     const COEFFICIENTS: [f64; 9] = [
@@ -230,7 +232,7 @@ pub(crate) fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
 where
     F: FnMut(u64) -> f64,
 {
-    if p < 0.0 || !p.is_finite() || p > 1.0 {
+    if !is_probability(p) {
         return f64::NAN;
     }
     if p == 0.0 {
@@ -262,7 +264,7 @@ pub(crate) fn invert_bounded_cdf<F>(p: f64, lower: f64, upper: f64, mut cdf: F) 
 where
     F: FnMut(f64) -> f64,
 {
-    if p < 0.0 || !p.is_finite() || p > 1.0 || !lower.is_finite() || !upper.is_finite() {
+    if !is_probability(p) || !lower.is_finite() || !upper.is_finite() {
         return f64::NAN;
     }
     if p == 0.0 {
@@ -290,7 +292,7 @@ pub(crate) fn invert_positive_cdf<F>(p: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
-    if p < 0.0 || !p.is_finite() || p > 1.0 {
+    if !is_probability(p) {
         return f64::NAN;
     }
     if p == 0.0 {
@@ -315,7 +317,7 @@ pub(crate) fn invert_real_cdf<F>(p: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
-    if p < 0.0 || !p.is_finite() || p > 1.0 {
+    if !is_probability(p) {
         return f64::NAN;
     }
     if p == 0.0 {

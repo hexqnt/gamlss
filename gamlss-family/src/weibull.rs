@@ -7,6 +7,7 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Scale, Shape,
 };
 
+use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values};
 use crate::special::{ln_gamma, regularized_gamma_lower};
 
@@ -40,14 +41,13 @@ where
     }
 
     #[inline(always)]
+    fn valid_theta(theta: WeibullTheta) -> bool {
+        is_positive_finite(theta.shape) && is_positive_finite(theta.scale)
+    }
+
+    #[inline(always)]
     fn nll_theta(y: f64, theta: WeibullTheta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+        if y <= 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -200,12 +200,7 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if y <= 0.0 {
@@ -222,12 +217,7 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+        if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -241,13 +231,7 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if y < 0.0
-            || !y.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -272,11 +256,7 @@ where
     ScaleLink: PositiveLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 

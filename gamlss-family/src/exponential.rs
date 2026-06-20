@@ -7,6 +7,7 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Rate,
 };
 
+use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{positive_floor, weighted_mean, weighted_values};
 
 /// Exponential family parameterized by positive rate.
@@ -35,8 +36,13 @@ where
     }
 
     #[inline(always)]
+    fn valid_theta(theta: ExponentialTheta) -> bool {
+        is_positive_finite(theta.rate)
+    }
+
+    #[inline(always)]
     fn nll_theta(y: f64, theta: ExponentialTheta) -> f64 {
-        if y < 0.0 || !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -156,7 +162,7 @@ where
     RateLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -172,7 +178,7 @@ where
     RateLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p) || theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -185,7 +191,7 @@ where
     RateLink: PositiveLink<f64>,
 {
     fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if y < 0.0 || !y.is_finite() || theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -200,7 +206,7 @@ where
     RateLink: PositiveLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.rate <= 0.0 || !theta.rate.is_finite() {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
