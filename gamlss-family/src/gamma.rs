@@ -119,9 +119,278 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 }
 
+impl<MeanLink, CvLink> Gamma<MeanCv, MeanLink, CvLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: GammaMeanCvEta) -> GammaMeanCvTheta {
+        GammaMeanCvTheta {
+            mean: MeanLink::inverse(eta.mean),
+            cv: CvLink::inverse(eta.cv),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanCvEta) -> (f64, GammaMeanCvEta) {
+        let theta = Self::theta_from_eta(eta);
+        let shape_rate = theta.shape_rate();
+        let nll = Self::nll_shape_rate(y, shape_rate);
+        if !nll.is_finite() {
+            return (nll, GammaMeanCvEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
+        let d_mean = d_rate * (-shape_rate.rate / theta.mean);
+        let d_cv = d_shape * (-2.0 * shape_rate.shape / theta.cv)
+            + d_rate * (-2.0 * shape_rate.rate / theta.cv);
+
+        (
+            nll,
+            GammaMeanCvEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                cv: d_cv * CvLink::derivative_inverse(eta.cv),
+            },
+        )
+    }
+}
+
+impl<MeanLink, ShapeLink> Gamma<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: GammaMeanShapeEta) -> GammaMeanShapeTheta {
+        GammaMeanShapeTheta {
+            mean: MeanLink::inverse(eta.mean),
+            shape: ShapeLink::inverse(eta.shape),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanShapeEta) -> (f64, GammaMeanShapeEta) {
+        let theta = Self::theta_from_eta(eta);
+        let shape_rate = theta.shape_rate();
+        let nll = Self::nll_shape_rate(y, shape_rate);
+        if !nll.is_finite() {
+            return (nll, GammaMeanShapeEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
+        let d_mean = d_rate * (-theta.shape / (theta.mean * theta.mean));
+        let d_shape_param = d_shape + d_rate / theta.mean;
+
+        (
+            nll,
+            GammaMeanShapeEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                shape: d_shape_param * ShapeLink::derivative_inverse(eta.shape),
+            },
+        )
+    }
+}
+
+impl<ShapeLink, RateLink> Gamma<ShapeRate, ShapeLink, RateLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: GammaShapeRateEta) -> GammaShapeRateTheta {
+        GammaShapeRateTheta {
+            shape: ShapeLink::inverse(eta.shape),
+            rate: RateLink::inverse(eta.rate),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: GammaShapeRateEta) -> (f64, GammaShapeRateEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_shape_rate(y, theta);
+        if !nll.is_finite() {
+            return (nll, GammaShapeRateEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_shape, d_rate) = Self::gradient_shape_rate(y, theta);
+        (
+            nll,
+            GammaShapeRateEta {
+                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
+                rate: d_rate * RateLink::derivative_inverse(eta.rate),
+            },
+        )
+    }
+}
+
 impl<Param, FirstLink, SecondLink> Default for Gamma<Param, FirstLink, SecondLink> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<MeanLink, CvLink> Family for Gamma<MeanCv, MeanLink, CvLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+{
+    type Eta = GammaMeanCvEta;
+    type Theta = GammaMeanCvTheta;
+    type NllGradientEta = GammaMeanCvEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_shape_rate(y, theta.shape_rate())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MeanLink, CvLink> ParameterizedFamily<2> for Gamma<MeanCv, MeanLink, CvLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mean, Cv);
+    type Links = (MeanLink, CvLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
+            return GammaMeanCvEta::from_array([0.0, 0.0]);
+        };
+        let cv = positive_floor(1.0 / shape.sqrt());
+
+        GammaMeanCvEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            cv: CvLink::initial_eta_from_theta(cv),
+        }
+    }
+}
+
+impl<MeanLink, ShapeLink> Family for Gamma<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    type Eta = GammaMeanShapeEta;
+    type Theta = GammaMeanShapeTheta;
+    type NllGradientEta = GammaMeanShapeEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_shape_rate(y, theta.shape_rate())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MeanLink, ShapeLink> ParameterizedFamily<2> for Gamma<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mean, Shape);
+    type Links = (MeanLink, ShapeLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
+            return GammaMeanShapeEta::from_array([0.0, 0.0]);
+        };
+
+        GammaMeanShapeEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
+    }
+}
+
+impl<ShapeLink, RateLink> Family for Gamma<ShapeRate, ShapeLink, RateLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    RateLink: PositiveLink<f64>,
+{
+    type Eta = GammaShapeRateEta;
+    type Theta = GammaShapeRateTheta;
+    type NllGradientEta = GammaShapeRateEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_shape_rate(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_shape_rate(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<ShapeLink, RateLink> ParameterizedFamily<2> for Gamma<ShapeRate, ShapeLink, RateLink>
+where
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    RateLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Shape, Rate);
+    type Links = (ShapeLink, RateLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
+            return GammaShapeRateEta::from_array([0.0, 0.0]);
+        };
+        let rate = positive_floor(shape / mean);
+
+        GammaShapeRateEta {
+            shape: ShapeLink::initial_eta_from_theta(shape),
+            rate: RateLink::initial_eta_from_theta(rate),
+        }
     }
 }
 
@@ -255,275 +524,6 @@ pub struct GammaShapeRateTheta {
     pub shape: f64,
     /// Positive rate.
     pub rate: f64,
-}
-
-impl<MeanLink, CvLink> Gamma<MeanCv, MeanLink, CvLink>
-where
-    MeanLink: PositiveLink<f64>,
-    CvLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: GammaMeanCvEta) -> GammaMeanCvTheta {
-        GammaMeanCvTheta {
-            mean: MeanLink::inverse(eta.mean),
-            cv: CvLink::inverse(eta.cv),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanCvEta) -> (f64, GammaMeanCvEta) {
-        let theta = Self::theta_from_eta(eta);
-        let shape_rate = theta.shape_rate();
-        let nll = Self::nll_shape_rate(y, shape_rate);
-        if !nll.is_finite() {
-            return (nll, GammaMeanCvEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
-        let d_mean = d_rate * (-shape_rate.rate / theta.mean);
-        let d_cv = d_shape * (-2.0 * shape_rate.shape / theta.cv)
-            + d_rate * (-2.0 * shape_rate.rate / theta.cv);
-
-        (
-            nll,
-            GammaMeanCvEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                cv: d_cv * CvLink::derivative_inverse(eta.cv),
-            },
-        )
-    }
-}
-
-impl<MeanLink, CvLink> Family for Gamma<MeanCv, MeanLink, CvLink>
-where
-    MeanLink: PositiveLink<f64>,
-    CvLink: PositiveLink<f64>,
-{
-    type Eta = GammaMeanCvEta;
-    type Theta = GammaMeanCvTheta;
-    type NllGradientEta = GammaMeanCvEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_shape_rate(y, theta.shape_rate())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MeanLink, CvLink> ParameterizedFamily<2> for Gamma<MeanCv, MeanLink, CvLink>
-where
-    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean, Cv);
-    type Links = (MeanLink, CvLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
-            return GammaMeanCvEta::from_array([0.0, 0.0]);
-        };
-        let cv = positive_floor(1.0 / shape.sqrt());
-
-        GammaMeanCvEta {
-            mean: MeanLink::initial_eta_from_theta(mean),
-            cv: CvLink::initial_eta_from_theta(cv),
-        }
-    }
-}
-
-impl<MeanLink, ShapeLink> Gamma<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: GammaMeanShapeEta) -> GammaMeanShapeTheta {
-        GammaMeanShapeTheta {
-            mean: MeanLink::inverse(eta.mean),
-            shape: ShapeLink::inverse(eta.shape),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanShapeEta) -> (f64, GammaMeanShapeEta) {
-        let theta = Self::theta_from_eta(eta);
-        let shape_rate = theta.shape_rate();
-        let nll = Self::nll_shape_rate(y, shape_rate);
-        if !nll.is_finite() {
-            return (nll, GammaMeanShapeEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
-        let d_mean = d_rate * (-theta.shape / (theta.mean * theta.mean));
-        let d_shape_param = d_shape + d_rate / theta.mean;
-
-        (
-            nll,
-            GammaMeanShapeEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                shape: d_shape_param * ShapeLink::derivative_inverse(eta.shape),
-            },
-        )
-    }
-}
-
-impl<MeanLink, ShapeLink> Family for Gamma<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    type Eta = GammaMeanShapeEta;
-    type Theta = GammaMeanShapeTheta;
-    type NllGradientEta = GammaMeanShapeEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_shape_rate(y, theta.shape_rate())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MeanLink, ShapeLink> ParameterizedFamily<2> for Gamma<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean, Shape);
-    type Links = (MeanLink, ShapeLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
-            return GammaMeanShapeEta::from_array([0.0, 0.0]);
-        };
-
-        GammaMeanShapeEta {
-            mean: MeanLink::initial_eta_from_theta(mean),
-            shape: ShapeLink::initial_eta_from_theta(shape),
-        }
-    }
-}
-
-impl<ShapeLink, RateLink> Gamma<ShapeRate, ShapeLink, RateLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    RateLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: GammaShapeRateEta) -> GammaShapeRateTheta {
-        GammaShapeRateTheta {
-            shape: ShapeLink::inverse(eta.shape),
-            rate: RateLink::inverse(eta.rate),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: GammaShapeRateEta) -> (f64, GammaShapeRateEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_shape_rate(y, theta);
-        if !nll.is_finite() {
-            return (nll, GammaShapeRateEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_shape, d_rate) = Self::gradient_shape_rate(y, theta);
-        (
-            nll,
-            GammaShapeRateEta {
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-                rate: d_rate * RateLink::derivative_inverse(eta.rate),
-            },
-        )
-    }
-}
-
-impl<ShapeLink, RateLink> Family for Gamma<ShapeRate, ShapeLink, RateLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    RateLink: PositiveLink<f64>,
-{
-    type Eta = GammaShapeRateEta;
-    type Theta = GammaShapeRateTheta;
-    type NllGradientEta = GammaShapeRateEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_shape_rate(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<ShapeLink, RateLink> ParameterizedFamily<2> for Gamma<ShapeRate, ShapeLink, RateLink>
-where
-    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    RateLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Shape, Rate);
-    type Links = (ShapeLink, RateLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
-            return GammaShapeRateEta::from_array([0.0, 0.0]);
-        };
-        let rate = positive_floor(shape / mean);
-
-        GammaShapeRateEta {
-            shape: ShapeLink::initial_eta_from_theta(shape),
-            rate: RateLink::initial_eta_from_theta(rate),
-        }
-    }
 }
 
 macro_rules! impl_gamma_helpers {

@@ -4,15 +4,6 @@ use crate::{TargetTransform, TransformError, validate_non_empty_finite};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Standardize;
 
-/// State for [`Standardize`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StandardizeState {
-    /// Training target mean.
-    pub center: f64,
-    /// Training target root-mean-square deviation.
-    pub scale: f64,
-}
-
 impl TargetTransform for Standardize {
     type State = StandardizeState;
 
@@ -49,6 +40,15 @@ impl TargetTransform for Standardize {
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.mul_add(state.scale, state.center)
     }
+}
+
+/// State for [`Standardize`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardizeState {
+    /// Training target mean.
+    pub center: f64,
+    /// Training target root-mean-square deviation.
+    pub scale: f64,
 }
 
 #[cfg(test)]

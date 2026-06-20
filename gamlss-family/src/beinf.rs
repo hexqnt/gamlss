@@ -12,19 +12,12 @@ use crate::initial::{
 use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{invert_bounded_cdf, ln_gamma, regularized_beta};
 
+/// BEINF distribution with logit/logit/log/log links.
+pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;
 /// Beta distribution inflated at both zero and one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Beinf<MuLink = Logit, SigmaLink = Logit, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct BeinfParts {
-    alpha: f64,
-    beta: f64,
-    p0: f64,
-    p1: f64,
-    p_beta: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink, TauLink> Beinf<MuLink, SigmaLink, NuLink, TauLink>
@@ -151,55 +144,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for BEINF on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BeinfEta {
-    /// Beta-component mean predictor.
-    pub mu: f64,
-    /// Beta-component dispersion predictor in `(0, 1)`.
-    pub sigma: f64,
-    /// Positive zero-mass odds predictor.
-    pub nu: f64,
-    /// Positive one-mass odds predictor.
-    pub tau: f64,
-}
-
-impl ParameterParts<4> for BeinfEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("beinf eta only has indices 0 through 3"),
-        }
-    }
-}
-
-/// Natural-scale BEINF parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BeinfTheta {
-    /// Beta-component mean in `(0, 1)`.
-    pub mu: f64,
-    /// Beta-component dispersion in `(0, 1)`.
-    pub sigma: f64,
-    /// Positive zero-mass odds relative to the beta component.
-    pub nu: f64,
-    /// Positive one-mass odds relative to the beta component.
-    pub tau: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for Beinf<MuLink, SigmaLink, NuLink, TauLink>
@@ -332,5 +276,60 @@ where
     }
 }
 
-/// BEINF distribution with logit/logit/log/log links.
-pub type DefaultBeinf = Beinf<Logit, Logit, Log, Log>;
+#[derive(Debug, Clone, Copy)]
+struct BeinfParts {
+    alpha: f64,
+    beta: f64,
+    p0: f64,
+    p1: f64,
+    p_beta: f64,
+}
+
+/// Predictors for BEINF on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeinfEta {
+    /// Beta-component mean predictor.
+    pub mu: f64,
+    /// Beta-component dispersion predictor in `(0, 1)`.
+    pub sigma: f64,
+    /// Positive zero-mass odds predictor.
+    pub nu: f64,
+    /// Positive one-mass odds predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<4> for BeinfEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 4]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+            tau: values[3],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            3 => self.tau,
+            _ => unreachable!("beinf eta only has indices 0 through 3"),
+        }
+    }
+}
+
+/// Natural-scale BEINF parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeinfTheta {
+    /// Beta-component mean in `(0, 1)`.
+    pub mu: f64,
+    /// Beta-component dispersion in `(0, 1)`.
+    pub sigma: f64,
+    /// Positive zero-mass odds relative to the beta component.
+    pub nu: f64,
+    /// Positive one-mass odds relative to the beta component.
+    pub tau: f64,
+}

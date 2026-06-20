@@ -2,12 +2,6 @@ use std::{marker::PhantomData, ops::Range};
 
 use crate::{DesignMatrix, LinearPredictorBlock, ModelError, PredictorBlock};
 
-/// Stable public name for a distribution parameter marker.
-pub trait ParameterName {
-    /// Name used in parameter layouts and unpacked coefficient views.
-    const NAME: &'static str;
-}
-
 /// Helper for assigning sequential offsets to typed parameter block tuples.
 ///
 /// This is the safe construction path for ordinary models: create each
@@ -17,13 +11,6 @@ pub trait ParameterName {
 /// layouts and integration code.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ParameterBlocks;
-
-/// Tuple contract implemented for typed parameter block tuples up to arity 8.
-pub trait AssignParameterOffsets: Sized {
-    /// Returns `self` with sequential offsets starting at `start`.
-    #[must_use]
-    fn assign_offsets(self, start: usize) -> Self;
-}
 
 impl ParameterBlocks {
     /// Assigns sequential offsets starting at zero.
@@ -52,81 +39,161 @@ impl ParameterBlocks {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mu;
 
+impl ParameterName for Mu {
+    const NAME: &'static str = "mu";
+}
+
 /// Marker for a mathematical mean parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mean;
+
+impl ParameterName for Mean {
+    const NAME: &'static str = "mean";
+}
 
 /// Marker for a median parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Median;
 
+impl ParameterName for Median {
+    const NAME: &'static str = "median";
+}
+
 /// Marker for a component mean in mixture or zero-adjusted models.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ComponentMean;
+
+impl ParameterName for ComponentMean {
+    const NAME: &'static str = "component_mean";
+}
 
 /// Marker for an unconditional total mean in mixture or zero-adjusted models.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TotalMean;
 
+impl ParameterName for TotalMean {
+    const NAME: &'static str = "total_mean";
+}
+
 /// Marker for the scale parameter `sigma`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sigma;
+
+impl ParameterName for Sigma {
+    const NAME: &'static str = "sigma";
+}
 
 /// Marker for a coefficient of variation parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Cv;
 
+impl ParameterName for Cv {
+    const NAME: &'static str = "cv";
+}
+
 /// Marker for a log-standard-deviation parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LogSd;
+
+impl ParameterName for LogSd {
+    const NAME: &'static str = "log_sd";
+}
 
 /// Marker for the location parameter of a log-scale distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LogLocation;
 
+impl ParameterName for LogLocation {
+    const NAME: &'static str = "log_location";
+}
+
 /// Marker for the third GAMLSS parameter `nu`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Nu;
+
+impl ParameterName for Nu {
+    const NAME: &'static str = "nu";
+}
 
 /// Marker for the fourth GAMLSS parameter `tau`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tau;
 
+impl ParameterName for Tau {
+    const NAME: &'static str = "tau";
+}
+
 /// Marker for the rate parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Rate;
+
+impl ParameterName for Rate {
+    const NAME: &'static str = "rate";
+}
 
 /// Marker for a dispersion parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Dispersion;
 
+impl ParameterName for Dispersion {
+    const NAME: &'static str = "dispersion";
+}
+
 /// Marker for the shape parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape;
+
+impl ParameterName for Shape {
+    const NAME: &'static str = "shape";
+}
 
 /// Marker for a negative-binomial size parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Size;
 
+impl ParameterName for Size {
+    const NAME: &'static str = "size";
+}
+
 /// Marker for the scale parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scale;
+
+impl ParameterName for Scale {
+    const NAME: &'static str = "scale";
+}
 
 /// Marker for a probability parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Probability;
 
+impl ParameterName for Probability {
+    const NAME: &'static str = "probability";
+}
+
 /// Marker for a zero-mass or zero-inflation probability parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ZeroProbability;
+
+impl ParameterName for ZeroProbability {
+    const NAME: &'static str = "zero_probability";
+}
 
 /// Marker for a one-mass probability parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OneProbability;
 
+impl ParameterName for OneProbability {
+    const NAME: &'static str = "one_probability";
+}
+
 /// Marker for a power parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Power;
+
+impl ParameterName for Power {
+    const NAME: &'static str = "power";
+}
 
 /// Marker for the precision parameter of a distribution.
 ///
@@ -134,86 +201,6 @@ pub struct Power;
 /// `precision > 0` controls the concentration around the mean.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Precision;
-
-impl ParameterName for Mu {
-    const NAME: &'static str = "mu";
-}
-
-impl ParameterName for Mean {
-    const NAME: &'static str = "mean";
-}
-
-impl ParameterName for Median {
-    const NAME: &'static str = "median";
-}
-
-impl ParameterName for ComponentMean {
-    const NAME: &'static str = "component_mean";
-}
-
-impl ParameterName for TotalMean {
-    const NAME: &'static str = "total_mean";
-}
-
-impl ParameterName for Sigma {
-    const NAME: &'static str = "sigma";
-}
-
-impl ParameterName for Cv {
-    const NAME: &'static str = "cv";
-}
-
-impl ParameterName for LogSd {
-    const NAME: &'static str = "log_sd";
-}
-
-impl ParameterName for LogLocation {
-    const NAME: &'static str = "log_location";
-}
-
-impl ParameterName for Nu {
-    const NAME: &'static str = "nu";
-}
-
-impl ParameterName for Tau {
-    const NAME: &'static str = "tau";
-}
-
-impl ParameterName for Rate {
-    const NAME: &'static str = "rate";
-}
-
-impl ParameterName for Dispersion {
-    const NAME: &'static str = "dispersion";
-}
-
-impl ParameterName for Shape {
-    const NAME: &'static str = "shape";
-}
-
-impl ParameterName for Size {
-    const NAME: &'static str = "size";
-}
-
-impl ParameterName for Scale {
-    const NAME: &'static str = "scale";
-}
-
-impl ParameterName for Probability {
-    const NAME: &'static str = "probability";
-}
-
-impl ParameterName for ZeroProbability {
-    const NAME: &'static str = "zero_probability";
-}
-
-impl ParameterName for OneProbability {
-    const NAME: &'static str = "one_probability";
-}
-
-impl ParameterName for Power {
-    const NAME: &'static str = "power";
-}
 
 impl ParameterName for Precision {
     const NAME: &'static str = "precision";
@@ -357,6 +344,19 @@ where
     }
 }
 
+/// Stable public name for a distribution parameter marker.
+pub trait ParameterName {
+    /// Name used in parameter layouts and unpacked coefficient views.
+    const NAME: &'static str;
+}
+
+/// Tuple contract implemented for typed parameter block tuples up to arity 8.
+pub trait AssignParameterOffsets: Sized {
+    /// Returns `self` with sequential offsets starting at `start`.
+    #[must_use]
+    fn assign_offsets(self, start: usize) -> Self;
+}
+
 macro_rules! impl_assign_offsets {
     (
         types = ($($block:ident),+);
@@ -381,11 +381,6 @@ macro_rules! impl_assign_offsets {
     };
 }
 
-trait OffsetAssignable: Sized {
-    fn with_assigned_offset(self, offset: usize) -> Self;
-    fn assigned_len(&self) -> usize;
-}
-
 impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
     fn with_assigned_offset(self, offset: usize) -> Self {
         self.with_offset(offset)
@@ -394,6 +389,11 @@ impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
     fn assigned_len(&self) -> usize {
         self.len()
     }
+}
+
+trait OffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_len(&self) -> usize;
 }
 
 impl_assign_offsets!(types = (B1); vars = (b1));

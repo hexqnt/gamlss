@@ -1,23 +1,6 @@
 #![forbid(unsafe_code)]
 //! Spline bases, spline design matrices and penalties.
 
-pub mod bspline;
-pub mod cyclic;
-pub mod error;
-pub mod fourier;
-pub mod ispline;
-mod local;
-pub mod monotone;
-pub mod mspline;
-pub mod natural;
-pub mod open_uniform;
-pub mod order;
-pub mod penalty;
-pub mod periodic;
-pub mod row_basis;
-pub mod tensor;
-pub mod truncated_power;
-
 pub use bspline::{BSplineBasis, pspline_design};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
 pub use error::{FourierError, SplineError};
@@ -36,6 +19,23 @@ pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
 pub use row_basis::SplineRowBasis;
 pub use tensor::TensorSplineDesign;
 pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
+
+pub mod bspline;
+pub mod cyclic;
+pub mod error;
+pub mod fourier;
+pub mod ispline;
+mod local;
+pub mod monotone;
+pub mod mspline;
+pub mod natural;
+pub mod open_uniform;
+pub mod order;
+pub mod penalty;
+pub mod periodic;
+pub mod row_basis;
+pub mod tensor;
+pub mod truncated_power;
 
 /// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {

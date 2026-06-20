@@ -14,6 +14,8 @@ use crate::special::{
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
+/// ZIP distribution with log/logit links.
+pub type ZipMeanZeroProbability = Zip<Log, Logit>;
 /// Zero-inflated Poisson family.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zip<MuLink = Log, SigmaLink = Logit> {
@@ -115,43 +117,6 @@ where
     }
 }
 
-/// Predictors for ZIP on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZipEta {
-    /// Poisson mean predictor.
-    pub mu: f64,
-    /// Zero-inflation probability predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for ZipEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("zip eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale ZIP parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZipTheta {
-    /// Positive Poisson mean.
-    pub mu: f64,
-    /// Zero-inflation probability in `(0, 1)`.
-    pub sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for Zip<MuLink, SigmaLink>
 where
     MuLink: PositiveLink<f64>,
@@ -237,5 +202,39 @@ where
     }
 }
 
-/// ZIP distribution with log/logit links.
-pub type DefaultZip = Zip<Log, Logit>;
+/// Predictors for ZIP on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZipEta {
+    /// Poisson mean predictor.
+    pub mu: f64,
+    /// Zero-inflation probability predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for ZipEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("zip eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale ZIP parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZipTheta {
+    /// Positive Poisson mean.
+    pub mu: f64,
+    /// Zero-inflation probability in `(0, 1)`.
+    pub sigma: f64,
+}

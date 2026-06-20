@@ -112,6 +112,24 @@ impl FourierDesign {
     }
 }
 
+impl SplineRowBasis for FourierDesign {
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        debug_assert!(row < self.x.len());
+        self.for_each_basis_at(row, f);
+    }
+}
+
 impl PredictorBlock for FourierDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -160,24 +178,6 @@ impl PredictorBlock for FourierDesign {
         for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.add_row_gradient(row, score * multiplier, grad);
         }
-    }
-}
-
-impl SplineRowBasis for FourierDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        debug_assert!(row < self.x.len());
-        self.for_each_basis_at(row, f);
     }
 }
 

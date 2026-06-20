@@ -120,6 +120,22 @@ impl PeriodicSplineDesign {
     }
 }
 
+impl SplineRowBasis for PeriodicSplineDesign {
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        SplineRowBasis::nrows(&self.phase_design)
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        SplineRowBasis::nparams(&self.phase_design)
+    }
+
+    #[inline(always)]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        self.phase_design.for_each_row_basis(row, f);
+    }
+}
 impl PredictorBlock for PeriodicSplineDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -151,22 +167,5 @@ impl PredictorBlock for PeriodicSplineDesign {
     ) {
         self.phase_design
             .add_weighted_gradient(scores, multiplier, beta, grad);
-    }
-}
-
-impl SplineRowBasis for PeriodicSplineDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        SplineRowBasis::nrows(&self.phase_design)
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        SplineRowBasis::nparams(&self.phase_design)
-    }
-
-    #[inline(always)]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.phase_design.for_each_row_basis(row, f);
     }
 }

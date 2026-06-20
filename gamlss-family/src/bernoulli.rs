@@ -9,6 +9,9 @@ use gamlss_core::{
 
 use crate::initial::probability_floor;
 
+/// Bernoulli distribution with logit link for success probability.
+pub type BernoulliProbability = Bernoulli<Logit>;
+
 /// Bernoulli family parameterized by success probability.
 ///
 /// The probability link must guarantee values in `(0, 1)`.
@@ -81,35 +84,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictor for the Bernoulli family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BernoulliEta {
-    /// Success-probability predictor.
-    pub mu: f64,
-}
-
-impl ParameterParts<1> for BernoulliEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mu: values[0] }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            _ => unreachable!("bernoulli eta only has index 0"),
-        }
-    }
-}
-
-/// Natural-scale Bernoulli parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BernoulliTheta {
-    /// Success probability in `(0, 1)`.
-    pub mu: f64,
 }
 
 impl<MuLink> Family for Bernoulli<MuLink>
@@ -242,8 +216,34 @@ where
     }
 }
 
-/// Bernoulli distribution with logit link for success probability.
-pub type DefaultBernoulli = Bernoulli<Logit>;
+/// Predictor for the Bernoulli family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BernoulliEta {
+    /// Success-probability predictor.
+    pub mu: f64,
+}
+
+impl ParameterParts<1> for BernoulliEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 1]) -> Self {
+        Self { mu: values[0] }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            _ => unreachable!("bernoulli eta only has index 0"),
+        }
+    }
+}
+
+/// Natural-scale Bernoulli parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BernoulliTheta {
+    /// Success probability in `(0, 1)`.
+    pub mu: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -252,19 +252,19 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{BernoulliTheta, DefaultBernoulli};
+    use super::{BernoulliProbability, BernoulliTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn bernoulli_gradient_matches_finite_difference() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         assert_gradient_matches_finite_difference::<_, 1>(&family, 1.0, [0.4]);
         assert_gradient_matches_finite_difference::<_, 1>(&family, 0.0, [0.4]);
     }
 
     #[test]
     fn bernoulli_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert!(family.nll(1.0, theta).is_finite());
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn bernoulli_cdf_matches_reference_points() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert_eq!(family.cdf(-1.0, theta), 0.0);
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn bernoulli_quantile_matches_generalized_inverse_cdf() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert_eq!(family.quantile(0.0, theta), 0.0);
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn bernoulli_crps_matches_squared_binary_error() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert_relative_eq!(family.crps(1.0, theta), 0.36, epsilon = 1.0e-12);
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn bernoulli_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert!(family.crps(0.5, theta).is_nan());
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn bernoulli_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert!(family.crps(1.0, theta) >= 0.0);
@@ -330,7 +330,7 @@ mod tests {
     fn bernoulli_sampling_returns_binary_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(&mut rng, BernoulliTheta { mu: 0.4 });
         assert!(sample == 0.0 || sample == 1.0);

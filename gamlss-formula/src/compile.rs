@@ -20,13 +20,6 @@ pub(crate) enum ResponseDomain {
     Unit,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ParameterBuild {
-    pub(crate) predictor: FormulaPredictorBlock,
-    pub(crate) penalty: FormulaPenalty,
-    pub(crate) terms: ParameterTerms,
-}
-
 #[derive(Debug)]
 enum PreparedDenseTerm<'a> {
     Intercept {
@@ -61,6 +54,13 @@ enum PreparedDenseTerm<'a> {
         right_basis: OpenUniformSplineBasis,
         range: Range<usize>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ParameterBuild {
+    pub(crate) predictor: FormulaPredictorBlock,
+    pub(crate) penalty: FormulaPenalty,
+    pub(crate) terms: ParameterTerms,
 }
 
 struct RowMajorDesignBuilder {

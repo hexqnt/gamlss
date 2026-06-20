@@ -12,6 +12,8 @@ use crate::special::{invert_positive_cdf, ln_gamma, regularized_gamma_lower, uni
 const NU_EPSILON: f64 = 1.0e-6;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
+/// Generalized gamma distribution with log/log/identity links.
+pub type GeneralizedGammaMuSigmaNu = GeneralizedGamma<Log, Log, Identity>;
 /// Generalized gamma family with GAMLSS-like mean/scale/shape parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneralizedGamma<MuLink = Log, SigmaLink = Log, NuLink = Identity> {
@@ -87,49 +89,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for generalized gamma on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GeneralizedGammaEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Shape predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for GeneralizedGammaEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("generalized gamma eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale generalized gamma parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GeneralizedGammaTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Shape parameter; `nu = 0` is the log-normal limit.
-    pub nu: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink> Family for GeneralizedGamma<MuLink, SigmaLink, NuLink>
@@ -245,5 +204,45 @@ where
     }
 }
 
-/// Generalized gamma distribution with log/log/identity links.
-pub type DefaultGeneralizedGamma = GeneralizedGamma<Log, Log, Identity>;
+/// Predictors for generalized gamma on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneralizedGammaEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Shape predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for GeneralizedGammaEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("generalized gamma eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale generalized gamma parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneralizedGammaTheta {
+    /// Positive mean parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Shape parameter; `nu = 0` is the log-normal limit.
+    pub nu: f64,
+}

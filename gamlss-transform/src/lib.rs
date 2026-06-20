@@ -3,13 +3,20 @@
 
 use thiserror::Error;
 
-pub mod transforms;
-
 pub use transforms::{
     AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log, Log1pShift,
     Log1pShiftState, LogState, Standardize, StandardizeState,
 };
 
+pub mod transforms;
+
+/// Most commonly used imports from `gamlss-transform`.
+pub mod prelude {
+    pub use crate::{
+        AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log, Log1pShift,
+        Log1pShiftState, LogState, Standardize, StandardizeState, TargetTransform, TransformError,
+    };
+}
 /// Errors for building and applying target transforms.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TransformError {
@@ -205,12 +212,4 @@ pub(crate) fn median_sorted(values: &[f64]) -> Option<f64> {
             Some((values[upper - 1] + values[upper]) / 2.0)
         }
     }
-}
-
-/// Most commonly used imports from `gamlss-transform`.
-pub mod prelude {
-    pub use crate::{
-        AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log, Log1pShift,
-        Log1pShiftState, LogState, Standardize, StandardizeState, TargetTransform, TransformError,
-    };
 }

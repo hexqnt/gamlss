@@ -10,6 +10,9 @@ use gamlss_core::{
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
 
+/// Logistic distribution with identity link for location and log link for scale.
+pub type LogisticMuSigma = Logistic<Identity, Log>;
+
 /// Logistic family parameterized by location and positive scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Logistic<MuLink = Identity, SigmaLink = Log> {
@@ -107,43 +110,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the logistic family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogisticEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for LogisticEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("logistic eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale logistic parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogisticTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
 }
 
 impl<MuLink, SigmaLink> Family for Logistic<MuLink, SigmaLink>
@@ -262,8 +228,42 @@ where
     }
 }
 
-/// Logistic distribution with identity link for location and log link for scale.
-pub type DefaultLogistic = Logistic<Identity, Log>;
+/// Predictors for the logistic family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogisticEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for LogisticEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("logistic eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale logistic parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogisticTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -272,18 +272,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultLogistic, LogisticTheta};
+    use super::{LogisticMuSigma, LogisticTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn logistic_gradient_matches_finite_difference() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn logistic_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn logistic_cdf_matches_reference_points() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn logistic_quantile_inverts_cdf() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn logistic_crps_matches_fixed_values() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
 
         assert_relative_eq!(
             family.crps(
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn logistic_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
 
         assert!(
             family
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn logistic_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
 
         assert!(
             family.crps(
@@ -409,7 +409,7 @@ mod tests {
     fn logistic_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

@@ -14,6 +14,9 @@ use crate::special::{integrate_finite, invert_positive_cdf, unit_normal_cdf};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
+/// Inverse Gaussian distribution with log links for mean and shape.
+pub type InverseGaussianMuShape = InverseGaussian<Log, Log>;
+
 /// Inverse Gaussian family parameterized by positive mean and shape.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {
@@ -92,43 +95,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the inverse Gaussian family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for InverseGaussianEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            _ => unreachable!("inverse Gaussian eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale inverse Gaussian parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-    /// Positive shape parameter.
-    pub shape: f64,
 }
 
 impl<MuLink, ShapeLink> Family for InverseGaussian<MuLink, ShapeLink>
@@ -304,8 +270,42 @@ where
     }
 }
 
-/// Inverse Gaussian distribution with log links for mean and shape.
-pub type DefaultInverseGaussian = InverseGaussian<Log, Log>;
+/// Predictors for the inverse Gaussian family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InverseGaussianEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Shape predictor.
+    pub shape: f64,
+}
+
+impl ParameterParts<2> for InverseGaussianEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            shape: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.shape,
+            _ => unreachable!("inverse Gaussian eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale inverse Gaussian parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InverseGaussianTheta {
+    /// Positive mean parameter.
+    pub mu: f64,
+    /// Positive shape parameter.
+    pub shape: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -314,18 +314,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultInverseGaussian, InverseGaussianTheta};
+    use super::{InverseGaussianMuShape, InverseGaussianTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn inverse_gaussian_gradient_matches_finite_difference() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn inverse_gaussian_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         let theta = InverseGaussianTheta {
             mu: 1.5,
             shape: 0.8,
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_cdf_matches_reference_points() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         let theta = InverseGaussianTheta {
             mu: 1.0,
             shape: 1.0,
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
 
         assert_eq!(
             family.cdf(
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_cdf_is_finite_for_extreme_shape_ratio() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         let cdf = family.cdf(
             1.0,
             InverseGaussianTheta {
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_quantile_inverts_cdf() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         let theta = InverseGaussianTheta {
             mu: 1.5,
             shape: 0.8,
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_crps_matches_fixed_values() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
 
         assert_relative_eq!(
             family.crps(
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
 
         assert!(
             family
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn inverse_gaussian_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
 
         assert!(
             family.crps(
@@ -526,7 +526,7 @@ mod tests {
     fn inverse_gaussian_sampling_returns_positive_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultInverseGaussian::new();
+        let family = InverseGaussianMuShape::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,

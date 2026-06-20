@@ -6,6 +6,50 @@ use gamlss_spline::{
 
 use crate::{Category, Col};
 
+/// Pre-data term specification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TermSpec {
+    /// Intercept column of ones.
+    Intercept,
+    /// Linear term backed by one numeric column.
+    Linear {
+        /// Source column.
+        col: Col<f64>,
+    },
+    /// Numeric offset added to the predictor without adding coefficients.
+    Offset {
+        /// Source column.
+        col: Col<f64>,
+    },
+    /// Boolean indicator term.
+    Indicator {
+        /// Source column.
+        col: Col<bool>,
+    },
+    /// Treatment-coded categorical term.
+    Factor {
+        /// Source column.
+        col: Col<Category>,
+    },
+    /// Product of two numeric columns.
+    Interaction {
+        /// Left source column.
+        left: Col<f64>,
+        /// Right source column.
+        right: Col<f64>,
+    },
+    /// Open-uniform P-spline term.
+    PSpline(PSplineTerm),
+    /// Cyclic P-spline term.
+    CyclicPSpline(CyclicPSplineTerm),
+    /// Fourier seasonal term.
+    Fourier(FourierTerm),
+    /// Tensor-product open-uniform P-spline term.
+    TensorPSpline(TensorPSplineTerm),
+    /// Hard-monotone I-spline term.
+    Monotone(MonotoneTerm),
+}
+
 /// Pre-data term expression for one parameter predictor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TermExpr {
@@ -59,50 +103,6 @@ impl Add for TermExpr {
         }
         self
     }
-}
-
-/// Pre-data term specification.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TermSpec {
-    /// Intercept column of ones.
-    Intercept,
-    /// Linear term backed by one numeric column.
-    Linear {
-        /// Source column.
-        col: Col<f64>,
-    },
-    /// Numeric offset added to the predictor without adding coefficients.
-    Offset {
-        /// Source column.
-        col: Col<f64>,
-    },
-    /// Boolean indicator term.
-    Indicator {
-        /// Source column.
-        col: Col<bool>,
-    },
-    /// Treatment-coded categorical term.
-    Factor {
-        /// Source column.
-        col: Col<Category>,
-    },
-    /// Product of two numeric columns.
-    Interaction {
-        /// Left source column.
-        left: Col<f64>,
-        /// Right source column.
-        right: Col<f64>,
-    },
-    /// Open-uniform P-spline term.
-    PSpline(PSplineTerm),
-    /// Cyclic P-spline term.
-    CyclicPSpline(CyclicPSplineTerm),
-    /// Fourier seasonal term.
-    Fourier(FourierTerm),
-    /// Tensor-product open-uniform P-spline term.
-    TensorPSpline(TensorPSplineTerm),
-    /// Hard-monotone I-spline term.
-    Monotone(MonotoneTerm),
 }
 
 /// Creates an intercept term expression.

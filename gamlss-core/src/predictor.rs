@@ -2,78 +2,17 @@ use std::marker::PhantomData;
 
 use crate::{DesignMatrix, Link, ModelError, Softplus};
 
-/// Predictor block for one distribution parameter.
+/// Convenience predictor block alias for `softplus(beta)`.
 ///
-/// Implementations map a local coefficient slice to a scalar linear predictor
-/// contribution for each observation and know how to propagate per-observation
-/// scores back to that local coefficient slice.
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
+pub type SoftplusScalar = TransformedScalar<SoftplusTransform>;
+
+/// Convenience predictor block alias for `-softplus(beta)`.
 ///
-/// The model validates row counts before evaluation. In release builds,
-/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
-/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
-/// must add into the existing `grad` buffer rather than clearing it.
-pub trait PredictorBlock {
-    /// Number of observations.
-    fn nrows(&self) -> usize;
-    /// Number of local coefficients consumed by this block.
-    fn nparams(&self) -> usize;
-    /// Predictor contribution for one row.
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
-    /// Writes a constant predictor start into the local coefficient slice.
-    ///
-    /// Implementations should return `true` only when the write makes this
-    /// block contribute `value` for every row with the rest of the local slice
-    /// left at zero. Unsupported blocks should leave `beta` unchanged.
-    #[inline]
-    fn set_constant_start(&self, _value: f64, _beta: &mut [f64]) -> bool {
-        false
-    }
-    /// Constant contribution when all local coefficients are zero.
-    ///
-    /// Returns `None` when the zero-coefficient contribution is not constant
-    /// across rows or cannot be determined cheaply. [`SumBlock`] uses this to
-    /// account for offsets and transformed scalar baselines when constructing
-    /// constant starts.
-    #[inline]
-    fn zero_beta_constant_contribution(&self) -> Option<f64> {
-        None
-    }
-    /// Adds the gradient contribution implied by `scores` into `grad`.
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
-    /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
-    ///
-    /// Default implementation materializes scaled scores and delegates to
-    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
-    /// this method when they can fuse the multiplier into their gradient pass.
-    #[inline]
-    fn add_weighted_gradient(
-        &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(scores.len(), multiplier.len());
-
-        let scaled_scores = scores
-            .iter()
-            .zip(multiplier)
-            .map(|(score, multiplier)| score * multiplier)
-            .collect::<Vec<_>>();
-        self.add_gradient(&scaled_scores, beta, grad);
-    }
-
-    /// Validates internal block consistency.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError`] when internal dimensions or invariants do not
-    /// match the block contract.
-    #[inline]
-    fn validate(&self) -> Result<(), ModelError> {
-        Ok(())
-    }
-}
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
+pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 
 /// Linear predictor block backed by a [`DesignMatrix`].
 ///
@@ -147,24 +86,6 @@ where
     }
 }
 
-/// Predictor blocks that expose an underlying [`DesignMatrix`].
-///
-/// This extension trait enables Fisher Scoring solvers to construct the
-/// weighted Gram matrix `X^T W X` for each parameter block. Only predictor
-/// blocks with a linear structure can provide this — nonlinear blocks like
-/// [`TransformedScalar`] or [`ProductBlock`] must fall back to gradient-only
-/// optimizers.
-///
-/// Currently only [`LinearPredictorBlock`] implements this trait.
-/// Future sparse or structured matrix backends will implement it as well.
-pub trait HasDesignMatrix: PredictorBlock {
-    /// The underlying design matrix type.
-    type Matrix: DesignMatrix;
-
-    /// Returns a reference to the design matrix.
-    fn design(&self) -> &Self::Matrix;
-}
-
 impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     type Matrix = X;
 
@@ -172,14 +93,6 @@ impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     fn design(&self) -> &Self::Matrix {
         &self.x
     }
-}
-
-/// Transform for a single coefficient used by [`TransformedScalar`].
-pub trait CoefficientTransform {
-    /// Transformed coefficient value.
-    fn value(beta: f64) -> f64;
-    /// Derivative of [`Self::value`] with respect to `beta`.
-    fn derivative(beta: f64) -> f64;
 }
 
 /// Softplus coefficient transform: `softplus(beta)`.
@@ -287,18 +200,6 @@ where
         value.is_finite().then_some(value)
     }
 }
-
-/// Convenience predictor block alias for `softplus(beta)`.
-///
-/// The generic building block is [`TransformedScalar`]; this alias is provided
-/// for common scalar constraints.
-pub type SoftplusScalar = TransformedScalar<SoftplusTransform>;
-
-/// Convenience predictor block alias for `-softplus(beta)`.
-///
-/// The generic building block is [`TransformedScalar`]; this alias is provided
-/// for common scalar constraints.
-pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 
 /// Convenience one-coefficient predictor block: `floor + softplus(beta)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -500,15 +401,6 @@ where
     }
 }
 
-#[inline]
-fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
-    scores
-        .iter()
-        .zip(multiplier)
-        .map(|(score, multiplier)| score * multiplier)
-        .sum()
-}
-
 /// Sum of several predictor blocks sharing the same observations.
 ///
 /// The local beta slice is split between terms in tuple order. This keeps
@@ -526,6 +418,114 @@ impl<Terms> SumBlock<Terms> {
     pub const fn new(terms: Terms) -> Self {
         Self { terms }
     }
+}
+
+/// Predictor block for one distribution parameter.
+///
+/// Implementations map a local coefficient slice to a scalar linear predictor
+/// contribution for each observation and know how to propagate per-observation
+/// scores back to that local coefficient slice.
+///
+/// The model validates row counts before evaluation. In release builds,
+/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
+/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
+/// must add into the existing `grad` buffer rather than clearing it.
+pub trait PredictorBlock {
+    /// Number of observations.
+    fn nrows(&self) -> usize;
+    /// Number of local coefficients consumed by this block.
+    fn nparams(&self) -> usize;
+    /// Predictor contribution for one row.
+    fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Writes a constant predictor start into the local coefficient slice.
+    ///
+    /// Implementations should return `true` only when the write makes this
+    /// block contribute `value` for every row with the rest of the local slice
+    /// left at zero. Unsupported blocks should leave `beta` unchanged.
+    #[inline]
+    fn set_constant_start(&self, _value: f64, _beta: &mut [f64]) -> bool {
+        false
+    }
+    /// Constant contribution when all local coefficients are zero.
+    ///
+    /// Returns `None` when the zero-coefficient contribution is not constant
+    /// across rows or cannot be determined cheaply. [`SumBlock`] uses this to
+    /// account for offsets and transformed scalar baselines when constructing
+    /// constant starts.
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        None
+    }
+    /// Adds the gradient contribution implied by `scores` into `grad`.
+    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
+    /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
+    ///
+    /// Default implementation materializes scaled scores and delegates to
+    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
+    /// this method when they can fuse the multiplier into their gradient pass.
+    #[inline]
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), multiplier.len());
+
+        let scaled_scores = scores
+            .iter()
+            .zip(multiplier)
+            .map(|(score, multiplier)| score * multiplier)
+            .collect::<Vec<_>>();
+        self.add_gradient(&scaled_scores, beta, grad);
+    }
+
+    /// Validates internal block consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when internal dimensions or invariants do not
+    /// match the block contract.
+    #[inline]
+    fn validate(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+/// Predictor blocks that expose an underlying [`DesignMatrix`].
+///
+/// This extension trait enables Fisher Scoring solvers to construct the
+/// weighted Gram matrix `X^T W X` for each parameter block. Only predictor
+/// blocks with a linear structure can provide this — nonlinear blocks like
+/// [`TransformedScalar`] or [`ProductBlock`] must fall back to gradient-only
+/// optimizers.
+///
+/// Currently only [`LinearPredictorBlock`] implements this trait.
+/// Future sparse or structured matrix backends will implement it as well.
+pub trait HasDesignMatrix: PredictorBlock {
+    /// The underlying design matrix type.
+    type Matrix: DesignMatrix;
+
+    /// Returns a reference to the design matrix.
+    fn design(&self) -> &Self::Matrix;
+}
+
+/// Transform for a single coefficient used by [`TransformedScalar`].
+pub trait CoefficientTransform {
+    /// Transformed coefficient value.
+    fn value(beta: f64) -> f64;
+    /// Derivative of [`Self::value`] with respect to `beta`.
+    fn derivative(beta: f64) -> f64;
+}
+
+#[inline]
+fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
+    scores
+        .iter()
+        .zip(multiplier)
+        .map(|(score, multiplier)| score * multiplier)
+        .sum()
 }
 
 macro_rules! impl_sum_block {

@@ -40,6 +40,11 @@
 
 use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView};
 
+/// Common diagnostics imports.
+pub mod prelude {
+    pub use crate::{CdfDiagnosticsExt, CrpsDiagnosticsExt};
+}
+
 /// CDF-based diagnostics for fitted GAMLSS models.
 pub trait CdfDiagnosticsExt<F, Blocks>
 where
@@ -294,11 +299,6 @@ fn inverse_unit_normal_cdf(probability: f64) -> f64 {
     let q = (-2.0 * (1.0 - probability).ln()).sqrt();
     -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
         / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
-}
-
-/// Common diagnostics imports.
-pub mod prelude {
-    pub use crate::{CdfDiagnosticsExt, CrpsDiagnosticsExt};
 }
 
 #[cfg(test)]

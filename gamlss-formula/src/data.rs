@@ -4,42 +4,6 @@ use gamlss_core::{ModelError, ObservationView};
 
 use crate::FormulaError;
 
-/// Marker type for categorical columns.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Category;
-
-/// Typed reference to a named input column.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Col<T> {
-    name: Arc<str>,
-    marker: PhantomData<T>,
-}
-
-impl<T> Col<T> {
-    /// Returns the external column name.
-    #[must_use]
-    #[inline(always)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl<T> fmt::Debug for Col<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Col").field(&self.name).finish()
-    }
-}
-
-/// Creates a typed column reference.
-#[must_use]
-#[inline]
-pub fn col<T>(name: impl Into<Arc<str>>) -> Col<T> {
-    Col {
-        name: name.into(),
-        marker: PhantomData,
-    }
-}
-
 /// Numeric column storage returned by [`DataView`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum NumericCol<'a> {
@@ -107,34 +71,6 @@ impl CatCol<'_> {
             Self::Borrowed(values) => values,
             Self::Owned(values) => values,
         }
-    }
-}
-
-/// Read-only data access contract for the formula layer.
-pub trait DataView {
-    /// Number of rows visible to the model builder.
-    fn nrows(&self) -> usize;
-
-    /// Returns an `f64` column by typed column reference.
-    ///
-    /// Implementations should return [`FormulaError::UnknownColumn`] when the
-    /// name is not available. The formula layer validates row counts.
-    fn f64_col(&self, col: &Col<f64>) -> Result<NumericCol<'_>, FormulaError>;
-
-    /// Returns a `bool` column by typed column reference.
-    fn bool_col(&self, col: &Col<bool>) -> Result<BoolCol<'_>, FormulaError> {
-        Err(FormulaError::UnsupportedColumnType {
-            name: col.name().to_owned(),
-            requested: "bool",
-        })
-    }
-
-    /// Returns a categorical column by typed column reference.
-    fn cat_col(&self, col: &Col<Category>) -> Result<CatCol<'_>, FormulaError> {
-        Err(FormulaError::UnsupportedColumnType {
-            name: col.name().to_owned(),
-            requested: "category",
-        })
     }
 }
 
@@ -208,5 +144,68 @@ impl<'row> ObservationView<'row> for NumericResponse<'_> {
             }
         }
         Ok(())
+    }
+}
+/// Marker type for categorical columns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Category;
+
+/// Typed reference to a named input column.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Col<T> {
+    name: Arc<str>,
+    marker: PhantomData<T>,
+}
+
+impl<T> Col<T> {
+    /// Returns the external column name.
+    #[must_use]
+    #[inline(always)]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl<T> fmt::Debug for Col<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Col").field(&self.name).finish()
+    }
+}
+
+/// Read-only data access contract for the formula layer.
+pub trait DataView {
+    /// Number of rows visible to the model builder.
+    fn nrows(&self) -> usize;
+
+    /// Returns an `f64` column by typed column reference.
+    ///
+    /// Implementations should return [`FormulaError::UnknownColumn`] when the
+    /// name is not available. The formula layer validates row counts.
+    fn f64_col(&self, col: &Col<f64>) -> Result<NumericCol<'_>, FormulaError>;
+
+    /// Returns a `bool` column by typed column reference.
+    fn bool_col(&self, col: &Col<bool>) -> Result<BoolCol<'_>, FormulaError> {
+        Err(FormulaError::UnsupportedColumnType {
+            name: col.name().to_owned(),
+            requested: "bool",
+        })
+    }
+
+    /// Returns a categorical column by typed column reference.
+    fn cat_col(&self, col: &Col<Category>) -> Result<CatCol<'_>, FormulaError> {
+        Err(FormulaError::UnsupportedColumnType {
+            name: col.name().to_owned(),
+            requested: "category",
+        })
+    }
+}
+
+/// Creates a typed column reference.
+#[must_use]
+#[inline]
+pub fn col<T>(name: impl Into<Arc<str>>) -> Col<T> {
+    Col {
+        name: name.into(),
+        marker: PhantomData,
     }
 }

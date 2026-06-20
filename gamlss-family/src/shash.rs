@@ -9,6 +9,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
+/// SHASH distribution with identity/log/log/log links.
+pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// Sinh-arcsinh family using positive skewness and tail parameters.
 ///
 /// `nu = 1` and `tau = 1` reduce the standardized distribution to the
@@ -97,55 +99,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for SHASH on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ShashEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Positive skewness predictor.
-    pub nu: f64,
-    /// Positive tail predictor.
-    pub tau: f64,
-}
-
-impl ParameterParts<4> for ShashEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("shash eta only has indices 0 through 3"),
-        }
-    }
-}
-
-/// Natural-scale SHASH parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ShashTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Positive skewness parameter.
-    pub nu: f64,
-    /// Positive tail parameter.
-    pub tau: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for Shash<MuLink, SigmaLink, NuLink, TauLink>
@@ -258,5 +211,51 @@ where
     }
 }
 
-/// SHASH distribution with identity/log/log/log links.
-pub type DefaultShash = Shash<Identity, Log, Log, Log>;
+/// Predictors for SHASH on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShashEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Positive skewness predictor.
+    pub nu: f64,
+    /// Positive tail predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<4> for ShashEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 4]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+            tau: values[3],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            3 => self.tau,
+            _ => unreachable!("shash eta only has indices 0 through 3"),
+        }
+    }
+}
+
+/// Natural-scale SHASH parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShashTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Positive skewness parameter.
+    pub nu: f64,
+    /// Positive tail parameter.
+    pub tau: f64,
+}

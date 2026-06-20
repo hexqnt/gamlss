@@ -238,6 +238,22 @@ impl OpenUniformSplineDesign {
     }
 }
 
+impl SplineRowBasis for OpenUniformSplineDesign {
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        self.basis_for_row(row).for_each(f);
+    }
+}
 impl PredictorBlock for OpenUniformSplineDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -280,22 +296,5 @@ impl PredictorBlock for OpenUniformSplineDesign {
         for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
             self.basis_for_row(row).add_scaled(score * multiplier, grad);
         }
-    }
-}
-
-impl SplineRowBasis for OpenUniformSplineDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.basis_for_row(row).for_each(f);
     }
 }

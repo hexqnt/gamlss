@@ -13,14 +13,6 @@ pub struct FormulaPredictorBlock {
     nparams: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MonotoneSegment {
-    pub(crate) range: Range<usize>,
-    pub(crate) values: Vec<f64>,
-    pub(crate) basis: ISplineBasis,
-    pub(crate) direction: MonotoneDirection,
-}
-
 impl FormulaPredictorBlock {
     /// Creates a formula predictor block.
     #[must_use]
@@ -197,6 +189,14 @@ impl PredictorBlock for FormulaPredictorBlock {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MonotoneSegment {
+    pub(crate) range: Range<usize>,
+    pub(crate) values: Vec<f64>,
+    pub(crate) basis: ISplineBasis,
+    pub(crate) direction: MonotoneDirection,
 }
 
 fn monotone_sign(direction: MonotoneDirection) -> f64 {

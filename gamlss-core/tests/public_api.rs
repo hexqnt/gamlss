@@ -9,95 +9,6 @@ use gamlss_core::{
     TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
 };
 
-#[test]
-fn convenience_predictor_helpers_remain_root_reexports() {
-    let softplus = SoftplusScalar::new(1);
-    let negative = NegativeSoftplusScalar::new(1);
-    let floored = FloorSoftplusScalar::new(1, 0.5);
-
-    assert_eq!(softplus.nparams(), 1);
-    assert_eq!(negative.nparams(), 1);
-    assert_eq!(floored.nparams(), 1);
-}
-
-#[test]
-fn training_diagnostics_remains_a_root_reexport() {
-    let diagnostics = TrainingDiagnostics {
-        objective: 1.0,
-        train_nll: 0.75,
-        penalty: 0.25,
-        gradient_norm: 0.0,
-        nonfinite_gradient_count: 0,
-    };
-
-    assert_eq!(diagnostics.objective, 1.0);
-}
-
-#[test]
-fn objective_scale_and_linear_form_builder_remain_root_reexports() {
-    let form = LinearForm::builder()
-        .weighted_range(2..4, [0.5, -1.0])
-        .constant(0.25)
-        .build();
-    let explicit = LinearFormBuilder::new()
-        .term(2, 0.5)
-        .term(3, -1.0)
-        .constant(0.25)
-        .build();
-
-    assert_eq!(ObjectiveScale::default(), ObjectiveScale::Sum);
-    assert_eq!(form, explicit);
-    assert_eq!(form.value(&[0.0, 0.0, 2.0, 0.5]), 0.75);
-}
-
-#[test]
-fn parameter_layout_helpers_remain_root_reexports() {
-    let layout = ParameterLayout::new(vec![
-        ParameterSlice {
-            name: "mu",
-            range: 0..2,
-        },
-        ParameterSlice {
-            name: "sigma",
-            range: 2..3,
-        },
-    ]);
-
-    assert_eq!(layout.len(), 2);
-    assert!(!layout.is_empty());
-    assert_eq!(layout.ncoefficients(), 3);
-    assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
-    assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
-}
-
-#[test]
-fn semantic_parameter_markers_remain_root_reexports() {
-    assert_eq!(Mean::NAME, "mean");
-    assert_eq!(Median::NAME, "median");
-    assert_eq!(ComponentMean::NAME, "component_mean");
-    assert_eq!(TotalMean::NAME, "total_mean");
-    assert_eq!(Cv::NAME, "cv");
-    assert_eq!(LogSd::NAME, "log_sd");
-    assert_eq!(LogLocation::NAME, "log_location");
-    assert_eq!(Dispersion::NAME, "dispersion");
-    assert_eq!(Size::NAME, "size");
-    assert_eq!(Probability::NAME, "probability");
-    assert_eq!(ZeroProbability::NAME, "zero_probability");
-    assert_eq!(OneProbability::NAME, "one_probability");
-    assert_eq!(Power::NAME, "power");
-}
-
-#[test]
-fn link_domain_marker_traits_remain_root_reexports() {
-    fn assert_positive_link<L: PositiveLink<f64>>() {}
-    fn assert_unit_interval_link<L: UnitIntervalLink<f64>>() {}
-
-    assert_positive_link::<Log>();
-    assert_positive_link::<Softplus>();
-    assert_positive_link::<ClampedLog<-12, 12>>();
-    assert_unit_interval_link::<Logit>();
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct BorrowedRows {
     rows: Vec<Vec<f64>>,
@@ -204,6 +115,95 @@ impl HasInitialEta for DependentConstraintFamily {
     fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta {
         (Self::target(observation), 0.0)
     }
+}
+
+#[test]
+fn convenience_predictor_helpers_remain_root_reexports() {
+    let softplus = SoftplusScalar::new(1);
+    let negative = NegativeSoftplusScalar::new(1);
+    let floored = FloorSoftplusScalar::new(1, 0.5);
+
+    assert_eq!(softplus.nparams(), 1);
+    assert_eq!(negative.nparams(), 1);
+    assert_eq!(floored.nparams(), 1);
+}
+
+#[test]
+fn training_diagnostics_remains_a_root_reexport() {
+    let diagnostics = TrainingDiagnostics {
+        objective: 1.0,
+        train_nll: 0.75,
+        penalty: 0.25,
+        gradient_norm: 0.0,
+        nonfinite_gradient_count: 0,
+    };
+
+    assert_eq!(diagnostics.objective, 1.0);
+}
+
+#[test]
+fn objective_scale_and_linear_form_builder_remain_root_reexports() {
+    let form = LinearForm::builder()
+        .weighted_range(2..4, [0.5, -1.0])
+        .constant(0.25)
+        .build();
+    let explicit = LinearFormBuilder::new()
+        .term(2, 0.5)
+        .term(3, -1.0)
+        .constant(0.25)
+        .build();
+
+    assert_eq!(ObjectiveScale::default(), ObjectiveScale::Sum);
+    assert_eq!(form, explicit);
+    assert_eq!(form.value(&[0.0, 0.0, 2.0, 0.5]), 0.75);
+}
+
+#[test]
+fn parameter_layout_helpers_remain_root_reexports() {
+    let layout = ParameterLayout::new(vec![
+        ParameterSlice {
+            name: "mu",
+            range: 0..2,
+        },
+        ParameterSlice {
+            name: "sigma",
+            range: 2..3,
+        },
+    ]);
+
+    assert_eq!(layout.len(), 2);
+    assert!(!layout.is_empty());
+    assert_eq!(layout.ncoefficients(), 3);
+    assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
+    assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
+}
+
+#[test]
+fn semantic_parameter_markers_remain_root_reexports() {
+    assert_eq!(Mean::NAME, "mean");
+    assert_eq!(Median::NAME, "median");
+    assert_eq!(ComponentMean::NAME, "component_mean");
+    assert_eq!(TotalMean::NAME, "total_mean");
+    assert_eq!(Cv::NAME, "cv");
+    assert_eq!(LogSd::NAME, "log_sd");
+    assert_eq!(LogLocation::NAME, "log_location");
+    assert_eq!(Dispersion::NAME, "dispersion");
+    assert_eq!(Size::NAME, "size");
+    assert_eq!(Probability::NAME, "probability");
+    assert_eq!(ZeroProbability::NAME, "zero_probability");
+    assert_eq!(OneProbability::NAME, "one_probability");
+    assert_eq!(Power::NAME, "power");
+}
+
+#[test]
+fn link_domain_marker_traits_remain_root_reexports() {
+    fn assert_positive_link<L: PositiveLink<f64>>() {}
+    fn assert_unit_interval_link<L: UnitIntervalLink<f64>>() {}
+
+    assert_positive_link::<Log>();
+    assert_positive_link::<Softplus>();
+    assert_positive_link::<ClampedLog<-12, 12>>();
+    assert_unit_interval_link::<Logit>();
 }
 
 #[test]

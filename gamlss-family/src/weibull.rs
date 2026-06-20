@@ -131,9 +131,191 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     }
 }
 
+impl<MeanLink, ShapeLink> Weibull<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: WeibullMeanShapeEta) -> WeibullMeanShapeTheta {
+        WeibullMeanShapeTheta {
+            mean: MeanLink::inverse(eta.mean),
+            shape: ShapeLink::inverse(eta.shape),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: WeibullMeanShapeEta) -> (f64, WeibullMeanShapeEta) {
+        let theta = Self::theta_from_eta(eta);
+        let scale_shape = theta.scale_shape();
+        let nll = Self::nll_scale_shape(y, scale_shape);
+        if !nll.is_finite() {
+            return (nll, WeibullMeanShapeEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_scale, d_shape_kernel) = Self::gradient_scale_shape(y, scale_shape);
+        let d_mean = d_scale * scale_shape.scale / theta.mean;
+        let a = 1.0 + 1.0 / theta.shape;
+        let d_scale_d_shape = scale_shape.scale * digamma(a) / (theta.shape * theta.shape);
+        let d_shape = d_shape_kernel + d_scale * d_scale_d_shape;
+
+        (
+            nll,
+            WeibullMeanShapeEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
+            },
+        )
+    }
+}
+
+impl<ScaleLink, ShapeLink> Weibull<ScaleShape, ScaleLink, ShapeLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: WeibullScaleShapeEta) -> WeibullScaleShapeTheta {
+        WeibullScaleShapeTheta {
+            scale: ScaleLink::inverse(eta.scale),
+            shape: ShapeLink::inverse(eta.shape),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: WeibullScaleShapeEta,
+    ) -> (f64, WeibullScaleShapeEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_scale_shape(y, theta);
+        if !nll.is_finite() {
+            return (nll, WeibullScaleShapeEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_scale, d_shape) = Self::gradient_scale_shape(y, theta);
+        (
+            nll,
+            WeibullScaleShapeEta {
+                scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
+                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
+            },
+        )
+    }
+}
+
 impl<Param, FirstLink, SecondLink> Default for Weibull<Param, FirstLink, SecondLink> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<MeanLink, ShapeLink> Family for Weibull<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    type Eta = WeibullMeanShapeEta;
+    type Theta = WeibullMeanShapeTheta;
+    type NllGradientEta = WeibullMeanShapeEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_scale_shape(y, theta.scale_shape())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_scale_shape(y, Self::theta_from_eta(eta).scale_shape())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MeanLink, ShapeLink> ParameterizedFamily<2> for Weibull<MeanShape, MeanLink, ShapeLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mean, Shape);
+    type Links = (MeanLink, ShapeLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let Some((scale, shape)) = Self::initial_scale_shape(obs) else {
+            return WeibullMeanShapeEta::from_array([0.0, 0.0]);
+        };
+        let mean = scale * Self::mean_factor(shape);
+
+        WeibullMeanShapeEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
+    }
+}
+
+impl<ScaleLink, ShapeLink> Family for Weibull<ScaleShape, ScaleLink, ShapeLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    type Eta = WeibullScaleShapeEta;
+    type Theta = WeibullScaleShapeTheta;
+    type NllGradientEta = WeibullScaleShapeEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_scale_shape(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_scale_shape(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<ScaleLink, ShapeLink> ParameterizedFamily<2> for Weibull<ScaleShape, ScaleLink, ShapeLink>
+where
+    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Scale, Shape);
+    type Links = (ScaleLink, ShapeLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let Some((scale, shape)) = Self::initial_scale_shape(obs) else {
+            return WeibullScaleShapeEta::from_array([0.0, 0.0]);
+        };
+
+        WeibullScaleShapeEta {
+            scale: ScaleLink::initial_eta_from_theta(scale),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
     }
 }
 
@@ -219,188 +401,6 @@ pub struct WeibullScaleShapeTheta {
     pub scale: f64,
     /// Positive shape.
     pub shape: f64,
-}
-
-impl<MeanLink, ShapeLink> Weibull<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: WeibullMeanShapeEta) -> WeibullMeanShapeTheta {
-        WeibullMeanShapeTheta {
-            mean: MeanLink::inverse(eta.mean),
-            shape: ShapeLink::inverse(eta.shape),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: WeibullMeanShapeEta) -> (f64, WeibullMeanShapeEta) {
-        let theta = Self::theta_from_eta(eta);
-        let scale_shape = theta.scale_shape();
-        let nll = Self::nll_scale_shape(y, scale_shape);
-        if !nll.is_finite() {
-            return (nll, WeibullMeanShapeEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_scale, d_shape_kernel) = Self::gradient_scale_shape(y, scale_shape);
-        let d_mean = d_scale * scale_shape.scale / theta.mean;
-        let a = 1.0 + 1.0 / theta.shape;
-        let d_scale_d_shape = scale_shape.scale * digamma(a) / (theta.shape * theta.shape);
-        let d_shape = d_shape_kernel + d_scale * d_scale_d_shape;
-
-        (
-            nll,
-            WeibullMeanShapeEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            },
-        )
-    }
-}
-
-impl<MeanLink, ShapeLink> Family for Weibull<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    type Eta = WeibullMeanShapeEta;
-    type Theta = WeibullMeanShapeTheta;
-    type NllGradientEta = WeibullMeanShapeEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_scale_shape(y, theta.scale_shape())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_scale_shape(y, Self::theta_from_eta(eta).scale_shape())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MeanLink, ShapeLink> ParameterizedFamily<2> for Weibull<MeanShape, MeanLink, ShapeLink>
-where
-    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean, Shape);
-    type Links = (MeanLink, ShapeLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let Some((scale, shape)) = Self::initial_scale_shape(obs) else {
-            return WeibullMeanShapeEta::from_array([0.0, 0.0]);
-        };
-        let mean = scale * Self::mean_factor(shape);
-
-        WeibullMeanShapeEta {
-            mean: MeanLink::initial_eta_from_theta(mean),
-            shape: ShapeLink::initial_eta_from_theta(shape),
-        }
-    }
-}
-
-impl<ScaleLink, ShapeLink> Weibull<ScaleShape, ScaleLink, ShapeLink>
-where
-    ScaleLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: WeibullScaleShapeEta) -> WeibullScaleShapeTheta {
-        WeibullScaleShapeTheta {
-            scale: ScaleLink::inverse(eta.scale),
-            shape: ShapeLink::inverse(eta.shape),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(
-        y: f64,
-        eta: WeibullScaleShapeEta,
-    ) -> (f64, WeibullScaleShapeEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_scale_shape(y, theta);
-        if !nll.is_finite() {
-            return (nll, WeibullScaleShapeEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_scale, d_shape) = Self::gradient_scale_shape(y, theta);
-        (
-            nll,
-            WeibullScaleShapeEta {
-                scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            },
-        )
-    }
-}
-
-impl<ScaleLink, ShapeLink> Family for Weibull<ScaleShape, ScaleLink, ShapeLink>
-where
-    ScaleLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    type Eta = WeibullScaleShapeEta;
-    type Theta = WeibullScaleShapeTheta;
-    type NllGradientEta = WeibullScaleShapeEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_scale_shape(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_scale_shape(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<ScaleLink, ShapeLink> ParameterizedFamily<2> for Weibull<ScaleShape, ScaleLink, ShapeLink>
-where
-    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Scale, Shape);
-    type Links = (ScaleLink, ShapeLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let Some((scale, shape)) = Self::initial_scale_shape(obs) else {
-            return WeibullScaleShapeEta::from_array([0.0, 0.0]);
-        };
-
-        WeibullScaleShapeEta {
-            scale: ScaleLink::initial_eta_from_theta(scale),
-            shape: ShapeLink::initial_eta_from_theta(shape),
-        }
-    }
 }
 
 impl From<WeibullMeanShapeTheta> for WeibullScaleShapeTheta {

@@ -2,40 +2,6 @@ use std::ops::Range;
 
 use crate::ModelError;
 
-/// Optimizer-independent oracle over a flat parameter vector.
-///
-/// Methods accept `&mut self` so implementations can reuse temporary buffers
-/// without exposing optimizer-specific state in `gamlss-core`.
-///
-/// Implementations validate input lengths and return recoverable errors for
-/// shape mismatches. `value` and `gradient` are allowed to reuse internal
-/// buffers; callers should not assume they are pure with respect to internal
-/// cache state. `value_gradient` is the primary first-order hot path; the
-/// default `gradient` wrapper exists for optimizer traits that request a
-/// gradient-only callback.
-pub trait Objective {
-    /// Recoverable error returned by objective evaluation.
-    type Error;
-
-    /// Dimension of the flat parameter vector accepted by this objective.
-    fn dim(&self) -> usize;
-
-    /// Objective value at `parameters`.
-    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error>;
-
-    /// Computes objective value and gradient at `parameters`.
-    ///
-    /// Implementations overwrite the full gradient buffer after validating
-    /// `grad.len() == dim()`. They should return an error instead of panicking
-    /// for ordinary caller mistakes such as wrong vector length.
-    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error>;
-
-    /// Writes the gradient at `parameters` into preallocated `grad`.
-    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.value_gradient(parameters, grad).map(|_| ())
-    }
-}
-
 /// Convenience adapter for optimizing one coefficient block at a time.
 ///
 /// This is not part of the fundamental model representation. It exists for
@@ -117,6 +83,40 @@ where
             .value_gradient(&self.working_beta, &mut self.full_grad)?;
         grad.copy_from_slice(&self.full_grad[self.block.start..self.block.end]);
         Ok(value)
+    }
+}
+
+/// Optimizer-independent oracle over a flat parameter vector.
+///
+/// Methods accept `&mut self` so implementations can reuse temporary buffers
+/// without exposing optimizer-specific state in `gamlss-core`.
+///
+/// Implementations validate input lengths and return recoverable errors for
+/// shape mismatches. `value` and `gradient` are allowed to reuse internal
+/// buffers; callers should not assume they are pure with respect to internal
+/// cache state. `value_gradient` is the primary first-order hot path; the
+/// default `gradient` wrapper exists for optimizer traits that request a
+/// gradient-only callback.
+pub trait Objective {
+    /// Recoverable error returned by objective evaluation.
+    type Error;
+
+    /// Dimension of the flat parameter vector accepted by this objective.
+    fn dim(&self) -> usize;
+
+    /// Objective value at `parameters`.
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error>;
+
+    /// Computes objective value and gradient at `parameters`.
+    ///
+    /// Implementations overwrite the full gradient buffer after validating
+    /// `grad.len() == dim()`. They should return an error instead of panicking
+    /// for ordinary caller mistakes such as wrong vector length.
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error>;
+
+    /// Writes the gradient at `parameters` into preallocated `grad`.
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(parameters, grad).map(|_| ())
     }
 }
 

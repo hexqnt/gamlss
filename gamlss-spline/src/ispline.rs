@@ -174,6 +174,23 @@ impl ISplineDesign {
     }
 }
 
+impl SplineRowBasis for ISplineDesign {
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
+        self.basis.for_each_basis(self.x[row], &mut f);
+    }
+}
+
 impl PredictorBlock for ISplineDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -222,23 +239,6 @@ impl PredictorBlock for ISplineDesign {
                 grad[index] += score * multiplier * weight;
             });
         }
-    }
-}
-
-impl SplineRowBasis for ISplineDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        self.basis.for_each_basis(self.x[row], &mut f);
     }
 }
 

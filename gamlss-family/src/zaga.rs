@@ -9,6 +9,8 @@ use crate::initial::{positive_floor, probability_floor, weighted_summary, weight
 use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{invert_positive_cdf, ln_gamma, regularized_gamma_lower};
 
+/// ZAGA distribution with log/log/logit links.
+pub type ZagaMeanSigmaZeroProbability = Zaga<Log, Log, Logit>;
 /// Zero-adjusted gamma family.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
@@ -117,46 +119,6 @@ where
     }
 }
 
-/// Predictors for ZAGA on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZagaEta {
-    /// Positive mean predictor for the gamma component.
-    pub mu: f64,
-    /// Positive coefficient-of-variation predictor for the gamma component.
-    pub sigma: f64,
-    /// Zero-mass probability predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for ZagaEta {
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("zaga eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale ZAGA parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZagaTheta {
-    /// Positive mean for the gamma component.
-    pub mu: f64,
-    /// Positive coefficient of variation for the gamma component.
-    pub sigma: f64,
-    /// Zero-mass probability in `(0, 1)`.
-    pub nu: f64,
-}
-
 impl<MuLink, SigmaLink, NuLink> Family for Zaga<MuLink, SigmaLink, NuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -262,5 +224,42 @@ where
     }
 }
 
-/// ZAGA distribution with log/log/logit links.
-pub type DefaultZaga = Zaga<Log, Log, Logit>;
+/// Predictors for ZAGA on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZagaEta {
+    /// Positive mean predictor for the gamma component.
+    pub mu: f64,
+    /// Positive coefficient-of-variation predictor for the gamma component.
+    pub sigma: f64,
+    /// Zero-mass probability predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for ZagaEta {
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("zaga eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale ZAGA parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZagaTheta {
+    /// Positive mean for the gamma component.
+    pub mu: f64,
+    /// Positive coefficient of variation for the gamma component.
+    pub sigma: f64,
+    /// Zero-mass probability in `(0, 1)`.
+    pub nu: f64,
+}

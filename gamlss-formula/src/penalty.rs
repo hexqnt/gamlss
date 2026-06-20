@@ -5,12 +5,6 @@ use gamlss_spline::{PreparedCyclicDifferencePenalty, PreparedDifferencePenalty};
 
 use crate::FittedTerm;
 
-/// Formula-local segment penalty representation.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct FormulaPenalty {
-    spline_segments: Vec<SegmentPenalty<SegmentPenaltyKind>>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 enum SegmentPenaltyKind {
     Difference(PreparedDifferencePenalty),
@@ -31,6 +25,12 @@ impl Penalty for SegmentPenaltyKind {
             Self::Cyclic(penalty) => penalty.add_gradient(beta, grad),
         }
     }
+}
+
+/// Formula-local segment penalty representation.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FormulaPenalty {
+    spline_segments: Vec<SegmentPenalty<SegmentPenaltyKind>>,
 }
 
 impl FormulaPenalty {

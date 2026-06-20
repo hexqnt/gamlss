@@ -5,185 +5,15 @@ use crate::{
     ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
 };
 
-mod layout;
-mod observation;
-mod workspace;
-
 pub use layout::{
     ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
 pub use observation::ObservationView;
 pub use workspace::GradientWorkspace;
 
-/// Tuple contract for a set of parameter blocks compatible with family `F`.
-///
-/// Implementations are generated for typed tuples of [`ParameterBlock`]. The
-/// model validates observation count, predictor row counts and coefficient
-/// ranges before hot-path evaluation; generated methods may then assume
-/// compatible row counts, finite non-negative weights and non-overlapping block
-/// ranges.
-pub trait GamlssBlocks<F>
-where
-    F: Family,
-{
-    /// Number of observations in the blocks.
-    fn nrows(&self) -> usize;
-    /// Length of the common beta vector covering all blocks.
-    fn len(&self) -> usize;
-
-    /// `true` if the blocks require no coefficients.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Validates that the blocks are compatible with the observation count
-    /// `nobs`.
-    fn validate(&self, nobs: usize) -> Result<(), ModelError>;
-    /// Weighted negative log-likelihood without penalties.
-    ///
-    /// `obs` has already been validated by the model constructor. Each scalar
-    /// likelihood contribution is multiplied by the corresponding observation
-    /// weight.
-    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Additive predictors on the link scale for one row.
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
-    where
-        F: Family;
-    /// Penalty value depending on coefficient blocks.
-    fn penalty_value(&self, beta: &[f64]) -> f64;
-    /// Creates a flat optimizer-parameter start vector from family-level
-    /// link-scale initial predictors.
-    fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Adds the local penalty gradient into an existing full gradient vector.
-    ///
-    /// Implementations with local penalties should override this method. It is
-    /// used by objective scaling to rescale likelihood gradients without
-    /// changing the meaning of penalty weights. The default implementation is
-    /// correct only for block collections whose [`penalty_value`](Self::penalty_value)
-    /// has zero gradient.
-    fn add_penalty_gradient(&self, _beta: &[f64], _grad: &mut [f64]) {}
-    /// Value of the weighted negative log-likelihood plus penalties.
-    fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        self.train_nll(family, obs, beta) + self.penalty_value(beta)
-    }
-    /// Creates reusable buffers for repeated gradient evaluations.
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let mut workspace = GradientWorkspace::new();
-        let ranges = self.block_ranges();
-        workspace.prepare(ranges.len());
-        for (index, range) in ranges.iter().enumerate() {
-            workspace.prepare_row_gradient(index, nobs);
-            let _ = workspace.local_gradient_mut(index, range.len());
-        }
-        workspace
-    }
-    /// Adds the weighted gradient, reusing temporary buffers from `workspace`.
-    ///
-    /// The default implementation uses the fused value-gradient path and
-    /// discards the value.
-    fn gradient_into_workspace<'obs, Obs>(
-        &self,
-        family: &F,
-        obs: &'obs Obs,
-        beta: &[f64],
-        grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
-    ) where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let _ = self.value_gradient_into_workspace(family, obs, beta, grad, workspace);
-    }
-
-    /// Computes weighted objective value and gradient in one observation pass.
-    fn value_gradient_into_workspace<'obs, Obs>(
-        &self,
-        family: &F,
-        obs: &'obs Obs,
-        beta: &[f64],
-        grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
-    ) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Coefficient ranges for each block in the common beta vector.
-    fn block_ranges(&self) -> Vec<Range<usize>>;
-    /// Returns the layout of the coefficient blocks within the flat beta vector.
-    fn parameter_layout(&self) -> ParameterLayout;
-
-    /// Visits coefficient ranges for each parameter block in model order without allocating.
-    fn visit_block_ranges<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, Range<usize>),
-    {
-        for (index, range) in self.block_ranges().into_iter().enumerate() {
-            visit(index, range);
-        }
-    }
-
-    fn parameter_slice_count(&self) -> usize {
-        self.parameter_layout().slices().len()
-    }
-
-    #[doc(hidden)]
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        self.parameter_layout()
-            .slices()
-            .get(index)
-            .is_some_and(|slice| slice.name == name && slice.range == range)
-    }
-
-    /// Visits named parameter slices in model order without allocating.
-    fn visit_parameter_slices<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        for (index, slice) in self.parameter_layout().slices().iter().enumerate() {
-            visit(index, slice.name, slice.range.clone());
-        }
-    }
-
-    #[doc(hidden)]
-    fn parameter_slice_of<P>(&self) -> Option<Range<usize>>
-    where
-        P: ParameterName,
-    {
-        let mut found = None;
-        self.visit_parameter_slices(|_, name, range| {
-            if name == P::NAME && found.is_none() {
-                found = Some(range);
-            }
-        });
-        found
-    }
-
-    #[doc(hidden)]
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        let mut got_count = 0;
-        let mut matches = true;
-
-        other.visit_parameter_slices(|index, name, range| {
-            got_count += 1;
-            matches &= self.parameter_slice_matches(index, name, range);
-        });
-
-        matches && got_count == self.parameter_slice_count()
-    }
-}
+mod layout;
+mod observation;
+mod workspace;
 
 /// Scaling convention for the likelihood part of a compiled objective.
 ///
@@ -232,32 +62,6 @@ pub struct Gamlss<F, Blocks, Obs> {
     pub obs: Obs,
     /// Scaling applied to the likelihood part of the objective.
     pub objective_scale: ObjectiveScale,
-}
-
-/// GAMLSS objective with reusable gradient buffers.
-///
-/// This wrapper is intended for optimizers that call `gradient` repeatedly.
-/// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
-/// avoiding per-call allocation of row-gradient and local-gradient vectors.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkspaceGamlss<F, Blocks, Obs> {
-    /// Wrapped compiled model.
-    pub model: Gamlss<F, Blocks, Obs>,
-    /// Reusable gradient workspace.
-    pub workspace: GradientWorkspace,
-}
-
-/// Objective wrapper that adds penalties depending on the full beta vector.
-///
-/// Unlike [`Penalty`], which acts locally on a single block,
-/// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
-/// LASSO-like penalties).
-#[derive(Debug, Clone, PartialEq)]
-pub struct WithGlobalPenalties<O, GP> {
-    /// Wrapped objective.
-    pub objective: O,
-    /// Global penalties evaluated on the full parameter vector.
-    pub penalties: GP,
 }
 
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
@@ -720,6 +524,44 @@ where
     }
 }
 
+impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+{
+    type Error = ModelError;
+
+    fn dim(&self) -> usize {
+        self.nparams()
+    }
+
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        self.try_value(parameters)
+    }
+
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.try_value_gradient_into(parameters, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.try_value_gradient_into(parameters, grad)
+    }
+}
+
+/// GAMLSS objective with reusable gradient buffers.
+///
+/// This wrapper is intended for optimizers that call `gradient` repeatedly.
+/// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
+/// avoiding per-call allocation of row-gradient and local-gradient vectors.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceGamlss<F, Blocks, Obs> {
+    /// Wrapped compiled model.
+    pub model: Gamlss<F, Blocks, Obs>,
+    /// Reusable gradient workspace.
+    pub workspace: GradientWorkspace,
+}
+
 impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
 where
     F: Family,
@@ -798,31 +640,6 @@ where
     }
 }
 
-impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
-where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
-{
-    type Error = ModelError;
-
-    fn dim(&self) -> usize {
-        self.nparams()
-    }
-
-    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
-        self.try_value(parameters)
-    }
-
-    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.try_value_gradient_into(parameters, grad).map(|_| ())
-    }
-
-    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        self.try_value_gradient_into(parameters, grad)
-    }
-}
-
 impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
 where
     F: Family,
@@ -851,6 +668,19 @@ where
     }
 }
 
+/// Objective wrapper that adds penalties depending on the full beta vector.
+///
+/// Unlike [`Penalty`], which acts locally on a single block,
+/// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
+/// LASSO-like penalties).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithGlobalPenalties<O, GP> {
+    /// Wrapped objective.
+    pub objective: O,
+    /// Global penalties evaluated on the full parameter vector.
+    pub penalties: GP,
+}
+
 impl<O, GP> Objective for WithGlobalPenalties<O, GP>
 where
     O: Objective,
@@ -875,6 +705,176 @@ where
         value += self.penalties.value(parameters);
         self.penalties.add_gradient(parameters, grad);
         Ok(value)
+    }
+}
+
+/// Tuple contract for a set of parameter blocks compatible with family `F`.
+///
+/// Implementations are generated for typed tuples of [`ParameterBlock`]. The
+/// model validates observation count, predictor row counts and coefficient
+/// ranges before hot-path evaluation; generated methods may then assume
+/// compatible row counts, finite non-negative weights and non-overlapping block
+/// ranges.
+pub trait GamlssBlocks<F>
+where
+    F: Family,
+{
+    /// Number of observations in the blocks.
+    fn nrows(&self) -> usize;
+    /// Length of the common beta vector covering all blocks.
+    fn len(&self) -> usize;
+
+    /// `true` if the blocks require no coefficients.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Validates that the blocks are compatible with the observation count
+    /// `nobs`.
+    fn validate(&self, nobs: usize) -> Result<(), ModelError>;
+    /// Weighted negative log-likelihood without penalties.
+    ///
+    /// `obs` has already been validated by the model constructor. Each scalar
+    /// likelihood contribution is multiplied by the corresponding observation
+    /// weight.
+    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Additive predictors on the link scale for one row.
+    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
+    where
+        F: Family;
+    /// Penalty value depending on coefficient blocks.
+    fn penalty_value(&self, beta: &[f64]) -> f64;
+    /// Creates a flat optimizer-parameter start vector from family-level
+    /// link-scale initial predictors.
+    fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Adds the local penalty gradient into an existing full gradient vector.
+    ///
+    /// Implementations with local penalties should override this method. It is
+    /// used by objective scaling to rescale likelihood gradients without
+    /// changing the meaning of penalty weights. The default implementation is
+    /// correct only for block collections whose [`penalty_value`](Self::penalty_value)
+    /// has zero gradient.
+    fn add_penalty_gradient(&self, _beta: &[f64], _grad: &mut [f64]) {}
+    /// Value of the weighted negative log-likelihood plus penalties.
+    fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        self.train_nll(family, obs, beta) + self.penalty_value(beta)
+    }
+    /// Creates reusable buffers for repeated gradient evaluations.
+    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
+        let mut workspace = GradientWorkspace::new();
+        let ranges = self.block_ranges();
+        workspace.prepare(ranges.len());
+        for (index, range) in ranges.iter().enumerate() {
+            workspace.prepare_row_gradient(index, nobs);
+            let _ = workspace.local_gradient_mut(index, range.len());
+        }
+        workspace
+    }
+    /// Adds the weighted gradient, reusing temporary buffers from `workspace`.
+    ///
+    /// The default implementation uses the fused value-gradient path and
+    /// discards the value.
+    fn gradient_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let _ = self.value_gradient_into_workspace(family, obs, beta, grad, workspace);
+    }
+
+    /// Computes weighted objective value and gradient in one observation pass.
+    fn value_gradient_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Coefficient ranges for each block in the common beta vector.
+    fn block_ranges(&self) -> Vec<Range<usize>>;
+    /// Returns the layout of the coefficient blocks within the flat beta vector.
+    fn parameter_layout(&self) -> ParameterLayout;
+
+    /// Visits coefficient ranges for each parameter block in model order without allocating.
+    fn visit_block_ranges<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        for (index, range) in self.block_ranges().into_iter().enumerate() {
+            visit(index, range);
+        }
+    }
+
+    fn parameter_slice_count(&self) -> usize {
+        self.parameter_layout().slices().len()
+    }
+
+    #[doc(hidden)]
+    fn parameter_slice_matches(
+        &self,
+        index: usize,
+        name: &'static str,
+        range: Range<usize>,
+    ) -> bool {
+        self.parameter_layout()
+            .slices()
+            .get(index)
+            .is_some_and(|slice| slice.name == name && slice.range == range)
+    }
+
+    /// Visits named parameter slices in model order without allocating.
+    fn visit_parameter_slices<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        for (index, slice) in self.parameter_layout().slices().iter().enumerate() {
+            visit(index, slice.name, slice.range.clone());
+        }
+    }
+
+    #[doc(hidden)]
+    fn parameter_slice_of<P>(&self) -> Option<Range<usize>>
+    where
+        P: ParameterName,
+    {
+        let mut found = None;
+        self.visit_parameter_slices(|_, name, range| {
+            if name == P::NAME && found.is_none() {
+                found = Some(range);
+            }
+        });
+        found
+    }
+
+    #[doc(hidden)]
+    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
+    where
+        Other: GamlssBlocks<F>,
+    {
+        let mut got_count = 0;
+        let mut matches = true;
+
+        other.visit_parameter_slices(|index, name, range| {
+            got_count += 1;
+            matches &= self.parameter_slice_matches(index, name, range);
+        });
+
+        matches && got_count == self.parameter_slice_count()
     }
 }
 

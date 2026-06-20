@@ -8,13 +8,6 @@ use crate::{TargetTransform, TransformError, median_sorted, validate_non_empty_f
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AsinhScale;
 
-/// State for [`AsinhScale`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AsinhScaleState {
-    /// Positive scale used before `asinh`.
-    pub scale: f64,
-}
-
 impl TargetTransform for AsinhScale {
     type State = AsinhScaleState;
 
@@ -39,6 +32,13 @@ impl TargetTransform for AsinhScale {
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.sinh() * state.scale
     }
+}
+
+/// State for [`AsinhScale`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AsinhScaleState {
+    /// Positive scale used before `asinh`.
+    pub scale: f64,
 }
 
 #[cfg(test)]

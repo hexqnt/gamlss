@@ -12,6 +12,9 @@ use crate::initial::{
 };
 use crate::special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
 
+/// Beta distribution with logit link for mean and log link for precision.
+pub type BetaMeanPrecision = Beta<Logit, Log>;
+
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
 ///
 /// The mean link must guarantee values in `(0, 1)`.
@@ -108,43 +111,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the beta family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BetaEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Precision predictor.
-    pub precision: f64,
-}
-
-impl ParameterParts<2> for BetaEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            precision: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.precision,
-            _ => unreachable!("beta eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale beta parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BetaTheta {
-    /// Mean parameter in `(0, 1)`.
-    pub mu: f64,
-    /// Positive precision parameter.
-    pub precision: f64,
 }
 
 impl<MuLink, PrecisionLink> Family for Beta<MuLink, PrecisionLink>
@@ -311,8 +277,42 @@ where
     }
 }
 
-/// Beta distribution with logit link for mean and log link for precision.
-pub type DefaultBeta = Beta<Logit, Log>;
+/// Predictors for the beta family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BetaEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Precision predictor.
+    pub precision: f64,
+}
+
+impl ParameterParts<2> for BetaEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            precision: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.precision,
+            _ => unreachable!("beta eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale beta parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BetaTheta {
+    /// Mean parameter in `(0, 1)`.
+    pub mu: f64,
+    /// Positive precision parameter.
+    pub precision: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -322,18 +322,18 @@ mod tests {
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{Beta as StatrsBeta, ContinuousCDF};
 
-    use super::{BetaTheta, DefaultBeta};
+    use super::{BetaMeanPrecision, BetaTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn beta_gradient_matches_finite_difference() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 0.4, [0.2, 1.0]);
     }
 
     #[test]
     fn beta_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         let theta = BetaTheta {
             mu: 0.4,
             precision: 3.0,
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn beta_cdf_and_quantile_match_statrs_reference() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         let theta = BetaTheta {
             mu: 0.4,
             precision: 3.0,
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn beta_cdf_and_quantile_handle_boundaries_and_invalid_domains() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         let theta = BetaTheta {
             mu: 0.4,
             precision: 3.0,
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn beta_crps_matches_fixed_values() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
 
         assert_relative_eq!(
             family.crps(
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn beta_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
 
         assert!(
             family
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn beta_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
 
         assert!(
             family.crps(
@@ -481,7 +481,7 @@ mod tests {
     fn beta_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,

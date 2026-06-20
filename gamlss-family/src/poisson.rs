@@ -17,6 +17,9 @@ const MAX_BESSEL_SERIES_TERMS: usize = 10_000;
 const BESSEL_SERIES_EPSILON: f64 = 1.0e-15;
 const DIRECT_BESSEL_MU_LIMIT: f64 = 350.0;
 
+/// Poisson distribution with log link for mean.
+pub type PoissonMean = Poisson<Log>;
+
 /// Poisson family parameterized by positive mean.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Poisson<MuLink = Log> {
@@ -184,35 +187,6 @@ where
     }
 }
 
-/// Predictor for the Poisson family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PoissonEta {
-    /// Mean predictor.
-    pub mu: f64,
-}
-
-impl ParameterParts<1> for PoissonEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mu: values[0] }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            _ => unreachable!("poisson eta only has index 0"),
-        }
-    }
-}
-
-/// Natural-scale Poisson parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PoissonTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-}
-
 impl<MuLink> Family for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -327,8 +301,34 @@ where
     }
 }
 
-/// Poisson distribution with log link for mean.
-pub type DefaultPoisson = Poisson<Log>;
+/// Predictor for the Poisson family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PoissonEta {
+    /// Mean predictor.
+    pub mu: f64,
+}
+
+impl ParameterParts<1> for PoissonEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 1]) -> Self {
+        Self { mu: values[0] }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            _ => unreachable!("poisson eta only has index 0"),
+        }
+    }
+}
+
+/// Natural-scale Poisson parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PoissonTheta {
+    /// Positive mean parameter.
+    pub mu: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -338,20 +338,20 @@ mod tests {
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{DiscreteCDF, Poisson as StatrsPoisson};
 
-    use super::{DefaultPoisson, PoissonTheta};
+    use super::{PoissonMean, PoissonTheta};
     use crate::test_support::{
         assert_gradient_matches_finite_difference, statrs_discrete_quantile,
     };
 
     #[test]
     fn poisson_gradient_matches_finite_difference() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         assert_gradient_matches_finite_difference::<_, 1>(&family, 3.0, [0.4]);
     }
 
     #[test]
     fn poisson_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
         assert!(family.nll(3.0, theta).is_finite());
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn poisson_cdf_matches_reference_points() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
         assert_eq!(family.cdf(-1.0, theta), 0.0);
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn poisson_cdf_is_stable_for_large_mean() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let cdf = family.cdf(1000.0, PoissonTheta { mu: 1000.0 });
 
         assert!(cdf.is_finite());
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn poisson_quantile_matches_statrs_reference() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
         let reference = StatrsPoisson::new(theta.mu).unwrap();
 
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn poisson_quantile_is_generalized_inverse_cdf() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 6.0 };
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn poisson_crps_matches_fixed_values() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
         assert_relative_eq!(
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn poisson_crps_matches_truncated_expectation_identity() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 6.0 };
 
         assert_relative_eq!(
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn poisson_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
         assert!(family.crps(-1.0, theta).is_nan());
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn poisson_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
 
         assert!(family.crps(3.0, PoissonTheta { mu: 2.0 }) >= 0.0);
         assert!(family.crps(1000.0, PoissonTheta { mu: 1000.0 }) >= 0.0);
@@ -493,7 +493,7 @@ mod tests {
     fn poisson_sampling_returns_counts_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultPoisson::new();
+        let family = PoissonMean::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(&mut rng, PoissonTheta { mu: 2.0 });
         assert!(sample >= 0.0 && sample.fract() == 0.0);

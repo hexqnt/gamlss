@@ -49,7 +49,7 @@
 //! ));
 //!
 //! let model = Gamlss::try_new_weighted(
-//!     gamlss::family::DefaultNormal::new(),
+//!     gamlss::family::NormalMuSigma::new(),
 //!     blocks,
 //!     &y,
 //!     &weights,

@@ -10,6 +10,8 @@ use crate::numeric::finite_difference_gradient_eta;
 
 const XI_EPSILON: f64 = 1.0e-8;
 
+/// GEV distribution with identity/log/identity links.
+pub type GevMuSigmaShape = Gev<Identity, Log, Identity>;
 /// Generalized extreme value family for block maxima.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gev<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {
@@ -86,49 +88,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for GEV on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GevEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Shape predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for GevEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("gev eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale GEV parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GevTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Shape parameter.
-    pub nu: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink> Family for Gev<MuLink, SigmaLink, NuLink>
@@ -256,5 +215,45 @@ where
     }
 }
 
-/// GEV distribution with identity/log/identity links.
-pub type DefaultGev = Gev<Identity, Log, Identity>;
+/// Predictors for GEV on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GevEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Shape predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for GevEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("gev eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale GEV parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GevTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Shape parameter.
+    pub nu: f64,
+}

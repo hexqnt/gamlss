@@ -39,32 +39,6 @@ pub struct BuiltModel<M> {
     layout: ParameterLayout,
 }
 
-/// Reusable prediction design compiled from fitted term metadata.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PredictionDesign<Blocks> {
-    blocks: Blocks,
-}
-
-impl<Blocks> PredictionDesign<Blocks> {
-    pub(crate) fn new(blocks: Blocks) -> Self {
-        Self { blocks }
-    }
-
-    /// Returns typed prediction parameter blocks.
-    #[must_use]
-    #[inline(always)]
-    pub fn blocks(&self) -> &Blocks {
-        &self.blocks
-    }
-
-    /// Consumes the design and returns typed prediction parameter blocks.
-    #[must_use]
-    #[inline]
-    pub fn into_blocks(self) -> Blocks {
-        self.blocks
-    }
-}
-
 impl<M> BuiltModel<M> {
     pub(crate) fn new(model: M, schema: ModelSchema, layout: ParameterLayout) -> Self {
         Self {
@@ -137,6 +111,32 @@ impl<M> BuiltModel<M> {
     #[inline(always)]
     pub fn layout(&self) -> &ParameterLayout {
         &self.layout
+    }
+}
+
+/// Reusable prediction design compiled from fitted term metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredictionDesign<Blocks> {
+    blocks: Blocks,
+}
+
+impl<Blocks> PredictionDesign<Blocks> {
+    pub(crate) fn new(blocks: Blocks) -> Self {
+        Self { blocks }
+    }
+
+    /// Returns typed prediction parameter blocks.
+    #[must_use]
+    #[inline(always)]
+    pub fn blocks(&self) -> &Blocks {
+        &self.blocks
+    }
+
+    /// Consumes the design and returns typed prediction parameter blocks.
+    #[must_use]
+    #[inline]
+    pub fn into_blocks(self) -> Blocks {
+        self.blocks
     }
 }
 

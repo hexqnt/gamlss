@@ -35,35 +35,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UserNormalEta {
-    mu: f64,
-    sigma: f64,
-}
-
-impl ParameterParts<2> for UserNormalEta {
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("user normal eta only has indices 0 and 1"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UserNormalTheta {
-    mu: f64,
-    sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for UserNormal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -142,6 +113,35 @@ where
         let z = (y - theta.mu) / (theta.sigma * std::f64::consts::SQRT_2);
         f64::midpoint(1.0, erf_approx(z))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UserNormalEta {
+    mu: f64,
+    sigma: f64,
+}
+
+impl ParameterParts<2> for UserNormalEta {
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("user normal eta only has indices 0 and 1"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UserNormalTheta {
+    mu: f64,
+    sigma: f64,
 }
 
 fn erf_approx(x: f64) -> f64 {

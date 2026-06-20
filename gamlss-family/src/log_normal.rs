@@ -106,9 +106,290 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     }
 }
 
+impl<MeanLink, LogSdLink> LogNormal<MeanLogSd, MeanLink, LogSdLink>
+where
+    MeanLink: PositiveLink<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: LogNormalMeanLogSdEta) -> LogNormalMeanLogSdTheta {
+        LogNormalMeanLogSdTheta {
+            mean: MeanLink::inverse(eta.mean),
+            log_sd: LogSdLink::inverse(eta.log_sd),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: LogNormalMeanLogSdEta,
+    ) -> (f64, LogNormalMeanLogSdEta) {
+        let theta = Self::theta_from_eta(eta);
+        let canonical = theta.log_location_log_sd();
+        let nll = Self::nll_log_location_log_sd(y, canonical);
+        if !nll.is_finite() {
+            return (nll, LogNormalMeanLogSdEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_location, d_log_sd_kernel) = Self::gradient_log_location_log_sd(y, canonical);
+        let d_mean = d_location / theta.mean;
+        let d_log_sd = d_log_sd_kernel - d_location * theta.log_sd;
+
+        (
+            nll,
+            LogNormalMeanLogSdEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
+            },
+        )
+    }
+}
+
+impl<MedianLink, LogSdLink> LogNormal<MedianLogSd, MedianLink, LogSdLink>
+where
+    MedianLink: PositiveLink<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: LogNormalMedianLogSdEta) -> LogNormalMedianLogSdTheta {
+        LogNormalMedianLogSdTheta {
+            median: MedianLink::inverse(eta.median),
+            log_sd: LogSdLink::inverse(eta.log_sd),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: LogNormalMedianLogSdEta,
+    ) -> (f64, LogNormalMedianLogSdEta) {
+        let theta = Self::theta_from_eta(eta);
+        let canonical = theta.log_location_log_sd();
+        let nll = Self::nll_log_location_log_sd(y, canonical);
+        if !nll.is_finite() {
+            return (nll, LogNormalMedianLogSdEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
+        (
+            nll,
+            LogNormalMedianLogSdEta {
+                median: d_location / theta.median * MedianLink::derivative_inverse(eta.median),
+                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
+            },
+        )
+    }
+}
+
+impl<LocationLink, LogSdLink> LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
+where
+    LocationLink: Link<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: LogNormalLogLocationLogSdEta) -> LogNormalLogLocationLogSdTheta {
+        LogNormalLogLocationLogSdTheta {
+            log_location: LocationLink::inverse(eta.log_location),
+            log_sd: LogSdLink::inverse(eta.log_sd),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: LogNormalLogLocationLogSdEta,
+    ) -> (f64, LogNormalLogLocationLogSdEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_log_location_log_sd(y, theta);
+        if !nll.is_finite() {
+            return (nll, LogNormalLogLocationLogSdEta::from_array([f64::NAN; 2]));
+        }
+
+        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, theta);
+        (
+            nll,
+            LogNormalLogLocationLogSdEta {
+                log_location: d_location * LocationLink::derivative_inverse(eta.log_location),
+                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
+            },
+        )
+    }
+}
+
 impl<Param, FirstLink, SecondLink> Default for LogNormal<Param, FirstLink, SecondLink> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<MeanLink, LogSdLink> Family for LogNormal<MeanLogSd, MeanLink, LogSdLink>
+where
+    MeanLink: PositiveLink<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    type Eta = LogNormalMeanLogSdEta;
+    type Theta = LogNormalMeanLogSdTheta;
+    type NllGradientEta = LogNormalMeanLogSdEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MeanLink, LogSdLink> ParameterizedFamily<2> for LogNormal<MeanLogSd, MeanLink, LogSdLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mean, LogSd);
+    type Links = (MeanLink, LogSdLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
+        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
+            return LogNormalMeanLogSdEta::from_array([0.0, 0.0]);
+        };
+        let log_sd = positive_floor(log_sd);
+        let mean = (log_location + 0.5 * log_sd * log_sd).exp();
+
+        LogNormalMeanLogSdEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            log_sd: LogSdLink::initial_eta_from_theta(log_sd),
+        }
+    }
+}
+
+impl<MedianLink, LogSdLink> Family for LogNormal<MedianLogSd, MedianLink, LogSdLink>
+where
+    MedianLink: PositiveLink<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    type Eta = LogNormalMedianLogSdEta;
+    type Theta = LogNormalMedianLogSdTheta;
+    type NllGradientEta = LogNormalMedianLogSdEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MedianLink, LogSdLink> ParameterizedFamily<2> for LogNormal<MedianLogSd, MedianLink, LogSdLink>
+where
+    MedianLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Median, LogSd);
+    type Links = (MedianLink, LogSdLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
+        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
+            return LogNormalMedianLogSdEta::from_array([0.0, 0.0]);
+        };
+
+        LogNormalMedianLogSdEta {
+            median: MedianLink::initial_eta_from_theta(log_location.exp()),
+            log_sd: LogSdLink::initial_eta_from_theta(positive_floor(log_sd)),
+        }
+    }
+}
+
+impl<LocationLink, LogSdLink> Family for LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
+where
+    LocationLink: Link<f64>,
+    LogSdLink: PositiveLink<f64>,
+{
+    type Eta = LogNormalLogLocationLogSdEta;
+    type Theta = LogNormalLogLocationLogSdTheta;
+    type NllGradientEta = LogNormalLogLocationLogSdEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_log_location_log_sd(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<LocationLink, LogSdLink> ParameterizedFamily<2>
+    for LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
+where
+    LocationLink: InitialEtaFromTheta<f64> + Link<f64>,
+    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (LogLocation, LogSd);
+    type Links = (LocationLink, LogSdLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
+        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
+            return LogNormalLogLocationLogSdEta::from_array([0.0, 0.0]);
+        };
+
+        LogNormalLogLocationLogSdEta {
+            log_location: LocationLink::initial_eta_from_theta(log_location),
+            log_sd: LogSdLink::initial_eta_from_theta(positive_floor(log_sd)),
+        }
     }
 }
 
@@ -241,287 +522,6 @@ pub struct LogNormalLogLocationLogSdTheta {
     pub log_location: f64,
     /// Positive standard deviation of `log(Y)`.
     pub log_sd: f64,
-}
-
-impl<MeanLink, LogSdLink> LogNormal<MeanLogSd, MeanLink, LogSdLink>
-where
-    MeanLink: PositiveLink<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: LogNormalMeanLogSdEta) -> LogNormalMeanLogSdTheta {
-        LogNormalMeanLogSdTheta {
-            mean: MeanLink::inverse(eta.mean),
-            log_sd: LogSdLink::inverse(eta.log_sd),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(
-        y: f64,
-        eta: LogNormalMeanLogSdEta,
-    ) -> (f64, LogNormalMeanLogSdEta) {
-        let theta = Self::theta_from_eta(eta);
-        let canonical = theta.log_location_log_sd();
-        let nll = Self::nll_log_location_log_sd(y, canonical);
-        if !nll.is_finite() {
-            return (nll, LogNormalMeanLogSdEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_location, d_log_sd_kernel) = Self::gradient_log_location_log_sd(y, canonical);
-        let d_mean = d_location / theta.mean;
-        let d_log_sd = d_log_sd_kernel - d_location * theta.log_sd;
-
-        (
-            nll,
-            LogNormalMeanLogSdEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
-            },
-        )
-    }
-}
-
-impl<MeanLink, LogSdLink> Family for LogNormal<MeanLogSd, MeanLink, LogSdLink>
-where
-    MeanLink: PositiveLink<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    type Eta = LogNormalMeanLogSdEta;
-    type Theta = LogNormalMeanLogSdTheta;
-    type NllGradientEta = LogNormalMeanLogSdEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MeanLink, LogSdLink> ParameterizedFamily<2> for LogNormal<MeanLogSd, MeanLink, LogSdLink>
-where
-    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean, LogSd);
-    type Links = (MeanLink, LogSdLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
-        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
-            return LogNormalMeanLogSdEta::from_array([0.0, 0.0]);
-        };
-        let log_sd = positive_floor(log_sd);
-        let mean = (log_location + 0.5 * log_sd * log_sd).exp();
-
-        LogNormalMeanLogSdEta {
-            mean: MeanLink::initial_eta_from_theta(mean),
-            log_sd: LogSdLink::initial_eta_from_theta(log_sd),
-        }
-    }
-}
-
-impl<MedianLink, LogSdLink> LogNormal<MedianLogSd, MedianLink, LogSdLink>
-where
-    MedianLink: PositiveLink<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: LogNormalMedianLogSdEta) -> LogNormalMedianLogSdTheta {
-        LogNormalMedianLogSdTheta {
-            median: MedianLink::inverse(eta.median),
-            log_sd: LogSdLink::inverse(eta.log_sd),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(
-        y: f64,
-        eta: LogNormalMedianLogSdEta,
-    ) -> (f64, LogNormalMedianLogSdEta) {
-        let theta = Self::theta_from_eta(eta);
-        let canonical = theta.log_location_log_sd();
-        let nll = Self::nll_log_location_log_sd(y, canonical);
-        if !nll.is_finite() {
-            return (nll, LogNormalMedianLogSdEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
-        (
-            nll,
-            LogNormalMedianLogSdEta {
-                median: d_location / theta.median * MedianLink::derivative_inverse(eta.median),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
-            },
-        )
-    }
-}
-
-impl<MedianLink, LogSdLink> Family for LogNormal<MedianLogSd, MedianLink, LogSdLink>
-where
-    MedianLink: PositiveLink<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    type Eta = LogNormalMedianLogSdEta;
-    type Theta = LogNormalMedianLogSdTheta;
-    type NllGradientEta = LogNormalMedianLogSdEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MedianLink, LogSdLink> ParameterizedFamily<2> for LogNormal<MedianLogSd, MedianLink, LogSdLink>
-where
-    MedianLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Median, LogSd);
-    type Links = (MedianLink, LogSdLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
-        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
-            return LogNormalMedianLogSdEta::from_array([0.0, 0.0]);
-        };
-
-        LogNormalMedianLogSdEta {
-            median: MedianLink::initial_eta_from_theta(log_location.exp()),
-            log_sd: LogSdLink::initial_eta_from_theta(positive_floor(log_sd)),
-        }
-    }
-}
-
-impl<LocationLink, LogSdLink> LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
-where
-    LocationLink: Link<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: LogNormalLogLocationLogSdEta) -> LogNormalLogLocationLogSdTheta {
-        LogNormalLogLocationLogSdTheta {
-            log_location: LocationLink::inverse(eta.log_location),
-            log_sd: LogSdLink::inverse(eta.log_sd),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(
-        y: f64,
-        eta: LogNormalLogLocationLogSdEta,
-    ) -> (f64, LogNormalLogLocationLogSdEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_log_location_log_sd(y, theta);
-        if !nll.is_finite() {
-            return (nll, LogNormalLogLocationLogSdEta::from_array([f64::NAN; 2]));
-        }
-
-        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, theta);
-        (
-            nll,
-            LogNormalLogLocationLogSdEta {
-                log_location: d_location * LocationLink::derivative_inverse(eta.log_location),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
-            },
-        )
-    }
-}
-
-impl<LocationLink, LogSdLink> Family for LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
-where
-    LocationLink: Link<f64>,
-    LogSdLink: PositiveLink<f64>,
-{
-    type Eta = LogNormalLogLocationLogSdEta;
-    type Theta = LogNormalLogLocationLogSdTheta;
-    type NllGradientEta = LogNormalLogLocationLogSdEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_log_location_log_sd(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<LocationLink, LogSdLink> ParameterizedFamily<2>
-    for LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
-where
-    LocationLink: InitialEtaFromTheta<f64> + Link<f64>,
-    LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (LogLocation, LogSd);
-    type Links = (LocationLink, LogSdLink);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y.ln()));
-        let Some((log_location, log_sd)) = robust_location_scale(&values) else {
-            return LogNormalLogLocationLogSdEta::from_array([0.0, 0.0]);
-        };
-
-        LogNormalLogLocationLogSdEta {
-            log_location: LocationLink::initial_eta_from_theta(log_location),
-            log_sd: LogSdLink::initial_eta_from_theta(positive_floor(log_sd)),
-        }
-    }
 }
 
 impl From<LogNormalMeanLogSdTheta> for LogNormalLogLocationLogSdTheta {

@@ -280,6 +280,24 @@ impl TruncatedPowerDesign {
     }
 }
 
+impl SplineRowBasis for TruncatedPowerDesign {
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        debug_assert!(row < self.x.len());
+        self.basis.for_each_basis(self.x[row], f);
+    }
+}
+
 impl PredictorBlock for TruncatedPowerDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -332,24 +350,6 @@ impl PredictorBlock for TruncatedPowerDesign {
                 grad[index] += score * multiplier * weight;
             });
         }
-    }
-}
-
-impl SplineRowBasis for TruncatedPowerDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        debug_assert!(row < self.x.len());
-        self.basis.for_each_basis(self.x[row], f);
     }
 }
 

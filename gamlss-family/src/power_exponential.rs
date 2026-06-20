@@ -11,6 +11,13 @@ use crate::special::{invert_real_cdf, ln_gamma, regularized_gamma_lower};
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
+/// Power exponential distribution with identity/log/log links.
+pub type PowerExponentialMuSigmaNu = PowerExponential<Identity, Log, Log>;
+/// Alias commonly used for the generalized error distribution.
+pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
+    PowerExponential<MuLink, SigmaLink, NuLink>;
+/// Default generalized error distribution alias.
+pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 /// Power exponential / generalized error distribution.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {
@@ -93,49 +100,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the power exponential family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PowerExponentialEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Standard-deviation scale predictor.
-    pub sigma: f64,
-    /// Tail-shape predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for PowerExponentialEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("power exponential eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale power exponential parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PowerExponentialTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive standard-deviation scale.
-    pub sigma: f64,
-    /// Positive tail shape.
-    pub nu: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink> Family for PowerExponential<MuLink, SigmaLink, NuLink>
@@ -245,10 +209,45 @@ where
     }
 }
 
-/// Power exponential distribution with identity/log/log links.
-pub type DefaultPowerExponential = PowerExponential<Identity, Log, Log>;
-/// Alias commonly used for the generalized error distribution.
-pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
-    PowerExponential<MuLink, SigmaLink, NuLink>;
-/// Default generalized error distribution alias.
-pub type DefaultGed = DefaultPowerExponential;
+/// Predictors for the power exponential family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PowerExponentialEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Standard-deviation scale predictor.
+    pub sigma: f64,
+    /// Tail-shape predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for PowerExponentialEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("power exponential eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale power exponential parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PowerExponentialTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive standard-deviation scale.
+    pub sigma: f64,
+    /// Positive tail shape.
+    pub nu: f64,
+}

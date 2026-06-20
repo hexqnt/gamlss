@@ -11,6 +11,8 @@ use crate::special::{invert_real_cdf, owens_t, unit_normal_cdf, unit_normal_log_
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
+/// Skew-normal distribution with identity/log/identity links.
+pub type SkewNormalMuSigmaNu = SkewNormal<Identity, Log, Identity>;
 /// Azzalini/SN1-style skew-normal family with location, scale and skewness.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkewNormal<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {
@@ -95,49 +97,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the skew-normal family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SkewNormalEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Skewness predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for SkewNormalEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("skew-normal eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale skew-normal parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SkewNormalTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Skewness parameter.
-    pub nu: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink> Family for SkewNormal<MuLink, SigmaLink, NuLink>
@@ -243,5 +202,45 @@ where
     }
 }
 
-/// Skew-normal distribution with identity/log/identity links.
-pub type DefaultSkewNormal = SkewNormal<Identity, Log, Identity>;
+/// Predictors for the skew-normal family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewNormalEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Skewness predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for SkewNormalEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("skew-normal eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale skew-normal parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewNormalTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Skewness parameter.
+    pub nu: f64,
+}

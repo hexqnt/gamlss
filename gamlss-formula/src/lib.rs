@@ -53,15 +53,6 @@
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! ```
 
-mod compile;
-mod data;
-mod error;
-mod penalty;
-mod predictor;
-mod schema;
-mod spec;
-mod terms;
-
 pub use data::{BoolCol, CatCol, Category, Col, DataView, NumericCol, NumericResponse, col};
 pub use error::FormulaError;
 pub use penalty::FormulaPenalty;
@@ -79,6 +70,15 @@ pub use terms::{
     TermExpr, TermSpec, cyclic_pspline, factor, fourier, indicator, interaction, intercept, linear,
     monotone, no_intercept, offset, pspline, tensor_pspline,
 };
+
+mod compile;
+mod data;
+mod error;
+mod penalty;
+mod predictor;
+mod schema;
+mod spec;
+mod terms;
 
 /// Common imports for the typed formula layer.
 pub mod prelude {

@@ -14,6 +14,9 @@ use crate::special::{
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
+/// Negative binomial distribution with log links for mean and shape.
+pub type NegativeBinomialMeanSize = NegativeBinomial<Log, Log>;
+
 /// Negative binomial family parameterized by positive mean and shape.
 ///
 /// The variance is `mu + mu^2 / shape`.
@@ -172,43 +175,6 @@ where
     }
 }
 
-/// Predictors for the negative binomial family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NegativeBinomialEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for NegativeBinomialEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            _ => unreachable!("negative binomial eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale negative binomial parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NegativeBinomialTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-    /// Positive shape parameter.
-    pub shape: f64,
-}
-
 impl<MuLink, ShapeLink> Family for NegativeBinomial<MuLink, ShapeLink>
 where
     MuLink: PositiveLink<f64>,
@@ -328,8 +294,42 @@ where
     }
 }
 
-/// Negative binomial distribution with log links for mean and shape.
-pub type DefaultNegativeBinomial = NegativeBinomial<Log, Log>;
+/// Predictors for the negative binomial family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NegativeBinomialEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Shape predictor.
+    pub shape: f64,
+}
+
+impl ParameterParts<2> for NegativeBinomialEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            shape: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.shape,
+            _ => unreachable!("negative binomial eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale negative binomial parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NegativeBinomialTheta {
+    /// Positive mean parameter.
+    pub mu: f64,
+    /// Positive shape parameter.
+    pub shape: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -338,20 +338,20 @@ mod tests {
     use gamlss_core::{Family, HasCdf, HasQuantile};
     use statrs::distribution::{DiscreteCDF, NegativeBinomial as StatrsNegativeBinomial};
 
-    use super::{DefaultNegativeBinomial, NegativeBinomialTheta};
+    use super::{NegativeBinomialMeanSize, NegativeBinomialTheta};
     use crate::test_support::{
         assert_gradient_matches_finite_difference, statrs_discrete_quantile,
     };
 
     #[test]
     fn negative_binomial_gradient_matches_finite_difference() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 3.0, [0.4, -0.2]);
     }
 
     #[test]
     fn negative_binomial_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 2.0,
             shape: 1.5,
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn negative_binomial_cdf_matches_reference_points() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 2.0,
             shape: 1.5,
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn negative_binomial_cdf_is_stable_for_large_parameters() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let cdf = family.cdf(
             1000.0,
             NegativeBinomialTheta {
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn negative_binomial_quantile_matches_statrs_reference() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 2.0,
             shape: 1.5,
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn negative_binomial_quantile_is_generalized_inverse_cdf() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 6.0,
             shape: 2.5,
@@ -475,7 +475,7 @@ mod tests {
     fn negative_binomial_sampling_returns_counts_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,

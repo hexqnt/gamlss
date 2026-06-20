@@ -1,5 +1,50 @@
 use crate::model::ObservationView;
 
+/// Dense expected information matrix for a fixed-arity family.
+///
+/// This is an extension-point container for second-order fitting algorithms.
+/// The core model hot path does not consume it directly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DenseInformation<const K: usize> {
+    values: [[f64; K]; K],
+}
+
+impl<const K: usize> DenseInformation<K> {
+    /// Creates a dense information matrix from row-major values.
+    #[must_use]
+    #[inline]
+    pub const fn new(values: [[f64; K]; K]) -> Self {
+        Self { values }
+    }
+
+    /// Creates a diagonal information matrix.
+    #[must_use]
+    #[inline]
+    pub fn diagonal(diagonal: [f64; K]) -> Self {
+        let mut values = [[0.0; K]; K];
+        let mut index = 0;
+        while index < K {
+            values[index][index] = diagonal[index];
+            index += 1;
+        }
+        Self { values }
+    }
+
+    /// Returns the matrix entry at `row`, `col`.
+    #[must_use]
+    #[inline(always)]
+    pub fn get(&self, row: usize, col: usize) -> f64 {
+        self.values[row][col]
+    }
+
+    /// Returns the underlying dense matrix.
+    #[must_use]
+    #[inline(always)]
+    pub const fn as_array(&self) -> &[[f64; K]; K] {
+        &self.values
+    }
+}
+
 /// Distribution contract for the compiled GAMLSS objective.
 ///
 /// Custom distributions implement this trait. Parameter arity, parameter roles
@@ -53,51 +98,6 @@ pub trait Family {
         observation: Self::Observation<'_>,
         eta: Self::Eta,
     ) -> (f64, Self::NllGradientEta);
-}
-
-/// Dense expected information matrix for a fixed-arity family.
-///
-/// This is an extension-point container for second-order fitting algorithms.
-/// The core model hot path does not consume it directly.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DenseInformation<const K: usize> {
-    values: [[f64; K]; K],
-}
-
-impl<const K: usize> DenseInformation<K> {
-    /// Creates a dense information matrix from row-major values.
-    #[must_use]
-    #[inline]
-    pub const fn new(values: [[f64; K]; K]) -> Self {
-        Self { values }
-    }
-
-    /// Creates a diagonal information matrix.
-    #[must_use]
-    #[inline]
-    pub fn diagonal(diagonal: [f64; K]) -> Self {
-        let mut values = [[0.0; K]; K];
-        let mut index = 0;
-        while index < K {
-            values[index][index] = diagonal[index];
-            index += 1;
-        }
-        Self { values }
-    }
-
-    /// Returns the matrix entry at `row`, `col`.
-    #[must_use]
-    #[inline(always)]
-    pub fn get(&self, row: usize, col: usize) -> f64 {
-        self.values[row][col]
-    }
-
-    /// Returns the underlying dense matrix.
-    #[must_use]
-    #[inline(always)]
-    pub const fn as_array(&self) -> &[[f64; K]; K] {
-        &self.values
-    }
 }
 
 /// Extension trait for families that provide diagonal Fisher information.

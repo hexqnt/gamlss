@@ -18,6 +18,21 @@ const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
 const INV_SQRT_PI: f64 = 0.564_189_583_547_756_3;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
+/// Normal distribution with `Identity` link for `mu` and `Log` link for `sigma`.
+pub type NormalMuSigma = Normal<Identity, Log>;
+
+/// Typed GAMLSS model for the default normal family.
+///
+/// The lifetime tracks the borrowed response slice.
+pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
+    NormalMuSigma,
+    (
+        ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
+        ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
+    ),
+    &'a [f64],
+>;
+
 /// Normal distribution with typed link functions for `mu` and `sigma`.
 ///
 /// `SigmaLink` must be a positive link so that the scale parameter stays
@@ -109,43 +124,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Normal distribution predictors on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NormalEta {
-    /// Predictor for `mu`.
-    pub mu: f64,
-    /// Predictor for `sigma`.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for NormalEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("normal eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Normal distribution parameters on the natural scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NormalTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
 }
 
 impl<MuLink, SigmaLink> Family for Normal<MuLink, SigmaLink>
@@ -292,20 +270,42 @@ where
     }
 }
 
-/// Normal distribution with `Identity` link for `mu` and `Log` link for `sigma`.
-pub type DefaultNormal = Normal<Identity, Log>;
+/// Normal distribution predictors on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalEta {
+    /// Predictor for `mu`.
+    pub mu: f64,
+    /// Predictor for `sigma`.
+    pub sigma: f64,
+}
 
-/// Typed GAMLSS model for the default normal family.
-///
-/// The lifetime tracks the borrowed response slice.
-pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
-    DefaultNormal,
-    (
-        ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
-        ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
-    ),
-    &'a [f64],
->;
+impl ParameterParts<2> for NormalEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("normal eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Normal distribution parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 /// Creates a normal GAMLSS model from a response, two design matrices and
 /// penalties.
@@ -329,7 +329,7 @@ where
         ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, 0),
     ));
 
-    Gamlss::try_new(DefaultNormal::new(), blocks, y)
+    Gamlss::try_new(NormalMuSigma::new(), blocks, y)
 }
 
 #[cfg(test)]
@@ -343,18 +343,18 @@ mod tests {
     };
     use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
-    use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
+    use super::{DEFAULT_INITIAL_LOG_SIGMA, NormalEta, NormalMuSigma, NormalTheta, normal_gamlss};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn normal_gradient_matches_finite_difference() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn normal_rejects_non_finite_domain_and_returns_nan_gradient() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn normal_initial_eta_starts_inside_domain_for_valid_observation() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let eta = family.initial_eta(1.7);
 
         assert_relative_eq!(eta.mu, 1.7);
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn normal_initial_eta_propagates_invalid_observation_without_panic() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let invalid_eta = family.initial_eta(f64::NAN);
 
         assert!(invalid_eta.mu.is_nan());
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn normal_deviance_returns_non_finite_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn normal_deviance_is_standardized_squared_residual() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let deviance = family.deviance(
             2.5,
             NormalTheta {
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn normal_cdf_matches_standard_normal_reference_points() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn normal_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn density_helpers_reuse_nll() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn normal_quantile_inverts_cdf() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn normal_quantile_matches_statrs_reference() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn normal_crps_matches_fixed_values() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert_relative_eq!(
             family.crps(
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn normal_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -628,7 +628,7 @@ mod tests {
     fn normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

@@ -1,42 +1,5 @@
-/// Link function, represented via the inverse transform.
-///
-/// The likelihood hot path uses `inverse(eta)`, where `eta` is on the linear
-/// predictor scale, together with the derivative of the inverse for the chain
-/// rule.
-pub trait Link<S> {
-    /// Converts a value from the predictor scale to the parameter scale.
-    fn inverse(eta: S) -> S;
-    /// Derivative of `inverse` with respect to `eta`.
-    fn derivative_inverse(eta: S) -> S;
-}
-
-/// Initializer-time conversion from natural parameter scale to predictor scale.
-///
-/// This is the opposite direction of [`Link::inverse`]. It is deliberately
-/// used for constructing robust starts and may clamp boundary values to keep
-/// optimizer starts finite.
-///
-/// Custom links used with built-in families must implement this trait to
-/// participate in [`crate::ParameterizedFamily`] and model initialization.
-pub trait InitialEtaFromTheta<S>: Link<S> {
-    /// Converts a natural-scale parameter value into a finite link-scale start.
-    fn initial_eta_from_theta(theta: S) -> S;
-}
-
 const INITIAL_POSITIVE_FLOOR: f64 = 1.0e-12;
 const INITIAL_PROBABILITY_FLOOR: f64 = 1.0e-12;
-
-/// Marker for link functions that guarantee a result in `(0, +inf)`.
-///
-/// This contract is suitable for scale/rate/shape-like parameters without an
-/// upper bound. For probabilities use [`UnitIntervalLink`].
-pub trait PositiveLink<S>: Link<S> {}
-
-/// Marker for link functions that guarantee a result in `(0, 1)`.
-///
-/// This contract is suitable for probability parameters, such as Bernoulli
-/// success probability or beta mean.
-pub trait UnitIntervalLink<S>: Link<S> {}
 
 /// Identity link: `theta = eta`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -232,6 +195,43 @@ impl<const MIN: i64, const MAX: i64> InitialEtaFromTheta<f64> for ClampedLog<MIN
         theta.max(INITIAL_POSITIVE_FLOOR).ln().clamp(min, max)
     }
 }
+
+/// Link function, represented via the inverse transform.
+///
+/// The likelihood hot path uses `inverse(eta)`, where `eta` is on the linear
+/// predictor scale, together with the derivative of the inverse for the chain
+/// rule.
+pub trait Link<S> {
+    /// Converts a value from the predictor scale to the parameter scale.
+    fn inverse(eta: S) -> S;
+    /// Derivative of `inverse` with respect to `eta`.
+    fn derivative_inverse(eta: S) -> S;
+}
+
+/// Initializer-time conversion from natural parameter scale to predictor scale.
+///
+/// This is the opposite direction of [`Link::inverse`]. It is deliberately
+/// used for constructing robust starts and may clamp boundary values to keep
+/// optimizer starts finite.
+///
+/// Custom links used with built-in families must implement this trait to
+/// participate in [`crate::ParameterizedFamily`] and model initialization.
+pub trait InitialEtaFromTheta<S>: Link<S> {
+    /// Converts a natural-scale parameter value into a finite link-scale start.
+    fn initial_eta_from_theta(theta: S) -> S;
+}
+
+/// Marker for link functions that guarantee a result in `(0, +inf)`.
+///
+/// This contract is suitable for scale/rate/shape-like parameters without an
+/// upper bound. For probabilities use [`UnitIntervalLink`].
+pub trait PositiveLink<S>: Link<S> {}
+
+/// Marker for link functions that guarantee a result in `(0, 1)`.
+///
+/// This contract is suitable for probability parameters, such as Bernoulli
+/// success probability or beta mean.
+pub trait UnitIntervalLink<S>: Link<S> {}
 
 #[cfg(test)]
 mod tests {

@@ -1,34 +1,5 @@
 use std::ops::Range;
 
-/// Penalty for the coefficients of a single parameter block.
-///
-/// Implementations receive the local coefficient slice for one parameter
-/// block. The model validates slice lengths before evaluation where possible;
-/// hot-path implementations may use debug assertions for length checks.
-pub trait Penalty {
-    /// Penalty value for the current coefficients.
-    fn value(&self, beta: &[f64]) -> f64;
-    /// Adds the penalty gradient into the existing `grad`.
-    ///
-    /// Implementations must add into `grad` and must not clear it, because the
-    /// likelihood gradient may already be present in the same buffer.
-    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
-}
-
-/// Penalty evaluated on the full model parameter vector.
-///
-/// This is useful for constraints or regularization coupling several parameter
-/// blocks, while [`Penalty`] remains the local per-block mechanism.
-///
-/// Implementations receive the full flat beta vector and add their gradient to
-/// the full model gradient. They should not allocate or mutate global state.
-pub trait GlobalPenalty {
-    /// Penalty value for the full beta vector.
-    fn value(&self, beta: &[f64]) -> f64;
-    /// Adds the penalty gradient into an existing full gradient vector.
-    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
-}
-
 /// Zero penalty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoPenalty;
@@ -51,6 +22,13 @@ impl GlobalPenalty for NoPenalty {
 
     #[inline(always)]
     fn add_gradient(&self, _: &[f64], _: &mut [f64]) {}
+}
+
+impl MatrixPenalty for NoPenalty {
+    #[inline(always)]
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        debug_assert_matrix_shape(dim, gram);
+    }
 }
 
 /// Ridge penalty `lambda * sum(beta_i^2)`.
@@ -86,33 +64,6 @@ impl Penalty for RidgePenalty {
     }
 }
 
-/// Penalty that can be expressed as a quadratic form `β^T P β`.
-///
-/// This extension trait enables Fisher Scoring solvers to add the penalty
-/// matrix to the weighted Gram matrix: `X^T W X + P`. Penalties that cannot
-/// be expressed as a constant quadratic form (e.g., slope-limit or
-/// monotonic constraints) should not implement this trait.
-///
-/// Currently [`NoPenalty`] and [`RidgePenalty`] implement this trait.
-/// Spline penalties like [`crate::DifferencePenalty`] will implement it
-/// in `gamlss-spline`.
-pub trait MatrixPenalty: Penalty {
-    /// Adds the penalty matrix `P` to `gram` in row-major order.
-    ///
-    /// `gram` is a `dim × dim` matrix, where `dim` equals the number
-    /// of coefficients in the parameter block. Implementations should add
-    /// their contribution — the caller is responsible for zeroing `gram`
-    /// before the first call.
-    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]);
-}
-
-impl MatrixPenalty for NoPenalty {
-    #[inline(always)]
-    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
-        debug_assert_matrix_shape(dim, gram);
-    }
-}
-
 impl MatrixPenalty for RidgePenalty {
     #[inline]
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
@@ -126,11 +77,6 @@ impl MatrixPenalty for RidgePenalty {
             row_values[row] += self.lambda;
         }
     }
-}
-
-#[inline]
-fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
-    debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
 
 /// Applies a local penalty to a subrange of a larger coefficient block.
@@ -506,6 +452,60 @@ impl PenaltyContribution {
             gradient_scale,
         }
     }
+}
+
+/// Penalty for the coefficients of a single parameter block.
+///
+/// Implementations receive the local coefficient slice for one parameter
+/// block. The model validates slice lengths before evaluation where possible;
+/// hot-path implementations may use debug assertions for length checks.
+pub trait Penalty {
+    /// Penalty value for the current coefficients.
+    fn value(&self, beta: &[f64]) -> f64;
+    /// Adds the penalty gradient into the existing `grad`.
+    ///
+    /// Implementations must add into `grad` and must not clear it, because the
+    /// likelihood gradient may already be present in the same buffer.
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
+}
+
+/// Penalty evaluated on the full model parameter vector.
+///
+/// This is useful for constraints or regularization coupling several parameter
+/// blocks, while [`Penalty`] remains the local per-block mechanism.
+///
+/// Implementations receive the full flat beta vector and add their gradient to
+/// the full model gradient. They should not allocate or mutate global state.
+pub trait GlobalPenalty {
+    /// Penalty value for the full beta vector.
+    fn value(&self, beta: &[f64]) -> f64;
+    /// Adds the penalty gradient into an existing full gradient vector.
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
+}
+
+/// Penalty that can be expressed as a quadratic form `β^T P β`.
+///
+/// This extension trait enables Fisher Scoring solvers to add the penalty
+/// matrix to the weighted Gram matrix: `X^T W X + P`. Penalties that cannot
+/// be expressed as a constant quadratic form (e.g., slope-limit or
+/// monotonic constraints) should not implement this trait.
+///
+/// Currently [`NoPenalty`] and [`RidgePenalty`] implement this trait.
+/// Spline penalties like [`crate::DifferencePenalty`] will implement it
+/// in `gamlss-spline`.
+pub trait MatrixPenalty: Penalty {
+    /// Adds the penalty matrix `P` to `gram` in row-major order.
+    ///
+    /// `gram` is a `dim × dim` matrix, where `dim` equals the number
+    /// of coefficients in the parameter block. Implementations should add
+    /// their contribution — the caller is responsible for zeroing `gram`
+    /// before the first call.
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]);
+}
+
+#[inline]
+fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
+    debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
 
 macro_rules! impl_global_penalty_tuple {

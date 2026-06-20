@@ -10,6 +10,9 @@ use gamlss_core::{
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 
+/// Gumbel distribution with identity link for location and log link for scale.
+pub type GumbelMuSigma = Gumbel<Identity, Log>;
+
 /// Maximum-type Gumbel family parameterized by location and positive scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gumbel<MuLink = Identity, SigmaLink = Log> {
@@ -88,43 +91,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the Gumbel family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GumbelEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for GumbelEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("gumbel eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale Gumbel parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GumbelTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
 }
 
 impl<MuLink, SigmaLink> Family for Gumbel<MuLink, SigmaLink>
@@ -238,8 +204,42 @@ where
     }
 }
 
-/// Gumbel distribution with identity link for location and log link for scale.
-pub type DefaultGumbel = Gumbel<Identity, Log>;
+/// Predictors for the Gumbel family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GumbelEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for GumbelEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("gumbel eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale Gumbel parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GumbelTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -248,18 +248,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasQuantile};
 
-    use super::{DefaultGumbel, GumbelTheta};
+    use super::{GumbelMuSigma, GumbelTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn gumbel_gradient_matches_finite_difference() {
-        let family = DefaultGumbel::new();
+        let family = GumbelMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn gumbel_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultGumbel::new();
+        let family = GumbelMuSigma::new();
         let theta = GumbelTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn gumbel_cdf_matches_reference_points() {
-        let family = DefaultGumbel::new();
+        let family = GumbelMuSigma::new();
         let theta = GumbelTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn gumbel_quantile_inverts_cdf() {
-        let family = DefaultGumbel::new();
+        let family = GumbelMuSigma::new();
         let theta = GumbelTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -329,7 +329,7 @@ mod tests {
     fn gumbel_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultGumbel::new();
+        let family = GumbelMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

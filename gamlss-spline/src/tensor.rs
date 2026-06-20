@@ -73,6 +73,33 @@ where
     }
 }
 
+impl<A, B> SplineRowBasis for TensorSplineDesign<A, B>
+where
+    A: SplineRowBasis,
+    B: SplineRowBasis,
+{
+    #[inline(always)]
+    fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    #[inline(always)]
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
+        self.left
+            .for_each_row_basis(row, |left_index, left_weight| {
+                self.right
+                    .for_each_row_basis(row, |right_index, right_weight| {
+                        let index = left_index * self.right_nparams + right_index;
+                        f(index, left_weight * right_weight);
+                    });
+            });
+    }
+}
 impl<A, B> PredictorBlock for TensorSplineDesign<A, B>
 where
     A: SplineRowBasis,
@@ -129,33 +156,5 @@ where
                 grad[index] += score * multiplier * weight;
             });
         }
-    }
-}
-
-impl<A, B> SplineRowBasis for TensorSplineDesign<A, B>
-where
-    A: SplineRowBasis,
-    B: SplineRowBasis,
-{
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.nrows
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        self.left
-            .for_each_row_basis(row, |left_index, left_weight| {
-                self.right
-                    .for_each_row_basis(row, |right_index, right_weight| {
-                        let index = left_index * self.right_nparams + right_index;
-                        f(index, left_weight * right_weight);
-                    });
-            });
     }
 }

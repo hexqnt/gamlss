@@ -12,17 +12,12 @@ use crate::special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gam
 const MAX_SERIES_TERMS: usize = 2_000;
 const SERIES_EPSILON: f64 = 1.0e-13;
 
+/// Tweedie distribution with log/log/logit links.
+pub type TweedieMeanDispersionPower = Tweedie<Log, Log, Logit>;
 /// Tweedie compound Poisson-gamma family for `1 < nu < 2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tweedie<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CompoundParams {
-    lambda: f64,
-    alpha: f64,
-    rate: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink> Tweedie<MuLink, SigmaLink, NuLink>
@@ -175,49 +170,6 @@ where
     }
 }
 
-/// Predictors for Tweedie on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TweedieEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Dispersion predictor.
-    pub sigma: f64,
-    /// Power predictor mapped into `(1, 2)`.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for TweedieEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("tweedie eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale Tweedie parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TweedieTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-    /// Positive dispersion parameter.
-    pub sigma: f64,
-    /// Power parameter in `(1, 2)`.
-    pub nu: f64,
-}
-
 impl<MuLink, SigmaLink, NuLink> Family for Tweedie<MuLink, SigmaLink, NuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -314,5 +266,52 @@ where
     }
 }
 
-/// Tweedie distribution with log/log/logit links.
-pub type DefaultTweedie = Tweedie<Log, Log, Logit>;
+#[derive(Debug, Clone, Copy)]
+struct CompoundParams {
+    lambda: f64,
+    alpha: f64,
+    rate: f64,
+}
+
+/// Predictors for Tweedie on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TweedieEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Dispersion predictor.
+    pub sigma: f64,
+    /// Power predictor mapped into `(1, 2)`.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for TweedieEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("tweedie eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale Tweedie parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TweedieTheta {
+    /// Positive mean parameter.
+    pub mu: f64,
+    /// Positive dispersion parameter.
+    pub sigma: f64,
+    /// Power parameter in `(1, 2)`.
+    pub nu: f64,
+}

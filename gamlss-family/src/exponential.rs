@@ -78,9 +78,173 @@ impl<Param, Link> Exponential<Param, Link> {
     }
 }
 
+impl<Link> Exponential<MeanParam, Link>
+where
+    Link: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: ExponentialMeanEta) -> ExponentialMeanTheta {
+        ExponentialMeanTheta {
+            mean: Link::inverse(eta.mean),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialMeanEta) -> (f64, ExponentialMeanEta) {
+        let theta = Self::theta_from_eta(eta);
+        let rate = theta.rate();
+        let nll = Self::nll_rate(y, rate);
+        if !nll.is_finite() {
+            return (nll, ExponentialMeanEta { mean: f64::NAN });
+        }
+
+        let d_rate = y - 1.0 / rate.rate;
+        let d_mean = d_rate * (-1.0 / (theta.mean * theta.mean));
+        (
+            nll,
+            ExponentialMeanEta {
+                mean: d_mean * Link::derivative_inverse(eta.mean),
+            },
+        )
+    }
+}
+
+impl<Link> Exponential<RateParam, Link>
+where
+    Link: PositiveLink<f64>,
+{
+    #[inline(always)]
+    fn theta_from_eta(eta: ExponentialRateEta) -> ExponentialRateTheta {
+        ExponentialRateTheta {
+            rate: Link::inverse(eta.rate),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialRateEta) -> (f64, ExponentialRateEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_rate(y, theta);
+        if !nll.is_finite() {
+            return (nll, ExponentialRateEta { rate: f64::NAN });
+        }
+
+        let d_rate = y - 1.0 / theta.rate;
+        (
+            nll,
+            ExponentialRateEta {
+                rate: d_rate * Link::derivative_inverse(eta.rate),
+            },
+        )
+    }
+}
+
 impl<Param, Link> Default for Exponential<Param, Link> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<Link> Family for Exponential<MeanParam, Link>
+where
+    Link: PositiveLink<f64>,
+{
+    type Eta = ExponentialMeanEta;
+    type Theta = ExponentialMeanTheta;
+    type NllGradientEta = ExponentialMeanEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_rate(y, theta.rate())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_rate(y, Self::theta_from_eta(eta).rate())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<Link> ParameterizedFamily<1> for Exponential<MeanParam, Link>
+where
+    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mean,);
+    type Links = (Link,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let Some(mean) = weighted_mean(&values) else {
+            return ExponentialMeanEta::from_array([0.0]);
+        };
+        ExponentialMeanEta {
+            mean: Link::initial_eta_from_theta(positive_floor(mean)),
+        }
+    }
+}
+
+impl<Link> Family for Exponential<RateParam, Link>
+where
+    Link: PositiveLink<f64>,
+{
+    type Eta = ExponentialRateEta;
+    type Theta = ExponentialRateTheta;
+    type NllGradientEta = ExponentialRateEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_rate(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_rate(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<Link> ParameterizedFamily<1> for Exponential<RateParam, Link>
+where
+    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Rate,);
+    type Links = (Link,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let Some(mean) = weighted_mean(&values) else {
+            return ExponentialRateEta::from_array([0.0]);
+        };
+        ExponentialRateEta {
+            rate: Link::initial_eta_from_theta(1.0 / positive_floor(mean)),
+        }
     }
 }
 
@@ -149,170 +313,6 @@ impl ParameterParts<1> for ExponentialRateEta {
 pub struct ExponentialRateTheta {
     /// Positive rate.
     pub rate: f64,
-}
-
-impl<Link> Exponential<MeanParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: ExponentialMeanEta) -> ExponentialMeanTheta {
-        ExponentialMeanTheta {
-            mean: Link::inverse(eta.mean),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialMeanEta) -> (f64, ExponentialMeanEta) {
-        let theta = Self::theta_from_eta(eta);
-        let rate = theta.rate();
-        let nll = Self::nll_rate(y, rate);
-        if !nll.is_finite() {
-            return (nll, ExponentialMeanEta { mean: f64::NAN });
-        }
-
-        let d_rate = y - 1.0 / rate.rate;
-        let d_mean = d_rate * (-1.0 / (theta.mean * theta.mean));
-        (
-            nll,
-            ExponentialMeanEta {
-                mean: d_mean * Link::derivative_inverse(eta.mean),
-            },
-        )
-    }
-}
-
-impl<Link> Family for Exponential<MeanParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    type Eta = ExponentialMeanEta;
-    type Theta = ExponentialMeanTheta;
-    type NllGradientEta = ExponentialMeanEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_rate(y, theta.rate())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_rate(y, Self::theta_from_eta(eta).rate())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<Link> ParameterizedFamily<1> for Exponential<MeanParam, Link>
-where
-    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean,);
-    type Links = (Link,);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
-        let Some(mean) = weighted_mean(&values) else {
-            return ExponentialMeanEta::from_array([0.0]);
-        };
-        ExponentialMeanEta {
-            mean: Link::initial_eta_from_theta(positive_floor(mean)),
-        }
-    }
-}
-
-impl<Link> Exponential<RateParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: ExponentialRateEta) -> ExponentialRateTheta {
-        ExponentialRateTheta {
-            rate: Link::inverse(eta.rate),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialRateEta) -> (f64, ExponentialRateEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_rate(y, theta);
-        if !nll.is_finite() {
-            return (nll, ExponentialRateEta { rate: f64::NAN });
-        }
-
-        let d_rate = y - 1.0 / theta.rate;
-        (
-            nll,
-            ExponentialRateEta {
-                rate: d_rate * Link::derivative_inverse(eta.rate),
-            },
-        )
-    }
-}
-
-impl<Link> Family for Exponential<RateParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    type Eta = ExponentialRateEta;
-    type Theta = ExponentialRateTheta;
-    type NllGradientEta = ExponentialRateEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_rate(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_rate(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<Link> ParameterizedFamily<1> for Exponential<RateParam, Link>
-where
-    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Rate,);
-    type Links = (Link,);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
-        let Some(mean) = weighted_mean(&values) else {
-            return ExponentialRateEta::from_array([0.0]);
-        };
-        ExponentialRateEta {
-            rate: Link::initial_eta_from_theta(1.0 / positive_floor(mean)),
-        }
-    }
 }
 
 impl From<ExponentialMeanTheta> for ExponentialRateTheta {

@@ -4,10 +4,6 @@ use crate::{TargetTransform, TransformError, map_slice_into, validate_positive};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IdentityPositive;
 
-/// State for [`IdentityPositive`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct IdentityPositiveState;
-
 impl TargetTransform for IdentityPositive {
     type State = IdentityPositiveState;
 
@@ -44,6 +40,10 @@ impl TargetTransform for IdentityPositive {
         })
     }
 }
+
+/// State for [`IdentityPositive`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IdentityPositiveState;
 
 #[cfg(test)]
 mod tests {

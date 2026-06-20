@@ -9,10 +9,13 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use rand::RngExt;
 
-const LOG_2: f64 = std::f64::consts::LN_2;
-
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
+
+const LOG_2: f64 = std::f64::consts::LN_2;
+
+/// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
+pub type LaplaceMuSigma = Laplace<Identity, Log>;
 
 /// Laplace location-scale family.
 ///
@@ -108,43 +111,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the Laplace distribution on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LaplaceEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for LaplaceEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("laplace eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Laplace distribution parameters on the natural scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LaplaceTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
 }
 
 impl<MuLink, SigmaLink> Family for Laplace<MuLink, SigmaLink>
@@ -272,8 +238,42 @@ where
     }
 }
 
-/// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
-pub type DefaultLaplace = Laplace<Identity, Log>;
+/// Predictors for the Laplace distribution on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaplaceEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for LaplaceEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("laplace eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Laplace distribution parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaplaceTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -282,18 +282,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
+    use super::{LaplaceEta, LaplaceMuSigma, LaplaceTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn laplace_gradient_matches_finite_difference() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn laplace_rejects_non_finite_domain_and_returns_nan_gradient() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn laplace_cdf_matches_reference_points() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn laplace_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert!(
             family
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn laplace_quantile_inverts_cdf() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn laplace_crps_matches_fixed_values() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert_relative_eq!(
             family.crps(
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn laplace_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert!(
             family
@@ -465,7 +465,7 @@ mod tests {
     fn laplace_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

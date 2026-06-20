@@ -10,6 +10,9 @@ use gamlss_core::{
 use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 
+/// Lomax distribution with log links for shape and scale.
+pub type LomaxShapeScale = Lomax<Log, Log>;
+
 /// Lomax (Pareto type II) family parameterized by positive shape and scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Lomax<ShapeLink = Log, ScaleLink = Log> {
@@ -85,43 +88,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the Lomax family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LomaxEta {
-    /// Shape predictor.
-    pub shape: f64,
-    /// Scale predictor.
-    pub scale: f64,
-}
-
-impl ParameterParts<2> for LomaxEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            shape: values[0],
-            scale: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.shape,
-            1 => self.scale,
-            _ => unreachable!("lomax eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale Lomax parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LomaxTheta {
-    /// Positive shape parameter.
-    pub shape: f64,
-    /// Positive scale parameter.
-    pub scale: f64,
 }
 
 impl<ShapeLink, ScaleLink> Family for Lomax<ShapeLink, ScaleLink>
@@ -238,8 +204,42 @@ where
     }
 }
 
-/// Lomax distribution with log links for shape and scale.
-pub type DefaultLomax = Lomax<Log, Log>;
+/// Predictors for the Lomax family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LomaxEta {
+    /// Shape predictor.
+    pub shape: f64,
+    /// Scale predictor.
+    pub scale: f64,
+}
+
+impl ParameterParts<2> for LomaxEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            shape: values[0],
+            scale: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.shape,
+            1 => self.scale,
+            _ => unreachable!("lomax eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Natural-scale Lomax parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LomaxTheta {
+    /// Positive shape parameter.
+    pub shape: f64,
+    /// Positive scale parameter.
+    pub scale: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -248,18 +248,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasQuantile};
 
-    use super::{DefaultLomax, LomaxTheta};
+    use super::{LomaxShapeScale, LomaxTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn lomax_gradient_matches_finite_difference() {
-        let family = DefaultLomax::new();
+        let family = LomaxShapeScale::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn lomax_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultLomax::new();
+        let family = LomaxShapeScale::new();
         let theta = LomaxTheta {
             shape: 1.5,
             scale: 0.8,
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn lomax_cdf_matches_reference_points() {
-        let family = DefaultLomax::new();
+        let family = LomaxShapeScale::new();
         let theta = LomaxTheta {
             shape: 2.0,
             scale: 3.0,
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn lomax_quantile_inverts_cdf() {
-        let family = DefaultLomax::new();
+        let family = LomaxShapeScale::new();
         let theta = LomaxTheta {
             shape: 2.0,
             scale: 3.0,
@@ -328,7 +328,7 @@ mod tests {
     fn lomax_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLomax::new();
+        let family = LomaxShapeScale::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,

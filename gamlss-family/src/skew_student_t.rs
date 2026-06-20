@@ -14,6 +14,8 @@ use crate::special::{
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
+/// Skew Student-t distribution with identity/log/identity/log links.
+pub type SkewStudentTMuSigmaNuTau = SkewStudentT<Identity, Log, Identity, Log>;
 /// Azzalini/ST1-style skew Student-t family.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkewStudentT<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
@@ -110,55 +112,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for skew Student-t on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SkewStudentTEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Skewness predictor.
-    pub nu: f64,
-    /// Degrees-of-freedom predictor.
-    pub tau: f64,
-}
-
-impl ParameterParts<4> for SkewStudentTEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("skew student-t eta only has indices 0 through 3"),
-        }
-    }
-}
-
-/// Natural-scale skew Student-t parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SkewStudentTTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Skewness parameter.
-    pub nu: f64,
-    /// Positive degrees of freedom.
-    pub tau: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for SkewStudentT<MuLink, SigmaLink, NuLink, TauLink>
@@ -291,5 +244,51 @@ where
     }
 }
 
-/// Skew Student-t distribution with identity/log/identity/log links.
-pub type DefaultSkewStudentT = SkewStudentT<Identity, Log, Identity, Log>;
+/// Predictors for skew Student-t on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewStudentTEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Skewness predictor.
+    pub nu: f64,
+    /// Degrees-of-freedom predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<4> for SkewStudentTEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 4]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+            tau: values[3],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            3 => self.tau,
+            _ => unreachable!("skew student-t eta only has indices 0 through 3"),
+        }
+    }
+}
+
+/// Natural-scale skew Student-t parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewStudentTTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Skewness parameter.
+    pub nu: f64,
+    /// Positive degrees of freedom.
+    pub tau: f64,
+}

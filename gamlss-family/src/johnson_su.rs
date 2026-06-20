@@ -9,6 +9,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
+/// Johnson SU distribution with identity/log/identity/log links.
+pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 /// Johnson SU family in a location-scale-skewness-tail parameterization.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
@@ -82,55 +84,6 @@ where
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Predictors for the Johnson SU family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct JohnsonSuEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-    /// Skewness predictor.
-    pub nu: f64,
-    /// Tail predictor.
-    pub tau: f64,
-}
-
-impl ParameterParts<4> for JohnsonSuEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("johnson-su eta only has indices 0 through 3"),
-        }
-    }
-}
-
-/// Natural-scale Johnson SU parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct JohnsonSuTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-    /// Skewness parameter.
-    pub nu: f64,
-    /// Positive tail parameter.
-    pub tau: f64,
 }
 
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for JohnsonSu<MuLink, SigmaLink, NuLink, TauLink>
@@ -241,5 +194,51 @@ where
     }
 }
 
-/// Johnson SU distribution with identity/log/identity/log links.
-pub type DefaultJohnsonSu = JohnsonSu<Identity, Log, Identity, Log>;
+/// Predictors for the Johnson SU family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JohnsonSuEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Skewness predictor.
+    pub nu: f64,
+    /// Tail predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<4> for JohnsonSuEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 4]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            nu: values[2],
+            tau: values[3],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.nu,
+            3 => self.tau,
+            _ => unreachable!("johnson-su eta only has indices 0 through 3"),
+        }
+    }
+}
+
+/// Natural-scale Johnson SU parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JohnsonSuTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Skewness parameter.
+    pub nu: f64,
+    /// Positive tail parameter.
+    pub tau: f64,
+}

@@ -156,101 +156,6 @@ impl Penalty for PreparedCyclicDifferencePenalty {
     }
 }
 
-fn cyclic_value(values: &[f64], index: usize) -> f64 {
-    values[index % values.len()]
-}
-
-fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
-    if beta.is_empty() || beta.len() < coefficients.len() {
-        return 0.0;
-    }
-
-    let n = beta.len();
-    let mut sum = 0.0;
-    for start in 0..n {
-        let diff = coefficients
-            .iter()
-            .enumerate()
-            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-            .sum::<f64>();
-        sum += diff * diff;
-    }
-
-    lambda * sum / n as f64
-}
-
-fn add_cyclic_difference_penalty_gradient(
-    lambda: f64,
-    coefficients: &[f64],
-    beta: &[f64],
-    grad: &mut [f64],
-) {
-    debug_assert_eq!(beta.len(), grad.len());
-
-    if beta.is_empty() || beta.len() < coefficients.len() {
-        return;
-    }
-
-    let n = beta.len();
-    let scale = lambda / n as f64;
-    for start in 0..n {
-        let diff = coefficients
-            .iter()
-            .enumerate()
-            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-            .sum::<f64>();
-
-        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-            grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
-        }
-    }
-}
-
-fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
-    if beta.len() < coefficients.len() {
-        return 0.0;
-    }
-
-    let mut sum = 0.0;
-    for window in beta.windows(coefficients.len()) {
-        let diff = coefficients
-            .iter()
-            .copied()
-            .zip(window.iter().copied())
-            .map(|(coefficient, beta)| coefficient * beta)
-            .sum::<f64>();
-        sum += diff * diff;
-    }
-
-    lambda * sum
-}
-
-fn add_difference_penalty_gradient(
-    lambda: f64,
-    coefficients: &[f64],
-    beta: &[f64],
-    grad: &mut [f64],
-) {
-    debug_assert_eq!(beta.len(), grad.len());
-
-    if beta.len() < coefficients.len() {
-        return;
-    }
-
-    for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
-        let diff = coefficients
-            .iter()
-            .copied()
-            .zip(beta_window.iter().copied())
-            .map(|(coefficient, beta)| coefficient * beta)
-            .sum::<f64>();
-
-        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-            grad[start + offset] += 2.0 * lambda * diff * coefficient;
-        }
-    }
-}
-
 /// Quadratic penalty for violating monotonicity at the spline edges.
 ///
 /// Penalizes positive differences `beta[1] - beta[0]` and
@@ -353,6 +258,101 @@ impl Penalty for SlopeLimitPenalty {
         let mut value = 0.0;
         add_slope_limit_value(beta, self, true, &mut value, Some(&mut *grad));
         add_slope_limit_value(beta, self, false, &mut value, Some(&mut *grad));
+    }
+}
+
+fn cyclic_value(values: &[f64], index: usize) -> f64 {
+    values[index % values.len()]
+}
+
+fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if beta.is_empty() || beta.len() < coefficients.len() {
+        return 0.0;
+    }
+
+    let n = beta.len();
+    let mut sum = 0.0;
+    for start in 0..n {
+        let diff = coefficients
+            .iter()
+            .enumerate()
+            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
+            .sum::<f64>();
+        sum += diff * diff;
+    }
+
+    lambda * sum / n as f64
+}
+
+fn add_cyclic_difference_penalty_gradient(
+    lambda: f64,
+    coefficients: &[f64],
+    beta: &[f64],
+    grad: &mut [f64],
+) {
+    debug_assert_eq!(beta.len(), grad.len());
+
+    if beta.is_empty() || beta.len() < coefficients.len() {
+        return;
+    }
+
+    let n = beta.len();
+    let scale = lambda / n as f64;
+    for start in 0..n {
+        let diff = coefficients
+            .iter()
+            .enumerate()
+            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
+            .sum::<f64>();
+
+        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
+            grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
+        }
+    }
+}
+
+fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if beta.len() < coefficients.len() {
+        return 0.0;
+    }
+
+    let mut sum = 0.0;
+    for window in beta.windows(coefficients.len()) {
+        let diff = coefficients
+            .iter()
+            .copied()
+            .zip(window.iter().copied())
+            .map(|(coefficient, beta)| coefficient * beta)
+            .sum::<f64>();
+        sum += diff * diff;
+    }
+
+    lambda * sum
+}
+
+fn add_difference_penalty_gradient(
+    lambda: f64,
+    coefficients: &[f64],
+    beta: &[f64],
+    grad: &mut [f64],
+) {
+    debug_assert_eq!(beta.len(), grad.len());
+
+    if beta.len() < coefficients.len() {
+        return;
+    }
+
+    for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
+        let diff = coefficients
+            .iter()
+            .copied()
+            .zip(beta_window.iter().copied())
+            .map(|(coefficient, beta)| coefficient * beta)
+            .sum::<f64>();
+
+        for (offset, coefficient) in coefficients.iter().copied().enumerate() {
+            grad[start + offset] += 2.0 * lambda * diff * coefficient;
+        }
     }
 }
 

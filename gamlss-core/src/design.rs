@@ -1,85 +1,5 @@
 use crate::ModelError;
 
-/// Minimal design matrix contract for the model hot path.
-///
-/// Implementations must interpret `beta` as a vector of length `ncols()` and
-/// `weights` as a vector of length `nrows()`. Methods are not required to
-/// re-check lengths in release builds, so the calling code validates sizes
-/// upfront.
-pub trait DesignMatrix {
-    /// Number of observations.
-    fn nrows(&self) -> usize;
-    /// Number of coefficients in the block.
-    fn ncols(&self) -> usize;
-    /// Dot product of row `row` with `beta`.
-    fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
-    /// Adds `X^T weights` into `out`.
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
-    /// Writes a constant predictor start into `out` when this matrix has an
-    /// intercept-like coefficient.
-    ///
-    /// The default is conservative and leaves `out` unchanged. Matrix
-    /// implementations should return `true` only when setting a local
-    /// coefficient to `value` makes the block contribution constant across
-    /// rows with all other local coefficients left at zero.
-    #[inline]
-    fn set_constant_start(&self, _value: f64, _out: &mut [f64]) -> bool {
-        false
-    }
-    /// Adds `X^T (weights * multiplier)` into `out`.
-    ///
-    /// Default implementation materializes scaled weights. Matrix
-    /// implementations used in hot paths should override this method when they
-    /// can fuse scaling into their transpose multiply.
-    #[inline]
-    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
-        debug_assert_eq!(weights.len(), multiplier.len());
-
-        let scaled_weights = weights
-            .iter()
-            .zip(multiplier)
-            .map(|(weight, multiplier)| weight * multiplier)
-            .collect::<Vec<_>>();
-        self.add_t_mul_vec(&scaled_weights, out);
-    }
-
-    /// Adds `X^T diag(weights) X` into `out`.
-    ///
-    /// `out` is a row-major matrix of size `ncols × ncols`. The result is added
-    /// to the existing values in `out`, not replacing them. The matrix is
-    /// symmetric; implementations may compute only the upper triangle and mirror
-    /// into the lower.
-    ///
-    /// The default implementation builds column by column via
-    /// [`Self::dot_row`] and [`Self::add_t_mul_vec`]. Implementations with
-    /// direct access to values (dense, sparse) should override this method to
-    /// avoid allocations and accelerate via SIMD.
-    #[inline]
-    fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
-        let ncols = self.ncols();
-        let nrows = self.nrows();
-        debug_assert_eq!(weights.len(), nrows);
-        debug_assert_eq!(out.len(), ncols * ncols);
-
-        let mut unit_beta = vec![0.0; ncols];
-        let mut w_xk = vec![0.0; nrows];
-
-        for k in 0..ncols {
-            if k > 0 {
-                unit_beta[k - 1] = 0.0;
-            }
-            unit_beta[k] = 1.0;
-
-            for row in 0..nrows {
-                w_xk[row] = self.dot_row(row, &unit_beta) * weights[row];
-            }
-
-            let gram_col = &mut out[k * ncols..(k + 1) * ncols];
-            self.add_t_mul_vec(&w_xk, gram_col);
-        }
-    }
-}
-
 /// Simple dense matrix in row-major order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseDesign {
@@ -208,12 +128,6 @@ impl DenseDesign {
     }
 }
 
-fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usize, ModelError> {
-    nrows
-        .checked_mul(ncols)
-        .ok_or(ModelError::ArithmeticOverflow { context })
-}
-
 impl DesignMatrix for DenseDesign {
     #[inline(always)]
     fn nrows(&self) -> usize {
@@ -307,6 +221,92 @@ impl DesignMatrix for DenseDesign {
             }
         }
     }
+}
+
+/// Minimal design matrix contract for the model hot path.
+///
+/// Implementations must interpret `beta` as a vector of length `ncols()` and
+/// `weights` as a vector of length `nrows()`. Methods are not required to
+/// re-check lengths in release builds, so the calling code validates sizes
+/// upfront.
+pub trait DesignMatrix {
+    /// Number of observations.
+    fn nrows(&self) -> usize;
+    /// Number of coefficients in the block.
+    fn ncols(&self) -> usize;
+    /// Dot product of row `row` with `beta`.
+    fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Adds `X^T weights` into `out`.
+    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
+    /// Writes a constant predictor start into `out` when this matrix has an
+    /// intercept-like coefficient.
+    ///
+    /// The default is conservative and leaves `out` unchanged. Matrix
+    /// implementations should return `true` only when setting a local
+    /// coefficient to `value` makes the block contribution constant across
+    /// rows with all other local coefficients left at zero.
+    #[inline]
+    fn set_constant_start(&self, _value: f64, _out: &mut [f64]) -> bool {
+        false
+    }
+    /// Adds `X^T (weights * multiplier)` into `out`.
+    ///
+    /// Default implementation materializes scaled weights. Matrix
+    /// implementations used in hot paths should override this method when they
+    /// can fuse scaling into their transpose multiply.
+    #[inline]
+    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(weights.len(), multiplier.len());
+
+        let scaled_weights = weights
+            .iter()
+            .zip(multiplier)
+            .map(|(weight, multiplier)| weight * multiplier)
+            .collect::<Vec<_>>();
+        self.add_t_mul_vec(&scaled_weights, out);
+    }
+
+    /// Adds `X^T diag(weights) X` into `out`.
+    ///
+    /// `out` is a row-major matrix of size `ncols × ncols`. The result is added
+    /// to the existing values in `out`, not replacing them. The matrix is
+    /// symmetric; implementations may compute only the upper triangle and mirror
+    /// into the lower.
+    ///
+    /// The default implementation builds column by column via
+    /// [`Self::dot_row`] and [`Self::add_t_mul_vec`]. Implementations with
+    /// direct access to values (dense, sparse) should override this method to
+    /// avoid allocations and accelerate via SIMD.
+    #[inline]
+    fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
+        let ncols = self.ncols();
+        let nrows = self.nrows();
+        debug_assert_eq!(weights.len(), nrows);
+        debug_assert_eq!(out.len(), ncols * ncols);
+
+        let mut unit_beta = vec![0.0; ncols];
+        let mut w_xk = vec![0.0; nrows];
+
+        for k in 0..ncols {
+            if k > 0 {
+                unit_beta[k - 1] = 0.0;
+            }
+            unit_beta[k] = 1.0;
+
+            for row in 0..nrows {
+                w_xk[row] = self.dot_row(row, &unit_beta) * weights[row];
+            }
+
+            let gram_col = &mut out[k * ncols..(k + 1) * ncols];
+            self.add_t_mul_vec(&w_xk, gram_col);
+        }
+    }
+}
+
+fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usize, ModelError> {
+    nrows
+        .checked_mul(ncols)
+        .ok_or(ModelError::ArithmeticOverflow { context })
 }
 
 #[cfg(test)]

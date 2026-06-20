@@ -3,7 +3,7 @@ use gamlss_core::{
     Shape, Sigma,
 };
 use gamlss_family::{
-    DefaultBeta, DefaultInverseGaussian, DefaultNormal, GammaMeanCv, LogNormalMeanLogSd,
+    BetaMeanPrecision, GammaMeanCv, InverseGaussianMuShape, LogNormalMeanLogSd, NormalMuSigma,
     WeibullMeanShape,
 };
 
@@ -33,7 +33,7 @@ pub type InverseGaussianBlocks = (FormulaBlock<Mu, Log>, FormulaBlock<Shape, Log
 pub type BetaBlocks = (FormulaBlock<Mu, Logit>, FormulaBlock<Precision, Log>);
 
 /// Compiled normal formula model.
-pub type CompiledNormal<'a> = Gamlss<DefaultNormal, NormalBlocks, NumericResponse<'a>>;
+pub type CompiledNormal<'a> = Gamlss<NormalMuSigma, NormalBlocks, NumericResponse<'a>>;
 /// Compiled gamma formula model.
 pub type CompiledGamma<'a> = Gamlss<GammaMeanCv, GammaBlocks, NumericResponse<'a>>;
 /// Compiled log-normal formula model.
@@ -42,9 +42,9 @@ pub type CompiledLogNormal<'a> = Gamlss<LogNormalMeanLogSd, LogNormalBlocks, Num
 pub type CompiledWeibull<'a> = Gamlss<WeibullMeanShape, WeibullBlocks, NumericResponse<'a>>;
 /// Compiled inverse Gaussian formula model.
 pub type CompiledInverseGaussian<'a> =
-    Gamlss<DefaultInverseGaussian, InverseGaussianBlocks, NumericResponse<'a>>;
+    Gamlss<InverseGaussianMuShape, InverseGaussianBlocks, NumericResponse<'a>>;
 /// Compiled beta formula model.
-pub type CompiledBeta<'a> = Gamlss<DefaultBeta, BetaBlocks, NumericResponse<'a>>;
+pub type CompiledBeta<'a> = Gamlss<BetaMeanPrecision, BetaBlocks, NumericResponse<'a>>;
 
 /// Built normal formula model.
 pub type BuiltNormal<'a> = BuiltModel<CompiledNormal<'a>>;
@@ -245,7 +245,7 @@ macro_rules! define_spec {
 
 define_spec!(
     /// Typed normal model specification.
-    NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, DefaultNormal;
+    NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, NormalMuSigma;
     family_name = "normal", domain = ResponseDomain::Finite;
     first = mu_terms, mu, "mu", Mu, Identity;
     second = sigma_terms, sigma, "sigma", Sigma, Log
@@ -277,7 +277,7 @@ define_spec!(
 
 define_spec!(
     /// Typed inverse Gaussian model specification.
-    InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, DefaultInverseGaussian;
+    InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, InverseGaussianMuShape;
     family_name = "inverse Gaussian", domain = ResponseDomain::Positive;
     first = mu_terms, mu, "mu", Mu, Log;
     second = shape_terms, shape, "shape", Shape, Log
@@ -285,7 +285,7 @@ define_spec!(
 
 define_spec!(
     /// Typed beta model specification.
-    BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, DefaultBeta;
+    BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, BetaMeanPrecision;
     family_name = "beta", domain = ResponseDomain::Unit;
     first = mu_terms, mu, "mu", Mu, Logit;
     second = precision_terms, precision, "precision", Precision, Log

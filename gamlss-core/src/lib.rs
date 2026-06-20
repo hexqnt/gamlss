@@ -28,25 +28,6 @@
 //! `*_with_blocks` methods accept a compatible tuple of prediction blocks for new
 //! rows.
 
-/// Design matrix abstractions.
-pub mod design;
-/// Model and validation errors.
-pub mod error;
-/// Distribution family contracts.
-pub mod family;
-/// Link functions.
-pub mod link;
-/// Compiled models.
-pub mod model;
-/// Objective abstractions.
-pub mod objective;
-/// Typed parameters and parameter blocks.
-pub mod param;
-/// Penalty traits and implementations.
-pub mod penalty;
-/// Predictor block traits and predictor composition.
-pub mod predictor;
-
 pub use design::{DenseDesign, DesignMatrix};
 pub use error::ModelError;
 pub use family::{
@@ -78,6 +59,25 @@ pub use predictor::{
     NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock, PredictorBlock, ProductBlock,
     SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
+
+/// Design matrix abstractions.
+pub mod design;
+/// Model and validation errors.
+pub mod error;
+/// Distribution family contracts.
+pub mod family;
+/// Link functions.
+pub mod link;
+/// Compiled models.
+pub mod model;
+/// Objective abstractions.
+pub mod objective;
+/// Typed parameters and parameter blocks.
+pub mod param;
+/// Penalty traits and implementations.
+pub mod penalty;
+/// Predictor block traits and predictor composition.
+pub mod predictor;
 
 /// Most commonly used imports from `gamlss-core`.
 pub mod prelude {

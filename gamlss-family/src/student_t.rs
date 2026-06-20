@@ -10,6 +10,10 @@ use gamlss_core::{
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::special::{invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
+/// Student's t distribution with `Identity` link for `mu` and `Log` link
+/// for `sigma`.
+pub type StudentTMuSigma = StudentT<Identity, Log>;
+
 /// Student's t location-scale family with a fixed number of degrees of freedom.
 ///
 /// `MuLink` and `SigmaLink` control the link functions for the location and
@@ -168,43 +172,6 @@ where
     }
 }
 
-/// Predictors for the Student's t distribution on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StudentTEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for StudentTEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("student-t eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Student's t distribution parameters on the natural scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct StudentTTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for StudentT<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -335,9 +302,42 @@ where
     }
 }
 
-/// Student's t distribution with `Identity` link for `mu` and `Log` link
-/// for `sigma`.
-pub type DefaultStudentT = StudentT<Identity, Log>;
+/// Predictors for the Student's t distribution on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for StudentTEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("student-t eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Student's t distribution parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 /// Normalization constant for the logarithm of the Student's t density.
 fn student_t_constant(nu: f64) -> f64 {
@@ -352,24 +352,24 @@ mod tests {
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, StudentsT};
 
-    use super::{DefaultStudentT, StudentTEta, StudentTTheta};
+    use super::{StudentTEta, StudentTMuSigma, StudentTTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn student_t_rejects_invalid_degrees_of_freedom() {
-        assert!(DefaultStudentT::try_new(0.0).is_err());
-        assert!(DefaultStudentT::try_new(f64::INFINITY).is_err());
+        assert!(StudentTMuSigma::try_new(0.0).is_err());
+        assert!(StudentTMuSigma::try_new(f64::INFINITY).is_err());
     }
 
     #[test]
     fn student_t_gradient_matches_finite_difference() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn student_t_rejects_non_finite_domain_and_returns_nan_gradient() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
         let theta = StudentTTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn student_t_cdf_matches_reference_points() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
         let theta = StudentTTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn student_t_cdf_and_quantile_match_statrs_reference() {
-        let family = DefaultStudentT::try_new(7.0).unwrap();
+        let family = StudentTMuSigma::try_new(7.0).unwrap();
         let theta = StudentTTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn student_t_quantile_inverts_cdf() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
         let theta = StudentTTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn student_t_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
 
         assert!(
             family
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn student_t_crps_matches_fixed_values() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
 
         assert_relative_eq!(
             family.crps(
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn student_t_crps_scales_with_sigma() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
 
         assert_relative_eq!(
             family.crps(
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn student_t_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
 
         assert!(
             family
@@ -577,7 +577,7 @@ mod tests {
                 .is_nan()
         );
         assert!(
-            DefaultStudentT::try_new(1.0)
+            StudentTMuSigma::try_new(1.0)
                 .unwrap()
                 .crps(
                     1.0,
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn student_t_crps_is_nonnegative_for_valid_domains() {
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
 
         assert!(
             family.crps(
@@ -610,7 +610,7 @@ mod tests {
     fn student_t_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultStudentT::try_new(5.0).unwrap();
+        let family = StudentTMuSigma::try_new(5.0).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

@@ -1,13 +1,14 @@
 use gamlss_core::{Family, HasCdf, HasDensity, HasQuantile, ParameterParts};
 use gamlss_family::{
-    BernoulliEta, BernoulliTheta, BetaEta, BetaTheta, DefaultBernoulli, DefaultBeta, DefaultGumbel,
-    DefaultInverseGaussian, DefaultLaplace, DefaultLogistic, DefaultLomax, DefaultNegativeBinomial,
-    DefaultNormal, DefaultPoisson, DefaultStudentT, ExponentialRate, ExponentialRateEta,
-    ExponentialRateTheta, GammaEta, GammaShapeRate, GammaTheta, GumbelEta, GumbelTheta,
-    InverseGaussianEta, InverseGaussianTheta, LaplaceEta, LaplaceTheta, LogNormalEta,
-    LogNormalLogLocationLogSd, LogNormalTheta, LogisticEta, LogisticTheta, LomaxEta, LomaxTheta,
-    NegativeBinomialEta, NegativeBinomialTheta, NormalEta, NormalTheta, PoissonEta, PoissonTheta,
-    StudentTEta, StudentTTheta, WeibullEta, WeibullScaleShape, WeibullTheta,
+    BernoulliEta, BernoulliProbability, BernoulliTheta, BetaEta, BetaMeanPrecision, BetaTheta,
+    ExponentialRate, ExponentialRateEta, ExponentialRateTheta, GammaEta, GammaShapeRate,
+    GammaTheta, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussianEta, InverseGaussianMuShape,
+    InverseGaussianTheta, LaplaceEta, LaplaceMuSigma, LaplaceTheta, LogNormalEta,
+    LogNormalLogLocationLogSd, LogNormalTheta, LogisticEta, LogisticMuSigma, LogisticTheta,
+    LomaxEta, LomaxShapeScale, LomaxTheta, NegativeBinomialEta, NegativeBinomialMeanSize,
+    NegativeBinomialTheta, NormalEta, NormalMuSigma, NormalTheta, PoissonEta, PoissonMean,
+    PoissonTheta, StudentTEta, StudentTMuSigma, StudentTTheta, WeibullEta, WeibullScaleShape,
+    WeibullTheta,
 };
 use proptest::prelude::*;
 use statrs::distribution::{
@@ -26,6 +27,13 @@ const FD_ABS_TOL: f64 = 2.0e-5;
 const REAL_REFERENCE_POINTS: [f64; 5] = [-3.0, -1.0, 0.0, 1.0, 3.0];
 const POSITIVE_REFERENCE_POINTS: [f64; 5] = [0.1, 0.5, 1.0, 2.0, 4.0];
 const REFERENCE_PROBABILITIES: [f64; 5] = [0.01, 0.1, 0.5, 0.9, 0.99];
+
+struct ContinuousReferenceTolerances {
+    cdf_abs: f64,
+    density_rel: f64,
+    density_abs: f64,
+    quantile_abs: f64,
+}
 
 fn proptest_config() -> ProptestConfig {
     ProptestConfig {
@@ -183,13 +191,6 @@ fn nb_success_probability(theta: NegativeBinomialTheta) -> f64 {
     theta.shape / (theta.shape + theta.mu)
 }
 
-struct ContinuousReferenceTolerances {
-    cdf_abs: f64,
-    density_rel: f64,
-    density_abs: f64,
-    quantile_abs: f64,
-}
-
 fn assert_continuous_statrs_reference<F, R>(
     family: &F,
     theta: F::Theta,
@@ -264,20 +265,20 @@ proptest! {
         eta1 in -3.0_f64..3.0,
         eta2 in -3.0_f64..3.0,
     ) {
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultNormal::new(), y_real, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultGumbel::new(), y_real, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultLaplace::new(), y_real, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultLogistic::new(), y_real, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultStudentT::default(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&NormalMuSigma::new(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&GumbelMuSigma::new(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LaplaceMuSigma::new(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LogisticMuSigma::new(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&StudentTMuSigma::default(), y_real, [eta1, eta2]);
 
         assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), y_positive, [eta1]);
         assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), y_positive, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultInverseGaussian::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&InverseGaussianMuShape::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LogNormalLogLocationLogSd::new(), y_positive, [eta1, eta2]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultLomax::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LomaxShapeScale::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&WeibullScaleShape::new(), y_positive, [eta1, eta2]);
 
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultBeta::new(), y_unit, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&BetaMeanPrecision::new(), y_unit, [eta1, eta2]);
     }
 
     #[test]
@@ -287,9 +288,9 @@ proptest! {
         eta1 in -3.0_f64..3.0,
         eta2 in -3.0_f64..3.0,
     ) {
-        assert_gradient_matches_finite_difference::<_, 1>(&DefaultBernoulli::new(), f64::from(binary), [eta1]);
-        assert_gradient_matches_finite_difference::<_, 1>(&DefaultPoisson::new(), f64::from(count), [eta1]);
-        assert_gradient_matches_finite_difference::<_, 2>(&DefaultNegativeBinomial::new(), f64::from(count), [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 1>(&BernoulliProbability::new(), f64::from(binary), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&PoissonMean::new(), f64::from(count), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 2>(&NegativeBinomialMeanSize::new(), f64::from(count), [eta1, eta2]);
     }
 
     #[test]
@@ -303,20 +304,20 @@ proptest! {
         let scale = log_scale.exp();
         let shape = log_shape.exp();
 
-        assert_continuous_inverse(&DefaultNormal::new(), p, NormalTheta { mu: location, sigma: scale }, 2.0e-7);
-        assert_continuous_inverse(&DefaultGumbel::new(), p, GumbelTheta { mu: location, sigma: scale }, 2.0e-10);
-        assert_continuous_inverse(&DefaultLaplace::new(), p, LaplaceTheta { mu: location, sigma: scale }, 2.0e-10);
-        assert_continuous_inverse(&DefaultLogistic::new(), p, LogisticTheta { mu: location, sigma: scale }, 2.0e-10);
-        assert_continuous_inverse(&DefaultStudentT::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-7);
+        assert_continuous_inverse(&NormalMuSigma::new(), p, NormalTheta { mu: location, sigma: scale }, 2.0e-7);
+        assert_continuous_inverse(&GumbelMuSigma::new(), p, GumbelTheta { mu: location, sigma: scale }, 2.0e-10);
+        assert_continuous_inverse(&LaplaceMuSigma::new(), p, LaplaceTheta { mu: location, sigma: scale }, 2.0e-10);
+        assert_continuous_inverse(&LogisticMuSigma::new(), p, LogisticTheta { mu: location, sigma: scale }, 2.0e-10);
+        assert_continuous_inverse(&StudentTMuSigma::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-7);
 
         assert_continuous_inverse(&ExponentialRate::new(), p, ExponentialRateTheta { rate: shape }, 2.0e-10);
         assert_continuous_inverse(&GammaShapeRate::new(), p, GammaTheta { shape, rate: scale }, 2.0e-7);
-        assert_continuous_inverse(&DefaultInverseGaussian::new(), p, InverseGaussianTheta { mu: scale, shape }, 2.0e-7);
+        assert_continuous_inverse(&InverseGaussianMuShape::new(), p, InverseGaussianTheta { mu: scale, shape }, 2.0e-7);
         assert_continuous_inverse(&LogNormalLogLocationLogSd::new(), p, LogNormalTheta { log_location: location, log_sd: scale }, 2.0e-7);
-        assert_continuous_inverse(&DefaultLomax::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
+        assert_continuous_inverse(&LomaxShapeScale::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
         assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullTheta { shape, scale }, 2.0e-10);
 
-        assert_continuous_inverse(&DefaultBeta::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 2.0e-7);
+        assert_continuous_inverse(&BetaMeanPrecision::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 2.0e-7);
     }
 
     #[test]
@@ -326,16 +327,16 @@ proptest! {
         shape in 0.2_f64..20.0,
         bernoulli_mu in 0.01_f64..0.99,
     ) {
-        assert_discrete_inverse(&DefaultBernoulli::new(), p, BernoulliTheta { mu: bernoulli_mu });
-        assert_discrete_inverse(&DefaultPoisson::new(), p, PoissonTheta { mu });
-        assert_discrete_inverse(&DefaultNegativeBinomial::new(), p, NegativeBinomialTheta { mu, shape });
+        assert_discrete_inverse(&BernoulliProbability::new(), p, BernoulliTheta { mu: bernoulli_mu });
+        assert_discrete_inverse(&PoissonMean::new(), p, PoissonTheta { mu });
+        assert_discrete_inverse(&NegativeBinomialMeanSize::new(), p, NegativeBinomialTheta { mu, shape });
     }
 }
 
 #[test]
 fn cdfs_are_monotone_on_representative_grids() {
     assert_cdf_monotone(
-        &DefaultNormal::new(),
+        &NormalMuSigma::new(),
         NormalTheta {
             mu: 0.3,
             sigma: 1.2,
@@ -343,7 +344,7 @@ fn cdfs_are_monotone_on_representative_grids() {
         &[-4.0, -1.0, 0.0, 1.0, 4.0],
     );
     assert_cdf_monotone(
-        &DefaultBeta::new(),
+        &BetaMeanPrecision::new(),
         BetaTheta {
             mu: 0.4,
             precision: 5.0,
@@ -351,12 +352,12 @@ fn cdfs_are_monotone_on_representative_grids() {
         &[0.0, 0.05, 0.4, 0.9, 1.0],
     );
     assert_cdf_monotone(
-        &DefaultPoisson::new(),
+        &PoissonMean::new(),
         PoissonTheta { mu: 3.5 },
         &[-1.0, 0.0, 1.0, 3.0, 10.0],
     );
     assert_cdf_monotone(
-        &DefaultNegativeBinomial::new(),
+        &NegativeBinomialMeanSize::new(),
         NegativeBinomialTheta {
             mu: 4.0,
             shape: 2.0,
@@ -368,7 +369,7 @@ fn cdfs_are_monotone_on_representative_grids() {
 #[test]
 fn continuous_density_integrates_approximately_to_one() {
     assert_density_integrates_over_quantile_bracket(
-        &DefaultNormal::new(),
+        &NormalMuSigma::new(),
         NormalTheta {
             mu: 0.2,
             sigma: 1.1,
@@ -377,7 +378,7 @@ fn continuous_density_integrates_approximately_to_one() {
         2.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultBeta::new(),
+        &BetaMeanPrecision::new(),
         BetaTheta {
             mu: 0.5,
             precision: 6.0,
@@ -401,7 +402,7 @@ fn continuous_density_integrates_approximately_to_one() {
         7.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultGumbel::new(),
+        &GumbelMuSigma::new(),
         GumbelTheta {
             mu: -0.2,
             sigma: 1.1,
@@ -410,7 +411,7 @@ fn continuous_density_integrates_approximately_to_one() {
         2.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultInverseGaussian::new(),
+        &InverseGaussianMuShape::new(),
         InverseGaussianTheta {
             mu: 1.3,
             shape: 2.0,
@@ -419,7 +420,7 @@ fn continuous_density_integrates_approximately_to_one() {
         3.0e-4,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultLaplace::new(),
+        &LaplaceMuSigma::new(),
         LaplaceTheta {
             mu: 0.2,
             sigma: 0.9,
@@ -437,7 +438,7 @@ fn continuous_density_integrates_approximately_to_one() {
         8.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultLogistic::new(),
+        &LogisticMuSigma::new(),
         LogisticTheta {
             mu: -0.3,
             sigma: 1.4,
@@ -446,7 +447,7 @@ fn continuous_density_integrates_approximately_to_one() {
         2.0e-5,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultLomax::new(),
+        &LomaxShapeScale::new(),
         LomaxTheta {
             shape: 2.2,
             scale: 1.1,
@@ -455,7 +456,7 @@ fn continuous_density_integrates_approximately_to_one() {
         1.0e-4,
     );
     assert_density_integrates_over_quantile_bracket(
-        &DefaultStudentT::default(),
+        &StudentTMuSigma::default(),
         StudentTTheta {
             mu: 0.0,
             sigma: 1.2,
@@ -477,19 +478,19 @@ fn continuous_density_integrates_approximately_to_one() {
 #[test]
 fn discrete_mass_sums_approximately_to_one() {
     assert_discrete_mass_sums_to_one(
-        &DefaultBernoulli::new(),
+        &BernoulliProbability::new(),
         BernoulliTheta { mu: 0.35 },
         1.0,
         1.0e-14,
     );
     assert_discrete_mass_sums_to_one(
-        &DefaultPoisson::new(),
+        &PoissonMean::new(),
         PoissonTheta { mu: 4.0 },
         1.0 - 1.0e-10,
         2.0e-12,
     );
     assert_discrete_mass_sums_to_one(
-        &DefaultNegativeBinomial::new(),
+        &NegativeBinomialMeanSize::new(),
         NegativeBinomialTheta {
             mu: 5.0,
             shape: 2.5,
@@ -501,7 +502,7 @@ fn discrete_mass_sums_approximately_to_one() {
 
 #[test]
 fn cdf_quantile_and_density_match_statrs_references() {
-    let bernoulli = DefaultBernoulli::new();
+    let bernoulli = BernoulliProbability::new();
     let bernoulli_theta = BernoulliTheta { mu: 0.35 };
     let statrs_bernoulli = StatrsBernoulli::new(bernoulli_theta.mu).unwrap();
     for y in [0.0, 1.0] {
@@ -521,7 +522,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         assert_close(bernoulli.cdf(y, bernoulli_theta), expected, 0.0, 1.0e-14);
     }
 
-    let beta = DefaultBeta::new();
+    let beta = BetaMeanPrecision::new();
     let beta_theta = BetaTheta {
         mu: 0.4,
         precision: 5.0,
@@ -579,7 +580,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let gumbel = DefaultGumbel::new();
+    let gumbel = GumbelMuSigma::new();
     let gumbel_theta = GumbelTheta {
         mu: -0.3,
         sigma: 1.2,
@@ -598,7 +599,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let laplace = DefaultLaplace::new();
+    let laplace = LaplaceMuSigma::new();
     let laplace_theta = LaplaceTheta {
         mu: 0.4,
         sigma: 0.8,
@@ -637,7 +638,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let normal = DefaultNormal::new();
+    let normal = NormalMuSigma::new();
     let normal_theta = NormalTheta {
         mu: -0.2,
         sigma: 1.1,
@@ -656,12 +657,12 @@ fn cdf_quantile_and_density_match_statrs_references() {
         },
     );
 
-    let poisson = DefaultPoisson::new();
+    let poisson = PoissonMean::new();
     let poisson_theta = PoissonTheta { mu: 4.0 };
     let statrs_poisson = StatrsPoisson::new(poisson_theta.mu).unwrap();
     assert_discrete_statrs_reference(&poisson, poisson_theta, &statrs_poisson, 0_u64..12, 1.0e-12);
 
-    let negative_binomial = DefaultNegativeBinomial::new();
+    let negative_binomial = NegativeBinomialMeanSize::new();
     let negative_binomial_theta = NegativeBinomialTheta {
         mu: 5.0,
         shape: 2.5,
@@ -679,7 +680,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         1.0e-12,
     );
 
-    let student_t = DefaultStudentT::default();
+    let student_t = StudentTMuSigma::default();
     let student_t_theta = StudentTTheta {
         mu: 0.2,
         sigma: 1.3,
@@ -721,7 +722,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
 
 #[test]
 fn invalid_domains_and_boundaries_follow_public_contracts() {
-    let normal = DefaultNormal::new();
+    let normal = NormalMuSigma::new();
     assert!(
         normal
             .cdf(
@@ -755,7 +756,7 @@ fn invalid_domains_and_boundaries_follow_public_contracts() {
             .is_infinite()
     );
 
-    let beta = DefaultBeta::new();
+    let beta = BetaMeanPrecision::new();
     let beta_theta = BetaTheta {
         mu: 0.4,
         precision: 3.0,
@@ -788,7 +789,7 @@ fn invalid_domains_and_boundaries_follow_public_contracts() {
             .is_infinite()
     );
 
-    let poisson = DefaultPoisson::new();
+    let poisson = PoissonMean::new();
     assert!(poisson.nll(1.5, PoissonTheta { mu: 2.0 }).is_infinite());
     assert_eq!(poisson.cdf(-1.0, PoissonTheta { mu: 2.0 }), 0.0);
     assert_eq!(poisson.quantile(0.0, PoissonTheta { mu: 2.0 }), 0.0);
@@ -798,7 +799,7 @@ fn invalid_domains_and_boundaries_follow_public_contracts() {
             .is_nan()
     );
 
-    let bernoulli = DefaultBernoulli::new();
+    let bernoulli = BernoulliProbability::new();
     assert!(bernoulli.nll(0.5, BernoulliTheta { mu: 0.5 }).is_infinite());
     assert_eq!(bernoulli.cdf(-1.0, BernoulliTheta { mu: 0.5 }), 0.0);
     assert_eq!(bernoulli.quantile(0.0, BernoulliTheta { mu: 0.5 }), 0.0);
@@ -813,11 +814,13 @@ fn invalid_domains_and_boundaries_follow_public_contracts() {
 #[test]
 fn theta_construction_from_eta_stays_inside_expected_domains() {
     assert_eq!(
-        DefaultBernoulli::new().theta(BernoulliEta { mu: 0.0 }).mu,
+        BernoulliProbability::new()
+            .theta(BernoulliEta { mu: 0.0 })
+            .mu,
         0.5
     );
     assert_eq!(
-        DefaultBeta::new()
+        BetaMeanPrecision::new()
             .theta(BetaEta {
                 mu: 0.0,
                 precision: 0.0,
@@ -831,9 +834,9 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
             .rate,
         1.0
     );
-    assert_eq!(DefaultPoisson::new().theta(PoissonEta { mu: 0.0 }).mu, 1.0);
+    assert_eq!(PoissonMean::new().theta(PoissonEta { mu: 0.0 }).mu, 1.0);
     assert_eq!(
-        DefaultNormal::new()
+        NormalMuSigma::new()
             .theta(NormalEta {
                 mu: 0.0,
                 sigma: 0.0,
@@ -851,7 +854,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultGumbel::new()
+        GumbelMuSigma::new()
             .theta(GumbelEta {
                 mu: 0.0,
                 sigma: 0.0,
@@ -860,7 +863,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultInverseGaussian::new()
+        InverseGaussianMuShape::new()
             .theta(InverseGaussianEta {
                 mu: 0.0,
                 shape: 0.0,
@@ -869,7 +872,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultLaplace::new()
+        LaplaceMuSigma::new()
             .theta(LaplaceEta {
                 mu: 0.0,
                 sigma: 0.0,
@@ -887,7 +890,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultLogistic::new()
+        LogisticMuSigma::new()
             .theta(LogisticEta {
                 mu: 0.0,
                 sigma: 0.0,
@@ -896,7 +899,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultLomax::new()
+        LomaxShapeScale::new()
             .theta(LomaxEta {
                 shape: 0.0,
                 scale: 0.0,
@@ -905,7 +908,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultNegativeBinomial::new()
+        NegativeBinomialMeanSize::new()
             .theta(NegativeBinomialEta {
                 mu: 0.0,
                 shape: 0.0,
@@ -914,7 +917,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
         1.0
     );
     assert_eq!(
-        DefaultStudentT::default()
+        StudentTMuSigma::default()
             .theta(StudentTEta {
                 mu: 0.0,
                 sigma: 0.0,

@@ -16,6 +16,8 @@ use crate::special::{
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
+/// ZINB distribution with log/log/logit links.
+pub type ZinbMeanSizeZeroProbability = Zinb<Log, Log, Logit>;
 /// Zero-inflated negative binomial family.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zinb<MuLink = Log, ShapeLink = Log, NuLink = Logit> {
@@ -138,47 +140,6 @@ where
     }
 }
 
-/// Predictors for ZINB on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZinbEta {
-    /// Negative-binomial mean predictor.
-    pub mu: f64,
-    /// Negative-binomial shape predictor.
-    pub shape: f64,
-    /// Zero-inflation probability predictor.
-    pub nu: f64,
-}
-
-impl ParameterParts<3> for ZinbEta {
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-            nu: values[2],
-        }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            2 => self.nu,
-            _ => unreachable!("zinb eta only has indices 0 through 2"),
-        }
-    }
-}
-
-/// Natural-scale ZINB parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZinbTheta {
-    /// Positive negative-binomial mean.
-    pub mu: f64,
-    /// Positive negative-binomial shape.
-    pub shape: f64,
-    /// Zero-inflation probability in `(0, 1)`.
-    pub nu: f64,
-}
-
 impl<MuLink, ShapeLink, NuLink> Family for Zinb<MuLink, ShapeLink, NuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -280,5 +241,43 @@ where
     }
 }
 
-/// ZINB distribution with log/log/logit links.
-pub type DefaultZinb = Zinb<Log, Log, Logit>;
+/// Predictors for ZINB on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZinbEta {
+    /// Negative-binomial mean predictor.
+    pub mu: f64,
+    /// Negative-binomial shape predictor.
+    pub shape: f64,
+    /// Zero-inflation probability predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for ZinbEta {
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            shape: values[1],
+            nu: values[2],
+        }
+    }
+
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.shape,
+            2 => self.nu,
+            _ => unreachable!("zinb eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale ZINB parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZinbTheta {
+    /// Positive negative-binomial mean.
+    pub mu: f64,
+    /// Positive negative-binomial shape.
+    pub shape: f64,
+    /// Zero-inflation probability in `(0, 1)`.
+    pub nu: f64,
+}

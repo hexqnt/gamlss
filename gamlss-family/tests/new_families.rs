@@ -1,10 +1,11 @@
 use gamlss_core::{Family, HasCdf, HasQuantile, ParameterParts};
 use gamlss_family::{
-    BeinfTheta, DefaultBeinf, DefaultGeneralizedGamma, DefaultGev, DefaultJohnsonSu, DefaultNormal,
-    DefaultPowerExponential, DefaultShash, DefaultSkewNormal, DefaultSkewStudentT, DefaultTweedie,
-    DefaultZaga, DefaultZinb, DefaultZip, GeneralizedGammaTheta, GevTheta, JohnsonSuTheta,
-    NormalTheta, PowerExponentialTheta, ShashTheta, SkewNormalTheta, SkewStudentTTheta,
-    TweedieTheta, ZagaTheta, ZinbTheta, ZipTheta,
+    BeinfMuSigmaNuTau, BeinfTheta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta,
+    GevMuSigmaShape, GevTheta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, NormalMuSigma, NormalTheta,
+    PowerExponentialMuSigmaNu, PowerExponentialTheta, ShashMuSigmaNuTau, ShashTheta,
+    SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
+    TweedieMeanDispersionPower, TweedieTheta, ZagaMeanSigmaZeroProbability, ZagaTheta,
+    ZinbMeanSizeZeroProbability, ZinbTheta, ZipMeanZeroProbability, ZipTheta,
 };
 
 const FD_REL_TOL: f64 = 8.0e-4;
@@ -64,38 +65,42 @@ where
 #[test]
 fn new_continuous_family_gradients_match_finite_differences() {
     assert_gradient_matches_finite_difference::<_, 3>(
-        &DefaultSkewNormal::new(),
+        &SkewNormalMuSigmaNu::new(),
         0.4,
         [0.1, -0.2, 0.3],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
-        &DefaultPowerExponential::new(),
+        &PowerExponentialMuSigmaNu::new(),
         0.4,
         [0.1, -0.2, 2.0_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 4>(
-        &DefaultSkewStudentT::new(),
+        &SkewStudentTMuSigmaNuTau::new(),
         0.4,
         [0.1, -0.2, 0.3, 5.0_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 4>(
-        &DefaultShash::new(),
+        &ShashMuSigmaNuTau::new(),
         0.4,
         [0.1, -0.2, 0.5_f64.ln(), 0.8_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 4>(
-        &DefaultJohnsonSu::new(),
+        &JohnsonSuMuSigmaNuTau::new(),
         0.4,
         [0.1, -0.2, 0.3, 1.2_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
-        &DefaultGeneralizedGamma::new(),
+        &GeneralizedGammaMuSigmaNu::new(),
         1.4,
         [0.1, -0.2, 0.5],
     );
-    assert_gradient_matches_finite_difference::<_, 3>(&DefaultGev::new(), 0.4, [0.1, -0.2, 0.1]);
     assert_gradient_matches_finite_difference::<_, 3>(
-        &DefaultTweedie::new(),
+        &GevMuSigmaShape::new(),
+        0.4,
+        [0.1, -0.2, 0.1],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanDispersionPower::new(),
         1.4,
         [0.2, -0.3, 0.0],
     );
@@ -103,11 +108,11 @@ fn new_continuous_family_gradients_match_finite_differences() {
 
 #[test]
 fn new_mixed_family_gradients_match_finite_differences() {
-    let zip = DefaultZip::new();
+    let zip = ZipMeanZeroProbability::new();
     assert_gradient_matches_finite_difference::<_, 2>(&zip, 0.0, [1.2_f64.ln(), -1.0]);
     assert_gradient_matches_finite_difference::<_, 2>(&zip, 3.0, [1.2_f64.ln(), -1.0]);
 
-    let zinb = DefaultZinb::new();
+    let zinb = ZinbMeanSizeZeroProbability::new();
     assert_gradient_matches_finite_difference::<_, 3>(
         &zinb,
         0.0,
@@ -119,7 +124,7 @@ fn new_mixed_family_gradients_match_finite_differences() {
         [1.2_f64.ln(), 2.0_f64.ln(), -1.0],
     );
 
-    let zaga = DefaultZaga::new();
+    let zaga = ZagaMeanSigmaZeroProbability::new();
     assert_gradient_matches_finite_difference::<_, 3>(
         &zaga,
         0.0,
@@ -131,7 +136,7 @@ fn new_mixed_family_gradients_match_finite_differences() {
         [1.2_f64.ln(), 0.8_f64.ln(), -1.0],
     );
 
-    let beinf = DefaultBeinf::new();
+    let beinf = BeinfMuSigmaNuTau::new();
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 0.0, [0.1, -1.0, -2.0, -2.2]);
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 0.4, [0.1, -1.0, -2.0, -2.2]);
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 1.0, [0.1, -1.0, -2.0, -2.2]);
@@ -140,7 +145,7 @@ fn new_mixed_family_gradients_match_finite_differences() {
 #[test]
 fn cdf_quantile_roundtrips_for_new_families() {
     assert_inverse(
-        &DefaultSkewNormal::new(),
+        &SkewNormalMuSigmaNu::new(),
         0.4,
         SkewNormalTheta {
             mu: 0.1,
@@ -150,7 +155,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         3.0e-5,
     );
     assert_inverse(
-        &DefaultPowerExponential::new(),
+        &PowerExponentialMuSigmaNu::new(),
         0.4,
         PowerExponentialTheta {
             mu: 0.1,
@@ -160,7 +165,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         2.0e-7,
     );
     assert_inverse(
-        &DefaultShash::new(),
+        &ShashMuSigmaNuTau::new(),
         0.4,
         ShashTheta {
             mu: 0.1,
@@ -171,7 +176,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         2.0e-7,
     );
     assert_inverse(
-        &DefaultJohnsonSu::new(),
+        &JohnsonSuMuSigmaNuTau::new(),
         0.4,
         JohnsonSuTheta {
             mu: 0.1,
@@ -182,7 +187,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         2.0e-7,
     );
     assert_inverse(
-        &DefaultGeneralizedGamma::new(),
+        &GeneralizedGammaMuSigmaNu::new(),
         0.4,
         GeneralizedGammaTheta {
             mu: 1.2,
@@ -192,7 +197,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         2.0e-7,
     );
     assert_inverse(
-        &DefaultGev::new(),
+        &GevMuSigmaShape::new(),
         0.4,
         GevTheta {
             mu: 0.1,
@@ -205,7 +210,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
 
 #[test]
 fn mixed_family_cdfs_and_quantiles_handle_atoms() {
-    let zip = DefaultZip::new();
+    let zip = ZipMeanZeroProbability::new();
     let zip_theta = ZipTheta {
         mu: 2.0,
         sigma: 0.3,
@@ -223,7 +228,7 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
         .is_nan()
     );
 
-    let zinb = DefaultZinb::new();
+    let zinb = ZinbMeanSizeZeroProbability::new();
     let zinb_theta = ZinbTheta {
         mu: 2.0,
         shape: 1.5,
@@ -243,7 +248,7 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
         .is_nan()
     );
 
-    let zaga = DefaultZaga::new();
+    let zaga = ZagaMeanSigmaZeroProbability::new();
     let zaga_theta = ZagaTheta {
         mu: 1.2,
         sigma: 0.7,
@@ -252,7 +257,7 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
     assert_eq!(zaga.cdf(0.0, zaga_theta), 0.2);
     assert_eq!(zaga.quantile(0.1, zaga_theta), 0.0);
 
-    let beinf = DefaultBeinf::new();
+    let beinf = BeinfMuSigmaNuTau::new();
     let beinf_theta = BeinfTheta {
         mu: 0.4,
         sigma: 0.2,
@@ -267,7 +272,7 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
 #[test]
 fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
     assert!(
-        DefaultSkewStudentT::new()
+        SkewStudentTMuSigmaNuTau::new()
             .nll(
                 0.0,
                 SkewStudentTTheta {
@@ -280,7 +285,7 @@ fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
             .is_infinite()
     );
     assert!(
-        DefaultTweedie::new()
+        TweedieMeanDispersionPower::new()
             .nll(
                 -1.0,
                 TweedieTheta {
@@ -295,13 +300,13 @@ fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
 
 #[test]
 fn new_families_match_expected_symmetric_special_cases() {
-    let normal = DefaultNormal::new();
+    let normal = NormalMuSigma::new();
     let normal_theta = NormalTheta {
         mu: 0.2,
         sigma: 1.3,
     };
 
-    let skew_normal = DefaultSkewNormal::new();
+    let skew_normal = SkewNormalMuSigmaNu::new();
     let skew_normal_theta = SkewNormalTheta {
         mu: normal_theta.mu,
         sigma: normal_theta.sigma,
@@ -320,7 +325,7 @@ fn new_families_match_expected_symmetric_special_cases() {
         2.0e-7,
     );
 
-    let power_exponential = DefaultPowerExponential::new();
+    let power_exponential = PowerExponentialMuSigmaNu::new();
     assert_close(
         power_exponential.nll(
             0.7,
@@ -335,7 +340,7 @@ fn new_families_match_expected_symmetric_special_cases() {
         1.0e-12,
     );
 
-    let shash = DefaultShash::new();
+    let shash = ShashMuSigmaNuTau::new();
     let shash_theta = ShashTheta {
         mu: normal_theta.mu,
         sigma: normal_theta.sigma,
