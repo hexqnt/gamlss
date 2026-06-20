@@ -17,10 +17,10 @@ const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
 const INV_SQRT_PI: f64 = 0.564_189_583_547_756_3;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
-/// Нормальное распределение с типизированными link-функциями для `mu` и `sigma`.
+/// Normal distribution with typed link functions for `mu` and `sigma`.
 ///
-/// `SigmaLink` обязан быть positive link, чтобы scale-параметр оставался
-/// положительным на уровне типов.
+/// `SigmaLink` must be a positive link so that the scale parameter stays
+/// positive at the type level.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
@@ -31,7 +31,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    /// Создаёт stateless значение family.
+    /// Creates a stateless family value.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -39,7 +39,7 @@ where
         }
     }
 
-    /// Преобразует предикторы с link-шкалы в параметры на естественной шкале.
+    /// Converts link-scale predictors to natural-scale parameters.
     #[inline(always)]
     fn theta_from_eta(eta: NormalEta) -> NormalTheta {
         NormalTheta {
@@ -48,10 +48,10 @@ where
         }
     }
 
-    /// Negative log-likelihood одного наблюдения на естественной шкале.
+    /// Negative log-likelihood for one observation on the natural scale.
     ///
-    /// Возвращает `INFINITY` при non-finite observation/location или
-    /// неположительном sigma.
+    /// Returns `INFINITY` for non-finite observation/location or non-positive
+    /// sigma.
     #[inline(always)]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
@@ -64,10 +64,10 @@ where
         HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
     }
 
-    /// Вычисляет NLL и gradient по eta для одного наблюдения.
+    /// Computes NLL and gradient w.r.t. eta for one observation.
     ///
-    /// Использует аналитические производные NLL по `mu` и `sigma` и
-    /// домножает на производные link-функций (chain rule).
+    /// Uses analytic NLL derivatives w.r.t. `mu` and `sigma` and multiplies
+    /// by the link function derivatives (chain rule).
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
@@ -106,12 +106,12 @@ where
     }
 }
 
-/// Предикторы нормального распределения на link-шкале.
+/// Normal distribution predictors on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalEta {
-    /// Предиктор для `mu`.
+    /// Predictor for `mu`.
     pub mu: f64,
-    /// Предиктор для `sigma`.
+    /// Predictor for `sigma`.
     pub sigma: f64,
 }
 
@@ -134,12 +134,12 @@ impl ParameterParts<2> for NormalEta {
     }
 }
 
-/// Параметры нормального распределения на естественной шкале.
+/// Normal distribution parameters on the natural scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalTheta {
-    /// Location-параметр.
+    /// Location parameter.
     pub mu: f64,
-    /// Положительный scale-параметр.
+    /// Positive scale parameter.
     pub sigma: f64,
 }
 
@@ -290,10 +290,10 @@ where
     }
 }
 
-/// Нормальное распределение с `Identity` link для `mu` и `Log` link для `sigma`.
+/// Normal distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type DefaultNormal = Normal<Identity, Log>;
 
-/// Типизированная GAMLSS-модель для normal family по умолчанию.
+/// Typed GAMLSS model for the default normal family.
 ///
 /// The lifetime tracks the borrowed response slice.
 pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
@@ -305,7 +305,8 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
     &'a [f64],
 >;
 
-/// Создаёт normal GAMLSS-модель из response, двух design matrices и штрафов.
+/// Creates a normal GAMLSS model from a response, two design matrices and
+/// penalties.
 ///
 /// The returned model borrows `y` and owns the design matrices and penalties.
 pub fn normal_gamlss<'a, XMu, XSigma, PMu, PSigma>(

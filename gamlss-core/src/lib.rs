@@ -1,50 +1,50 @@
 #![forbid(unsafe_code)]
-//! Типизированное ядро GAMLSS: link-функции, parameter blocks, objectives и compiled models.
+//! Typed GAMLSS core: link functions, parameter blocks, objectives and compiled models.
 //!
-//! `gamlss-core` содержит минимальные abstractions, которые нужны
-//! distributional-regression моделям, но не зависит от optimizers,
-//! dataframe-библиотек и тяжёлых matrix backends.
+//! `gamlss-core` contains the minimal abstractions needed by
+//! distributional-regression models, but does not depend on optimizers,
+//! dataframe libraries or heavy matrix backends.
 //!
 //! # Parameter blocks
 //!
-//! Модель собирается из typed [`ParameterBlock`] values. Тип `P` задаёт
-//! parameter marker (`Mu`, `Sigma`, `Shape`, пользовательский marker и т.д.),
-//! `L` задаёт link, predictor block `X` считает link-scale predictor, а
-//! `Penalty` добавляет локальную регуляризацию.
+//! The model is assembled from typed [`ParameterBlock`] values. The `P` type
+//! specifies the parameter marker (`Mu`, `Sigma`, `Shape`, custom marker, etc.),
+//! `L` specifies the link, predictor block `X` computes the link-scale predictor,
+//! and `Penalty` adds local regularization.
 //!
-//! Используйте [`ParameterBlocks::new`] для обычной сборки tuple blocks: она
-//! последовательно назначает offsets и убирает ручной расчёт диапазонов в
-//! общем beta-векторе.
+//! Use [`ParameterBlocks::new`] for ordinary tuple block assembly: it
+//! sequentially assigns offsets and removes the need for manual range calculation
+//! in the common beta vector.
 //!
 //! # Observations and prediction
 //!
-//! [`Gamlss::try_new`] строит unweighted модель над borrowed response slice.
-//! [`Gamlss::try_new_weighted`] дополнительно принимает finite non-negative
-//! observation weights; нулевой вес исключает наблюдение из likelihood и
-//! gradient.
+//! [`Gamlss::try_new`] builds an unweighted model over a borrowed response slice.
+//! [`Gamlss::try_new_weighted`] additionally accepts finite non-negative
+//! observation weights; a zero weight excludes the observation from the
+//! likelihood and gradient.
 //!
-//! Prediction methods возвращают link-scale `Eta` или natural-scale `Theta`:
-//! `predict_eta`, `predict_theta` используют training blocks, а методы
-//! `*_with_blocks` принимают совместимый tuple prediction blocks для новых
-//! строк.
+//! Prediction methods return link-scale `Eta` or natural-scale `Theta`:
+//! `predict_eta`, `predict_theta` use training blocks, while the
+//! `*_with_blocks` methods accept a compatible tuple of prediction blocks for new
+//! rows.
 
-/// Абстракции design matrix.
+/// Design matrix abstractions.
 pub mod design;
-/// Ошибки модели и валидации.
+/// Model and validation errors.
 pub mod error;
-/// Контракты distribution families.
+/// Distribution family contracts.
 pub mod family;
-/// Link-функции.
+/// Link functions.
 pub mod link;
-/// Скомпилированные модели.
+/// Compiled models.
 pub mod model;
-/// Абстракции objective.
+/// Objective abstractions.
 pub mod objective;
-/// Типизированные параметры и parameter blocks.
+/// Typed parameters and parameter blocks.
 pub mod param;
-/// Penalty traits и реализации.
+/// Penalty traits and implementations.
 pub mod penalty;
-/// Predictor block traits и композиция predictor-а.
+/// Predictor block traits and predictor composition.
 pub mod predictor;
 
 pub use design::{DenseDesign, DesignMatrix};
@@ -78,7 +78,7 @@ pub use predictor::{
     SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
 
-/// Наиболее часто используемые импорты из `gamlss-core`.
+/// Most commonly used imports from `gamlss-core`.
 pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,

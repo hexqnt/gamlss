@@ -1,8 +1,8 @@
-//! Простой пример: подгонка нормальной GAMLSS-модели с intercept-only
-//! predictor-ами для `mu` и `sigma` градиентным спуском.
+//! Simple example: fitting a normal GAMLSS model with intercept-only
+//! predictors for `mu` and `sigma` using gradient descent.
 //!
-//! Демонстрирует минимальный цикл сборки модели, вычисления градиента
-//! и ручного обновления параметров.
+//! Demonstrates the minimal cycle of model assembly, gradient computation
+//! and manual parameter updates.
 #![allow(clippy::cast_precision_loss)]
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

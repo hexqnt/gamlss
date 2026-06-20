@@ -1,11 +1,11 @@
 use crate::model::ObservationView;
 
-/// Контракт распределения для скомпилированного GAMLSS-objective.
+/// Distribution contract for the compiled GAMLSS objective.
 ///
-/// Пользовательские распределения реализуют этот trait. Арность параметров,
-/// роли параметров и совместимость link-функций задаются через
-/// [`ParameterizedFamily`], поэтому hot path остаётся типизированным без
-/// dynamic lookup.
+/// Custom distributions implement this trait. Parameter arity, parameter roles
+/// and link-function compatibility are specified through
+/// [`ParameterizedFamily`], so the hot path stays typed without dynamic
+/// lookup.
 ///
 /// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
 /// contributions for one observation. Invalid observation or parameter domains
@@ -21,14 +21,14 @@ pub trait Family {
     /// lifetime parameter allows families to consume borrowed observations,
     /// such as `&'obs [f64]`, without forcing row copies.
     type Observation<'obs>;
-    /// Аддитивные предикторы на link-шкале.
+    /// Additive predictors on the link scale.
     type Eta;
-    /// Параметры распределения на естественной шкале.
+    /// Distribution parameters on the natural scale.
     type Theta;
-    /// Градиент negative log-likelihood по `Eta`.
+    /// Gradient of the negative log-likelihood with respect to `Eta`.
     type NllGradientEta;
 
-    /// Преобразует предикторы с link-шкалы в параметры распределения.
+    /// Converts link-scale predictors to distribution parameters.
     ///
     /// Per-parameter links are a convenient way to express independent scalar
     /// constraints, such as positive scales. Dependent constraints between
@@ -36,13 +36,13 @@ pub trait Family {
     /// cutpoints, or simplex weights — should be handled here by transforming
     /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
-    /// Negative log-likelihood для одного наблюдения на естественной шкале.
+    /// Negative log-likelihood for one observation on the natural scale.
     fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
-    /// Negative log-likelihood для одного наблюдения на link-шкале.
+    /// Negative log-likelihood for one observation on the link scale.
     fn nll_eta<'obs>(&self, observation: Self::Observation<'obs>, eta: Self::Eta) -> f64 {
         self.nll(observation, self.theta(eta))
     }
-    /// Negative log-likelihood и NLL-gradient по `Eta` для одного наблюдения.
+    /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
     ///
     /// `NllGradientEta` is the gradient of the negative log-likelihood with
     /// respect to the link-scale predictors `Eta`, after applying the chain
@@ -143,17 +143,17 @@ where
     ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
 }
 
-/// Контейнер для eta или NLL-gradient у family с фиксированной арностью `K`.
+/// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///
 /// `part(index)` is used in the model hot path after compile-time arity
 /// selection. Callers pass `index < K`; implementations may use `unreachable!`
 /// for out-of-range indices instead of returning a recoverable error.
 pub trait ParameterParts<const K: usize>: Sized {
-    /// Собирает контейнер из `K` scalar-частей.
+    /// Assembles a container from `K` scalar parts.
     fn from_array(values: [f64; K]) -> Self;
-    /// Возвращает scalar-часть по индексу.
+    /// Returns a scalar part by index.
     ///
-    /// Реализации могут считать, что вызывающий код передаёт индекс меньше `K`.
+    /// Implementations may assume that the caller passes an index less than `K`.
     fn part(&self, index: usize) -> f64;
 }
 
@@ -311,9 +311,10 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     }
 }
 
-/// Family с фиксированным числом параметров, ролями параметров и link-функциями.
+/// Family with a fixed number of parameters, parameter roles and link functions.
 ///
-/// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
+/// `Params` and `Links` are specified as tuples of the same length as the
+/// family arity.
 /// Their order defines the order of predictor blocks, gradient parts and flat
 /// coefficient ranges in compiled models.
 ///
@@ -325,9 +326,9 @@ where
     Self::Eta: ParameterParts<K>,
     Self::NllGradientEta: ParameterParts<K>,
 {
-    /// Роли параметров family.
+    /// Parameter roles of the family.
     type Params;
-    /// Link-функции параметров family.
+    /// Link functions of the family parameters.
     type Links;
 
     /// Sample-aware initial predictors on the link scale.
@@ -343,9 +344,9 @@ where
     }
 }
 
-/// Distribution helper для CDF.
+/// Distribution helper for the CDF.
 pub trait HasCdf: Family {
-    /// CDF в точке `y` для параметров на естественной шкале.
+    /// CDF at point `y` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid query
     /// points or parameter domains rather than panicking, matching the base
@@ -355,9 +356,9 @@ pub trait HasCdf: Family {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для quantile function.
+/// Distribution helper for the quantile function.
 pub trait HasQuantile: Family {
-    /// Квантиль уровня `p` для параметров на естественной шкале.
+    /// Quantile at probability level `p` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid
     /// probabilities or parameter domains rather than panicking.
@@ -401,13 +402,13 @@ pub trait HasCrps: Family {
     fn crps<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для simulation.
+/// Distribution helper for simulation.
 pub trait CanSimulate<Rng>: Family {
-    /// Генерирует одно значение для параметров на естественной шкале.
+    /// Generates one value for natural-scale parameters.
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для per-observation deviance.
+/// Distribution helper for per-observation deviance.
 ///
 /// This is intentionally separate from [`Family`] so compiled likelihood
 /// evaluation remains minimal. Diagnostics and residual tooling can opt into
@@ -421,7 +422,7 @@ pub trait HasDeviance: Family {
     fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для family-specific link-scale initialization.
+/// Distribution helper for family-specific link-scale initialization.
 ///
 /// This gives future fit layers a typed place to ask the family for starting
 /// predictors without hard-coding distribution heuristics outside the family

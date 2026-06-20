@@ -1,18 +1,19 @@
 use crate::ModelError;
 
-/// Минимальный контракт design matrix для hot path модели.
+/// Minimal design matrix contract for the model hot path.
 ///
-/// Реализации должны интерпретировать `beta` как вектор длины `ncols()` и
-/// `weights` как вектор длины `nrows()`. Методы не обязаны повторно проверять
-/// длины в release-сборке, поэтому вызывающий код валидирует размеры заранее.
+/// Implementations must interpret `beta` as a vector of length `ncols()` and
+/// `weights` as a vector of length `nrows()`. Methods are not required to
+/// re-check lengths in release builds, so the calling code validates sizes
+/// upfront.
 pub trait DesignMatrix {
-    /// Число наблюдений.
+    /// Number of observations.
     fn nrows(&self) -> usize;
-    /// Число коэффициентов в блоке.
+    /// Number of coefficients in the block.
     fn ncols(&self) -> usize;
-    /// Скалярное произведение строки `row` на `beta`.
+    /// Dot product of row `row` with `beta`.
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
-    /// Добавляет `X^T weights` в `out`.
+    /// Adds `X^T weights` into `out`.
     fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
     /// Writes a constant predictor start into `out` when this matrix has an
     /// intercept-like coefficient.
@@ -25,7 +26,7 @@ pub trait DesignMatrix {
     fn set_constant_start(&self, _value: f64, _out: &mut [f64]) -> bool {
         false
     }
-    /// Добавляет `X^T (weights * multiplier)` в `out`.
+    /// Adds `X^T (weights * multiplier)` into `out`.
     ///
     /// Default implementation materializes scaled weights. Matrix
     /// implementations used in hot paths should override this method when they
@@ -42,17 +43,17 @@ pub trait DesignMatrix {
         self.add_t_mul_vec(&scaled_weights, out);
     }
 
-    /// Добавляет `X^T diag(weights) X` в `out`.
+    /// Adds `X^T diag(weights) X` into `out`.
     ///
-    /// `out` — row-major матрица размера `ncols × ncols`. Результат
-    /// добавляется к уже существующим значениям `out`, а не заменяет их.
-    /// Матрица симметрична; реализации могут вычислять только верхний
-    /// треугольник и зеркалить в нижний.
+    /// `out` is a row-major matrix of size `ncols × ncols`. The result is added
+    /// to the existing values in `out`, not replacing them. The matrix is
+    /// symmetric; implementations may compute only the upper triangle and mirror
+    /// into the lower.
     ///
-    /// Default-реализация строит столбец за столбцом через
-    /// [`Self::dot_row`] и [`Self::add_t_mul_vec`]. Реализации
-    /// с прямым доступом к значениям (dense, sparse) должны переопределить
-    /// этот метод для избежания аллокаций и ускорения через SIMD.
+    /// The default implementation builds column by column via
+    /// [`Self::dot_row`] and [`Self::add_t_mul_vec`]. Implementations with
+    /// direct access to values (dense, sparse) should override this method to
+    /// avoid allocations and accelerate via SIMD.
     #[inline]
     fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
         let ncols = self.ncols();
@@ -79,7 +80,7 @@ pub trait DesignMatrix {
     }
 }
 
-/// Простая dense matrix в row-major порядке.
+/// Simple dense matrix in row-major order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseDesign {
     nrows: usize,
@@ -88,13 +89,13 @@ pub struct DenseDesign {
 }
 
 impl DenseDesign {
-    /// Создаёт dense matrix из row-major значений.
+    /// Creates a dense matrix from row-major values.
     ///
     /// # Errors
     ///
-    /// Возвращает [`ModelError::DesignSize`], если `values.len() != nrows * ncols`.
-    /// Возвращает [`ModelError::ArithmeticOverflow`], если `nrows * ncols` не
-    /// помещается в `usize`.
+    /// Returns [`ModelError::DesignSize`] if `values.len() != nrows * ncols`.
+    /// Returns [`ModelError::ArithmeticOverflow`] if `nrows * ncols` does not
+    /// fit in `usize`.
     pub fn from_row_major(
         nrows: usize,
         ncols: usize,
@@ -116,7 +117,7 @@ impl DenseDesign {
         })
     }
 
-    /// Создаёт dense matrix из массива строк фиксированной ширины.
+    /// Creates a dense matrix from an array of fixed-width rows.
     #[must_use]
     #[inline]
     pub fn from_rows<const C: usize>(rows: &[[f64; C]]) -> Self {
@@ -128,7 +129,7 @@ impl DenseDesign {
         }
     }
 
-    /// Создаёт design matrix из одного intercept-столбца.
+    /// Creates a design matrix from a single intercept column.
     #[must_use]
     #[inline]
     pub fn intercept(nrows: usize) -> Self {
@@ -139,7 +140,7 @@ impl DenseDesign {
         }
     }
 
-    /// Создаёт design matrix из одного пользовательского столбца.
+    /// Creates a design matrix from a single user-specified column.
     #[must_use]
     #[inline]
     pub fn column(values: &[f64]) -> Self {
@@ -150,16 +151,16 @@ impl DenseDesign {
         }
     }
 
-    /// Создаёт matrix из набора столбцов, опционально добавляя intercept первым.
+    /// Creates a matrix from a set of columns, optionally prepending an
+    /// intercept.
     ///
-    /// Все переданные столбцы должны иметь длину `nrows`.
+    /// All provided columns must have length `nrows`.
     ///
     /// # Errors
     ///
-    /// Возвращает [`ModelError::DesignRowMismatch`], если хотя бы один столбец
-    /// имеет длину, отличную от `nrows`. Возвращает
-    /// [`ModelError::ArithmeticOverflow`], если число элементов row-major
-    /// представления не помещается в `usize`.
+    /// Returns [`ModelError::DesignRowMismatch`] if any column has a length
+    /// different from `nrows`. Returns [`ModelError::ArithmeticOverflow`] if the
+    /// number of row-major elements does not fit in `usize`.
     pub fn from_columns(
         nrows: usize,
         include_intercept: bool,
@@ -199,7 +200,7 @@ impl DenseDesign {
         Self::from_row_major(nrows, ncols, values)
     }
 
-    /// Возвращает row-major значения матрицы.
+    /// Returns the row-major values of the matrix.
     #[must_use]
     #[inline]
     pub fn values(&self) -> &[f64] {

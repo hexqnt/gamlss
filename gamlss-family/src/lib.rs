@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Распределения, likelihood и NLL gradients для GAMLSS.
+//! Distributions, likelihood and NLL gradients for GAMLSS.
 
 /// Bernoulli distribution.
 pub mod bernoulli;
@@ -14,7 +14,7 @@ pub mod gumbel;
 mod initial;
 /// Inverse Gaussian distribution.
 pub mod inverse_gaussian;
-/// Распределение Лапласа.
+/// Laplace distribution.
 pub mod laplace;
 /// Log-normal distribution.
 pub mod log_normal;
@@ -24,12 +24,12 @@ pub mod logistic;
 pub mod lomax;
 /// Negative binomial distribution.
 pub mod negative_binomial;
-/// Нормальное распределение.
+/// Normal distribution.
 pub mod normal;
 /// Poisson distribution.
 pub mod poisson;
 mod special;
-/// Распределение Стьюдента с фиксированным числом степеней свободы.
+/// Student distribution with a fixed number of degrees of freedom.
 pub mod student_t;
 /// Weibull distribution.
 pub mod weibull;
@@ -54,7 +54,7 @@ pub use poisson::{DefaultPoisson, Poisson, PoissonEta, PoissonTheta};
 pub use student_t::{DefaultStudentT, StudentT, StudentTEta, StudentTTheta};
 pub use weibull::{DefaultWeibull, Weibull, WeibullEta, WeibullTheta};
 
-/// Наиболее часто используемые импорты из `gamlss-family`.
+/// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
     pub use crate::{
         Bernoulli, BernoulliEta, BernoulliTheta, Beta, BetaEta, BetaTheta, DefaultBernoulli,

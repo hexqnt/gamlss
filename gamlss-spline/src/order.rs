@@ -1,5 +1,4 @@
-/// Поддерживаемые степени/порядки сплайнов для эффективного локального
-/// вычисления базиса.
+/// Supported spline degrees/orders for efficient local basis computation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplineOrder {
     /// Linear B-spline.
@@ -11,13 +10,13 @@ pub enum SplineOrder {
 }
 
 impl SplineOrder {
-    /// Степень полинома.
+    /// Polynomial degree.
     #[inline(always)]
     pub fn degree(self) -> usize {
         self as usize
     }
 
-    /// Минимальное число коэффициентов для данного порядка.
+    /// Minimum number of coefficients for the given order.
     #[inline(always)]
     pub fn min_basis(self) -> usize {
         self.degree() + 1

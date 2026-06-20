@@ -4,7 +4,7 @@ use crate::local::{LocalBasis, cyclic_local_basis};
 use crate::row_basis::SplineRowBasis;
 use crate::{SplineError, SplineOrder};
 
-/// Metadata для cyclic spline predictor-а.
+/// Metadata for a cyclic spline predictor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CyclicSplineSpec {
     n_basis: usize,
@@ -12,11 +12,11 @@ pub struct CyclicSplineSpec {
 }
 
 impl CyclicSplineSpec {
-    /// Строит cyclic spline metadata.
+    /// Builds cyclic spline metadata.
     ///
     /// # Errors
     ///
-    /// Возвращает ошибку, если `n_basis` недостаточен для `order`.
+    /// Returns an error if `n_basis` is insufficient for `order`.
     pub fn new(n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
         if n_basis < order.min_basis() {
             return Err(SplineError::NotEnoughBasis {
@@ -28,11 +28,11 @@ impl CyclicSplineSpec {
         Ok(Self { n_basis, order })
     }
 
-    /// Строит predictor design для конкретных фаз.
+    /// Builds a predictor design for specific phases.
     ///
     /// # Errors
     ///
-    /// Возвращает ошибку, если `phi` содержит не-finite значения.
+    /// Returns an error if `phi` contains non-finite values.
     pub fn design(&self, phi: &[f64]) -> Result<CyclicSplineDesign, SplineError> {
         if phi.iter().any(|value| !value.is_finite()) {
             return Err(SplineError::NonFiniteValue);
@@ -44,14 +44,14 @@ impl CyclicSplineSpec {
         })
     }
 
-    /// Число spline-коэффициентов.
+    /// Number of spline coefficients.
     #[must_use]
     #[inline(always)]
     pub fn n_basis(&self) -> usize {
         self.n_basis
     }
 
-    /// Порядок spline.
+    /// Spline order.
     #[must_use]
     #[inline(always)]
     pub fn order(&self) -> SplineOrder {
@@ -59,7 +59,7 @@ impl CyclicSplineSpec {
     }
 }
 
-/// Cyclic spline predictor для периодических ковариат на `[0, 1)`.
+/// Cyclic spline predictor for periodic covariates on `[0, 1)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CyclicSplineDesign {
     phi: Vec<f64>,
@@ -67,9 +67,9 @@ pub struct CyclicSplineDesign {
 }
 
 impl CyclicSplineDesign {
-    /// Строит cyclic spline design.
+    /// Builds a cyclic spline design.
     ///
-    /// Все значения `phi` должны быть конечными.
+    /// All `phi` values must be finite.
     pub fn new(phi: &[f64], n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
         CyclicSplineSpec::new(n_basis, order)?.design(phi)
     }
@@ -81,14 +81,14 @@ impl CyclicSplineDesign {
         self.spec.n_basis()
     }
 
-    /// Metadata basis-а, пригодная для построения design на новых данных.
+    /// Basis metadata suitable for building a design on new data.
     #[must_use]
     #[inline(always)]
     pub fn spec(&self) -> CyclicSplineSpec {
         self.spec
     }
 
-    /// Возвращает исходные фазы design-а.
+    /// Returns the original phases of the design.
     #[must_use]
     #[inline(always)]
     pub fn phi(&self) -> &[f64] {
@@ -100,7 +100,7 @@ impl CyclicSplineDesign {
         cyclic_local_basis(self.phi[row], self.spec.order, self.spec.n_basis)
     }
 
-    /// Производная predictor contribution по фазе `phi`.
+    /// Derivative of the predictor contribution with respect to phase `phi`.
     #[must_use]
     #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {

@@ -1,42 +1,42 @@
 use gamlss_core::ModelError;
 use thiserror::Error;
 
-/// Ошибки построения spline basis и spline design matrix.
+/// Errors for spline basis and spline design matrix construction.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SplineError {
-    /// Входной вектор пуст.
+    /// Input vector is empty.
     #[error("spline input must contain at least one value")]
     EmptyInput,
 
-    /// Входной вектор содержит `NaN` или infinity.
+    /// Input vector contains `NaN` or infinity.
     #[error("spline input contains a non-finite value")]
     NonFiniteValue,
 
-    /// Диапазон данных не имеет двух различных конечных границ.
+    /// Data range does not have two distinct finite boundaries.
     #[error("spline range must have distinct finite boundaries")]
     InvalidRange,
 
-    /// Число basis-функций недостаточно для степени spline.
+    /// Number of basis functions is insufficient for the spline degree.
     #[error("B-spline basis count {n_basis} must be greater than degree {degree}")]
     NotEnoughBasis {
-        /// Запрошенное число basis-функций.
+        /// Requested number of basis functions.
         n_basis: usize,
-        /// Степень B-spline.
+        /// B-spline degree.
         degree: usize,
     },
 
-    /// Knot vector содержит не-finite значения или убывает.
+    /// Knot vector contains non-finite values or is decreasing.
     #[error("knot vector must be finite and nondecreasing")]
     InvalidKnots,
 
-    /// Knot vector содержит недостаточно узлов.
+    /// Knot vector does not contain enough knots.
     #[error("spline knot vector must contain at least {min} knots")]
     NotEnoughKnots {
-        /// Минимальное число узлов.
+        /// Minimum number of knots.
         min: usize,
     },
 
-    /// Период должен быть конечным положительным числом.
+    /// Period must be a finite positive number.
     #[error("spline period must be finite and positive")]
     InvalidPeriod,
 
@@ -49,38 +49,38 @@ pub enum SplineError {
         actual: usize,
     },
 
-    /// Число параметров переполнило `usize`.
+    /// Parameter count overflowed `usize`.
     #[error("spline parameter count overflowed")]
     ParameterOverflow,
 
-    /// Степень сплайна не поддерживается данным compact predictor-ом.
+    /// The spline degree is not supported by this compact predictor.
     #[error("spline degree {degree} is not supported")]
     UnsupportedDegree {
         /// Requested degree.
         degree: usize,
     },
 
-    /// Ошибка core design matrix.
+    /// Core design matrix error.
     #[error(transparent)]
     Model(#[from] ModelError),
 }
 
-/// Ошибки построения Fourier basis и Fourier predictor.
+/// Errors for Fourier basis and Fourier predictor construction.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum FourierError {
-    /// Входной вектор содержит `NaN` или infinity.
+    /// Input vector contains `NaN` or infinity.
     #[error("Fourier input contains a non-finite value")]
     NonFiniteValue,
 
-    /// Период должен быть конечным положительным числом.
+    /// Period must be a finite positive number.
     #[error("Fourier period must be finite and positive")]
     InvalidPeriod,
 
-    /// Число гармоник должно быть положительным.
+    /// Number of harmonics must be positive.
     #[error("Fourier order must be greater than zero")]
     InvalidOrder,
 
-    /// Число коэффициентов переполнило `usize`.
+    /// Coefficient count overflowed `usize`.
     #[error("Fourier coefficient count overflowed")]
     CoefficientOverflow,
 }

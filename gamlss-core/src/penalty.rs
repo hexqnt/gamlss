@@ -1,14 +1,14 @@
 use std::ops::Range;
 
-/// Penalty для коэффициентов одного parameter block.
+/// Penalty for the coefficients of a single parameter block.
 ///
 /// Implementations receive the local coefficient slice for one parameter
 /// block. The model validates slice lengths before evaluation where possible;
 /// hot-path implementations may use debug assertions for length checks.
 pub trait Penalty {
-    /// Значение penalty для текущих коэффициентов.
+    /// Penalty value for the current coefficients.
     fn value(&self, beta: &[f64]) -> f64;
-    /// Добавляет градиент penalty в уже существующий `grad`.
+    /// Adds the penalty gradient into the existing `grad`.
     ///
     /// Implementations must add into `grad` and must not clear it, because the
     /// likelihood gradient may already be present in the same buffer.
@@ -29,7 +29,7 @@ pub trait GlobalPenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
 }
 
-/// Нулевая penalty.
+/// Zero penalty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoPenalty;
 
@@ -56,12 +56,12 @@ impl GlobalPenalty for NoPenalty {
 /// Ridge penalty `lambda * sum(beta_i^2)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RidgePenalty {
-    /// Вес регуляризации.
+    /// Regularization weight.
     pub lambda: f64,
 }
 
 impl RidgePenalty {
-    /// Создаёт ridge penalty с заданным `lambda`.
+    /// Creates a ridge penalty with the given `lambda`.
     #[must_use]
     #[inline]
     pub const fn new(lambda: f64) -> Self {

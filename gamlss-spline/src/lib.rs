@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Spline-базисы, spline design matrices и штрафы.
+//! Spline bases, spline design matrices and penalties.
 
 pub mod bspline;
 pub mod cyclic;
@@ -37,7 +37,7 @@ pub use row_basis::SplineRowBasis;
 pub use tensor::TensorSplineDesign;
 pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
 
-/// Наиболее часто используемые импорты из `gamlss-spline`.
+/// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,

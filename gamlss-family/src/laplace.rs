@@ -15,8 +15,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 
 /// Laplace location-scale family.
 ///
-/// `MuLink` и `SigmaLink` управляют link-функциями. По умолчанию
-/// `Identity` для `mu` и `Log` для `sigma` (positive link).
+/// `MuLink` and `SigmaLink` control the link functions. Defaults to
+/// `Identity` for `mu` and `Log` for `sigma` (positive link).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Laplace<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
@@ -35,7 +35,7 @@ where
         }
     }
 
-    /// Преобразует предикторы с link-шкалы в параметры на естественной шкале.
+    /// Converts link-scale predictors to natural-scale parameters.
     #[inline(always)]
     fn theta_from_eta(eta: LaplaceEta) -> LaplaceTheta {
         LaplaceTheta {
@@ -44,10 +44,10 @@ where
         }
     }
 
-    /// Negative log-likelihood одного наблюдения на естественной шкале.
+    /// Negative log-likelihood for a single observation on the natural scale.
     ///
-    /// Возвращает `INFINITY` при non-finite observation/location или
-    /// неположительном sigma.
+    /// Returns `INFINITY` for non-finite observation/location or non-positive
+    /// sigma.
     #[inline(always)]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
@@ -58,9 +58,10 @@ where
         LOG_2 + theta.sigma.ln() + (y - theta.mu).abs() / theta.sigma
     }
 
-    /// Вычисляет NLL и gradient по eta для одного наблюдения.
+    /// Computes NLL and gradient with respect to eta for one observation.
     ///
-    /// Градиент по `mu` использует субградиент sign (0 при `residual == 0`).
+    /// The gradient with respect to `mu` uses the sign subgradient (0 when
+    /// `residual == 0`).
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
         let theta = Self::theta_from_eta(eta);
@@ -104,7 +105,7 @@ where
     }
 }
 
-/// Predictors для распределения Лапласа на link-шкале.
+/// Predictors for the Laplace distribution on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaplaceEta {
     /// Location predictor.
@@ -132,7 +133,7 @@ impl ParameterParts<2> for LaplaceEta {
     }
 }
 
-/// Параметры распределения Лапласа на естественной шкале.
+/// Laplace distribution parameters on the natural scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaplaceTheta {
     /// Location parameter.
@@ -272,7 +273,7 @@ where
     }
 }
 
-/// Распределение Лапласа с `Identity` link для `mu` и `Log` link для `sigma`.
+/// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type DefaultLaplace = Laplace<Identity, Log>;
 
 #[cfg(test)]

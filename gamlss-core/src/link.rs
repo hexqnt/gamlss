@@ -1,11 +1,12 @@
-/// Link-функция, представленная через обратное преобразование.
+/// Link function, represented via the inverse transform.
 ///
-/// В likelihood hot path используется `inverse(eta)`, где `eta` находится на
-/// линейной шкале predictor-а, и производная обратной функции для chain rule.
+/// The likelihood hot path uses `inverse(eta)`, where `eta` is on the linear
+/// predictor scale, together with the derivative of the inverse for the chain
+/// rule.
 pub trait Link<S> {
-    /// Переводит значение с predictor-шкалы на шкалу параметра.
+    /// Converts a value from the predictor scale to the parameter scale.
     fn inverse(eta: S) -> S;
-    /// Производная `inverse` по `eta`.
+    /// Derivative of `inverse` with respect to `eta`.
     fn derivative_inverse(eta: S) -> S;
 }
 
@@ -25,16 +26,16 @@ pub trait InitialEtaFromTheta<S>: Link<S> {
 const INITIAL_POSITIVE_FLOOR: f64 = 1.0e-12;
 const INITIAL_PROBABILITY_FLOOR: f64 = 1.0e-12;
 
-/// Маркер для link-функций, гарантирующих результат в `(0, +inf)`.
+/// Marker for link functions that guarantee a result in `(0, +inf)`.
 ///
-/// Этот контракт подходит для scale/rate/shape-like параметров без верхней
-/// границы. Для вероятностей используйте [`UnitIntervalLink`].
+/// This contract is suitable for scale/rate/shape-like parameters without an
+/// upper bound. For probabilities use [`UnitIntervalLink`].
 pub trait PositiveLink<S>: Link<S> {}
 
-/// Маркер для link-функций, гарантирующих результат в `(0, 1)`.
+/// Marker for link functions that guarantee a result in `(0, 1)`.
 ///
-/// Этот контракт подходит для вероятностных параметров, таких как Bernoulli
-/// success probability или beta mean.
+/// This contract is suitable for probability parameters, such as Bernoulli
+/// success probability or beta mean.
 pub trait UnitIntervalLink<S>: Link<S> {}
 
 /// Identity link: `theta = eta`.
@@ -85,7 +86,7 @@ impl InitialEtaFromTheta<f64> for Log {
     }
 }
 
-/// Численно устойчивый positive link: `theta = ln(1 + exp(eta))`.
+/// Numerically stable positive link: `theta = ln(1 + exp(eta))`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Softplus;
 
@@ -126,7 +127,7 @@ impl InitialEtaFromTheta<f64> for Softplus {
     }
 }
 
-/// Обратный logit link: `theta` лежит в интервале `(0, 1)`.
+/// Inverse logit link: `theta` lies in the interval `(0, 1)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Logit;
 
@@ -159,7 +160,7 @@ impl InitialEtaFromTheta<f64> for Logit {
     }
 }
 
-/// Сдвинутый log link: `theta = OFFSET + exp(eta)`.
+/// Shifted log link: `theta = OFFSET + exp(eta)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LogPlus<const OFFSET: i64>;
 

@@ -2,11 +2,10 @@ use std::ops::Range;
 
 use crate::ModelError;
 
-/// Независимый от оптимизатора оракул над плоским вектором параметров.
+/// Optimizer-independent oracle over a flat parameter vector.
 ///
-/// Методы принимают `&mut self`, чтобы реализации могли переиспользовать
-/// временные буферы, не раскрывая состояние, специфичное для оптимизатора,
-/// в `gamlss-core`.
+/// Methods accept `&mut self` so implementations can reuse temporary buffers
+/// without exposing optimizer-specific state in `gamlss-core`.
 ///
 /// Implementations validate input lengths and return recoverable errors for
 /// shape mismatches. `value` and `gradient` are allowed to reuse internal
@@ -43,17 +42,17 @@ pub trait Objective {
 /// block-wise fitting and optimizer integration code that wants to expose a
 /// projected view of a full [`Objective`].
 ///
-/// Оборачивает полный objective и проецирует вызовы на диапазон одного
-/// параметрического блока, переиспользуя рабочие буферы между вызовами.
+/// Wraps a full objective and projects calls onto the range of a single
+/// parameter block, reusing working buffers across calls.
 #[derive(Debug)]
 pub struct BlockObjective<'a, O> {
-    /// Полный objective.
+    /// Full objective.
     pub full_objective: &'a mut O,
-    /// Рабочий полный beta-вектор.
+    /// Working full beta vector.
     pub working_beta: Vec<f64>,
-    /// Рабочий полный gradient-вектор.
+    /// Working full gradient vector.
     pub full_grad: Vec<f64>,
-    /// Диапазон оптимизируемого блока.
+    /// Range of the block being optimized.
     pub block: Range<usize>,
 }
 
@@ -61,7 +60,7 @@ impl<'a, O> BlockObjective<'a, O>
 where
     O: Objective,
 {
-    /// Создаёт block objective поверх полного objective.
+    /// Creates a block objective over a full objective.
     ///
     /// This is a low-level constructor. Callers must pass a full parameter
     /// vector whose length equals `full_objective.dim()` and a block range

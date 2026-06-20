@@ -2,16 +2,16 @@ use gamlss_core::PredictorBlock;
 
 use crate::{FourierError, SplineRowBasis};
 
-/// Fourier predictor для сезонных/периодических ковариат.
+/// Fourier predictor for seasonal/periodic covariates.
 ///
-/// Для `order = K` строит колонки
-/// `sin(2πkx / period)` и `cos(2πkx / period)`, `k = 1..=K`.
-/// Если `include_intercept = true`, первым коэффициентом является intercept.
-/// Локальный вектор коэффициентов имеет порядок:
+/// For `order = K` builds columns
+/// `sin(2πkx / period)` and `cos(2πkx / period)`, `k = 1..=K`.
+/// If `include_intercept = true`, the first coefficient is the intercept.
+/// The local coefficient vector has order:
 /// `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`.
 ///
-/// В отличие от dense design matrix, этот predictor не материализует базис:
-/// значения вычисляются напрямую в [`PredictorBlock::eta_row`] и
+/// Unlike a dense design matrix, this predictor does not materialize the
+/// basis: values are computed directly in [`PredictorBlock::eta_row`] and
 /// [`PredictorBlock::add_gradient`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FourierDesign {
@@ -23,10 +23,10 @@ pub struct FourierDesign {
 }
 
 impl FourierDesign {
-    /// Строит Fourier predictor.
+    /// Builds a Fourier predictor.
     ///
-    /// `period` должен быть конечным и положительным, `order` — положительным.
-    /// Все значения `x` должны быть конечными.
+    /// `period` must be finite and positive, `order` must be positive.
+    /// All `x` values must be finite.
     pub fn new(
         x: &[f64],
         period: f64,
@@ -54,25 +54,25 @@ impl FourierDesign {
         })
     }
 
-    /// Число гармоник.
+    /// Number of harmonics.
     #[inline(always)]
     pub fn order(&self) -> usize {
         self.order
     }
 
-    /// Период Fourier basis.
+    /// Period of the Fourier basis.
     #[inline(always)]
     pub fn period(&self) -> f64 {
         std::f64::consts::TAU / self.omega
     }
 
-    /// Возвращает `true`, если predictor содержит intercept.
+    /// Returns `true` if the predictor contains an intercept.
     #[inline(always)]
     pub fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
-    /// Возвращает исходные координаты.
+    /// Returns the original coordinates.
     #[inline(always)]
     pub fn x(&self) -> &[f64] {
         &self.x

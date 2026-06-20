@@ -48,38 +48,38 @@ impl ParameterBlocks {
     }
 }
 
-/// Маркер для location-параметра `mu`.
+/// Marker for the location parameter `mu`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mu;
 
-/// Маркер для scale-параметра `sigma`.
+/// Marker for the scale parameter `sigma`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sigma;
 
-/// Маркер для третьего GAMLSS-параметра `nu`.
+/// Marker for the third GAMLSS parameter `nu`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Nu;
 
-/// Маркер для четвёртого GAMLSS-параметра `tau`.
+/// Marker for the fourth GAMLSS parameter `tau`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tau;
 
-/// Маркер для rate-параметра распределения.
+/// Marker for the rate parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Rate;
 
-/// Маркер для shape-параметра распределения.
+/// Marker for the shape parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Shape;
 
-/// Маркер для scale-параметра распределения.
+/// Marker for the scale parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scale;
 
-/// Маркер для precision-параметра распределения.
+/// Marker for the precision parameter of a distribution.
 ///
-/// Используется для параметризаций вида mean/precision, например beta
-/// distribution, где `precision > 0` управляет концентрацией вокруг mean.
+/// Used for mean/precision parameterizations, e.g. the beta distribution, where
+/// `precision > 0` controls the concentration around the mean.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Precision;
 
@@ -115,20 +115,20 @@ impl ParameterName for Precision {
     const NAME: &'static str = "precision";
 }
 
-/// Типизированный block коэффициентов для одного параметра распределения.
+/// Typed coefficient block for a single distribution parameter.
 ///
-/// `P` задаёт роль параметра, `L` задаёт link-функцию, `X` хранит predictor
-/// block, а `Penalty` добавляет регуляризацию. `offset` и `len` описывают
-/// диапазон коэффициентов блока внутри общего вектора beta.
+/// `P` specifies the parameter role, `L` specifies the link function, `X` holds
+/// the predictor block, and `Penalty` adds regularization. `offset` and `len`
+/// describe the coefficient range of the block within the common beta vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterBlock<P, L, X, Penalty> {
     /// Predictor block.
     pub x: X,
-    /// Penalty, применяемый к коэффициентам блока.
+    /// Penalty applied to the block's coefficients.
     pub penalty: Penalty,
-    /// Начальная позиция блока в общем beta-векторе.
+    /// Start position of the block in the common beta vector.
     pub offset: usize,
-    /// Число коэффициентов в блоке.
+    /// Number of coefficients in the block.
     pub len: usize,
     marker: PhantomData<(P, L)>,
 }
@@ -137,7 +137,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty>
 where
     X: PredictorBlock,
 {
-    /// Создаёт блок и берёт `len` из `x.nparams()`.
+    /// Creates a block, taking `len` from `x.nparams()`.
     #[must_use]
     #[inline]
     pub fn new(x: X, penalty: Penalty, offset: usize) -> Self {
@@ -145,10 +145,10 @@ where
         Self::from_len(x, penalty, offset, len)
     }
 
-    /// Создаёт блок из generic predictor.
+    /// Creates a block from a generic predictor.
     ///
-    /// Это синоним [`Self::new`], оставленный для кода, где явное слово
-    /// `predictor` делает вызов читаемее.
+    /// This is a synonym for [`Self::new`], kept for code where the explicit
+    /// `predictor` word makes the call more readable.
     #[must_use]
     #[inline]
     pub fn from_predictor(x: X, penalty: Penalty, offset: usize) -> Self {
@@ -160,7 +160,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, LinearPredictorBlock<X>, Penalty>
 where
     X: DesignMatrix,
 {
-    /// Создаёт линейный block из design matrix.
+    /// Creates a linear block from a design matrix.
     #[must_use]
     #[inline]
     pub fn linear(x: X, penalty: Penalty, offset: usize) -> Self {
@@ -180,7 +180,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
         }
     }
 
-    /// Возвращает копию блока с новым offset.
+    /// Returns a copy of the block with a new offset.
     #[must_use]
     #[inline]
     pub fn with_offset(mut self, offset: usize) -> Self {
@@ -188,7 +188,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
         self
     }
 
-    /// Диапазон коэффициентов блока в общем beta-векторе.
+    /// Coefficient range of the block in the common beta vector.
     ///
     /// # Panics
     ///
@@ -200,7 +200,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
         self.offset..self.end()
     }
 
-    /// Индекс сразу после последнего коэффициента блока.
+    /// Index immediately after the last coefficient of the block.
     ///
     /// # Panics
     ///
@@ -214,14 +214,14 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
             .expect("parameter block range end must fit in usize")
     }
 
-    /// Число коэффициентов блока.
+    /// Number of coefficients in the block.
     #[must_use]
     #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// `true`, если block не содержит коэффициентов.
+    /// `true` if the block contains no coefficients.
     #[must_use]
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -233,12 +233,12 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty>
 where
     P: ParameterName,
 {
-    /// Проверяет и возвращает диапазон коэффициентов блока.
+    /// Validates and returns the block's coefficient range.
     ///
     /// # Errors
     ///
-    /// Возвращает [`ModelError::BlockRangeOverflow`], если `offset + len` не
-    /// помещается в `usize`.
+    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
+    /// in `usize`.
     #[inline]
     pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
         let end = self

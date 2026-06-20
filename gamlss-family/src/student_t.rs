@@ -10,11 +10,11 @@ use gamlss_core::{
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::special::{invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
-/// Student's t location-scale family с фиксированным числом степеней свободы.
+/// Student's t location-scale family with a fixed number of degrees of freedom.
 ///
-/// `MuLink` и `SigmaLink` управляют link-функциями для параметров
-/// расположения и масштаба соответственно. По умолчанию используются
-/// `Identity` для `mu` и `Log` для `sigma`.
+/// `MuLink` and `SigmaLink` control the link functions for the location and
+/// scale parameters respectively. Defaults to `Identity` for `mu` and `Log`
+/// for `sigma`.
 ///
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = Identity, SigmaLink = Log> {
@@ -47,7 +47,7 @@ where
         self.degrees_of_freedom
     }
 
-    /// Преобразует предикторы с link-шкалы в параметры на естественной шкале.
+    /// Converts link-scale predictors to natural-scale parameters.
     #[inline(always)]
     fn theta_from_eta(eta: StudentTEta) -> StudentTTheta {
         StudentTTheta {
@@ -56,10 +56,10 @@ where
         }
     }
 
-    /// Negative log-likelihood одного наблюдения на естественной шкале.
+    /// Negative log-likelihood for one observation on the natural scale.
     ///
-    /// Возвращает `INFINITY` при non-finite observation/location или
-    /// неположительном sigma.
+    /// Returns `INFINITY` for non-finite observation/location or non-positive
+    /// sigma.
     #[inline(always)]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
@@ -72,10 +72,10 @@ where
         student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
     }
 
-    /// Вычисляет NLL и gradient по eta для одного наблюдения.
+    /// Computes NLL and gradient w.r.t. eta for one observation.
     ///
-    /// Использует аналитические производные с учётом фиксированного `nu`
-    /// и домножает на производные link-функций (chain rule).
+    /// Uses analytic derivatives taking into account the fixed `nu` and
+    /// multiplies by the link function derivatives (chain rule).
     #[inline(always)]
     fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
@@ -168,7 +168,7 @@ where
     }
 }
 
-/// Predictors для распределения Стьюдента на link-шкале.
+/// Predictors for the Student's t distribution on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentTEta {
     /// Location predictor.
@@ -196,7 +196,7 @@ impl ParameterParts<2> for StudentTEta {
     }
 }
 
-/// Параметры распределения Стьюдента на естественной шкале.
+/// Student's t distribution parameters on the natural scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentTTheta {
     /// Location parameter.
@@ -335,10 +335,11 @@ where
     }
 }
 
-/// Распределение Стьюдента с `Identity` link для `mu` и `Log` link для `sigma`.
+/// Student's t distribution with `Identity` link for `mu` and `Log` link
+/// for `sigma`.
 pub type DefaultStudentT = StudentT<Identity, Log>;
 
-/// Нормировочная константа логарифма плотности распределения Стьюдента.
+/// Normalization constant for the logarithm of the Student's t density.
 fn student_t_constant(nu: f64) -> f64 {
     0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
 }

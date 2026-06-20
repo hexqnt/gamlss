@@ -1,16 +1,16 @@
 use gamlss_core::Penalty;
 
-/// Difference penalty порядка `order` для соседних spline coefficients.
+/// Difference penalty of order `order` for neighboring spline coefficients.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DifferencePenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     pub lambda: f64,
-    /// Порядок finite difference.
+    /// Finite difference order.
     pub order: usize,
 }
 
 impl DifferencePenalty {
-    /// Создаёт difference penalty.
+    /// Creates a difference penalty.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
@@ -36,9 +36,9 @@ impl Penalty for DifferencePenalty {
 /// Difference penalty with finite-difference coefficients computed once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedDifferencePenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     pub lambda: f64,
-    /// Порядок finite difference.
+    /// Finite difference order.
     pub order: usize,
     coefficients: Vec<f64>,
 }
@@ -77,23 +77,23 @@ impl Penalty for PreparedDifferencePenalty {
     }
 }
 
-/// Циклический finite-difference penalty для периодических векторов
-/// коэффициентов.
+/// Cyclic finite-difference penalty for periodic coefficient vectors.
 ///
-/// Отличается от [`DifferencePenalty`] тем, что разности берутся по
-/// модулю длины вектора (wrap-around).
+/// Differs from [`DifferencePenalty`] in that differences are taken modulo
+/// the vector length (wrap-around).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CyclicDifferencePenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     pub lambda: f64,
-    /// Порядок finite difference.
+    /// Finite difference order.
     pub order: usize,
 }
 
 impl CyclicDifferencePenalty {
-    /// Создаёт cyclic difference penalty.
+    /// Creates a cyclic difference penalty.
     ///
-    /// `lambda` задаёт силу штрафа, `order` — порядок конечной разности.
+    /// `lambda` sets the penalty strength, `order` sets the finite-difference
+    /// order.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
@@ -115,9 +115,9 @@ impl Penalty for CyclicDifferencePenalty {
 /// Cyclic difference penalty with finite-difference coefficients computed once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedCyclicDifferencePenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     pub lambda: f64,
-    /// Порядок finite difference.
+    /// Finite difference order.
     pub order: usize,
     coefficients: Vec<f64>,
 }
@@ -251,20 +251,21 @@ fn add_difference_penalty_gradient(
     }
 }
 
-/// Квадратичный штраф за нарушение монотонности на краях сплайна.
+/// Quadratic penalty for violating monotonicity at the spline edges.
 ///
-/// Штрафует положительные разности `beta[1] - beta[0]` и
-/// `beta[n-2] - beta[n-1]`, поощряя убывание на краях.
+/// Penalizes positive differences `beta[1] - beta[0]` and
+/// `beta[n-2] - beta[n-1]`, encouraging decrease at the edges.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EdgeMonotonicPenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     ///
-    /// Чем больше `weight`, тем сильнее штраф за немонотонность на краях.
+    /// The larger `weight`, the stronger the penalty for non-monotonicity at
+    /// the edges.
     pub weight: f64,
 }
 
 impl EdgeMonotonicPenalty {
-    /// Создаёт edge monotonicity penalty.
+    /// Creates an edge monotonicity penalty.
     pub fn new(weight: f64) -> Self {
         Self { weight }
     }
@@ -304,31 +305,31 @@ impl Penalty for EdgeMonotonicPenalty {
     }
 }
 
-/// Квадратичный штраф за превышение пределов наклона на холодном/тёплом
-/// краях сплайна.
+/// Quadratic penalty for exceeding slope limits at the cold/warm edges of a
+/// spline.
 ///
-/// Позволяет ограничить физический наклон (например, рост потребления
-/// с температурой) на краях диапазона.
+/// Allows constraining the physical slope (e.g. consumption growth with
+/// temperature) at the range edges.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlopeLimitPenalty {
-    /// Вес penalty.
+    /// Penalty weight.
     ///
-    /// Чем больше `weight`, тем сильнее штраф.
+    /// The larger `weight`, the stronger the penalty.
     pub weight: f64,
-    /// Переводит разности краевых коэффициентов в физический наклон.
+    /// Converts edge coefficient differences into a physical slope.
     pub scale: f64,
-    /// Опциональный предел наклона на холодном краю.
+    /// Optional slope limit on the cold edge.
     pub cold_limit: Option<f64>,
-    /// Опциональный предел наклона на тёплом краю.
+    /// Optional slope limit on the warm edge.
     pub warm_limit: Option<f64>,
 }
 
 impl SlopeLimitPenalty {
-    /// Создаёт slope limit penalty.
+    /// Creates a slope limit penalty.
     ///
-    /// `weight` — сила штрафа, `scale` переводит разности коэффициентов
-    /// в физический наклон, `cold_limit` и `warm_limit` — опциональные
-    /// пределы (если `None`, соответствующий край не штрафуется).
+    /// `weight` — penalty strength, `scale` converts coefficient differences
+    /// into a physical slope, `cold_limit` and `warm_limit` — optional limits
+    /// (if `None`, the corresponding edge is not penalized).
     pub fn new(weight: f64, scale: f64, cold_limit: Option<f64>, warm_limit: Option<f64>) -> Self {
         Self {
             weight,
@@ -355,10 +356,10 @@ impl Penalty for SlopeLimitPenalty {
     }
 }
 
-/// Добавляет штраф за превышение предела наклона на одном краю.
+/// Adds a penalty for exceeding the slope limit on one edge.
 ///
-/// `cold = true` — холодный край (начало), `false` — тёплый (конец).
-/// Если `grad` передан, добавляет и градиентную составляющую.
+/// `cold = true` — cold edge (start), `false` — warm edge (end).
+/// If `grad` is provided, also adds the gradient contribution.
 fn add_slope_limit_value(
     beta: &[f64],
     penalty: &SlopeLimitPenalty,
@@ -412,9 +413,9 @@ fn add_slope_limit_value(
     }
 }
 
-/// Коэффициенты конечной разности заданного порядка.
+/// Finite-difference coefficients of the given order.
 ///
-/// Возвращает знакочередующиеся биномиальные коэффициенты:
+/// Returns alternating-sign binomial coefficients:
 /// `(-1)^{order-i} * C(order, i)`.
 fn difference_coefficients(order: usize) -> Vec<f64> {
     (0..=order)
@@ -429,7 +430,7 @@ fn difference_coefficients(order: usize) -> Vec<f64> {
         .collect()
 }
 
-/// Биномиальный коэффициент C(n, k).
+/// Binomial coefficient C(n, k).
 fn binomial(n: usize, k: usize) -> usize {
     if k > n {
         return 0;

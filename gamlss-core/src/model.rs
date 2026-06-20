@@ -15,7 +15,7 @@ pub use layout::{
 pub use observation::ObservationView;
 pub use workspace::GradientWorkspace;
 
-/// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
+/// Tuple contract for a set of parameter blocks compatible with family `F`.
 ///
 /// Implementations are generated for typed tuples of [`ParameterBlock`]. The
 /// model validates observation count, predictor row counts and coefficient
@@ -26,17 +26,18 @@ pub trait GamlssBlocks<F>
 where
     F: Family,
 {
-    /// Число наблюдений в blocks.
+    /// Number of observations in the blocks.
     fn nrows(&self) -> usize;
-    /// Длина общего beta-вектора, покрывающего все blocks.
+    /// Length of the common beta vector covering all blocks.
     fn len(&self) -> usize;
 
-    /// `true`, если blocks не требуют коэффициентов.
+    /// `true` if the blocks require no coefficients.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Проверяет, что blocks совместимы с observation count `nobs`.
+    /// Validates that the blocks are compatible with the observation count
+    /// `nobs`.
     fn validate(&self, nobs: usize) -> Result<(), ModelError>;
     /// Weighted negative log-likelihood without penalties.
     ///
@@ -46,7 +47,7 @@ where
     fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Аддитивные предикторы на link-шкале для одной строки.
+    /// Additive predictors on the link scale for one row.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
         F: Family;
@@ -65,7 +66,7 @@ where
     /// correct only for block collections whose [`penalty_value`](Self::penalty_value)
     /// has zero gradient.
     fn add_penalty_gradient(&self, _beta: &[f64], _grad: &mut [f64]) {}
-    /// Значение weighted negative log-likelihood плюс penalties.
+    /// Value of the weighted negative log-likelihood plus penalties.
     fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
@@ -83,7 +84,7 @@ where
         }
         workspace
     }
-    /// Добавляет weighted gradient, переиспользуя временные буферы из `workspace`.
+    /// Adds the weighted gradient, reusing temporary buffers from `workspace`.
     ///
     /// The default implementation uses the fused value-gradient path and
     /// discards the value.
@@ -111,9 +112,9 @@ where
     ) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Диапазоны коэффициентов каждого block в общем beta-векторе.
+    /// Coefficient ranges for each block in the common beta vector.
     fn block_ranges(&self) -> Vec<Range<usize>>;
-    /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
+    /// Returns the layout of the coefficient blocks within the flat beta vector.
     fn parameter_layout(&self) -> ParameterLayout;
 
     /// Visits coefficient ranges for each parameter block in model order without allocating.
@@ -212,10 +213,10 @@ impl ObjectiveScale {
     }
 }
 
-/// Скомпилированная типизированная GAMLSS-модель.
+/// Compiled typed GAMLSS model.
 ///
-/// `F` задаёт распределение response, а `Blocks` задаёт по одному predictor
-/// block для каждого параметра family.
+/// `F` specifies the response distribution, and `Blocks` provides one
+/// predictor block for each family parameter.
 ///
 /// The model owns the family and parameter blocks, and stores an observation
 /// view supplied by the caller. This keeps `gamlss-core` independent of the
@@ -223,9 +224,9 @@ impl ObjectiveScale {
 /// evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gamlss<F, Blocks, Obs> {
-    /// Family распределения response.
+    /// Response distribution family.
     pub family: F,
-    /// Типизированные parameter blocks.
+    /// Typed parameter blocks.
     pub blocks: Blocks,
     /// Observation view used for training objective evaluation.
     pub obs: Obs,
@@ -246,11 +247,11 @@ pub struct WorkspaceGamlss<F, Blocks, Obs> {
     pub workspace: GradientWorkspace,
 }
 
-/// Обёртка objective, добавляющая штрафы, зависящие от полного beta-вектора.
+/// Objective wrapper that adds penalties depending on the full beta vector.
 ///
-/// В отличие от [`Penalty`], который действует локально на один блок,
-/// [`GlobalPenalty`] позволяет coupling нескольких блоков (например,
-/// центрирующие или LASSO-подобные штрафы).
+/// Unlike [`Penalty`], which acts locally on a single block,
+/// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
+/// LASSO-like penalties).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithGlobalPenalties<O, GP> {
     /// Wrapped objective.
@@ -275,7 +276,7 @@ where
     Blocks: GamlssBlocks<F>,
     for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
-    /// Создаёт модель после проверки observation view и blocks.
+    /// Creates a model after validating the observation view and blocks.
     ///
     /// This is the extension point for custom storage backends. The observation
     /// view is stored by value, so callers can pass lightweight borrowed views,
@@ -299,12 +300,12 @@ where
         })
     }
 
-    /// Число наблюдений.
+    /// Number of observations.
     pub fn nobs(&self) -> usize {
         self.obs.len()
     }
 
-    /// Число коэффициентов в общем beta-векторе.
+    /// Number of coefficients in the common beta vector.
     pub fn nparams(&self) -> usize {
         self.blocks.len()
     }
@@ -363,7 +364,7 @@ where
         }
     }
 
-    /// Диапазоны coefficient blocks внутри beta.
+    /// Coefficient block ranges within beta.
     pub fn block_ranges(&self) -> Vec<Range<usize>> {
         self.blocks.block_ranges()
     }
@@ -595,7 +596,7 @@ where
             .collect())
     }
 
-    /// Проверяет длину beta и вычисляет objective.
+    /// Validates beta length and computes the objective.
     pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
         validate_len("parameters", beta.len(), self.nparams())?;
 
@@ -604,13 +605,13 @@ where
         Ok(self.likelihood_multiplier() * train_nll + penalty)
     }
 
-    /// Проверяет размеры beta/grad и записывает gradient.
+    /// Validates beta/grad sizes and writes the gradient.
     pub fn try_gradient_into(&self, beta: &[f64], grad: &mut [f64]) -> Result<(), ModelError> {
         let mut workspace = self.gradient_workspace();
         self.try_gradient_into_workspace(beta, grad, &mut workspace)
     }
 
-    /// Проверяет размеры beta/grad и записывает gradient, переиспользуя workspace.
+    /// Validates beta/grad sizes and writes the gradient, reusing a workspace.
     pub fn try_gradient_into_workspace(
         &self,
         beta: &[f64],
@@ -631,7 +632,7 @@ where
         Ok(())
     }
 
-    /// Проверяет размеры beta/grad и вычисляет value + gradient за один проход.
+    /// Validates beta/grad sizes and computes value + gradient in one pass.
     pub fn try_value_gradient_into(
         &self,
         beta: &[f64],
@@ -641,7 +642,8 @@ where
         self.try_value_gradient_into_workspace(beta, grad, &mut workspace)
     }
 
-    /// Проверяет размеры beta/grad и вычисляет fused value + gradient с workspace.
+    /// Validates beta/grad sizes and computes fused value + gradient with a
+    /// workspace.
     pub fn try_value_gradient_into_workspace(
         &self,
         beta: &[f64],
@@ -691,7 +693,7 @@ where
     F: for<'obs> Family<Observation<'obs> = f64>,
     Blocks: GamlssBlocks<F>,
 {
-    /// Создаёт unweighted модель после проверки response и blocks.
+    /// Creates an unweighted model after validating the response and blocks.
     pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
         Self::try_new_with_observations(family, blocks, y)
     }
@@ -702,7 +704,8 @@ where
     F: for<'obs> Family<Observation<'obs> = f64>,
     Blocks: GamlssBlocks<F>,
 {
-    /// Создаёт модель с observation weights после проверки response, weights и blocks.
+    /// Creates a model with observation weights after validating the response,
+    /// weights and blocks.
     ///
     /// Weights must have the same length as `y`; each weight must be finite and
     /// non-negative. Zero weights are accepted and exclude the corresponding
@@ -875,12 +878,13 @@ where
     }
 }
 
-/// Макрос, генерирующий реализацию [`GamlssBlocks`] для tuple parameter blocks.
+/// Macro that generates a [`GamlssBlocks`] implementation for tuple parameter
+/// blocks.
 ///
-/// Принимает арность `K`, списки parameter-типов, link-типов, design-типов и
-/// penalty-типов, а также имена внутренних переменных. На выходе даёт
-/// zero-cost реализацию `train_nll`, `value_gradient_into_workspace`, `penalty_value` и
-/// вспомогательных методов без dynamic dispatch.
+/// Takes the arity `K`, lists of parameter types, link types, design types and
+/// penalty types, plus internal variable names. Produces a zero-cost
+/// implementation of `train_nll`, `value_gradient_into_workspace`,
+/// `penalty_value` and helper methods without dynamic dispatch.
 macro_rules! impl_gamlss_blocks {
     (
         $k:literal;
@@ -1268,7 +1272,7 @@ impl_gamlss_blocks!(
     indices = (0, 1, 2, 3, 4, 5, 6, 7)
 );
 
-/// Проверяет, что число строк predictor-а совпадает с длиной response.
+/// Validates that the predictor row count matches the response length.
 fn validate_block_rows(
     parameter: &'static str,
     actual_rows: usize,
@@ -1285,14 +1289,14 @@ fn validate_block_rows(
     }
 }
 
-/// Проверяет пересечение двух диапазонов (непустое пересечение).
+/// Checks whether two ranges overlap (non-empty intersection).
 fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
     first.start < second.end && second.start < first.end
 }
 
-/// Поэлементно добавляет `values` к `out`.
+/// Element-wise adds `values` to `out`.
 ///
-/// Вызывающий код должен гарантировать `out.len() == values.len()`.
+/// The caller must guarantee `out.len() == values.len()`.
 fn add_into(out: &mut [f64], values: &[f64]) {
     debug_assert_eq!(out.len(), values.len());
 
@@ -1308,7 +1312,7 @@ where
     (0..obs.len()).map(|row| obs.weight_at(row)).sum()
 }
 
-/// Проверяет длину вектора (beta или gradient) и возвращает typed error.
+/// Validates the vector length (beta or gradient) and returns a typed error.
 fn validate_len(name: &'static str, actual: usize, expected: usize) -> Result<(), ModelError> {
     if actual == expected {
         Ok(())

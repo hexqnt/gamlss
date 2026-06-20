@@ -10,26 +10,26 @@ pub use transforms::{
     Log1pShiftState, LogState, Standardize, StandardizeState,
 };
 
-/// Ошибки построения и применения target transforms.
+/// Errors for building and applying target transforms.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TransformError {
-    /// Target vector пуст.
+    /// Target vector is empty.
     #[error("target vector must contain at least one value")]
     EmptyInput,
 
-    /// Target содержит `NaN` или infinity.
+    /// Target contains `NaN` or infinity.
     #[error("target contains a non-finite value")]
     NonFiniteValue,
 
-    /// Transform требует строго положительный target.
+    /// Transform requires strictly positive targets.
     #[error("target value must be finite and > 0")]
     NonPositiveValue,
 
-    /// Transform получил значение ниже обученной нижней границы.
+    /// Transform received a value below the fitted lower bound.
     #[error("target value is below the fitted lower bound")]
     BelowLowerBound,
 
-    /// Standardize transform получил нулевую дисперсию.
+    /// Standardize transform received zero variance.
     #[error("target scale must be positive")]
     ZeroScale,
 
@@ -43,28 +43,28 @@ pub enum TransformError {
     },
 }
 
-/// Transform целевой переменной с состоянием, оцениваемым на обучающем target.
+/// Transform of the target variable with state estimated on the training target.
 pub trait TargetTransform {
-    /// Состояние transform-а, сохраняемое вместе с обученной моделью.
+    /// State of the transform, persisted alongside the fitted model.
     type State;
 
-    /// Оценивает состояние transform-а по обучающему target.
+    /// Estimates the transform state from the training target.
     ///
     /// # Errors
     ///
-    /// Возвращает [`TransformError`], если target пуст, содержит не-finite
-    /// значения или нарушает domain-инварианты конкретного transform-а.
+    /// Returns [`TransformError`] if the target is empty, contains non-finite
+    /// values, or violates domain invariants of the specific transform.
     fn fit(y: &[f64]) -> Result<Self::State, TransformError>;
-    /// Преобразует одно значение target.
+    /// Transforms a single target value.
     fn transform(state: &Self::State, y: f64) -> f64;
-    /// Возвращает значение на исходную шкалу.
+    /// Returns a value to the original scale.
     fn inverse(state: &Self::State, value: f64) -> f64;
 
-    /// Оценивает состояние и преобразует весь target.
+    /// Estimates the state and transforms the entire target.
     ///
     /// # Errors
     ///
-    /// Возвращает ошибку из [`Self::fit`] или [`Self::transform_slice`].
+    /// Returns an error from [`Self::fit`] or [`Self::transform_slice`].
     #[inline]
     fn fit_transform(y: &[f64]) -> Result<(Self::State, Vec<f64>), TransformError> {
         let state = Self::fit(y)?;
@@ -72,13 +72,13 @@ pub trait TargetTransform {
         Ok((state, transformed))
     }
 
-    /// Преобразует срез target в новый `Vec`.
+    /// Transforms a target slice into a new `Vec`.
     ///
     /// # Errors
     ///
-    /// Возвращает [`TransformError::NonFiniteValue`], если вход содержит
-    /// `NaN` или infinity. Конкретные transform-ы могут усиливать проверку
-    /// domain-а, например требовать строго положительные значения.
+    /// Returns [`TransformError::NonFiniteValue`] if the input contains `NaN`
+    /// or infinity. Specific transforms may strengthen the domain check, e.g.
+    /// require strictly positive values.
     #[inline]
     fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; y.len()];
@@ -86,14 +86,14 @@ pub trait TargetTransform {
         Ok(out)
     }
 
-    /// Преобразует срез target в caller-provided output buffer.
+    /// Transforms a target slice into a caller-provided output buffer.
     ///
     /// # Errors
     ///
-    /// Возвращает [`TransformError::LengthMismatch`], если длина `out` не
-    /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
-    /// если вход содержит `NaN` или infinity. Конкретные transform-ы могут
-    /// усиливать проверку domain-а.
+    /// Returns [`TransformError::LengthMismatch`] if the `out` length does not
+    /// match the input length. Returns [`TransformError::NonFiniteValue`] if
+    /// the input contains `NaN` or infinity. Specific transforms may
+    /// strengthen the domain check.
     #[inline]
     fn transform_into(
         state: &Self::State,
@@ -105,12 +105,12 @@ pub trait TargetTransform {
         })
     }
 
-    /// Возвращает срез значений на исходную шкалу в новый `Vec`.
+    /// Returns a slice of values to the original scale into a new `Vec`.
     ///
     /// # Errors
     ///
-    /// Возвращает [`TransformError::NonFiniteValue`], если значения на
-    /// transform-шкале содержат `NaN` или infinity.
+    /// Returns [`TransformError::NonFiniteValue`] if the transform-scale values
+    /// contain `NaN` or infinity.
     #[inline]
     fn inverse_slice(state: &Self::State, values: &[f64]) -> Result<Vec<f64>, TransformError> {
         let mut out = vec![0.0; values.len()];
@@ -118,13 +118,14 @@ pub trait TargetTransform {
         Ok(out)
     }
 
-    /// Возвращает transform-scale values на исходную шкалу в caller-provided buffer.
+    /// Returns transform-scale values to the original scale into a caller-provided
+    /// buffer.
     ///
     /// # Errors
     ///
-    /// Возвращает [`TransformError::LengthMismatch`], если длина `out` не
-    /// совпадает с длиной входа. Возвращает [`TransformError::NonFiniteValue`],
-    /// если вход содержит `NaN` или infinity.
+    /// Returns [`TransformError::LengthMismatch`] if the `out` length does not
+    /// match the input length. Returns [`TransformError::NonFiniteValue`] if
+    /// the input contains `NaN` or infinity.
     #[inline]
     fn inverse_into(
         state: &Self::State,
@@ -206,7 +207,7 @@ pub(crate) fn median_sorted(values: &[f64]) -> Option<f64> {
     }
 }
 
-/// Наиболее часто используемые импорты из `gamlss-transform`.
+/// Most commonly used imports from `gamlss-transform`.
 pub mod prelude {
     pub use crate::{
         AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log, Log1pShift,
