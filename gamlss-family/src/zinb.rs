@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
 use crate::negative_binomial::{NegativeBinomial, NegativeBinomialTheta};
-use crate::special::{is_nonnegative_integer, ln_gamma, log_add_exp};
+use crate::special::{digamma, is_nonnegative_integer, ln_gamma, log_add_exp};
 
 pub use component_mean_size_zero_probability::{
     ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability,
@@ -19,6 +19,11 @@ mod total_mean_size;
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
 /// Zero-inflated negative binomial family.
+///
+/// The default parameterization models the negative-binomial component mean,
+/// component size, and zero-inflation probability. Use
+/// [`ZinbTotalMeanSizeZeroProbability`] for the derived unconditional-mean
+/// parameterization.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zinb<MuLink = Log, ShapeLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, ShapeLink, NuLink)>,
@@ -63,6 +68,37 @@ where
             -log_add_exp(theta.nu.ln(), (1.0 - theta.nu).ln() + log_nb)
         } else {
             -((1.0 - theta.nu).ln() + log_nb)
+        }
+    }
+
+    #[inline(always)]
+    fn negative_binomial_gradient_theta(y: f64, mu: f64, shape: f64) -> (f64, f64) {
+        let total = shape + mu;
+        let d_mu = (y + shape) / total - y / mu;
+        let d_shape = -digamma(y + shape) + digamma(shape) - shape.ln() - 1.0
+            + total.ln()
+            + (y + shape) / total;
+        (d_mu, d_shape)
+    }
+
+    #[inline(always)]
+    pub(super) fn gradient_component_theta(y: f64, theta: ZinbTheta) -> ZinbTheta {
+        let (d_mu, d_shape) = Self::negative_binomial_gradient_theta(y, theta.mu, theta.shape);
+        if y == 0.0 {
+            let q0 = (theta.shape / (theta.shape + theta.mu)).powf(theta.shape);
+            let p0 = theta.nu + (1.0 - theta.nu) * q0;
+            let responsibility = (1.0 - theta.nu) * q0 / p0;
+            ZinbTheta {
+                mu: responsibility * d_mu,
+                shape: responsibility * d_shape,
+                nu: -(1.0 - q0) / p0,
+            }
+        } else {
+            ZinbTheta {
+                mu: d_mu,
+                shape: d_shape,
+                nu: 1.0 / (1.0 - theta.nu),
+            }
         }
     }
 

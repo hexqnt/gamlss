@@ -5,7 +5,6 @@ use gamlss_core::{
 
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
@@ -32,14 +31,19 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: ZipEta) -> (f64, ZipEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, ZipEta::from_array([f64::NAN; 2]));
         }
-        let gradient = finite_difference_gradient_eta::<_, ZipEta, 2>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, ZipEta::from_array(gradient))
+        let gradient = Self::gradient_component_theta(y, theta);
+        (
+            nll,
+            ZipEta {
+                mu: gradient.mu * MeanLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * ZeroProbabilityLink::derivative_inverse(eta.sigma),
+            },
+        )
     }
 }
 

@@ -2,13 +2,14 @@ use gamlss_core::Family;
 use gamlss_family::{
     BetaMeanPrecision, ExponentialMean, ExponentialMeanTheta, ExponentialRate,
     ExponentialRateTheta, GammaMeanCv, GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeTheta,
-    GammaShapeRate, GammaShapeRateTheta, InverseGaussianMeanCv, InverseGaussianMeanCvTheta,
-    LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
-    LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
-    LogNormalMedianLogSdTheta, NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
-    NegativeBinomialMeanSize, NegativeBinomialTheta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
-    SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, StudentTMuSdTau, StudentTMuSdTauTheta,
-    StudentTMuSigmaTau, StudentTMuSigmaTauTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
+    GammaShapeRate, GammaShapeRateTheta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
+    InverseGaussianMeanCv, InverseGaussianMeanCvTheta, LogNormalLogLocationLogSd,
+    LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvTheta, LogNormalMeanLogSd,
+    LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdTheta,
+    NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize,
+    NegativeBinomialTheta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewStudentTMeanSdNuTau,
+    SkewStudentTMeanSdTheta, StudentTMuSdTau, StudentTMuSdTauTheta, StudentTMuSigmaTau,
+    StudentTMuSigmaTauTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
     TweedieMeanDispersionPower, TweedieTheta, WeibullMeanShape, WeibullMeanShapeTheta,
     WeibullScaleShape, WeibullScaleShapeTheta, ZagaTotalMeanCvZeroProbability,
     ZagaTotalMeanCvZeroProbabilityTheta, ZinbTotalMeanSizeZeroProbability,
@@ -138,6 +139,32 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
                     mean: 1.0,
                     cv: 0.5,
                     power: 1.5,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        GeneralizedGammaScaleSigmaNu::new()
+            .nll(
+                1.2,
+                GeneralizedGammaTheta {
+                    mu: 1.0,
+                    sigma: 0.5,
+                    nu: 1.0,
+                },
+            )
+            .is_finite()
+    );
+    #[allow(deprecated)]
+    type DeprecatedGeneralizedGammaAlias = gamlss_family::GeneralizedGammaMuSigmaNu;
+    assert!(
+        DeprecatedGeneralizedGammaAlias::new()
+            .nll(
+                1.2,
+                GeneralizedGammaTheta {
+                    mu: 1.0,
+                    sigma: 0.5,
+                    nu: 1.0,
                 },
             )
             .is_finite()

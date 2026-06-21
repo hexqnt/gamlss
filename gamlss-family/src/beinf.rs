@@ -9,8 +9,7 @@ use crate::initial::{
     POSITIVE_FLOOR, VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary,
     weighted_values,
 };
-use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{invert_bounded_cdf, ln_gamma, regularized_beta};
+use crate::special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// BEINF distribution with logit/logit/log/log links.
 pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;
@@ -100,6 +99,43 @@ where
         -(parts.p_beta.ln() + Self::beta_log_density(y, parts.alpha, parts.beta))
     }
 
+    #[inline(always)]
+    fn gradient_theta(y: f64, theta: BeinfTheta, parts: BeinfParts) -> BeinfTheta {
+        let denominator = 1.0 + theta.nu + theta.tau;
+        let d_log_denominator = 1.0 / denominator;
+
+        if y == 0.0 {
+            return BeinfTheta {
+                mu: 0.0,
+                sigma: 0.0,
+                nu: d_log_denominator - 1.0 / theta.nu,
+                tau: d_log_denominator,
+            };
+        }
+        if y == 1.0 {
+            return BeinfTheta {
+                mu: 0.0,
+                sigma: 0.0,
+                nu: d_log_denominator,
+                tau: d_log_denominator - 1.0 / theta.tau,
+            };
+        }
+
+        let precision = parts.alpha + parts.beta;
+        let common = digamma(precision);
+        let d_alpha = digamma(parts.alpha) - common - y.ln();
+        let d_beta = digamma(parts.beta) - common - (1.0 - y).ln();
+        let d_mu = precision * (d_alpha - d_beta);
+        let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
+
+        BeinfTheta {
+            mu: d_mu,
+            sigma: d_precision * (-1.0 / (theta.sigma * theta.sigma)),
+            nu: d_log_denominator,
+            tau: d_log_denominator,
+        }
+    }
+
     fn cdf_theta(y: f64, theta: BeinfTheta) -> f64 {
         if !y.is_finite() {
             return f64::NAN;
@@ -122,15 +158,25 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: BeinfEta) -> (f64, BeinfEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, BeinfEta::from_array([f64::NAN; 4]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, BeinfEta, 4>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, BeinfEta::from_array(gradient))
+        let Some(parts) = Self::parts(theta) else {
+            return (nll, BeinfEta::from_array([f64::NAN; 4]));
+        };
+        let gradient = Self::gradient_theta(y, theta, parts);
+        (
+            nll,
+            BeinfEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+            },
+        )
     }
 }
 

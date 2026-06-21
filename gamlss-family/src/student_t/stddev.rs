@@ -275,7 +275,7 @@ pub struct StudentTMuSdTauTheta {
     pub mu: f64,
     /// Positive standard deviation.
     pub sigma: f64,
-    /// Degrees of freedom, expected to be greater than two.
+    /// Degrees of freedom; must be greater than two.
     pub tau: f64,
 }
 

@@ -14,8 +14,10 @@ pub use gamma::{
     GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
     GammaTheta,
 };
+#[allow(deprecated)]
+pub use generalized_gamma::GeneralizedGammaMuSigmaNu;
 pub use generalized_gamma::{
-    GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta,
+    GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
 };
 pub use gev::{Gev, GevEta, GevMuSigmaShape, GevTheta};
 pub use gumbel::{Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta};
@@ -143,6 +145,8 @@ pub mod zip;
 
 /// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
+    #[allow(deprecated)]
+    pub use crate::GeneralizedGammaMuSigmaNu;
     pub use crate::{
         Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta,
         BernoulliProbability, BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta,
@@ -150,7 +154,7 @@ pub mod prelude {
         ExponentialRateEta, ExponentialRateTheta, Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta,
         GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate,
         GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, Ged, GedMuSigmaNu, GeneralizedGamma,
-        GeneralizedGammaEta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta, Gev, GevEta,
+        GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta, Gev, GevEta,
         GevMuSigmaShape, GevTheta, Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian,
         InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
         InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
@@ -276,7 +280,7 @@ mod initializer_tests {
 
     use crate::{
         BeinfMuSigmaNuTau, BernoulliProbability, BetaMeanPrecision, GammaShapeRate,
-        GeneralizedGammaMuSigmaNu, GevMuSigmaShape, GumbelMuSigma, InverseGaussianMuShape,
+        GeneralizedGammaScaleSigmaNu, GevMuSigmaShape, GumbelMuSigma, InverseGaussianMuShape,
         JohnsonSuMuSigmaNuTau, LaplaceMuSigma, LogNormalLogLocationLogSd, LogisticMuSigma,
         LomaxShapeScale, NegativeBinomialMeanSize, NormalMuSigma, PoissonMean,
         PowerExponentialMuSigmaNu, ShashMuSigmaNuTau, SkewNormalMuSigmaNu,
@@ -310,7 +314,11 @@ mod initializer_tests {
         assert_finite_initial_eta::<_, 4>(BeinfMuSigmaNuTau::new(), &[0.0, 0.2, 0.8, 1.0], 0.5);
         assert_finite_initial_eta::<_, 2>(BetaMeanPrecision::new(), &[0.1, 0.5, 0.9], 0.5);
         assert_finite_initial_eta::<_, 2>(GammaShapeRate::new(), &[0.2, 1.0, 2.0], 1.0);
-        assert_finite_initial_eta::<_, 3>(GeneralizedGammaMuSigmaNu::new(), &[0.2, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 3>(
+            GeneralizedGammaScaleSigmaNu::new(),
+            &[0.2, 1.0, 2.0],
+            1.0,
+        );
         assert_finite_initial_eta::<_, 3>(GevMuSigmaShape::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(GumbelMuSigma::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(InverseGaussianMuShape::new(), &[0.5, 1.0, 2.0], 1.0);

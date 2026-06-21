@@ -1,6 +1,6 @@
 use gamlss_core::{Family, HasCdf, HasQuantile, ParameterParts};
 use gamlss_family::{
-    BeinfMuSigmaNuTau, BeinfTheta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta,
+    BeinfMuSigmaNuTau, BeinfTheta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
     GevMuSigmaShape, GevTheta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, NormalMuSigma, NormalTheta,
     PowerExponentialMuSigmaNu, PowerExponentialTheta, ShashMuSigmaNuTau, ShashTheta,
     SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
@@ -106,14 +106,24 @@ fn new_continuous_family_gradients_match_finite_differences() {
         [0.1, -0.2, 0.3, 1.2_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
-        &GeneralizedGammaMuSigmaNu::new(),
+        &GeneralizedGammaScaleSigmaNu::new(),
         1.4,
         [0.1, -0.2, 0.5],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &GeneralizedGammaScaleSigmaNu::new(),
+        1.4,
+        [0.1, -0.2, 0.0],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
         &GevMuSigmaShape::new(),
         0.4,
         [0.1, -0.2, 0.1],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &GevMuSigmaShape::new(),
+        0.4,
+        [0.1, -0.2, 0.0],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
         &TweedieMeanDispersionPower::new(),
@@ -313,7 +323,7 @@ fn cdf_quantile_roundtrips_for_new_families() {
         2.0e-7,
     );
     assert_inverse(
-        &GeneralizedGammaMuSigmaNu::new(),
+        &GeneralizedGammaScaleSigmaNu::new(),
         0.4,
         GeneralizedGammaTheta {
             mu: 1.2,
@@ -526,7 +536,7 @@ fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
                 StudentTMuSigmaTauTheta {
                     mu: 0.0,
                     sigma: 1.0,
-                    tau: 2.0,
+                    tau: 0.0,
                 },
             )
             .is_infinite()

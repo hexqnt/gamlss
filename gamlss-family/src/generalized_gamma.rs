@@ -1,28 +1,38 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu, Nu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Nu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Scale, Sigma,
 };
 
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{invert_positive_cdf, ln_gamma, regularized_gamma_lower, unit_normal_cdf};
+use crate::special::{
+    digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, unit_normal_cdf,
+};
 
-const NU_EPSILON: f64 = 1.0e-6;
+const NU_EPSILON: f64 = 1.0e-4;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
-/// Generalized gamma distribution with log/log/identity links.
+/// Generalized gamma scale/sigma/nu distribution with log/log/identity links.
+pub type GeneralizedGammaScaleSigmaNu = GeneralizedGamma<Log, Log, Identity>;
+/// Deprecated compatibility alias for [`GeneralizedGammaScaleSigmaNu`].
+#[deprecated(
+    since = "0.3.0",
+    note = "the first generalized-gamma parameter is a scale/location parameter, not the arithmetic mean; use GeneralizedGammaScaleSigmaNu"
+)]
 pub type GeneralizedGammaMuSigmaNu = GeneralizedGamma<Log, Log, Identity>;
-/// Generalized gamma family with GAMLSS-like mean/scale/shape parameters.
+/// Generalized gamma family with scale, sigma, and shape parameters.
+///
+/// The first parameter is the positive scale/location used in `(y / scale)`,
+/// not the arithmetic mean except in special cases.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GeneralizedGamma<MuLink = Log, SigmaLink = Log, NuLink = Identity> {
-    marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
+pub struct GeneralizedGamma<ScaleLink = Log, SigmaLink = Log, NuLink = Identity> {
+    marker: PhantomData<(ScaleLink, SigmaLink, NuLink)>,
 }
 
-impl<MuLink, SigmaLink, NuLink> GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
@@ -37,7 +47,7 @@ where
     #[inline(always)]
     fn theta_from_eta(eta: GeneralizedGammaEta) -> GeneralizedGammaTheta {
         GeneralizedGammaTheta {
-            mu: MuLink::inverse(eta.mu),
+            mu: ScaleLink::inverse(eta.mu),
             sigma: SigmaLink::inverse(eta.sigma),
             nu: NuLink::inverse(eta.nu),
         }
@@ -56,8 +66,10 @@ where
             return f64::INFINITY;
         }
         if theta.nu.abs() < NU_EPSILON {
-            let z = (y / theta.mu).ln() / theta.sigma;
-            return y.ln() + theta.sigma.ln() + HALF_LOG_2_PI + 0.5 * z * z;
+            let log_ratio = (y / theta.mu).ln();
+            let z = log_ratio / theta.sigma;
+            let d_nu = Self::log_normal_limit_nu_score(log_ratio, theta.sigma);
+            return y.ln() + theta.sigma.ln() + HALF_LOG_2_PI + 0.5 * z * z + theta.nu * d_nu;
         }
 
         let abs_nu = theta.nu.abs();
@@ -67,22 +79,58 @@ where
     }
 
     #[inline(always)]
+    fn log_normal_limit_nu_score(log_ratio: f64, sigma: f64) -> f64 {
+        log_ratio * log_ratio * log_ratio / (6.0 * sigma * sigma) + sigma * sigma / 12.0
+    }
+
+    #[inline(always)]
+    fn gradient_theta(y: f64, theta: GeneralizedGammaTheta) -> GeneralizedGammaTheta {
+        let log_ratio = (y / theta.mu).ln();
+        if theta.nu.abs() < NU_EPSILON {
+            return GeneralizedGammaTheta {
+                mu: -log_ratio / (theta.mu * theta.sigma * theta.sigma),
+                sigma: 1.0 / theta.sigma
+                    - log_ratio * log_ratio / (theta.sigma * theta.sigma * theta.sigma),
+                nu: Self::log_normal_limit_nu_score(log_ratio, theta.sigma),
+            };
+        }
+
+        let k = 1.0 / (theta.sigma * theta.sigma * theta.nu * theta.nu);
+        let log_z = theta.nu * log_ratio;
+        let z = log_z.exp();
+        let d_k = digamma(k) - k.ln() - 1.0 - log_z + z;
+        let d_log_z = k * (z - 1.0);
+
+        GeneralizedGammaTheta {
+            mu: -d_log_z * theta.nu / theta.mu,
+            sigma: d_k * (-2.0 * k / theta.sigma),
+            nu: d_k * (-2.0 * k / theta.nu) + d_log_z * log_ratio - 1.0 / theta.nu,
+        }
+    }
+
+    #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: GeneralizedGammaEta) -> (f64, GeneralizedGammaEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, GeneralizedGammaEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, GeneralizedGammaEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, GeneralizedGammaEta::from_array(gradient))
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            GeneralizedGammaEta {
+                mu: gradient.mu * ScaleLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> Default for GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> Default for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
@@ -91,9 +139,9 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> Family for GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> Family for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
@@ -123,15 +171,15 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> ParameterizedFamily<3>
-    for GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> ParameterizedFamily<3>
+    for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     NuLink: InitialEtaFromTheta<f64> + Link<f64>,
 {
-    type Params = (Mu, Sigma, Nu);
-    type Links = (MuLink, SigmaLink, NuLink);
+    type Params = (Scale, Sigma, Nu);
+    type Links = (ScaleLink, SigmaLink, NuLink);
 
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -142,20 +190,20 @@ where
         let Some(summary) = weighted_summary(&values) else {
             return GeneralizedGammaEta::from_array([0.0, 0.0, 0.0]);
         };
-        let mu = positive_floor(summary.mean);
-        let sigma = positive_floor((summary.variance.sqrt() / mu).max(1.0e-3));
+        let scale = positive_floor(summary.mean);
+        let sigma = positive_floor((summary.variance.sqrt() / scale).max(1.0e-3));
 
         GeneralizedGammaEta {
-            mu: MuLink::initial_eta_from_theta(mu),
+            mu: ScaleLink::initial_eta_from_theta(scale),
             sigma: SigmaLink::initial_eta_from_theta(sigma),
             nu: NuLink::initial_eta_from_theta(1.0),
         }
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> HasCdf for GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> HasCdf for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
@@ -184,9 +232,9 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> HasQuantile for GeneralizedGamma<MuLink, SigmaLink, NuLink>
+impl<ScaleLink, SigmaLink, NuLink> HasQuantile for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
-    MuLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
@@ -207,7 +255,12 @@ where
 /// Predictors for generalized gamma on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneralizedGammaEta {
-    /// Mean predictor.
+    /// Scale/location predictor.
+    ///
+    /// This controls the positive parameter used in `(y / scale)`; it is not
+    /// generally the arithmetic mean.
+    ///
+    /// The field name is retained for compatibility with existing code.
     pub mu: f64,
     /// Scale predictor.
     pub sigma: f64,
@@ -239,7 +292,12 @@ impl ParameterParts<3> for GeneralizedGammaEta {
 /// Natural-scale generalized gamma parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneralizedGammaTheta {
-    /// Positive mean parameter.
+    /// Positive scale/location parameter.
+    ///
+    /// This is the positive parameter used in `(y / scale)`; it is not
+    /// generally the arithmetic mean.
+    ///
+    /// The field name is retained for compatibility with existing code.
     pub mu: f64,
     /// Positive scale parameter.
     pub sigma: f64,

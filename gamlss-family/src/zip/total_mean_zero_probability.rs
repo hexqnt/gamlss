@@ -5,7 +5,6 @@ use gamlss_core::{
 
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
@@ -74,14 +73,25 @@ where
     }
 
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta).component());
+        let theta = Self::theta_from_eta(eta);
+        let component = theta.component();
+        let nll = Self::nll_theta(y, component);
         if !nll.is_finite() {
             return (nll, ZipEta::from_array([f64::NAN; 2]));
         }
-        let gradient = finite_difference_gradient_eta::<_, ZipEta, 2>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe).component())
-        });
-        (nll, ZipEta::from_array(gradient))
+        let component_gradient = Self::gradient_component_theta(y, component);
+        let one_minus_zero = 1.0 - theta.zero_probability;
+        let d_total_mean = component_gradient.mu / one_minus_zero;
+        let d_zero_probability = component_gradient.mu * theta.total_mean
+            / (one_minus_zero * one_minus_zero)
+            + component_gradient.sigma;
+        (
+            nll,
+            ZipEta {
+                mu: d_total_mean * MeanLink::derivative_inverse(eta.mu),
+                sigma: d_zero_probability * ZeroProbabilityLink::derivative_inverse(eta.sigma),
+            },
+        )
     }
 }
 

@@ -6,7 +6,6 @@ use gamlss_core::{
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 const XI_EPSILON: f64 = 1.0e-8;
 
@@ -54,7 +53,9 @@ where
 
         let z = (y - theta.mu) / theta.sigma;
         if theta.nu.abs() < XI_EPSILON {
-            return theta.sigma.ln() + z + (-z).exp();
+            let exp_neg_z = (-z).exp();
+            let d_nu = Self::gumbel_limit_nu_score(z, exp_neg_z);
+            return theta.sigma.ln() + z + exp_neg_z + theta.nu * d_nu;
         }
 
         let t = 1.0 + theta.nu * z;
@@ -66,16 +67,54 @@ where
     }
 
     #[inline(always)]
+    fn gumbel_limit_nu_score(z: f64, exp_neg_z: f64) -> f64 {
+        z + 0.5 * z * z * (exp_neg_z - 1.0)
+    }
+
+    #[inline(always)]
+    fn gradient_theta(y: f64, theta: GevTheta) -> GevTheta {
+        let z = (y - theta.mu) / theta.sigma;
+        if theta.nu.abs() < XI_EPSILON {
+            let exp_neg_z = (-z).exp();
+            let d_z = 1.0 - exp_neg_z;
+            return GevTheta {
+                mu: -d_z / theta.sigma,
+                sigma: (1.0 - z * d_z) / theta.sigma,
+                nu: Self::gumbel_limit_nu_score(z, exp_neg_z),
+            };
+        }
+
+        let t = 1.0 + theta.nu * z;
+        let log_t = t.ln();
+        let inv = t.powf(-1.0 / theta.nu);
+        let d_z = (1.0 + theta.nu - inv) / t;
+        let d_nu = (inv - 1.0) * log_t / (theta.nu * theta.nu)
+            + z * (1.0 + theta.nu - inv) / (theta.nu * t);
+
+        GevTheta {
+            mu: -d_z / theta.sigma,
+            sigma: (1.0 - z * d_z) / theta.sigma,
+            nu: d_nu,
+        }
+    }
+
+    #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: GevEta) -> (f64, GevEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, GevEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, GevEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, GevEta::from_array(gradient))
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            GevEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 
@@ -210,7 +249,7 @@ where
         if theta.nu.abs() < XI_EPSILON {
             theta.mu - theta.sigma * log_p.ln()
         } else {
-            theta.mu + theta.sigma * (log_p.powf(-theta.nu) - 1.0) / theta.nu
+            theta.mu + theta.sigma * (-theta.nu * log_p.ln()).exp_m1() / theta.nu
         }
     }
 }

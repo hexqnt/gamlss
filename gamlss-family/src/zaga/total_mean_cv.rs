@@ -7,7 +7,6 @@ use gamlss_core::{
 };
 
 use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{invert_positive_cdf, regularized_gamma_lower};
 
 use super::{Zaga, ZagaTheta};
@@ -138,7 +137,9 @@ where
     }
 
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let nll = self.nll_eta(y, eta);
+        let theta = Self::theta_from_eta(eta);
+        let component = theta.component();
+        let nll = Zaga::<Log, Log, Logit>::nll_theta(y, component);
         if !nll.is_finite() {
             return (
                 nll,
@@ -146,11 +147,21 @@ where
             );
         }
 
-        let gradient = finite_difference_gradient_eta::<_, ZagaTotalMeanCvZeroProbabilityEta, 3>(
-            eta,
-            |probe| self.nll_eta(y, probe),
-        );
-        (nll, ZagaTotalMeanCvZeroProbabilityEta::from_array(gradient))
+        let component_gradient = Zaga::<Log, Log, Logit>::gradient_component_theta(y, component);
+        let one_minus_zero = 1.0 - theta.zero_probability;
+        let d_total_mean = component_gradient.mu / one_minus_zero;
+        let d_zero_probability = component_gradient.mu * theta.total_mean
+            / (one_minus_zero * one_minus_zero)
+            + component_gradient.nu;
+        (
+            nll,
+            ZagaTotalMeanCvZeroProbabilityEta {
+                total_mean: d_total_mean * MeanLink::derivative_inverse(eta.total_mean),
+                cv: component_gradient.sigma * CvLink::derivative_inverse(eta.cv),
+                zero_probability: d_zero_probability
+                    * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
+            },
+        )
     }
 }
 

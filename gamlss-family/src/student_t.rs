@@ -15,8 +15,8 @@ mod stddev;
 /// Student's t distribution with `Identity` link for `mu` and `Log` link
 /// for `sigma`.
 pub type StudentTMuSigma = StudentT<Identity, Log>;
-/// Student's t distribution with estimated degrees of freedom `tau > 2`.
-pub type StudentTMuSigmaTau = StudentTDynamic<Identity, Log, LogPlus<2>>;
+/// Student's t location-scale distribution with estimated degrees of freedom `tau > 0`.
+pub type StudentTMuSigmaTau = StudentTDynamic<Identity, Log, Log>;
 /// Student's t distribution parameterized by mean, standard deviation, and `tau > 2`.
 pub type StudentTMuSdTau = StudentTStdDev<Identity, Log, LogPlus<2>>;
 
@@ -478,6 +478,20 @@ mod tests {
                 epsilon = 1.0e-10
             );
         }
+    }
+
+    #[test]
+    fn student_t_dynamic_accepts_heavy_tails_without_finite_variance() {
+        let family = StudentTMuSigmaTau::new();
+        let theta = StudentTMuSigmaTauTheta {
+            mu: 0.0,
+            sigma: 1.0,
+            tau: 1.5,
+        };
+
+        assert!(family.nll(0.2, theta).is_finite());
+        assert!(family.cdf(0.2, theta).is_finite());
+        assert!(family.quantile(0.5, theta).is_finite());
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use crate::special::{ln_gamma, regularized_gamma_lower};
+use crate::special::{digamma, ln_gamma, regularized_gamma_lower};
 
 pub use component_mean_cv_zero_probability::{
     ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability,
@@ -16,6 +16,11 @@ mod component_mean_cv_zero_probability;
 mod total_mean_cv;
 
 /// Zero-adjusted gamma family.
+///
+/// The default parameterization models the gamma component mean, component
+/// coefficient of variation, and zero-mass probability. Use
+/// [`ZagaTotalMeanCvZeroProbability`] for the derived unconditional-mean
+/// parameterization.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
@@ -66,6 +71,26 @@ where
         }
         let (shape, rate) = Self::gamma_shape_rate(theta);
         -(1.0 - theta.nu).ln() + Self::gamma_nll(y, shape, rate)
+    }
+
+    #[inline(always)]
+    pub(super) fn gradient_component_theta(y: f64, theta: ZagaTheta) -> ZagaTheta {
+        if y == 0.0 {
+            return ZagaTheta {
+                mu: 0.0,
+                sigma: 0.0,
+                nu: -1.0 / theta.nu,
+            };
+        }
+
+        let (shape, rate) = Self::gamma_shape_rate(theta);
+        let d_shape = digamma(shape) - rate.ln() - y.ln();
+        let d_rate = y - shape / rate;
+        ZagaTheta {
+            mu: d_rate * (-rate / theta.mu),
+            sigma: d_shape * (-2.0 * shape / theta.sigma) + d_rate * (-2.0 * rate / theta.sigma),
+            nu: 1.0 / (1.0 - theta.nu),
+        }
     }
 
     pub(super) fn cdf_theta(y: f64, theta: ZagaTheta) -> f64 {

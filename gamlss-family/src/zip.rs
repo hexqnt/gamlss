@@ -18,10 +18,15 @@ mod total_mean_zero_probability;
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
 /// ZIP distribution with log/logit links.
+///
 /// Backward-compatible alias for the component-mean ZIP parameterization.
 pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 
 /// Zero-inflated Poisson family.
+///
+/// The default parameterization models the Poisson component mean and the
+/// zero-inflation probability. Use [`ZipTotalMeanZeroProbability`] for the
+/// derived unconditional-mean parameterization.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zip<Param = ComponentMeanZeroProbability, MeanLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(Param, MeanLink, ZeroProbabilityLink)>,
@@ -63,6 +68,23 @@ where
         }
     }
 
+    #[inline(always)]
+    pub(super) fn gradient_component_theta(y: f64, theta: ZipTheta) -> ZipTheta {
+        if y == 0.0 {
+            let q0 = (-theta.mu).exp();
+            let p0 = theta.sigma + (1.0 - theta.sigma) * q0;
+            ZipTheta {
+                mu: (1.0 - theta.sigma) * q0 / p0,
+                sigma: -(1.0 - q0) / p0,
+            }
+        } else {
+            ZipTheta {
+                mu: 1.0 - y / theta.mu,
+                sigma: 1.0 / (1.0 - theta.sigma),
+            }
+        }
+    }
+
     pub(super) fn cdf_theta(y: f64, theta: ZipTheta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
@@ -97,6 +119,8 @@ pub struct ZipEta {
     /// Poisson mean predictor.
     pub mu: f64,
     /// Zero-inflation probability predictor.
+    ///
+    /// The field name is retained for compatibility with existing code.
     pub sigma: f64,
 }
 
@@ -125,5 +149,7 @@ pub struct ZipTheta {
     /// Positive Poisson mean.
     pub mu: f64,
     /// Zero-inflation probability in `(0, 1)`.
+    ///
+    /// The field name is retained for compatibility with existing code.
     pub sigma: f64,
 }

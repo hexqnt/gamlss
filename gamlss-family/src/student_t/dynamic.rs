@@ -19,7 +19,7 @@ use super::{
 pub struct StudentTDynamic<
     MuLink = gamlss_core::Identity,
     SigmaLink = gamlss_core::Log,
-    TauLink = gamlss_core::LogPlus<2>,
+    TauLink = gamlss_core::Log,
 > {
     marker: PhantomData<(MuLink, SigmaLink, TauLink)>,
 }
@@ -259,7 +259,7 @@ pub struct StudentTMuSigmaTauTheta {
     pub mu: f64,
     /// Positive scale parameter.
     pub sigma: f64,
-    /// Degrees of freedom, expected to be greater than two.
+    /// Positive degrees of freedom.
     pub tau: f64,
 }
 
@@ -278,6 +278,6 @@ fn valid_dynamic_theta(theta: StudentTMuSigmaTauTheta) -> bool {
     theta.mu.is_finite()
         && theta.sigma > 0.0
         && theta.sigma.is_finite()
-        && theta.tau > 2.0
+        && theta.tau > 0.0
         && theta.tau.is_finite()
 }

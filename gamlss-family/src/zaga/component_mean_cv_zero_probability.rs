@@ -4,14 +4,13 @@ use gamlss_core::{
 };
 
 use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{invert_positive_cdf, regularized_gamma_lower};
 
 use super::{Zaga, ZagaTheta};
 
 /// ZAGA distribution with log/log/logit links.
 pub type ZagaMeanSigmaZeroProbability = Zaga<Log, Log, Logit>;
-/// Explicit alias for the component-mean/CV ZAGA parameterization.
+/// Explicit alias for the component-mean/CV/zero-probability ZAGA kernel parameterization.
 pub type ZagaComponentMeanCvZeroProbability = ZagaMeanSigmaZeroProbability;
 
 /// Predictors for ZAGA on the link scale.
@@ -61,14 +60,20 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: ZagaEta) -> (f64, ZagaEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, ZagaEta::from_array([f64::NAN; 3]));
         }
-        let gradient = finite_difference_gradient_eta::<_, ZagaEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, ZagaEta::from_array(gradient))
+        let gradient = Self::gradient_component_theta(y, theta);
+        (
+            nll,
+            ZagaEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 

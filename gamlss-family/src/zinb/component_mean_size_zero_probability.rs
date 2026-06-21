@@ -7,14 +7,13 @@ use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
-use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 
 /// ZINB distribution with log/log/logit links.
 pub type ZinbMeanSizeZeroProbability = Zinb<Log, Log, Logit>;
-/// Explicit alias for the component-mean/size/zero-probability ZINB parameterization.
+/// Explicit alias for the component-mean/size/zero-probability ZINB kernel parameterization.
 pub type ZinbComponentMeanSizeZeroProbability = ZinbMeanSizeZeroProbability;
 
 /// Predictors for ZINB on the link scale.
@@ -64,14 +63,20 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: ZinbEta) -> (f64, ZinbEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, ZinbEta::from_array([f64::NAN; 3]));
         }
-        let gradient = finite_difference_gradient_eta::<_, ZinbEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, ZinbEta::from_array(gradient))
+        let gradient = Self::gradient_component_theta(y, theta);
+        (
+            nll,
+            ZinbEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                shape: gradient.shape * ShapeLink::derivative_inverse(eta.shape),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 
