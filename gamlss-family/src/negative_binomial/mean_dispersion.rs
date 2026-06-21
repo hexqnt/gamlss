@@ -6,8 +6,7 @@ use gamlss_core::{
 };
 
 use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{discrete_quantile, is_nonnegative_integer};
+use crate::special::{digamma, discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 
@@ -127,7 +126,9 @@ where
     }
 
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let nll = self.nll_eta(y, eta);
+        let theta = Self::theta_from_eta(eta);
+        let mean_size = theta.mean_size();
+        let nll = NegativeBinomial::<Log, Log>::nll_theta(y, mean_size);
         if !nll.is_finite() {
             return (
                 nll,
@@ -135,11 +136,21 @@ where
             );
         }
 
-        let gradient = finite_difference_gradient_eta::<_, NegativeBinomialMeanDispersionEta, 2>(
-            eta,
-            |probe| self.nll_eta(y, probe),
-        );
-        (nll, NegativeBinomialMeanDispersionEta::from_array(gradient))
+        let total = mean_size.shape + mean_size.mu;
+        let d_mu = (y + mean_size.shape) / total - y / mean_size.mu;
+        let d_shape =
+            -digamma(y + mean_size.shape) + digamma(mean_size.shape) - mean_size.shape.ln() - 1.0
+                + total.ln()
+                + (y + mean_size.shape) / total;
+        let d_dispersion = d_shape * (-1.0 / (theta.dispersion * theta.dispersion));
+
+        (
+            nll,
+            NegativeBinomialMeanDispersionEta {
+                mean: d_mu * MeanLink::derivative_inverse(eta.mean),
+                dispersion: d_dispersion * DispersionLink::derivative_inverse(eta.dispersion),
+            },
+        )
     }
 }
 

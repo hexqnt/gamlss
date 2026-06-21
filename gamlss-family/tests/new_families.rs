@@ -342,6 +342,17 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
         sigma: 0.3,
     };
     assert!(zip.cdf(0.0, zip_theta) > 0.3);
+    let large_zip_cdf = zip.cdf(
+        1000.0,
+        ZipTheta {
+            mu: 1000.0,
+            sigma: 0.3,
+        },
+    );
+    assert!(
+        large_zip_cdf > 0.6 && large_zip_cdf < 0.7,
+        "large ZIP CDF was {large_zip_cdf}"
+    );
     assert_eq!(zip.quantile(0.1, zip_theta), 0.0);
     assert!(
         zip.quantile(
@@ -361,6 +372,18 @@ fn mixed_family_cdfs_and_quantiles_handle_atoms() {
         nu: 0.25,
     };
     assert!(zinb.cdf(0.0, zinb_theta) > 0.25);
+    let large_zinb_cdf = zinb.cdf(
+        1000.0,
+        ZinbTheta {
+            mu: 1000.0,
+            shape: 2000.0,
+            nu: 0.25,
+        },
+    );
+    assert!(
+        large_zinb_cdf > 0.55 && large_zinb_cdf < 0.65,
+        "large ZINB CDF was {large_zinb_cdf}"
+    );
     assert_eq!(zinb.quantile(0.1, zinb_theta), 0.0);
     assert!(
         zinb.quantile(

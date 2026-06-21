@@ -2,7 +2,7 @@
 
 use gamlss_core::{Identity, Log, LogPlus};
 
-use crate::special::{invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
+use crate::special::{digamma, invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
 pub use dynamic::{StudentTDynamic, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta};
 pub use fixed::{StudentT, StudentTEta};
@@ -29,6 +29,12 @@ pub struct StudentTTheta {
     pub sigma: f64,
 }
 
+pub(super) struct StudentTGradientTheta {
+    pub(super) mu: f64,
+    pub(super) sigma: f64,
+    pub(super) tau: f64,
+}
+
 pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
     if !y.is_finite()
         || !theta.mu.is_finite()
@@ -42,6 +48,37 @@ pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 
 
     let z = (y - theta.mu) / theta.sigma;
     student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
+}
+
+pub(super) fn student_t_nll_gradient_theta(
+    nu: f64,
+    y: f64,
+    theta: StudentTTheta,
+) -> StudentTGradientTheta {
+    if !y.is_finite()
+        || !theta.mu.is_finite()
+        || theta.sigma <= 0.0
+        || !theta.sigma.is_finite()
+        || nu <= 0.0
+        || !nu.is_finite()
+    {
+        return StudentTGradientTheta {
+            mu: f64::NAN,
+            sigma: f64::NAN,
+            tau: f64::NAN,
+        };
+    }
+
+    let z = (y - theta.mu) / theta.sigma;
+    let z2 = z * z;
+    let denominator = nu + z2;
+    let mu = -(nu + 1.0) * z / (theta.sigma * denominator);
+    let sigma = (1.0 - (nu + 1.0) * z2 / denominator) / theta.sigma;
+    let tau = 0.5 / nu + 0.5 * digamma(0.5 * nu) - 0.5 * digamma(0.5 * (nu + 1.0))
+        + 0.5 * (z2 / nu).ln_1p()
+        - 0.5 * (nu + 1.0) * z2 / (nu * denominator);
+
+    StudentTGradientTheta { mu, sigma, tau }
 }
 
 pub(super) fn student_t_standard_cdf(nu: f64, t: f64) -> f64 {

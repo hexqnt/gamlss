@@ -8,11 +8,10 @@ use gamlss_core::{
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_theta, student_t_standard_cdf,
-    student_t_standard_quantile,
+    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
+    student_t_standard_cdf, student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with estimated degrees of freedom.
@@ -61,16 +60,21 @@ where
         y: f64,
         eta: StudentTMuSigmaTauEta,
     ) -> (f64, StudentTMuSigmaTauEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, StudentTMuSigmaTauEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient =
-            finite_difference_gradient_eta::<_, StudentTMuSigmaTauEta, 3>(eta, |probe| {
-                Self::nll_theta(y, Self::theta_from_eta(probe))
-            });
-        (nll, StudentTMuSigmaTauEta::from_array(gradient))
+        let gradient = student_t_nll_gradient_theta(theta.tau, y, theta.location_scale());
+        (
+            nll,
+            StudentTMuSigmaTauEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+            },
+        )
     }
 }
 

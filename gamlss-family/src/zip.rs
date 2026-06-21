@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, ParameterParts, PositiveLink, UnitIntervalLink};
 
-use crate::special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use crate::poisson::{Poisson, PoissonTheta};
+use crate::special::{is_nonnegative_integer, ln_gamma, log_add_exp};
 
 pub use component_mean_zero_probability::{
     ComponentMeanZeroProbability, ZipComponentMeanZeroProbability,
@@ -75,19 +76,8 @@ where
         if y < 0.0 {
             return 0.0;
         }
-        let Some(max_count) = included_count(y, MAX_CDF_TERMS) else {
-            return f64::NAN;
-        };
-        let mut term = (-theta.mu).exp();
-        let mut sum = term;
-        for count in 1..=max_count {
-            term *= theta.mu / count as f64;
-            sum += term;
-            if term <= f64::EPSILON * sum {
-                break;
-            }
-        }
-        (theta.sigma + (1.0 - theta.sigma) * sum).clamp(0.0, 1.0)
+        let base_cdf = Poisson::<Log>::cdf_theta(y, PoissonTheta { mu: theta.mu });
+        (theta.sigma + (1.0 - theta.sigma) * base_cdf).clamp(0.0, 1.0)
     }
 }
 

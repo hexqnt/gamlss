@@ -6,9 +6,10 @@ use gamlss_core::{
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
-use super::{cdf_location_scale, nll_location_scale, quantile_location_scale};
+use super::{
+    cdf_location_scale, nll_gradient_location_scale, nll_location_scale, quantile_location_scale,
+};
 
 /// Skew-normal distribution with identity/log/identity links.
 pub type SkewNormalMuSigmaNu = SkewNormal<Identity, Log, Identity>;
@@ -49,15 +50,21 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewNormalEta) -> (f64, SkewNormalEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, SkewNormalEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, SkewNormalEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, SkewNormalEta::from_array(gradient))
+        let gradient = nll_gradient_location_scale(y, theta.mu, theta.sigma, theta.nu);
+        (
+            nll,
+            SkewNormalEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 

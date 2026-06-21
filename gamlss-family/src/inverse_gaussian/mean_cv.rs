@@ -8,7 +8,6 @@ use gamlss_core::{
 use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
 };
-use crate::numeric::finite_difference_gradient_eta;
 
 use super::{InverseGaussian, InverseGaussianTheta};
 
@@ -123,15 +122,28 @@ where
     }
 
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let nll = self.nll_eta(y, eta);
+        let theta = Self::theta_from_eta(eta);
+        let mean_shape = theta.mean_shape();
+        let nll = InverseGaussian::<Log, Log>::nll_theta(y, mean_shape);
         if !nll.is_finite() {
             return (nll, InverseGaussianMeanCvEta::from_array([f64::NAN; 2]));
         }
-        let gradient =
-            finite_difference_gradient_eta::<_, InverseGaussianMeanCvEta, 2>(eta, |probe| {
-                self.nll_eta(y, probe)
-            });
-        (nll, InverseGaussianMeanCvEta::from_array(gradient))
+
+        let residual = y - mean_shape.mu;
+        let d_mu = -mean_shape.shape * residual / (mean_shape.mu * mean_shape.mu * mean_shape.mu);
+        let d_shape = -0.5 / mean_shape.shape
+            + residual * residual / (2.0 * mean_shape.mu * mean_shape.mu * y);
+        let cv2 = theta.cv * theta.cv;
+        let d_mean = d_mu + d_shape / cv2;
+        let d_cv = d_shape * (-2.0 * theta.mean / (cv2 * theta.cv));
+
+        (
+            nll,
+            InverseGaussianMeanCvEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                cv: d_cv * CvLink::derivative_inverse(eta.cv),
+            },
+        )
     }
 }
 

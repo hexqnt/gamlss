@@ -1,6 +1,8 @@
 //! Skew-normal distribution parameterizations.
 
-use crate::special::{invert_real_cdf, owens_t, unit_normal_cdf, unit_normal_log_pdf};
+use crate::special::{
+    invert_real_cdf, log_ndtr, normal_mills_ratio, owens_t, unit_normal_cdf, unit_normal_log_pdf,
+};
 
 pub use mean_sd::{
     SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
@@ -13,6 +15,23 @@ mod mu_sigma_nu;
 const LOG_2: f64 = std::f64::consts::LN_2;
 const SQRT_2_OVER_PI: f64 = 0.797_884_560_802_865_4;
 
+#[derive(Debug, Clone, Copy)]
+struct SkewNormalGradient {
+    mu: f64,
+    sigma: f64,
+    nu: f64,
+}
+
+impl SkewNormalGradient {
+    #[inline(always)]
+    fn nan() -> Self {
+        Self {
+            mu: f64::NAN,
+            sigma: f64::NAN,
+            nu: f64::NAN,
+        }
+    }
+}
 #[inline(always)]
 fn valid_location_scale(mu: f64, sigma: f64, nu: f64) -> bool {
     mu.is_finite() && sigma > 0.0 && sigma.is_finite() && nu.is_finite()
@@ -25,12 +44,31 @@ fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     }
 
     let z = (y - mu) / sigma;
-    let skew_cdf = unit_normal_cdf(nu * z);
-    if skew_cdf <= 0.0 {
+    let log_skew_cdf = log_ndtr(nu * z);
+    if !log_skew_cdf.is_finite() {
         return f64::INFINITY;
     }
 
-    sigma.ln() - LOG_2 - unit_normal_log_pdf(z) - skew_cdf.ln()
+    sigma.ln() - LOG_2 - unit_normal_log_pdf(z) - log_skew_cdf
+}
+
+#[inline(always)]
+fn nll_gradient_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> SkewNormalGradient {
+    if !y.is_finite() || !valid_location_scale(mu, sigma, nu) {
+        return SkewNormalGradient::nan();
+    }
+
+    let z = (y - mu) / sigma;
+    let mills = normal_mills_ratio(nu * z);
+    if !mills.is_finite() {
+        return SkewNormalGradient::nan();
+    }
+
+    SkewNormalGradient {
+        mu: (nu * mills - z) / sigma,
+        sigma: (1.0 - z * z + nu * z * mills) / sigma,
+        nu: -z * mills,
+    }
 }
 
 #[inline(always)]

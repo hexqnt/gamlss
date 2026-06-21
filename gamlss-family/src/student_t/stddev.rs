@@ -8,11 +8,10 @@ use gamlss_core::{
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_theta, student_t_standard_cdf,
-    student_t_standard_quantile,
+    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
+    student_t_standard_cdf, student_t_standard_quantile,
 };
 
 /// Dynamic-DF Student's t family where `sigma` is the standard deviation.
@@ -63,15 +62,29 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: StudentTMuSdTauEta) -> (f64, StudentTMuSdTauEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let Some(location_scale) = theta.location_scale() else {
+            return (f64::INFINITY, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
+        };
+        let nll = student_t_nll_theta(theta.tau, y, location_scale);
         if !nll.is_finite() {
             return (nll, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, StudentTMuSdTauEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, StudentTMuSdTauEta::from_array(gradient))
+        let gradient = student_t_nll_gradient_theta(theta.tau, y, location_scale);
+        let scale_per_sd = location_scale.sigma / theta.sigma;
+        let scale_per_tau = location_scale.sigma / (theta.tau * (theta.tau - 2.0));
+        let d_sigma = gradient.sigma * scale_per_sd;
+        let d_tau = gradient.tau + gradient.sigma * scale_per_tau;
+
+        (
+            nll,
+            StudentTMuSdTauEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+                tau: d_tau * TauLink::derivative_inverse(eta.tau),
+            },
+        )
     }
 }
 

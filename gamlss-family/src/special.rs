@@ -511,6 +511,38 @@ pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
     if z >= 0.0 { 1.0 - tail } else { tail }.clamp(0.0, 1.0)
 }
 
+/// Natural logarithm of the standard normal CDF.
+pub(crate) fn log_ndtr(z: f64) -> f64 {
+    if z.is_nan() {
+        return f64::NAN;
+    }
+    if z == f64::NEG_INFINITY {
+        return f64::NEG_INFINITY;
+    }
+    if z == f64::INFINITY {
+        return 0.0;
+    }
+    if z < -10.0 {
+        return log_ndtr_left_tail(z);
+    }
+
+    unit_normal_cdf(z).ln()
+}
+
+fn log_ndtr_left_tail(z: f64) -> f64 {
+    let x = -z;
+    let inv2 = 1.0 / (x * x);
+    let correction = 1.0 - inv2 + 3.0 * inv2 * inv2 - 15.0 * inv2 * inv2 * inv2
+        + 105.0 * inv2 * inv2 * inv2 * inv2;
+
+    unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
+}
+
+/// Standard normal Mills ratio `phi(z) / Phi(z)`.
+pub(crate) fn normal_mills_ratio(z: f64) -> f64 {
+    (unit_normal_log_pdf(z) - log_ndtr(z)).exp()
+}
+
 /// Owen's T function `T(h, a)`.
 ///
 /// This is primarily used for skew-normal CDF evaluation. The implementation
@@ -604,8 +636,8 @@ mod tests {
 
     use super::{
         digamma, discrete_quantile, integrate_finite, invert_bounded_cdf, invert_positive_cdf,
-        invert_real_cdf, ln_beta, ln_gamma, log_add_exp, regularized_beta, regularized_gamma_lower,
-        unit_normal_cdf, unit_normal_quantile,
+        invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr, normal_mills_ratio,
+        regularized_beta, regularized_gamma_lower, unit_normal_cdf, unit_normal_quantile,
     };
 
     #[test]
@@ -648,6 +680,25 @@ mod tests {
         assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
+    }
+
+    #[test]
+    fn log_ndtr_and_mills_ratio_stay_finite_in_left_tail() {
+        for z in [-2.0, 0.0, 3.0] {
+            assert_relative_eq!(log_ndtr(z).exp(), unit_normal_cdf(z), epsilon = 1.0e-14);
+        }
+
+        let left_tail = log_ndtr(-40.0);
+        assert!(left_tail.is_finite());
+        assert!(left_tail < -800.0);
+
+        let mills = normal_mills_ratio(-40.0);
+        assert!(mills.is_finite());
+        assert!(mills > 40.0 && mills < 40.1, "mills was {mills}");
+
+        assert_eq!(log_ndtr(f64::INFINITY), 0.0);
+        assert_eq!(log_ndtr(f64::NEG_INFINITY), f64::NEG_INFINITY);
+        assert!(log_ndtr(f64::NAN).is_nan());
     }
 
     #[test]

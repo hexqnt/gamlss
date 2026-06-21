@@ -55,7 +55,7 @@ where
     }
 
     #[inline]
-    pub(super) fn cdf_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
+    pub(crate) fn cdf_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
             || !theta.mu.is_finite()

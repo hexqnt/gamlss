@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use crate::special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use crate::negative_binomial::{NegativeBinomial, NegativeBinomialTheta};
+use crate::special::{is_nonnegative_integer, ln_gamma, log_add_exp};
 
 pub use component_mean_size_zero_probability::{
     ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability,
@@ -65,28 +66,6 @@ where
         }
     }
 
-    fn nb_cdf(y: f64, mu: f64, shape: f64) -> f64 {
-        if y < 0.0 {
-            return 0.0;
-        }
-        let Some(max_count) = included_count(y, MAX_CDF_TERMS) else {
-            return f64::NAN;
-        };
-        let success_probability = shape / (shape + mu);
-        let failure_probability = mu / (shape + mu);
-        let mut term = (shape * success_probability.ln()).exp();
-        let mut sum = term;
-        for count in 1..=max_count {
-            let previous = (count - 1) as f64;
-            term *= ((previous + shape) / count as f64) * failure_probability;
-            sum += term;
-            if term <= f64::EPSILON * sum {
-                break;
-            }
-        }
-        sum.clamp(0.0, 1.0)
-    }
-
     pub(super) fn cdf_theta(y: f64, theta: ZinbTheta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
@@ -103,7 +82,14 @@ where
             return 0.0;
         }
 
-        (theta.nu + (1.0 - theta.nu) * Self::nb_cdf(y, theta.mu, theta.shape)).clamp(0.0, 1.0)
+        let base_cdf = NegativeBinomial::<Log, Log>::cdf_theta(
+            y,
+            NegativeBinomialTheta {
+                mu: theta.mu,
+                shape: theta.shape,
+            },
+        );
+        (theta.nu + (1.0 - theta.nu) * base_cdf).clamp(0.0, 1.0)
     }
 }
 

@@ -51,7 +51,7 @@ pub struct LogNormalMeanCvTheta {
 impl LogNormalMeanCvTheta {
     #[inline(always)]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
-        let log_sd_squared = self.cv.mul_add(self.cv, 1.0).ln();
+        let log_sd_squared = (self.cv * self.cv).ln_1p();
         LogNormalLogLocationLogSdTheta {
             log_location: self.mean.ln() - 0.5 * log_sd_squared,
             log_sd: log_sd_squared.sqrt(),

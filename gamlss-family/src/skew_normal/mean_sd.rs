@@ -6,11 +6,11 @@ use gamlss_core::{
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 use super::mu_sigma_nu::SkewNormalTheta;
 use super::{
-    cdf_location_scale, mean_sd_to_location_scale, nll_location_scale, quantile_location_scale,
+    SQRT_2_OVER_PI, cdf_location_scale, mean_sd_to_location_scale, nll_gradient_location_scale,
+    nll_location_scale, quantile_location_scale,
 };
 
 /// Skew-normal distribution parameterized by mean, standard deviation and skewness.
@@ -61,15 +61,49 @@ where
 
     #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewNormalMeanSdEta) -> (f64, SkewNormalMeanSdEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let Some(location_scale) = theta.location_scale() else {
+            return (
+                f64::INFINITY,
+                SkewNormalMeanSdEta::from_array([f64::NAN; 3]),
+            );
+        };
+        let nll = nll_location_scale(
+            y,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+        );
         if !nll.is_finite() {
             return (nll, SkewNormalMeanSdEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, SkewNormalMeanSdEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, SkewNormalMeanSdEta::from_array(gradient))
+        let gradient =
+            nll_gradient_location_scale(y, location_scale.mu, location_scale.sigma, theta.nu);
+        let nu2_plus_one = theta.nu.mul_add(theta.nu, 1.0);
+        let delta_derivative = 1.0 / (nu2_plus_one * nu2_plus_one.sqrt());
+        let standardized_mean = SQRT_2_OVER_PI * theta.nu / nu2_plus_one.sqrt();
+        let standardized_mean_derivative = SQRT_2_OVER_PI * delta_derivative;
+        let standardized_variance = 1.0 - standardized_mean * standardized_mean;
+        let scale_per_sd = location_scale.sigma / theta.sigma;
+        let scale_per_nu = location_scale.sigma * standardized_mean * standardized_mean_derivative
+            / standardized_variance;
+        let location_per_sd = -standardized_mean * scale_per_sd;
+        let location_per_nu =
+            -standardized_mean * scale_per_nu - location_scale.sigma * standardized_mean_derivative;
+
+        let d_mean = gradient.mu;
+        let d_sigma = gradient.mu * location_per_sd + gradient.sigma * scale_per_sd;
+        let d_nu = gradient.mu * location_per_nu + gradient.sigma * scale_per_nu + gradient.nu;
+
+        (
+            nll,
+            SkewNormalMeanSdEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: d_nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 
