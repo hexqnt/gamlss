@@ -155,20 +155,6 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
             )
             .is_finite()
     );
-    #[allow(deprecated)]
-    type DeprecatedGeneralizedGammaAlias = gamlss_family::GeneralizedGammaMuSigmaNu;
-    assert!(
-        DeprecatedGeneralizedGammaAlias::new()
-            .nll(
-                1.2,
-                GeneralizedGammaTheta {
-                    mu: 1.0,
-                    sigma: 0.5,
-                    nu: 1.0,
-                },
-            )
-            .is_finite()
-    );
     assert!(
         StudentTMuSigmaTau::new()
             .nll(

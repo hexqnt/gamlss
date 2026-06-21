@@ -14,8 +14,6 @@ pub use gamma::{
     GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
     GammaTheta,
 };
-#[allow(deprecated)]
-pub use generalized_gamma::GeneralizedGammaMuSigmaNu;
 pub use generalized_gamma::{
     GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
 };
@@ -145,8 +143,6 @@ pub mod zip;
 
 /// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
-    #[allow(deprecated)]
-    pub use crate::GeneralizedGammaMuSigmaNu;
     pub use crate::{
         Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta,
         BernoulliProbability, BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta,

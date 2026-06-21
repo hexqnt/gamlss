@@ -15,12 +15,6 @@ const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
 /// Generalized gamma scale/sigma/nu distribution with log/log/identity links.
 pub type GeneralizedGammaScaleSigmaNu = GeneralizedGamma<Log, Log, Identity>;
-/// Deprecated compatibility alias for [`GeneralizedGammaScaleSigmaNu`].
-#[deprecated(
-    since = "0.3.0",
-    note = "the first generalized-gamma parameter is a scale/location parameter, not the arithmetic mean; use GeneralizedGammaScaleSigmaNu"
-)]
-pub type GeneralizedGammaMuSigmaNu = GeneralizedGamma<Log, Log, Identity>;
 /// Generalized gamma family with scale, sigma, and shape parameters.
 ///
 /// The first parameter is the positive scale/location used in `(y / scale)`,
