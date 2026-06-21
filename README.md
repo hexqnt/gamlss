@@ -63,7 +63,7 @@ cargo test --workspace --all-features
 Численные тесты для `gamlss-family` можно запускать отдельно:
 
 ```bash
-cargo test -p gamlss-family --test numerical_validation --all-features
+cargo test -p gamlss-family --tests --all-features
 ```
 
 ## Общая ионформация о GAMLSS
