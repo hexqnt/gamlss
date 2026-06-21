@@ -4,9 +4,10 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
 
+use gamlss_special::{ln_gamma, regularized_gamma_lower};
+
 use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary};
-use crate::special::{ln_gamma, regularized_gamma_lower};
 
 pub use mean_shape::{MeanShape, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta};
 pub use scale_shape::{

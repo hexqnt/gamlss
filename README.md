@@ -21,8 +21,8 @@ gamlss = "*"
 
 `gamlss` — batteries-included фасад. Основной и наиболее стабильный путь сейчас
 идет через низкоуровневое typed API: `gamlss-core`, `gamlss-family`,
-`gamlss-spline` и `gamlss-transform`. По умолчанию фасад также реэкспортирует
-`gamlss-formula`, но этот слой пока является экспериментальным optional
+`gamlss-spline`, `gamlss-special` и `gamlss-transform`. По умолчанию фасад также
+реэкспортирует `gamlss-formula`, но этот слой пока является экспериментальным optional
 convenience crate, а не основным API библиотеки.
 
 Workspace также публикует отдельные crate-ы для более явного контроля API и
@@ -33,6 +33,8 @@ Workspace также публикует отдельные crate-ы для бо�
 - `gamlss-family` — распределения, likelihoods и score helpers.
 - `gamlss-diagnostics` — post-fit PIT/CDF diagnostics и normalized quantile
   residuals для supported continuous CDF families.
+- `gamlss-special` — special functions и общие численные helpers для
+  likelihood/CDF/quantile кода.
 - `gamlss-spline` — spline/Fourier predictors, penalties и spline metadata.
 - `gamlss-transform` — target preprocessing transforms.
 - `gamlss-formula` — экспериментальный optional formula/builder layer, который

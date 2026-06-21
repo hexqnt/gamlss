@@ -3,11 +3,11 @@ use gamlss_core::{
     ParameterizedFamily, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
 };
 
-use crate::domain::{is_positive_finite, is_strict_probability};
-use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
-use crate::special::{discrete_quantile, is_nonnegative_integer};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
+use crate::domain::{is_positive_finite, is_strict_probability};
+use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 
 /// ZIP distribution parameterized by total mean and zero-inflation probability.
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;

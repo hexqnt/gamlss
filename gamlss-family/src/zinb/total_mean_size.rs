@@ -5,13 +5,13 @@ use gamlss_core::{
     ParameterizedFamily, PositiveLink, Size, TotalMean, UnitIntervalLink, ZeroProbability,
 };
 
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
+
+use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
-use crate::special::{discrete_quantile, is_nonnegative_integer};
-
-use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 
 /// ZINB distribution parameterized by total mean, NB size, and zero probability.
 pub type ZinbTotalMeanSizeZeroProbability = ZinbTotalMeanSize<Log, Log, Logit>;

@@ -3,10 +3,10 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma, UnitIntervalLink,
 };
 
-use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
-use crate::special::{invert_positive_cdf, regularized_gamma_lower};
+use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
 
 use super::{Zaga, ZagaTheta};
+use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
 
 /// ZAGA distribution with log/log/logit links.
 pub type ZagaMeanSigmaZeroProbability = Zaga<Log, Log, Logit>;

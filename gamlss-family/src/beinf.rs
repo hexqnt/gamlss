@@ -5,11 +5,12 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau, UnitIntervalLink,
 };
 
+use gamlss_special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
+
 use crate::initial::{
     POSITIVE_FLOOR, VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary,
     weighted_values,
 };
-use crate::special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// BEINF distribution with logit/logit/log/log links.
 pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;

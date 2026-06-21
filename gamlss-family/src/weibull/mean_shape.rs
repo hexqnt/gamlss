@@ -3,7 +3,7 @@ use gamlss_core::{
     PositiveLink, Shape,
 };
 
-use crate::special::{digamma, ln_gamma};
+use gamlss_special::{digamma, ln_gamma};
 
 use super::{Weibull, WeibullScaleShapeTheta};
 

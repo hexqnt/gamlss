@@ -7,10 +7,11 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Precision, UnitIntervalLink,
 };
 
+use gamlss_special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
+
 use crate::initial::{
     VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
-use crate::special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
 
 /// Beta distribution with logit link for mean and log link for precision.
 pub type BetaMeanPrecision = Beta<Logit, Log>;

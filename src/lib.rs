@@ -2,9 +2,9 @@
 //! High-level crate for Rust-native GAMLSS.
 //!
 //! `gamlss` re-exports the typed core, ready-made distribution families,
-//! spline/predictor building blocks and target transforms. The primary approach
-//! is a low-level typed API through [`core`], [`family`], [`spline`] and
-//! [`transform`].
+//! spline/predictor building blocks, special functions and target transforms.
+//! The primary approach is a low-level typed API through [`core`], [`family`],
+//! [`spline`] and [`transform`].
 //!
 //! When the `formula` feature is enabled, the [`formula`] namespace is also
 //! available. This layer is an experimental optional convenience API: it compiles
@@ -69,6 +69,8 @@ pub use gamlss_core as core;
 pub use gamlss_diagnostics as diagnostics;
 /// Distributions and likelihood implementations.
 pub use gamlss_family as family;
+/// Special functions and numerical helpers.
+pub use gamlss_special as special;
 /// Spline bases and penalties.
 pub use gamlss_spline as spline;
 /// Transform layer for response/target preprocessing.

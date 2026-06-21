@@ -1,10 +1,10 @@
-#[path = "common/helpers.rs"]
-mod common;
-
 use gamlss_core::{Family, HasCdf, HasQuantile};
 use gamlss_family::*;
 
 use common::assert_close;
+
+#[path = "common/helpers.rs"]
+mod common;
 
 #[test]
 fn total_mean_parameterizations_match_component_equivalents() {

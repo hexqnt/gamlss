@@ -1,6 +1,6 @@
 //! Skew-normal distribution parameterizations.
 
-use crate::special::{
+use gamlss_special::{
     invert_real_cdf, log_ndtr, normal_mills_ratio, owens_t, unit_normal_cdf, unit_normal_log_pdf,
 };
 

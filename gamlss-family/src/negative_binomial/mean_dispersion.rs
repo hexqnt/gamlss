@@ -5,10 +5,10 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink,
 };
 
-use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
-use crate::special::{digamma, discrete_quantile, is_nonnegative_integer};
+use gamlss_special::{digamma, discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
+use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 
 /// Negative binomial distribution parameterized by mean and dispersion.
 ///

@@ -9,9 +9,10 @@ use gamlss_core::{
     PositiveLink, Sigma,
 };
 
+use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
+
 use crate::domain::is_finite_location_scale;
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::special::{unit_normal_cdf, unit_normal_quantile};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;

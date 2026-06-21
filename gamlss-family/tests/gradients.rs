@@ -1,6 +1,3 @@
-#[path = "common/helpers.rs"]
-mod common;
-
 use gamlss_family::*;
 use proptest::prelude::*;
 
@@ -8,6 +5,9 @@ use common::{
     assert_gradient_matches_finite_difference,
     assert_new_family_gradient_matches_finite_difference, proptest_config,
 };
+
+#[path = "common/helpers.rs"]
+mod common;
 
 proptest! {
     #![proptest_config(proptest_config())]

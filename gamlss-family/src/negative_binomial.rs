@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, PositiveLink};
 
-use crate::special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use gamlss_special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
 
 pub use mean_dispersion::{
     NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,

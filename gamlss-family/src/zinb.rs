@@ -2,8 +2,9 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
+use gamlss_special::{digamma, is_nonnegative_integer, ln_gamma, log_add_exp};
+
 use crate::negative_binomial::{NegativeBinomial, NegativeBinomialTheta};
-use crate::special::{digamma, is_nonnegative_integer, ln_gamma, log_add_exp};
 
 pub use component_mean_size_zero_probability::{
     ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability,

@@ -1,6 +1,3 @@
-#[path = "common/helpers.rs"]
-mod common;
-
 use gamlss_core::{Family, HasCdf, HasQuantile};
 use gamlss_family::*;
 use proptest::prelude::*;
@@ -11,6 +8,9 @@ use common::{
     assert_discrete_mass_sums_to_one, assert_discrete_or_continuous_generalized_inverse,
     integrate_simpson, proptest_config,
 };
+
+#[path = "common/helpers.rs"]
+mod common;
 
 proptest! {
     #![proptest_config(proptest_config())]

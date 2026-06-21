@@ -5,6 +5,7 @@ members = [
     "gamlss-family",
     "gamlss-spline",
     "gamlss-formula",
+    "gamlss-special",
     "gamlss-transform",
 ]
 resolver = "3"
@@ -28,6 +29,7 @@ gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.0" }
 gamlss-family = { path = "gamlss-family", version = "0.3.0" }
 gamlss-formula = { path = "gamlss-formula", version = "0.3.0" }
 gamlss-spline = { path = "gamlss-spline", version = "0.3.0" }
+gamlss-special = { path = "gamlss-special", version = "0.3.0" }
 gamlss-transform = { path = "gamlss-transform", version = "0.3.0" }
 rand = "0.10.1"
 rand_distr = "0.6.0"
@@ -65,6 +67,7 @@ gamlss-diagnostics.workspace = true
 gamlss-family.workspace = true
 gamlss-formula = { workspace = true, optional = true }
 gamlss-spline.workspace = true
+gamlss-special.workspace = true
 gamlss-transform.workspace = true
 
 [dev-dependencies]

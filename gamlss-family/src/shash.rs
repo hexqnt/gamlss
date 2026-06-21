@@ -5,9 +5,10 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
 };
 
+use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
+
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
 /// SHASH distribution with identity/log/log/log links.
 pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;

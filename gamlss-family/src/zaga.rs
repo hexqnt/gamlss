@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use crate::special::{digamma, ln_gamma, regularized_gamma_lower};
+use gamlss_special::{digamma, ln_gamma, regularized_gamma_lower};
 
 pub use component_mean_cv_zero_probability::{
     ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability,

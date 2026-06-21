@@ -5,9 +5,10 @@ use gamlss_core::{
     ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Power, UnitIntervalLink,
 };
 
+use gamlss_special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower};
+
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower};
 
 const MAX_SERIES_TERMS: usize = 2_000;
 const SERIES_EPSILON: f64 = 1.0e-13;

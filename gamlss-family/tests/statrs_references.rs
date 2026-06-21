@@ -1,6 +1,3 @@
-#[path = "common/helpers.rs"]
-mod common;
-
 use gamlss_core::{HasCdf, HasDensity, HasQuantile};
 use gamlss_family::*;
 use statrs::distribution::{
@@ -16,6 +13,9 @@ use common::{
     TAIL_PROBABILITIES, assert_close, assert_continuous_statrs_reference,
     assert_discrete_statrs_reference, nb_success_probability, statrs_discrete_quantile,
 };
+
+#[path = "common/helpers.rs"]
+mod common;
 
 #[test]
 fn cdf_quantile_and_density_match_statrs_references() {

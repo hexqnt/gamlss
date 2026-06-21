@@ -1,6 +1,6 @@
 //! Skew Student-t distribution parameterizations.
 
-use crate::special::{
+use gamlss_special::{
     integrate_finite, invert_bounded_cdf, ln_gamma, student_t_cdf_standardized,
     student_t_log_pdf_standardized,
 };

@@ -170,6 +170,7 @@ dependencies = [
  "gamlss-diagnostics",
  "gamlss-family",
  "gamlss-formula",
+ "gamlss-special",
  "gamlss-spline",
  "gamlss-transform",
 ]
@@ -197,6 +198,7 @@ version = "0.3.0"
 dependencies = [
  "approx",
  "gamlss-core",
+ "gamlss-special",
  "proptest",
  "rand 0.10.1",
  "rand_distr 0.6.0",
@@ -212,6 +214,14 @@ dependencies = [
  "gamlss-family",
  "gamlss-spline",
  "thiserror",
+]
+
+[[package]]
+name = "gamlss-special"
+version = "0.3.0"
+dependencies = [
+ "approx",
+ "statrs",
 ]
 
 [[package]]

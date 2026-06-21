@@ -18,6 +18,7 @@ rand = ["dep:rand", "dep:rand_distr"]
 
 [dependencies]
 gamlss-core.workspace = true
+gamlss-special.workspace = true
 rand = { workspace = true, optional = true }
 rand_distr = { workspace = true, optional = true }
 

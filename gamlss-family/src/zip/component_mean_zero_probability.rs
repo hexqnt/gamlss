@@ -3,11 +3,11 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, UnitIntervalLink, ZeroProbability,
 };
 
-use crate::domain::{is_positive_finite, is_strict_probability};
-use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
-use crate::special::{discrete_quantile, is_nonnegative_integer};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
+use crate::domain::{is_positive_finite, is_strict_probability};
+use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 
 /// ZIP distribution with log/logit links.
 pub type ZipComponentMeanZeroProbability = Zip<ComponentMeanZeroProbability, Log, Logit>;

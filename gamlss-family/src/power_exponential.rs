@@ -5,9 +5,10 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 
+use gamlss_special::{invert_real_cdf, ln_gamma, regularized_gamma_lower};
+
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
-use crate::special::{invert_real_cdf, ln_gamma, regularized_gamma_lower};
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 

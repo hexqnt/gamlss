@@ -1,7 +1,24 @@
-use crate::domain::is_probability;
+#![forbid(unsafe_code)]
+//! Special functions and numerical helpers for GAMLSS crates.
+//!
+//! This crate intentionally exposes small scalar `f64` free functions. Keeping
+//! the API as free functions lets distribution crates call them without runtime
+//! dispatch while still sharing one implementation of gamma/beta, normal-tail
+//! and CDF inversion helpers.
+//!
+//! Invalid domains return `NaN` for helper-style APIs and non-finite likelihood
+//! scale values where that convention is already part of the surrounding
+//! distribution code.
+
+#[inline(always)]
+fn is_probability(value: f64) -> bool {
+    (0.0..=1.0).contains(&value) && value.is_finite()
+}
 
 /// Natural logarithm of the gamma function via the Lanczos approximation.
-pub(crate) fn ln_gamma(value: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn ln_gamma(value: f64) -> f64 {
     const COEFFICIENTS: [f64; 9] = [
         0.999_999_999_999_809_9,
         676.520_368_121_885_1,
@@ -31,7 +48,9 @@ pub(crate) fn ln_gamma(value: f64) -> f64 {
 }
 
 /// Natural logarithm of the beta function for positive finite arguments.
-pub(crate) fn ln_beta(a: f64, b: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn ln_beta(a: f64, b: f64) -> f64 {
     if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() {
         return f64::NAN;
     }
@@ -40,7 +59,9 @@ pub(crate) fn ln_beta(a: f64, b: f64) -> f64 {
 }
 
 /// Returns `true` for finite counts represented on the shared `f64` observation path.
-pub(crate) fn is_nonnegative_integer(value: f64) -> bool {
+#[must_use]
+#[inline]
+pub fn is_nonnegative_integer(value: f64) -> bool {
     value >= 0.0 && value.is_finite() && value.fract() == 0.0
 }
 
@@ -48,7 +69,9 @@ pub(crate) fn is_nonnegative_integer(value: f64) -> bool {
 ///
 /// Returning `None` keeps discrete CDF implementations from doing unbounded
 /// work for pathologically large query points.
-pub(crate) fn included_count(value: f64, max_terms: u64) -> Option<u64> {
+#[must_use]
+#[inline]
+pub fn included_count(value: f64, max_terms: u64) -> Option<u64> {
     if value < 0.0 {
         return Some(0);
     }
@@ -62,7 +85,9 @@ pub(crate) fn included_count(value: f64, max_terms: u64) -> Option<u64> {
 }
 
 /// Stable two-term log-space addition.
-pub(crate) fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
     if log_left == f64::NEG_INFINITY {
         return log_right;
     }
@@ -75,18 +100,24 @@ pub(crate) fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
 }
 
 /// Standard normal log-density.
-pub(crate) fn unit_normal_log_pdf(z: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn unit_normal_log_pdf(z: f64) -> f64 {
     const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
     -HALF_LOG_2_PI - 0.5 * z * z
 }
 
 /// Student-t normalizing constant on the negative log-density scale.
-pub(crate) fn student_t_nll_constant(nu: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn student_t_nll_constant(nu: f64) -> f64 {
     0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
 }
 
 /// Standard Student-t log-density.
-pub(crate) fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
     if nu <= 0.0 || !nu.is_finite() || !t.is_finite() {
         return f64::NEG_INFINITY;
     }
@@ -95,7 +126,9 @@ pub(crate) fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
 }
 
 /// Standard Student-t CDF.
-pub(crate) fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
     if nu <= 0.0 || !nu.is_finite() {
         return f64::NAN;
     }
@@ -115,7 +148,9 @@ pub(crate) fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
 }
 
 /// Digamma function approximation for positive arguments.
-pub(crate) fn digamma(value: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn digamma(value: f64) -> f64 {
     if value <= 0.0 || !value.is_finite() {
         return f64::NAN;
     }
@@ -134,7 +169,9 @@ pub(crate) fn digamma(value: f64) -> f64 {
 }
 
 /// Regularized incomplete beta function `I_x(a, b)` for positive `a`, `b`.
-pub(crate) fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
     if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
         return f64::NAN;
     }
@@ -157,7 +194,9 @@ pub(crate) fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
 }
 
 /// Regularized lower incomplete gamma function `P(a, x)`.
-pub(crate) fn regularized_gamma_lower(a: f64, x: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn regularized_gamma_lower(a: f64, x: f64) -> f64 {
     if a <= 0.0 || !a.is_finite() || x < 0.0 || !x.is_finite() {
         return f64::NAN;
     }
@@ -228,7 +267,12 @@ fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
     (-x + a * x.ln() - ln_gamma(a)).exp() * h
 }
 
-pub(crate) fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
+/// Generalized inverse for a discrete CDF on non-negative integer support.
+///
+/// Returns `NaN` when `p` is outside `[0, 1]` or when `max_count` is reached
+/// before the supplied CDF reaches `p`.
+#[must_use]
+pub fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
 where
     F: FnMut(u64) -> f64,
 {
@@ -260,7 +304,12 @@ where
     low as f64
 }
 
-pub(crate) fn invert_bounded_cdf<F>(p: f64, lower: f64, upper: f64, mut cdf: F) -> f64
+/// Inverts a monotone CDF on a finite closed interval by bisection.
+///
+/// Returns the interval boundary for `p == 0` or `p == 1`, and `NaN` for
+/// invalid probabilities or non-finite bounds.
+#[must_use]
+pub fn invert_bounded_cdf<F>(p: f64, lower: f64, upper: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
@@ -288,7 +337,12 @@ where
     0.5 * (low + high)
 }
 
-pub(crate) fn invert_positive_cdf<F>(p: f64, mut cdf: F) -> f64
+/// Inverts a monotone CDF on `[0, +inf)` by bracketing and bisection.
+///
+/// Returns `0` for `p == 0`, `+inf` for `p == 1`, and `NaN` for invalid
+/// probabilities.
+#[must_use]
+pub fn invert_positive_cdf<F>(p: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
@@ -313,7 +367,12 @@ where
     invert_bounded_cdf(p, 0.0, high, cdf)
 }
 
-pub(crate) fn invert_real_cdf<F>(p: f64, mut cdf: F) -> f64
+/// Inverts a monotone CDF on the real line by bracketing and bisection.
+///
+/// Returns infinite tails for boundary probabilities and `NaN` for invalid
+/// probabilities.
+#[must_use]
+pub fn invert_real_cdf<F>(p: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
@@ -346,7 +405,12 @@ where
     invert_bounded_cdf(p, low, high, cdf)
 }
 
-pub(crate) fn integrate_finite<F>(lower: f64, upper: f64, mut function: F) -> f64
+/// Integrates a finite interval with adaptive Simpson quadrature.
+///
+/// Returns `NaN` for non-finite bounds, reversed bounds, or non-finite function
+/// evaluations.
+#[must_use]
+pub fn integrate_finite<F>(lower: f64, upper: f64, mut function: F) -> f64
 where
     F: FnMut(f64) -> f64,
 {
@@ -489,7 +553,9 @@ fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
 }
 
 /// Standard normal CDF approximation.
-pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn unit_normal_cdf(z: f64) -> f64 {
     if z.is_nan() {
         return f64::NAN;
     }
@@ -512,7 +578,9 @@ pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
 }
 
 /// Natural logarithm of the standard normal CDF.
-pub(crate) fn log_ndtr(z: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn log_ndtr(z: f64) -> f64 {
     if z.is_nan() {
         return f64::NAN;
     }
@@ -539,7 +607,9 @@ fn log_ndtr_left_tail(z: f64) -> f64 {
 }
 
 /// Standard normal Mills ratio `phi(z) / Phi(z)`.
-pub(crate) fn normal_mills_ratio(z: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn normal_mills_ratio(z: f64) -> f64 {
     (unit_normal_log_pdf(z) - log_ndtr(z)).exp()
 }
 
@@ -548,7 +618,8 @@ pub(crate) fn normal_mills_ratio(z: f64) -> f64 {
 /// This is primarily used for skew-normal CDF evaluation. The implementation
 /// uses adaptive Simpson integration, which is accurate enough for family
 /// helper APIs while keeping production dependencies unchanged.
-pub(crate) fn owens_t(h: f64, a: f64) -> f64 {
+#[must_use]
+pub fn owens_t(h: f64, a: f64) -> f64 {
     if !h.is_finite() || !a.is_finite() {
         return f64::NAN;
     }
@@ -570,7 +641,9 @@ pub(crate) fn owens_t(h: f64, a: f64) -> f64 {
 }
 
 /// Standard normal quantile approximation.
-pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
+#[must_use]
+#[inline]
+pub fn unit_normal_quantile(p: f64) -> f64 {
     if p < 0.0 || !p.is_finite() || p > 1.0 {
         return f64::NAN;
     }
@@ -633,12 +706,14 @@ pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
+    use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
     use super::{
         digamma, discrete_quantile, integrate_finite, invert_bounded_cdf, invert_positive_cdf,
         invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr, normal_mills_ratio, owens_t,
-        regularized_beta, regularized_gamma_lower, unit_normal_cdf, unit_normal_quantile,
+        regularized_beta, regularized_gamma_lower, student_t_cdf_standardized,
+        student_t_log_pdf_standardized, student_t_nll_constant, unit_normal_cdf,
+        unit_normal_quantile,
     };
 
     fn assert_close(actual: f64, expected: f64, rel_tol: f64, abs_tol: f64) {
@@ -770,6 +845,37 @@ mod tests {
         for z in [-10.0_f64, -8.0, -5.0, -2.0, 0.0, 2.0, 5.0] {
             assert_close(log_ndtr(z), reference.cdf(z).ln(), 0.0, 1.0e-4);
         }
+    }
+
+    #[test]
+    fn standardized_student_t_helpers_match_statrs_reference() {
+        for nu in [1.5_f64, 2.5, 5.0, 30.0] {
+            let reference = StudentsT::new(0.0, 1.0, nu).unwrap();
+            assert_close(
+                (-student_t_nll_constant(nu)).exp(),
+                reference.pdf(0.0),
+                2.0e-13,
+                2.0e-13,
+            );
+
+            for t in [-4.0_f64, -1.0, 0.0, 1.0, 4.0] {
+                assert_close(
+                    student_t_log_pdf_standardized(t, nu).exp(),
+                    reference.pdf(t),
+                    2.0e-13,
+                    2.0e-13,
+                );
+                assert_close(
+                    student_t_cdf_standardized(t, nu),
+                    reference.cdf(t),
+                    2.0e-12,
+                    2.0e-12,
+                );
+            }
+        }
+
+        assert!(student_t_log_pdf_standardized(0.0, 0.0).is_infinite());
+        assert!(student_t_cdf_standardized(0.0, 0.0).is_nan());
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Identity, Log};
 
-use crate::special::{unit_normal_cdf, unit_normal_quantile};
+use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
 pub use log_location_log_sd::{
     LogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,

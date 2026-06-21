@@ -17,6 +17,7 @@
 * `gamlss` — high-level public crate и re-exports.
 * `gamlss-core` — type-driven ядро: links, parameter blocks, objectives, compiled models.
 * `gamlss-family` — распределения, likelihoods, scores, CDF/quantile helpers.
+* `gamlss-special` — special functions и общие численные helpers для likelihood/CDF/quantile кода.
 * `gamlss-spline` — spline bases, penalties и spline metadata.
 * `gamlss-formula` — optional dynamic formula/builder layer, который компилируется в typed models.
 * `gamlss-transform` — target transforms, их persisted state и domain-aware inverse transforms.
@@ -48,6 +49,7 @@
 * Тяжёлые зависимости вроде `faer`, `sprs`, `polars`, `ndarray`, `serde` должны быть optional features или отдельными integration crates.
 * Formula/builder layer может быть динамическим; compiled model evaluation должен оставаться типизированным и эффективным.
 * Optimizer adapters должны быть тонкими: адаптировать objective/gradient traits, но не переносить modeling logic в optimizer crate.
+* Общие special/math функции и численные helpers должны жить в `gamlss-special`; family-specific likelihood, score и chain-rule логика должна оставаться в `gamlss-family`.
 * Если у distribution family больше одной параметризации, каждая параметризация должна жить в отдельном подмодуле, а корневой модуль — содержать общий carrier/kernel и re-exports.
 
 ## Тестирование и проверки

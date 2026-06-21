@@ -1,10 +1,10 @@
-#[path = "common/helpers.rs"]
-mod common;
-
 use gamlss_core::{HasCdf, HasQuantile};
 use gamlss_family::*;
 
 use common::assert_new_family_gradient_matches_finite_difference;
+
+#[path = "common/helpers.rs"]
+mod common;
 
 #[test]
 fn zero_adjusted_and_inflated_gradients_match_finite_differences() {

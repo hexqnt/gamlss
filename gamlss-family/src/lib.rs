@@ -127,7 +127,6 @@ pub mod shash;
 pub mod skew_normal;
 /// Skew Student-t distribution.
 pub mod skew_student_t;
-mod special;
 /// Student distribution with a fixed number of degrees of freedom.
 pub mod student_t;
 /// Tweedie compound Poisson-gamma distribution.

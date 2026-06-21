@@ -2,7 +2,7 @@
 
 use gamlss_core::{Identity, Log, LogPlus};
 
-use crate::special::{digamma, invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
+use gamlss_special::{digamma, invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
 pub use dynamic::{StudentTDynamic, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta};
 pub use fixed::{StudentT, StudentTEta};

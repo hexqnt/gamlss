@@ -7,10 +7,11 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink,
 };
 
-use crate::initial::{positive_floor, weighted_mean, weighted_values};
-use crate::special::{
+use gamlss_special::{
     discrete_quantile, included_count, is_nonnegative_integer, ln_gamma, log_add_exp,
 };
+
+use crate::initial::{positive_floor, weighted_mean, weighted_values};
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 const MAX_BESSEL_SERIES_TERMS: usize = 10_000;

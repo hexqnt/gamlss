@@ -5,10 +5,11 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Scale, Sigma,
 };
 
-use crate::initial::{positive_floor, weighted_summary, weighted_values};
-use crate::special::{
+use gamlss_special::{
     digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, unit_normal_cdf,
 };
+
+use crate::initial::{positive_floor, weighted_summary, weighted_values};
 
 const NU_EPSILON: f64 = 1.0e-4;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;

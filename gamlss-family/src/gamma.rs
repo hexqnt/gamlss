@@ -4,8 +4,9 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
 
+use gamlss_special::{digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower};
+
 use crate::initial::{LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary};
-use crate::special::{digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower};
 
 pub use mean_cv::{GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, MeanCv};
 pub use mean_shape::{GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, MeanShape};
