@@ -3,7 +3,7 @@
 ## Область действия
 
 * Этот файл применяется ко всему workspace.
-* Более близкие к редактируемому коду `AGENTS.md` или `AGENTS.override.md` в поддиректориях переопределяют эти правила для своей области.
+* Более близкие к редактируемому коду `AGENTS.md` в поддиректориях переопределяют эти правила для своей области.
 * Явные инструкции пользователя имеют приоритет над этим файлом.
 
 ## Обзор проекта
@@ -20,6 +20,7 @@
 * `gamlss-spline` — spline bases, penalties и spline metadata.
 * `gamlss-formula` — optional dynamic formula/builder layer, который компилируется в typed models.
 * `gamlss-transform` — target transforms, их persisted state и domain-aware inverse transforms.
+* `gamlss-diagnostics` — post-fit diagnostics extension APIs: PIT/CDF values, quantile residuals, CRPS summaries и будущие helpers для fitted parameters, predictions, worm plots и centile curves.
 
 ## Принципы дизайна
 
