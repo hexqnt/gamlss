@@ -47,6 +47,7 @@
 * Тяжёлые зависимости вроде `faer`, `sprs`, `polars`, `ndarray`, `serde` должны быть optional features или отдельными integration crates.
 * Formula/builder layer может быть динамическим; compiled model evaluation должен оставаться типизированным и эффективным.
 * Optimizer adapters должны быть тонкими: адаптировать objective/gradient traits, но не переносить modeling logic в optimizer crate.
+* Если у distribution family больше одной параметризации, каждая параметризация должна жить в отдельном подмодуле, а корневой модуль — содержать общий carrier/kernel и re-exports.
 
 ## Тестирование и проверки
 

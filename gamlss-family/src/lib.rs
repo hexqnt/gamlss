@@ -20,7 +20,9 @@ pub use generalized_gamma::{
 pub use gev::{Gev, GevEta, GevMuSigmaShape, GevTheta};
 pub use gumbel::{Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta};
 pub use inverse_gaussian::{
-    InverseGaussian, InverseGaussianEta, InverseGaussianMuShape, InverseGaussianTheta,
+    InverseGaussian, InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
+    InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
+    InverseGaussianTheta,
 };
 pub use johnson_su::{JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta};
 pub use laplace::{Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta};
@@ -33,7 +35,9 @@ pub use log_normal::{
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
 pub use negative_binomial::{
-    NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanSize, NegativeBinomialTheta,
+    NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
+    NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
+    NegativeBinomialMeanSize, NegativeBinomialTheta,
 };
 pub use normal::{Normal, NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, normal_gamlss};
 pub use poisson::{Poisson, PoissonEta, PoissonMean, PoissonTheta};
@@ -52,9 +56,20 @@ pub use weibull::{
     Weibull, WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
     WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta,
 };
-pub use zaga::{Zaga, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta};
-pub use zinb::{Zinb, ZinbEta, ZinbMeanSizeZeroProbability, ZinbTheta};
-pub use zip::{Zip, ZipEta, ZipMeanZeroProbability, ZipTheta};
+pub use zaga::{
+    Zaga, ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
+    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
+    ZagaTotalMeanCvZeroProbabilityTheta,
+};
+pub use zinb::{
+    Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability, ZinbTheta,
+    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityEta,
+    ZinbTotalMeanSizeZeroProbabilityTheta,
+};
+pub use zip::{
+    Zip, ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
+    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+};
 
 /// Beta inflated at zero and one distribution.
 pub mod beinf;
@@ -126,15 +141,18 @@ pub mod prelude {
         GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, Ged, GedMuSigmaNu, GeneralizedGamma,
         GeneralizedGammaEta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta, Gev, GevEta,
         GevMuSigmaShape, GevTheta, Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian,
-        InverseGaussianEta, InverseGaussianMuShape, InverseGaussianTheta, JohnsonSu, JohnsonSuEta,
-        JohnsonSuMuSigmaNuTau, JohnsonSuTheta, Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta,
-        LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
-        LogNormalLogLocationLogSdTheta, LogNormalMeanLogSd, LogNormalMeanLogSdEta,
-        LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdEta,
-        LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta, LogisticMuSigma,
-        LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta, NegativeBinomial,
-        NegativeBinomialEta, NegativeBinomialMeanSize, NegativeBinomialTheta, Normal, NormalEta,
-        NormalGamlss, NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean, PoissonTheta,
+        InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
+        InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
+        InverseGaussianTheta, JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta,
+        Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta, LogNormal, LogNormalEta,
+        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
+        LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
+        LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta,
+        NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
+        NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
+        NegativeBinomialMeanSize, NegativeBinomialTheta, Normal, NormalEta, NormalGamlss,
+        NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean, PoissonTheta,
         PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu, PowerExponentialTheta,
         Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
         SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta,
@@ -142,9 +160,13 @@ pub mod prelude {
         StudentTTheta, Tweedie, TweedieEta, TweedieMeanDispersionPower, TweedieTheta, Weibull,
         WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
         WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta, Zaga,
-        ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta, Zinb, ZinbEta,
-        ZinbMeanSizeZeroProbability, ZinbTheta, Zip, ZipEta, ZipMeanZeroProbability, ZipTheta,
-        normal_gamlss,
+        ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
+        ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
+        ZagaTotalMeanCvZeroProbabilityTheta, Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta,
+        ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
+        ZinbTotalMeanSizeZeroProbabilityEta, ZinbTotalMeanSizeZeroProbabilityTheta, Zip,
+        ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
+        ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
     };
 }
 

@@ -5,7 +5,10 @@ use gamlss_family::{
     PowerExponentialMuSigmaNu, PowerExponentialTheta, ShashMuSigmaNuTau, ShashTheta,
     SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
     TweedieMeanDispersionPower, TweedieTheta, ZagaMeanSigmaZeroProbability, ZagaTheta,
-    ZinbMeanSizeZeroProbability, ZinbTheta, ZipMeanZeroProbability, ZipTheta,
+    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
+    ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
+    ZinbTotalMeanSizeZeroProbabilityTheta, ZipMeanZeroProbability, ZipTheta,
+    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
 };
 
 const FD_REL_TOL: f64 = 8.0e-4;
@@ -124,6 +127,18 @@ fn new_mixed_family_gradients_match_finite_differences() {
         [1.2_f64.ln(), 2.0_f64.ln(), -1.0],
     );
 
+    let zinb_total = ZinbTotalMeanSizeZeroProbability::new();
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &zinb_total,
+        0.0,
+        [0.84_f64.ln(), 2.0_f64.ln(), -1.0],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &zinb_total,
+        3.0,
+        [0.84_f64.ln(), 2.0_f64.ln(), -1.0],
+    );
+
     let zaga = ZagaMeanSigmaZeroProbability::new();
     assert_gradient_matches_finite_difference::<_, 3>(
         &zaga,
@@ -136,10 +151,98 @@ fn new_mixed_family_gradients_match_finite_differences() {
         [1.2_f64.ln(), 0.8_f64.ln(), -1.0],
     );
 
+    let zaga_total = ZagaTotalMeanCvZeroProbability::new();
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &zaga_total,
+        0.0,
+        [0.84_f64.ln(), 0.8_f64.ln(), -1.0],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &zaga_total,
+        1.4,
+        [0.84_f64.ln(), 0.8_f64.ln(), -1.0],
+    );
+
     let beinf = BeinfMuSigmaNuTau::new();
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 0.0, [0.1, -1.0, -2.0, -2.2]);
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 0.4, [0.1, -1.0, -2.0, -2.2]);
     assert_gradient_matches_finite_difference::<_, 4>(&beinf, 1.0, [0.1, -1.0, -2.0, -2.2]);
+}
+
+#[test]
+fn total_mean_parameterizations_match_component_equivalents() {
+    let zip_component = ZipMeanZeroProbability::new();
+    let zip_total = ZipTotalMeanZeroProbability::new();
+    let zip_component_theta = ZipTheta {
+        mu: 2.0,
+        sigma: 0.3,
+    };
+    let zip_total_theta = ZipTotalMeanZeroProbabilityTheta {
+        total_mean: (1.0 - zip_component_theta.sigma) * zip_component_theta.mu,
+        zero_probability: zip_component_theta.sigma,
+    };
+    assert_close(
+        zip_total.nll(3.0, zip_total_theta),
+        zip_component.nll(3.0, zip_component_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        zip_total.cdf(3.0, zip_total_theta),
+        zip_component.cdf(3.0, zip_component_theta),
+        0.0,
+        1.0e-12,
+    );
+
+    let zaga_component = ZagaMeanSigmaZeroProbability::new();
+    let zaga_total = ZagaTotalMeanCvZeroProbability::new();
+    let zaga_component_theta = ZagaTheta {
+        mu: 2.0,
+        sigma: 0.6,
+        nu: 0.25,
+    };
+    let zaga_total_theta = ZagaTotalMeanCvZeroProbabilityTheta {
+        total_mean: (1.0 - zaga_component_theta.nu) * zaga_component_theta.mu,
+        cv: zaga_component_theta.sigma,
+        zero_probability: zaga_component_theta.nu,
+    };
+    assert_close(
+        zaga_total.nll(1.4, zaga_total_theta),
+        zaga_component.nll(1.4, zaga_component_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        zaga_total.cdf(1.4, zaga_total_theta),
+        zaga_component.cdf(1.4, zaga_component_theta),
+        0.0,
+        1.0e-12,
+    );
+
+    let zinb_component = ZinbMeanSizeZeroProbability::new();
+    let zinb_total = ZinbTotalMeanSizeZeroProbability::new();
+    let zinb_component_theta = ZinbTheta {
+        mu: 2.0,
+        shape: 1.5,
+        nu: 0.25,
+    };
+    let zinb_total_theta = ZinbTotalMeanSizeZeroProbabilityTheta {
+        total_mean: (1.0 - zinb_component_theta.nu) * zinb_component_theta.mu,
+        size: zinb_component_theta.shape,
+        zero_probability: zinb_component_theta.nu,
+    };
+    assert_close(
+        zinb_total.nll(3.0, zinb_total_theta),
+        zinb_component.nll(3.0, zinb_component_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        zinb_total.cdf(3.0, zinb_total_theta),
+        zinb_component.cdf(3.0, zinb_component_theta),
+        0.0,
+        1.0e-12,
+    );
 }
 
 #[test]
