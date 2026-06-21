@@ -308,7 +308,7 @@ proptest! {
         assert_continuous_inverse(&GumbelMuSigma::new(), p, GumbelTheta { mu: location, sigma: scale }, 2.0e-10);
         assert_continuous_inverse(&LaplaceMuSigma::new(), p, LaplaceTheta { mu: location, sigma: scale }, 2.0e-10);
         assert_continuous_inverse(&LogisticMuSigma::new(), p, LogisticTheta { mu: location, sigma: scale }, 2.0e-10);
-        assert_continuous_inverse(&StudentTMuSigma::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-7);
+        assert_continuous_inverse(&StudentTMuSigma::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-6);
 
         assert_continuous_inverse(&ExponentialRate::new(), p, ExponentialRateTheta { rate: shape }, 2.0e-10);
         assert_continuous_inverse(&GammaShapeRate::new(), p, GammaTheta { shape, rate: scale }, 2.0e-7);

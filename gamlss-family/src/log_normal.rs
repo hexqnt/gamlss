@@ -9,10 +9,12 @@ use crate::special::{unit_normal_cdf, unit_normal_quantile};
 pub use log_location_log_sd::{
     LogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
 };
+pub use mean_cv::{LogNormalMeanCvEta, LogNormalMeanCvTheta, MeanCv};
 pub use mean_log_sd::{LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, MeanLogSd};
 pub use median_log_sd::{LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, MedianLogSd};
 
 mod log_location_log_sd;
+mod mean_cv;
 mod mean_log_sd;
 mod median_log_sd;
 
@@ -166,11 +168,14 @@ macro_rules! impl_log_normal_helpers {
 }
 
 impl_log_normal_helpers!(MeanLogSd, MeanLink, LogSdLink);
+impl_log_normal_helpers!(MeanCv, MeanLink, CvLink);
 impl_log_normal_helpers!(MedianLogSd, MedianLink, LogSdLink);
 impl_log_normal_helpers!(LogLocationLogSd, LocationLink, LogSdLink);
 
 /// Log-normal distribution parameterized by mean and log standard deviation.
 pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
+/// Log-normal distribution parameterized by mean and coefficient of variation.
+pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
 /// Log-normal distribution parameterized by median and log standard deviation.
 pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
 /// Log-normal distribution parameterized by log-location and log standard deviation.
@@ -190,8 +195,8 @@ mod tests {
     use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
     use super::{
-        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanLogSd,
-        LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
+        LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -206,6 +211,11 @@ mod tests {
             &LogNormalMeanLogSd::new(),
             1.7,
             [1.5_f64.ln(), 0.8_f64.ln()],
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &LogNormalMeanCv::new(),
+            1.7,
+            [1.5_f64.ln(), 0.9_f64.ln()],
         );
         assert_gradient_matches_finite_difference::<_, 2>(
             &LogNormalMedianLogSd::new(),
@@ -241,6 +251,35 @@ mod tests {
         );
         assert_relative_eq!(
             mean.crps(1.7, theta),
+            canonical.crps(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn log_normal_mean_cv_matches_log_location_equivalent() {
+        let mean_cv = LogNormalMeanCv::new();
+        let canonical = LogNormalLogLocationLogSd::new();
+        let theta = LogNormalMeanCvTheta { mean: 1.5, cv: 0.9 };
+        let kernel = theta.log_location_log_sd();
+
+        assert_relative_eq!(
+            mean_cv.nll(1.7, theta),
+            canonical.nll(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.cdf(1.7, theta),
+            canonical.cdf(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.quantile(0.4, theta),
+            canonical.quantile(0.4, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.crps(1.7, theta),
             canonical.crps(1.7, kernel),
             epsilon = 1.0e-12
         );

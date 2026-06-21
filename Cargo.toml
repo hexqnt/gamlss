@@ -10,7 +10,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "Type-driven Rust crates for GAMLSS modeling"
 license = "MIT OR Apache-2.0"
@@ -23,12 +23,12 @@ categories = ["algorithms", "mathematics", "science"]
 
 [workspace.dependencies]
 approx = "0.5.1"
-gamlss-core = { path = "gamlss-core", version = "0.2.2" }
-gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.2.2" }
-gamlss-family = { path = "gamlss-family", version = "0.2.2" }
-gamlss-formula = { path = "gamlss-formula", version = "0.2.2" }
-gamlss-spline = { path = "gamlss-spline", version = "0.2.2" }
-gamlss-transform = { path = "gamlss-transform", version = "0.2.2" }
+gamlss-core = { path = "gamlss-core", version = "0.3.0" }
+gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.0" }
+gamlss-family = { path = "gamlss-family", version = "0.3.0" }
+gamlss-formula = { path = "gamlss-formula", version = "0.3.0" }
+gamlss-spline = { path = "gamlss-spline", version = "0.3.0" }
+gamlss-transform = { path = "gamlss-transform", version = "0.3.0" }
 rand = "0.10.1"
 rand_distr = "0.6.0"
 thiserror = "2.0.18"

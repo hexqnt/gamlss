@@ -28,9 +28,9 @@ pub use johnson_su::{JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTh
 pub use laplace::{Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta};
 pub use log_normal::{
     LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
-    LogNormalLogLocationLogSdTheta, LogNormalMeanLogSd, LogNormalMeanLogSdEta,
-    LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdEta,
-    LogNormalMedianLogSdTheta, LogNormalTheta,
+    LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
+    LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+    LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta,
 };
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
@@ -50,8 +50,14 @@ pub use skew_normal::{SkewNormal, SkewNormalEta, SkewNormalMuSigmaNu, SkewNormal
 pub use skew_student_t::{
     SkewStudentT, SkewStudentTEta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
 };
-pub use student_t::{StudentT, StudentTEta, StudentTMuSigma, StudentTTheta};
-pub use tweedie::{Tweedie, TweedieEta, TweedieMeanDispersionPower, TweedieTheta};
+pub use student_t::{
+    StudentT, StudentTDynamic, StudentTEta, StudentTMuSigma, StudentTMuSigmaTau,
+    StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTTheta,
+};
+pub use tweedie::{
+    Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
+    TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
+};
 pub use weibull::{
     Weibull, WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
     WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta,
@@ -146,7 +152,8 @@ pub mod prelude {
         InverseGaussianTheta, JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta,
         Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta, LogNormal, LogNormalEta,
         LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
-        LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd,
+        LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
         LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
         LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta,
         NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
@@ -156,10 +163,12 @@ pub mod prelude {
         PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu, PowerExponentialTheta,
         Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
         SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta,
-        SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTEta, StudentTMuSigma,
-        StudentTTheta, Tweedie, TweedieEta, TweedieMeanDispersionPower, TweedieTheta, Weibull,
-        WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
-        WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta, Zaga,
+        SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
+        StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta,
+        StudentTTheta, Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
+        TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullEta,
+        WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape,
+        WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta, Zaga,
         ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
         ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
         ZagaTotalMeanCvZeroProbabilityTheta, Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta,

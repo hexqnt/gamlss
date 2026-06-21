@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu, Nu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Sigma, UnitIntervalLink,
+    Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu,
+    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Power, UnitIntervalLink,
 };
 
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
@@ -12,19 +12,21 @@ use crate::special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gam
 const MAX_SERIES_TERMS: usize = 2_000;
 const SERIES_EPSILON: f64 = 1.0e-13;
 
-/// Tweedie distribution with log/log/logit links.
+/// Tweedie distribution parameterized by mean, dispersion, and power.
 pub type TweedieMeanDispersionPower = Tweedie<Log, Log, Logit>;
-/// Tweedie compound Poisson-gamma family for `1 < nu < 2`.
+/// Tweedie distribution parameterized by mean, CV, and power.
+pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
+/// Tweedie compound Poisson-gamma family for `1 < power < 2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Tweedie<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
-    marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
+pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
+    marker: PhantomData<(MeanLink, DispersionLink, PowerLink)>,
 }
 
-impl<MuLink, SigmaLink, NuLink> Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
 {
     /// Creates a stateless Tweedie family.
     #[inline]
@@ -37,26 +39,26 @@ where
     #[inline(always)]
     fn theta_from_eta(eta: TweedieEta) -> TweedieTheta {
         TweedieTheta {
-            mu: MuLink::inverse(eta.mu),
-            sigma: SigmaLink::inverse(eta.sigma),
-            nu: 1.0 + NuLink::inverse(eta.nu),
+            mean: MeanLink::inverse(eta.mean),
+            dispersion: DispersionLink::inverse(eta.dispersion),
+            power: 1.0 + PowerLink::inverse(eta.power),
         }
     }
 
     #[inline(always)]
     fn compound(theta: TweedieTheta) -> Option<CompoundParams> {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !(1.0..2.0).contains(&theta.nu)
+        if theta.mean <= 0.0
+            || !theta.mean.is_finite()
+            || theta.dispersion <= 0.0
+            || !theta.dispersion.is_finite()
+            || !(1.0..2.0).contains(&theta.power)
         {
             return None;
         }
 
-        let lambda = theta.mu.powf(2.0 - theta.nu) / (theta.sigma * (2.0 - theta.nu));
-        let alpha = (2.0 - theta.nu) / (theta.nu - 1.0);
-        let scale = theta.sigma * (theta.nu - 1.0) * theta.mu.powf(theta.nu - 1.0);
+        let lambda = theta.mean.powf(2.0 - theta.power) / (theta.dispersion * (2.0 - theta.power));
+        let alpha = (2.0 - theta.power) / (theta.power - 1.0);
+        let scale = theta.dispersion * (theta.power - 1.0) * theta.mean.powf(theta.power - 1.0);
         if lambda <= 0.0
             || !lambda.is_finite()
             || alpha <= 0.0
@@ -146,6 +148,24 @@ where
     }
 
     #[inline(always)]
+    fn quantile_theta(p: f64, theta: TweedieTheta) -> f64 {
+        let Some(params) = Self::compound(theta) else {
+            return f64::NAN;
+        };
+        if !(0.0..=1.0).contains(&p) {
+            return f64::NAN;
+        }
+        if p <= (-params.lambda).exp() {
+            return 0.0;
+        }
+        if p == 1.0 {
+            return f64::INFINITY;
+        }
+
+        invert_positive_cdf(p, |y| Self::cdf_theta(y, theta))
+    }
+
+    #[inline(always)]
     fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
         let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
@@ -159,22 +179,22 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> Default for Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> Default for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> Family for Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> Family for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
 {
     type Eta = TweedieEta;
     type Theta = TweedieTheta;
@@ -202,14 +222,15 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> ParameterizedFamily<3> for Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> ParameterizedFamily<3>
+    for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    NuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    DispersionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    PowerLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (Mu, Sigma, Nu);
-    type Links = (MuLink, SigmaLink, NuLink);
+    type Params = (Mu, Dispersion, Power);
+    type Links = (MeanLink, DispersionLink, PowerLink);
 
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -220,49 +241,37 @@ where
         let Some(summary) = weighted_summary(&values) else {
             return TweedieEta::from_array([0.0, 0.0, 0.0]);
         };
-        let mu = positive_floor(summary.mean);
-        let sigma = positive_floor(summary.variance / mu.powf(1.5));
+        let mean = positive_floor(summary.mean);
+        let dispersion = positive_floor(summary.variance / mean.powf(1.5));
 
         TweedieEta {
-            mu: MuLink::initial_eta_from_theta(mu),
-            sigma: SigmaLink::initial_eta_from_theta(sigma),
-            nu: NuLink::initial_eta_from_theta(0.5),
+            mean: MeanLink::initial_eta_from_theta(mean),
+            dispersion: DispersionLink::initial_eta_from_theta(dispersion),
+            power: PowerLink::initial_eta_from_theta(0.5),
         }
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> HasCdf for Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> HasCdf for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::cdf_theta(y, theta)
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> HasQuantile for Tweedie<MuLink, SigmaLink, NuLink>
+impl<MeanLink, DispersionLink, PowerLink> HasQuantile
+    for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        let Some(params) = Self::compound(theta) else {
-            return f64::NAN;
-        };
-        if !(0.0..=1.0).contains(&p) {
-            return f64::NAN;
-        }
-        if p <= (-params.lambda).exp() {
-            return 0.0;
-        }
-        if p == 1.0 {
-            return f64::INFINITY;
-        }
-
-        invert_positive_cdf(p, |y| Self::cdf_theta(y, theta))
+        Self::quantile_theta(p, theta)
     }
 }
 
@@ -277,29 +286,29 @@ struct CompoundParams {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TweedieEta {
     /// Mean predictor.
-    pub mu: f64,
+    pub mean: f64,
     /// Dispersion predictor.
-    pub sigma: f64,
+    pub dispersion: f64,
     /// Power predictor mapped into `(1, 2)`.
-    pub nu: f64,
+    pub power: f64,
 }
 
 impl ParameterParts<3> for TweedieEta {
     #[inline(always)]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
+            mean: values[0],
+            dispersion: values[1],
+            power: values[2],
         }
     }
 
     #[inline(always)]
     fn part(&self, index: usize) -> f64 {
         match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
+            0 => self.mean,
+            1 => self.dispersion,
+            2 => self.power,
             _ => unreachable!("tweedie eta only has indices 0 through 2"),
         }
     }
@@ -309,9 +318,211 @@ impl ParameterParts<3> for TweedieEta {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TweedieTheta {
     /// Positive mean parameter.
-    pub mu: f64,
+    pub mean: f64,
     /// Positive dispersion parameter.
-    pub sigma: f64,
+    pub dispersion: f64,
     /// Power parameter in `(1, 2)`.
-    pub nu: f64,
+    pub power: f64,
+}
+
+impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
+    #[inline(always)]
+    fn from(theta: TweedieMeanCvPowerTheta) -> Self {
+        TweedieTheta {
+            mean: theta.mean,
+            dispersion: theta.dispersion(),
+            power: theta.power,
+        }
+    }
+}
+
+/// Tweedie compound Poisson-gamma family parameterized by mean, CV, and power.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {
+    marker: PhantomData<(MeanLink, CvLink, PowerLink)>,
+}
+
+impl<MeanLink, CvLink, PowerLink> TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    /// Creates a stateless Tweedie mean/CV/power family.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn theta_from_eta(eta: TweedieMeanCvPowerEta) -> TweedieMeanCvPowerTheta {
+        TweedieMeanCvPowerTheta {
+            mean: MeanLink::inverse(eta.mean),
+            cv: CvLink::inverse(eta.cv),
+            power: 1.0 + PowerLink::inverse(eta.power),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: TweedieMeanCvPowerEta,
+    ) -> (f64, TweedieMeanCvPowerEta) {
+        let nll = Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(eta).into());
+        if !nll.is_finite() {
+            return (nll, TweedieMeanCvPowerEta::from_array([f64::NAN; 3]));
+        }
+
+        let gradient =
+            finite_difference_gradient_eta::<_, TweedieMeanCvPowerEta, 3>(eta, |probe| {
+                Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(probe).into())
+            });
+        (nll, TweedieMeanCvPowerEta::from_array(gradient))
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> Default for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> Family for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    type Eta = TweedieMeanCvPowerEta;
+    type Theta = TweedieMeanCvPowerTheta;
+    type NllGradientEta = TweedieMeanCvPowerEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::nll_theta(y, theta.into())
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(eta).into())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> ParameterizedFamily<3> for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    PowerLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+{
+    type Params = (Mu, Cv, Power);
+    type Links = (MeanLink, CvLink, PowerLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return TweedieMeanCvPowerEta::from_array([0.0, 0.0, 0.0]);
+        };
+        let mean = positive_floor(summary.mean);
+        let cv = positive_floor(summary.variance.sqrt() / mean);
+
+        TweedieMeanCvPowerEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            cv: CvLink::initial_eta_from_theta(cv),
+            power: PowerLink::initial_eta_from_theta(0.5),
+        }
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> HasCdf for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::cdf_theta(y, theta.into())
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> HasQuantile for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::quantile_theta(p, theta.into())
+    }
+}
+
+/// Predictors for Tweedie mean/CV/power on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TweedieMeanCvPowerEta {
+    /// Mean predictor.
+    pub mean: f64,
+    /// Coefficient-of-variation predictor.
+    pub cv: f64,
+    /// Power predictor mapped into `(1, 2)`.
+    pub power: f64,
+}
+
+impl ParameterParts<3> for TweedieMeanCvPowerEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mean: values[0],
+            cv: values[1],
+            power: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mean,
+            1 => self.cv,
+            2 => self.power,
+            _ => unreachable!("tweedie mean/CV/power eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale Tweedie mean/CV/power parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TweedieMeanCvPowerTheta {
+    /// Positive mean parameter.
+    pub mean: f64,
+    /// Positive coefficient of variation.
+    pub cv: f64,
+    /// Power parameter in `(1, 2)`.
+    pub power: f64,
+}
+
+impl TweedieMeanCvPowerTheta {
+    #[inline(always)]
+    fn dispersion(self) -> f64 {
+        self.cv * self.cv * self.mean.powf(2.0 - self.power)
+    }
 }

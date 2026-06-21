@@ -3,11 +3,13 @@ use gamlss_family::{
     BetaMeanPrecision, ExponentialMean, ExponentialMeanTheta, ExponentialRate,
     ExponentialRateTheta, GammaMeanCv, GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeTheta,
     GammaShapeRate, GammaShapeRateTheta, InverseGaussianMeanCv, InverseGaussianMeanCvTheta,
-    LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanLogSd,
-    LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdTheta,
-    NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize,
-    NegativeBinomialTheta, WeibullMeanShape, WeibullMeanShapeTheta, WeibullScaleShape,
-    WeibullScaleShapeTheta, ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
+    LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
+    LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+    LogNormalMedianLogSdTheta, NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
+    NegativeBinomialMeanSize, NegativeBinomialTheta, StudentTMuSigmaTau, StudentTMuSigmaTauTheta,
+    TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
+    WeibullMeanShape, WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeTheta,
+    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
     ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta,
     ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
 };
@@ -65,6 +67,11 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
             .is_finite()
     );
     assert!(
+        LogNormalMeanCv::new()
+            .nll(1.2, LogNormalMeanCvTheta { mean: 1.0, cv: 0.5 },)
+            .is_finite()
+    );
+    assert!(
         LogNormalMedianLogSd::new()
             .nll(
                 1.2,
@@ -105,6 +112,42 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
                 WeibullScaleShapeTheta {
                     scale: 1.0,
                     shape: 1.5,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        TweedieMeanDispersionPower::new()
+            .nll(
+                1.2,
+                TweedieTheta {
+                    mean: 1.0,
+                    dispersion: 0.5,
+                    power: 1.5,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        TweedieMeanCvPower::new()
+            .nll(
+                1.2,
+                TweedieMeanCvPowerTheta {
+                    mean: 1.0,
+                    cv: 0.5,
+                    power: 1.5,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        StudentTMuSigmaTau::new()
+            .nll(
+                1.2,
+                StudentTMuSigmaTauTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                    tau: 5.0,
                 },
             )
             .is_finite()

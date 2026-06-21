@@ -5,7 +5,7 @@ use gamlss_core::{
 
 use crate::initial::{positive_floor, robust_location_scale, weighted_values};
 
-use super::{LogNormal, LogNormalMeanLogSdTheta, LogNormalMedianLogSdTheta};
+use super::{LogNormal, LogNormalMeanCvTheta, LogNormalMeanLogSdTheta, LogNormalMedianLogSdTheta};
 
 /// Log-normal log-location/log-SD parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -51,6 +51,13 @@ pub struct LogNormalLogLocationLogSdTheta {
 impl From<LogNormalMeanLogSdTheta> for LogNormalLogLocationLogSdTheta {
     #[inline(always)]
     fn from(theta: LogNormalMeanLogSdTheta) -> Self {
+        theta.log_location_log_sd()
+    }
+}
+
+impl From<LogNormalMeanCvTheta> for LogNormalLogLocationLogSdTheta {
+    #[inline(always)]
+    fn from(theta: LogNormalMeanCvTheta) -> Self {
         theta.log_location_log_sd()
     }
 }

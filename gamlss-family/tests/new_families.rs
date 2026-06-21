@@ -4,11 +4,13 @@ use gamlss_family::{
     GevMuSigmaShape, GevTheta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, NormalMuSigma, NormalTheta,
     PowerExponentialMuSigmaNu, PowerExponentialTheta, ShashMuSigmaNuTau, ShashTheta,
     SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
-    TweedieMeanDispersionPower, TweedieTheta, ZagaMeanSigmaZeroProbability, ZagaTheta,
-    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
-    ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
-    ZinbTotalMeanSizeZeroProbabilityTheta, ZipMeanZeroProbability, ZipTheta,
-    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+    StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauTheta, StudentTTheta,
+    TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
+    ZagaMeanSigmaZeroProbability, ZagaTheta, ZagaTotalMeanCvZeroProbability,
+    ZagaTotalMeanCvZeroProbabilityTheta, ZinbMeanSizeZeroProbability, ZinbTheta,
+    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta,
+    ZipMeanZeroProbability, ZipTheta, ZipTotalMeanZeroProbability,
+    ZipTotalMeanZeroProbabilityTheta,
 };
 
 const FD_REL_TOL: f64 = 8.0e-4;
@@ -106,6 +108,16 @@ fn new_continuous_family_gradients_match_finite_differences() {
         &TweedieMeanDispersionPower::new(),
         1.4,
         [0.2, -0.3, 0.0],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanCvPower::new(),
+        1.4,
+        [0.2, -0.3, 0.0],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
+        &StudentTMuSigmaTau::new(),
+        0.4,
+        [0.1, -0.2, 3.0_f64.ln()],
     );
 }
 
@@ -392,12 +404,125 @@ fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
             .nll(
                 -1.0,
                 TweedieTheta {
-                    mu: 1.0,
-                    sigma: 1.0,
-                    nu: 1.5,
+                    mean: 1.0,
+                    dispersion: 1.0,
+                    power: 1.5,
                 },
             )
             .is_infinite()
+    );
+    assert!(
+        TweedieMeanCvPower::new()
+            .nll(
+                1.0,
+                TweedieMeanCvPowerTheta {
+                    mean: 1.0,
+                    cv: 0.0,
+                    power: 1.5,
+                },
+            )
+            .is_infinite()
+    );
+    assert!(
+        TweedieMeanDispersionPower::new()
+            .nll(
+                1.0,
+                TweedieTheta {
+                    mean: 1.0,
+                    dispersion: 1.0,
+                    power: 2.0,
+                },
+            )
+            .is_infinite()
+    );
+    assert!(
+        StudentTMuSigmaTau::new()
+            .nll(
+                1.0,
+                StudentTMuSigmaTauTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                    tau: 2.0,
+                },
+            )
+            .is_infinite()
+    );
+    assert!(
+        StudentTMuSigmaTau::new()
+            .cdf(
+                1.0,
+                StudentTMuSigmaTauTheta {
+                    mu: 0.0,
+                    sigma: 0.0,
+                    tau: 5.0,
+                },
+            )
+            .is_nan()
+    );
+}
+
+#[test]
+fn tweedie_mean_cv_matches_mean_dispersion_equivalent() {
+    let mean_cv = TweedieMeanCvPower::new();
+    let mean_dispersion = TweedieMeanDispersionPower::new();
+    let theta = TweedieMeanCvPowerTheta {
+        mean: 1.4,
+        cv: 0.7,
+        power: 1.5,
+    };
+    let canonical: TweedieTheta = theta.into();
+
+    assert_close(
+        mean_cv.nll(1.1, theta),
+        mean_dispersion.nll(1.1, canonical),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_cv.cdf(1.1, theta),
+        mean_dispersion.cdf(1.1, canonical),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_cv.quantile(0.7, theta),
+        mean_dispersion.quantile(0.7, canonical),
+        0.0,
+        1.0e-10,
+    );
+}
+
+#[test]
+fn student_t_dynamic_matches_fixed_df_equivalent() {
+    let dynamic = StudentTMuSigmaTau::new();
+    let fixed = StudentTMuSigma::try_new(5.0).unwrap();
+    let dynamic_theta = StudentTMuSigmaTauTheta {
+        mu: 0.2,
+        sigma: 1.3,
+        tau: 5.0,
+    };
+    let fixed_theta = StudentTTheta {
+        mu: dynamic_theta.mu,
+        sigma: dynamic_theta.sigma,
+    };
+
+    assert_close(
+        dynamic.nll(0.7, dynamic_theta),
+        fixed.nll(0.7, fixed_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        dynamic.cdf(0.7, dynamic_theta),
+        fixed.cdf(0.7, fixed_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        dynamic.quantile(0.7, dynamic_theta),
+        fixed.quantile(0.7, fixed_theta),
+        0.0,
+        1.0e-10,
     );
 }
 

@@ -3,16 +3,19 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, ModelError, Mu,
-    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, LogPlus,
+    ModelError, Mu, ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::numeric::finite_difference_gradient_eta;
 use crate::special::{invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
 
 /// Student's t distribution with `Identity` link for `mu` and `Log` link
 /// for `sigma`.
 pub type StudentTMuSigma = StudentT<Identity, Log>;
+/// Student's t distribution with estimated degrees of freedom `tau > 2`.
+pub type StudentTMuSigmaTau = StudentTDynamic<Identity, Log, LogPlus<2>>;
 
 /// Student's t location-scale family with a fixed number of degrees of freedom.
 ///
@@ -71,9 +74,7 @@ where
             return f64::INFINITY;
         }
 
-        let nu = self.degrees_of_freedom;
-        let z = (y - theta.mu) / theta.sigma;
-        student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
+        student_t_nll_theta(self.degrees_of_freedom, y, theta)
     }
 
     /// Computes NLL and gradient w.r.t. eta for one observation.
@@ -117,13 +118,7 @@ where
             return 0.5;
         }
 
-        let nu = self.degrees_of_freedom;
-        let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
-        if t < 0.0 {
-            0.5 * beta
-        } else {
-            1.0 - 0.5 * beta
-        }
+        student_t_standard_cdf(self.degrees_of_freedom, t)
     }
 
     fn standard_quantile(&self, p: f64) -> f64 {
@@ -140,25 +135,7 @@ where
             return 0.0;
         }
 
-        invert_real_cdf(p, |t| self.standard_cdf(t))
-    }
-
-    fn standard_density(&self, t: f64) -> f64 {
-        if !t.is_finite() {
-            return 0.0;
-        }
-
-        let nu = self.degrees_of_freedom;
-        (-student_t_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()).exp()
-    }
-
-    fn standard_crps_constant(&self) -> f64 {
-        let nu = self.degrees_of_freedom;
-        let log_beta_half_nu_minus_half = ln_beta(0.5, nu - 0.5);
-        let log_beta_half_nu_half = ln_beta(0.5, 0.5 * nu);
-
-        2.0 * nu.sqrt() / (nu - 1.0)
-            * (log_beta_half_nu_minus_half - 2.0 * log_beta_half_nu_half).exp()
+        student_t_standard_quantile(self.degrees_of_freedom, p)
     }
 }
 
@@ -272,12 +249,7 @@ where
         }
 
         let nu = self.degrees_of_freedom;
-        let z = (y - theta.mu) / theta.sigma;
-        let cdf = self.standard_cdf(z);
-        let density = self.standard_density(z);
-        let tail_moment = 2.0 * density * (nu + z * z) / (nu - 1.0);
-
-        theta.sigma * (z * (2.0 * cdf - 1.0) + tail_moment - self.standard_crps_constant())
+        student_t_crps_theta(nu, y, theta)
     }
 }
 
@@ -295,6 +267,203 @@ where
 
         let z = rand_distr::Distribution::sample(
             &rand_distr::StudentT::new(self.degrees_of_freedom)
+                .expect("validated degrees_of_freedom must construct"),
+            rng,
+        );
+        theta.mu + theta.sigma * z
+    }
+}
+
+/// Student's t location-scale family with estimated degrees of freedom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTDynamic<MuLink = Identity, SigmaLink = Log, TauLink = LogPlus<2>> {
+    marker: PhantomData<(MuLink, SigmaLink, TauLink)>,
+}
+
+impl<MuLink, SigmaLink, TauLink> StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    /// Creates a stateless dynamic-DF Student's t family.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn theta_from_eta(eta: StudentTMuSigmaTauEta) -> StudentTMuSigmaTauTheta {
+        StudentTMuSigmaTauTheta {
+            mu: MuLink::inverse(eta.mu),
+            sigma: SigmaLink::inverse(eta.sigma),
+            tau: TauLink::inverse(eta.tau),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_theta(y: f64, theta: StudentTMuSigmaTauTheta) -> f64 {
+        if !valid_dynamic_theta(theta) {
+            return f64::INFINITY;
+        }
+        student_t_nll_theta(theta.tau, y, theta.location_scale())
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: StudentTMuSigmaTauEta,
+    ) -> (f64, StudentTMuSigmaTauEta) {
+        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        if !nll.is_finite() {
+            return (nll, StudentTMuSigmaTauEta::from_array([f64::NAN; 3]));
+        }
+
+        let gradient =
+            finite_difference_gradient_eta::<_, StudentTMuSigmaTauEta, 3>(eta, |probe| {
+                Self::nll_theta(y, Self::theta_from_eta(probe))
+            });
+        (nll, StudentTMuSigmaTauEta::from_array(gradient))
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> Default for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> Family for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    type Eta = StudentTMuSigmaTauEta;
+    type Theta = StudentTMuSigmaTauTheta;
+    type NllGradientEta = StudentTMuSigmaTauEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_theta(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> ParameterizedFamily<3>
+    for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    TauLink: InitialEtaFromTheta<f64> + Link<f64>,
+{
+    type Params = (Mu, Sigma, Tau);
+    type Links = (MuLink, SigmaLink, TauLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return StudentTMuSigmaTauEta {
+                mu: MuLink::initial_eta_from_theta(0.0),
+                sigma: SigmaLink::initial_eta_from_theta(1.0),
+                tau: TauLink::initial_eta_from_theta(5.0),
+            };
+        };
+
+        StudentTMuSigmaTauEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+            tau: TauLink::initial_eta_from_theta(5.0),
+        }
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasCdf for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !valid_dynamic_theta(theta) {
+            return f64::NAN;
+        }
+
+        student_t_standard_cdf(theta.tau, (y - theta.mu) / theta.sigma)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasQuantile for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !valid_dynamic_theta(theta) {
+            return f64::NAN;
+        }
+
+        theta.mu + theta.sigma * student_t_standard_quantile(theta.tau, p)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasCrps for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !valid_dynamic_theta(theta) {
+            return f64::NAN;
+        }
+
+        student_t_crps_theta(theta.tau, y, theta.location_scale())
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, TauLink> CanSimulate<Rng>
+    for StudentTDynamic<MuLink, SigmaLink, TauLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if !valid_dynamic_theta(theta) {
+            return f64::NAN;
+        }
+
+        let z = rand_distr::Distribution::sample(
+            &rand_distr::StudentT::new(theta.tau)
                 .expect("validated degrees_of_freedom must construct"),
             rng,
         );
@@ -337,6 +506,140 @@ pub struct StudentTTheta {
     pub mu: f64,
     /// Positive scale parameter.
     pub sigma: f64,
+}
+
+/// Predictors for dynamic-DF Student's t on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTMuSigmaTauEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Degrees-of-freedom predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<3> for StudentTMuSigmaTauEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            tau: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.tau,
+            _ => unreachable!("dynamic student-t eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Dynamic-DF Student's t parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTMuSigmaTauTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Degrees of freedom, expected to be greater than two.
+    pub tau: f64,
+}
+
+impl StudentTMuSigmaTauTheta {
+    #[inline(always)]
+    fn location_scale(self) -> StudentTTheta {
+        StudentTTheta {
+            mu: self.mu,
+            sigma: self.sigma,
+        }
+    }
+}
+
+#[inline(always)]
+fn valid_dynamic_theta(theta: StudentTMuSigmaTauTheta) -> bool {
+    theta.mu.is_finite()
+        && theta.sigma > 0.0
+        && theta.sigma.is_finite()
+        && theta.tau > 2.0
+        && theta.tau.is_finite()
+}
+
+fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
+    if !y.is_finite()
+        || !theta.mu.is_finite()
+        || theta.sigma <= 0.0
+        || !theta.sigma.is_finite()
+        || nu <= 0.0
+        || !nu.is_finite()
+    {
+        return f64::INFINITY;
+    }
+
+    let z = (y - theta.mu) / theta.sigma;
+    student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
+}
+
+fn student_t_standard_cdf(nu: f64, t: f64) -> f64 {
+    if !t.is_finite() {
+        return if t.is_sign_negative() { 0.0 } else { 1.0 };
+    }
+    if t == 0.0 {
+        return 0.5;
+    }
+
+    let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
+    if t < 0.0 {
+        0.5 * beta
+    } else {
+        1.0 - 0.5 * beta
+    }
+}
+
+fn student_t_standard_quantile(nu: f64, p: f64) -> f64 {
+    if p < 0.0 || !p.is_finite() || p > 1.0 || nu <= 0.0 || !nu.is_finite() {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
+    if p == 0.5 {
+        return 0.0;
+    }
+
+    invert_real_cdf(p, |t| student_t_standard_cdf(nu, t))
+}
+
+fn student_t_standard_density(nu: f64, t: f64) -> f64 {
+    if !t.is_finite() {
+        return 0.0;
+    }
+
+    (-student_t_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()).exp()
+}
+
+fn student_t_standard_crps_constant(nu: f64) -> f64 {
+    let log_beta_half_nu_minus_half = ln_beta(0.5, nu - 0.5);
+    let log_beta_half_nu_half = ln_beta(0.5, 0.5 * nu);
+
+    2.0 * nu.sqrt() / (nu - 1.0) * (log_beta_half_nu_minus_half - 2.0 * log_beta_half_nu_half).exp()
+}
+
+fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
+    let z = (y - theta.mu) / theta.sigma;
+    let cdf = student_t_standard_cdf(nu, z);
+    let density = student_t_standard_density(nu, z);
+    let tail_moment = 2.0 * density * (nu + z * z) / (nu - 1.0);
+
+    theta.sigma * (z * (2.0 * cdf - 1.0) + tail_moment - student_t_standard_crps_constant(nu))
 }
 
 /// Normalization constant for the logarithm of the Student's t density.

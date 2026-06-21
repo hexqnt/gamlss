@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "argmin",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "thiserror",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-diagnostics"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "gamlss-core",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-family"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "gamlss-core",
@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-formula"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "gamlss-core",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-spline"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "gamlss-core",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "gamlss-transform"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "approx",
  "thiserror",
