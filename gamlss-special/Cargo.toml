@@ -9,7 +9,7 @@ repository.workspace = true
 documentation = "https://docs.rs/gamlss-special"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = ["src/**/*", "tests/**/*", "Cargo.toml", "README.md"]
 
 [dependencies]
 
