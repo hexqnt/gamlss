@@ -395,7 +395,7 @@ mod tests {
         let crps = model.crps_values(&[0.0, 0.0]).expect("valid parameters");
 
         assert_relative_eq!(crps[0], 0.233_694_977_255_109_13, epsilon = 1.0e-12);
-        assert_relative_eq!(crps[1], 0.602_441_337_825_803, epsilon = 1.0e-12);
+        assert_relative_eq!(crps[1], 0.602_441_346_364_267_4, epsilon = 1.0e-12);
         assert_relative_eq!(
             model.mean_crps(&[0.0, 0.0]).expect("valid parameters"),
             (crps[0] + crps[1]) / 2.0,

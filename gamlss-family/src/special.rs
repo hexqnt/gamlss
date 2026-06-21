@@ -490,7 +490,25 @@ fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
 
 /// Standard normal CDF approximation.
 pub(crate) fn unit_normal_cdf(z: f64) -> f64 {
-    (0.5 * (1.0 + erf_approx(z / std::f64::consts::SQRT_2))).clamp(0.0, 1.0)
+    if z.is_nan() {
+        return f64::NAN;
+    }
+    if z == f64::NEG_INFINITY {
+        return 0.0;
+    }
+    if z == f64::INFINITY {
+        return 1.0;
+    }
+
+    let x = z.abs();
+    let t = 1.0 / (1.0 + 0.231_641_9 * x);
+    let polynomial =
+        ((((1.330_274_429 * t - 1.821_255_978) * t + 1.781_477_937) * t - 0.356_563_782) * t
+            + 0.319_381_530)
+            * t;
+    let tail = (-0.5 * x * x).exp() * polynomial / (2.0 * std::f64::consts::PI).sqrt();
+
+    if z >= 0.0 { 1.0 - tail } else { tail }.clamp(0.0, 1.0)
 }
 
 /// Owen's T function `T(h, a)`.
@@ -578,22 +596,6 @@ pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
         -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
             / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
     }
-}
-
-fn erf_approx(value: f64) -> f64 {
-    const P: f64 = 0.327_591_1;
-    const A1: f64 = 0.254_829_592;
-    const A2: f64 = -0.284_496_736;
-    const A3: f64 = 1.421_413_741;
-    const A4: f64 = -1.453_152_027;
-    const A5: f64 = 1.061_405_429;
-
-    let sign = if value < 0.0 { -1.0 } else { 1.0 };
-    let x = value.abs();
-    let t = 1.0 / (1.0 + P * x);
-    let polynomial = (((((A5 * t + A4) * t) + A3) * t + A2) * t + A1) * t;
-
-    sign * (1.0 - polynomial * (-x * x).exp())
 }
 
 #[cfg(test)]

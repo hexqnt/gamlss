@@ -2,21 +2,15 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Rate,
-};
+use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log};
 
 use crate::domain::{is_positive_finite, is_probability};
-use crate::initial::{positive_floor, weighted_mean, weighted_values};
 
-/// Exponential mean parameterization marker.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MeanParam;
+pub use mean::{ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, MeanParam};
+pub use rate::{ExponentialRate, ExponentialRateEta, ExponentialRateTheta, RateParam};
 
-/// Exponential rate parameterization marker.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RateParam;
+mod mean;
+mod rate;
 
 /// Exponential family implementation carrier.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,247 +72,9 @@ impl<Param, Link> Exponential<Param, Link> {
     }
 }
 
-impl<Link> Exponential<MeanParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: ExponentialMeanEta) -> ExponentialMeanTheta {
-        ExponentialMeanTheta {
-            mean: Link::inverse(eta.mean),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialMeanEta) -> (f64, ExponentialMeanEta) {
-        let theta = Self::theta_from_eta(eta);
-        let rate = theta.rate();
-        let nll = Self::nll_rate(y, rate);
-        if !nll.is_finite() {
-            return (nll, ExponentialMeanEta { mean: f64::NAN });
-        }
-
-        let d_rate = y - 1.0 / rate.rate;
-        let d_mean = d_rate * (-1.0 / (theta.mean * theta.mean));
-        (
-            nll,
-            ExponentialMeanEta {
-                mean: d_mean * Link::derivative_inverse(eta.mean),
-            },
-        )
-    }
-}
-
-impl<Link> Exponential<RateParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    #[inline(always)]
-    fn theta_from_eta(eta: ExponentialRateEta) -> ExponentialRateTheta {
-        ExponentialRateTheta {
-            rate: Link::inverse(eta.rate),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: ExponentialRateEta) -> (f64, ExponentialRateEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_rate(y, theta);
-        if !nll.is_finite() {
-            return (nll, ExponentialRateEta { rate: f64::NAN });
-        }
-
-        let d_rate = y - 1.0 / theta.rate;
-        (
-            nll,
-            ExponentialRateEta {
-                rate: d_rate * Link::derivative_inverse(eta.rate),
-            },
-        )
-    }
-}
-
 impl<Param, Link> Default for Exponential<Param, Link> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<Link> Family for Exponential<MeanParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    type Eta = ExponentialMeanEta;
-    type Theta = ExponentialMeanTheta;
-    type NllGradientEta = ExponentialMeanEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_rate(y, theta.rate())
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_rate(y, Self::theta_from_eta(eta).rate())
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<Link> ParameterizedFamily<1> for Exponential<MeanParam, Link>
-where
-    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Mean,);
-    type Links = (Link,);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
-        let Some(mean) = weighted_mean(&values) else {
-            return ExponentialMeanEta::from_array([0.0]);
-        };
-        ExponentialMeanEta {
-            mean: Link::initial_eta_from_theta(positive_floor(mean)),
-        }
-    }
-}
-
-impl<Link> Family for Exponential<RateParam, Link>
-where
-    Link: PositiveLink<f64>,
-{
-    type Eta = ExponentialRateEta;
-    type Theta = ExponentialRateTheta;
-    type NllGradientEta = ExponentialRateEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_rate(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_rate(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<Link> ParameterizedFamily<1> for Exponential<RateParam, Link>
-where
-    Link: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-{
-    type Params = (Rate,);
-    type Links = (Link,);
-
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        let values =
-            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
-        let Some(mean) = weighted_mean(&values) else {
-            return ExponentialRateEta::from_array([0.0]);
-        };
-        ExponentialRateEta {
-            rate: Link::initial_eta_from_theta(1.0 / positive_floor(mean)),
-        }
-    }
-}
-
-/// Predictor for exponential mean on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExponentialMeanEta {
-    /// Mean predictor.
-    pub mean: f64,
-}
-
-impl ParameterParts<1> for ExponentialMeanEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mean: values[0] }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            _ => unreachable!("exponential mean eta only has index 0"),
-        }
-    }
-}
-
-/// Natural-scale exponential mean parameter.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExponentialMeanTheta {
-    /// Positive mean.
-    pub mean: f64,
-}
-
-impl ExponentialMeanTheta {
-    #[inline(always)]
-    fn rate(self) -> ExponentialRateTheta {
-        ExponentialRateTheta {
-            rate: 1.0 / self.mean,
-        }
-    }
-}
-
-/// Predictor for exponential rate on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExponentialRateEta {
-    /// Rate predictor.
-    pub rate: f64,
-}
-
-impl ParameterParts<1> for ExponentialRateEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { rate: values[0] }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.rate,
-            _ => unreachable!("exponential rate eta only has index 0"),
-        }
-    }
-}
-
-/// Natural-scale exponential rate parameter.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExponentialRateTheta {
-    /// Positive rate.
-    pub rate: f64,
-}
-
-impl From<ExponentialMeanTheta> for ExponentialRateTheta {
-    #[inline(always)]
-    fn from(theta: ExponentialMeanTheta) -> Self {
-        theta.rate()
     }
 }
 
@@ -379,11 +135,6 @@ macro_rules! impl_exponential_helpers {
 
 impl_exponential_helpers!(MeanParam);
 impl_exponential_helpers!(RateParam);
-
-/// Exponential distribution parameterized by mean.
-pub type ExponentialMean = Exponential<MeanParam, Log>;
-/// Exponential distribution parameterized by rate.
-pub type ExponentialRate = Exponential<RateParam, Log>;
 
 #[cfg(test)]
 mod tests {
