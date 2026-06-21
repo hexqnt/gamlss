@@ -6,12 +6,13 @@ use gamlss_family::{
     LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
     LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
     LogNormalMedianLogSdTheta, NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
-    NegativeBinomialMeanSize, NegativeBinomialTheta, StudentTMuSigmaTau, StudentTMuSigmaTauTheta,
-    TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
-    WeibullMeanShape, WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeTheta,
-    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
-    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta,
-    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+    NegativeBinomialMeanSize, NegativeBinomialTheta, StudentTMuSdTau, StudentTMuSdTauTheta,
+    StudentTMuSigmaTau, StudentTMuSigmaTauTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
+    TweedieMeanDispersionPower, TweedieTheta, WeibullMeanShape, WeibullMeanShapeTheta,
+    WeibullScaleShape, WeibullScaleShapeTheta, ZagaTotalMeanCvZeroProbability,
+    ZagaTotalMeanCvZeroProbabilityTheta, ZinbTotalMeanSizeZeroProbability,
+    ZinbTotalMeanSizeZeroProbabilityTheta, ZipTotalMeanZeroProbability,
+    ZipTotalMeanZeroProbabilityTheta,
 };
 
 #[test]
@@ -145,6 +146,18 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
             .nll(
                 1.2,
                 StudentTMuSigmaTauTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                    tau: 5.0,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        StudentTMuSdTau::new()
+            .nll(
+                1.2,
+                StudentTMuSdTauTheta {
                     mu: 0.0,
                     sigma: 1.0,
                     tau: 5.0,

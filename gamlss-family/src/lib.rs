@@ -51,8 +51,9 @@ pub use skew_student_t::{
     SkewStudentT, SkewStudentTEta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
 };
 pub use student_t::{
-    StudentT, StudentTDynamic, StudentTEta, StudentTMuSigma, StudentTMuSigmaTau,
-    StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTTheta,
+    StudentT, StudentTDynamic, StudentTEta, StudentTMuSdTau, StudentTMuSdTauEta,
+    StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauEta,
+    StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta,
 };
 pub use tweedie::{
     Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
@@ -164,7 +165,8 @@ pub mod prelude {
         Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
         SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta,
         SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
-        StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta,
+        StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma,
+        StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev,
         StudentTTheta, Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
         TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullEta,
         WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape,

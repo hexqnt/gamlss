@@ -1,0 +1,286 @@
+use std::marker::PhantomData;
+
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
+use gamlss_core::{
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Link, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
+};
+
+use crate::initial::{robust_location_scale, weighted_values};
+use crate::numeric::finite_difference_gradient_eta;
+
+use super::{
+    StudentTTheta, student_t_crps_theta, student_t_nll_theta, student_t_standard_cdf,
+    student_t_standard_quantile,
+};
+
+/// Dynamic-DF Student's t family where `sigma` is the standard deviation.
+///
+/// This is often a more convenient parameterization for residual models and
+/// volatility-style targets than the canonical Student-t scale. Internally it
+/// maps `sigma` to the location-scale Student-t scale by
+/// `scale = sigma * sqrt((tau - 2) / tau)`, so `tau` must be greater than two.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTStdDev<
+    MuLink = gamlss_core::Identity,
+    SigmaLink = gamlss_core::Log,
+    TauLink = gamlss_core::LogPlus<2>,
+> {
+    marker: PhantomData<(MuLink, SigmaLink, TauLink)>,
+}
+
+impl<MuLink, SigmaLink, TauLink> StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    /// Creates a stateless standard-deviation Student's t family.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn theta_from_eta(eta: StudentTMuSdTauEta) -> StudentTMuSdTauTheta {
+        StudentTMuSdTauTheta {
+            mu: MuLink::inverse(eta.mu),
+            sigma: SigmaLink::inverse(eta.sigma),
+            tau: TauLink::inverse(eta.tau),
+        }
+    }
+
+    #[inline(always)]
+    fn nll_theta(y: f64, theta: StudentTMuSdTauTheta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::INFINITY;
+        };
+        student_t_nll_theta(theta.tau, y, location_scale)
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta_values(y: f64, eta: StudentTMuSdTauEta) -> (f64, StudentTMuSdTauEta) {
+        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        if !nll.is_finite() {
+            return (nll, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
+        }
+
+        let gradient = finite_difference_gradient_eta::<_, StudentTMuSdTauEta, 3>(eta, |probe| {
+            Self::nll_theta(y, Self::theta_from_eta(probe))
+        });
+        (nll, StudentTMuSdTauEta::from_array(gradient))
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> Default for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> Family for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    type Eta = StudentTMuSdTauEta;
+    type Theta = StudentTMuSdTauTheta;
+    type NllGradientEta = StudentTMuSdTauEta;
+    type Observation<'obs> = f64;
+
+    #[inline(always)]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline(always)]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_theta(y, theta)
+    }
+
+    #[inline(always)]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline(always)]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> ParameterizedFamily<3>
+    for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    TauLink: InitialEtaFromTheta<f64> + Link<f64>,
+{
+    type Params = (Mu, Sigma, Tau);
+    type Links = (MuLink, SigmaLink, TauLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return StudentTMuSdTauEta {
+                mu: MuLink::initial_eta_from_theta(0.0),
+                sigma: SigmaLink::initial_eta_from_theta(1.0),
+                tau: TauLink::initial_eta_from_theta(5.0),
+            };
+        };
+
+        StudentTMuSdTauEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+            tau: TauLink::initial_eta_from_theta(5.0),
+        }
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasCdf for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+        if !y.is_finite() {
+            return f64::NAN;
+        }
+
+        student_t_standard_cdf(theta.tau, (y - theta.mu) / location_scale.sigma)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasQuantile for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        theta.mu + location_scale.sigma * student_t_standard_quantile(theta.tau, p)
+    }
+}
+
+impl<MuLink, SigmaLink, TauLink> HasCrps for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+        if !y.is_finite() {
+            return f64::NAN;
+        }
+
+        student_t_crps_theta(theta.tau, y, location_scale)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, TauLink> CanSimulate<Rng>
+    for StudentTStdDev<MuLink, SigmaLink, TauLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    TauLink: Link<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        let z = rand_distr::Distribution::sample(
+            &rand_distr::StudentT::new(theta.tau)
+                .expect("validated degrees_of_freedom must construct"),
+            rng,
+        );
+        theta.mu + location_scale.sigma * z
+    }
+}
+
+/// Predictors for standard-deviation Student's t on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTMuSdTauEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Standard-deviation predictor.
+    pub sigma: f64,
+    /// Degrees-of-freedom predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<3> for StudentTMuSdTauEta {
+    #[inline(always)]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+            tau: values[2],
+        }
+    }
+
+    #[inline(always)]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            2 => self.tau,
+            _ => unreachable!("standard-deviation student-t eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Standard-deviation Student's t parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StudentTMuSdTauTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive standard deviation.
+    pub sigma: f64,
+    /// Degrees of freedom, expected to be greater than two.
+    pub tau: f64,
+}
+
+impl StudentTMuSdTauTheta {
+    #[inline(always)]
+    fn location_scale(self) -> Option<StudentTTheta> {
+        valid_stddev_theta(self).then(|| StudentTTheta {
+            mu: self.mu,
+            sigma: self.sigma * ((self.tau - 2.0) / self.tau).sqrt(),
+        })
+    }
+}
+
+#[inline(always)]
+fn valid_stddev_theta(theta: StudentTMuSdTauTheta) -> bool {
+    theta.mu.is_finite()
+        && theta.sigma > 0.0
+        && theta.sigma.is_finite()
+        && theta.tau > 2.0
+        && theta.tau.is_finite()
+}
