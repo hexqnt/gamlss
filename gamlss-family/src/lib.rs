@@ -46,9 +46,13 @@ pub use power_exponential::{
     PowerExponentialTheta,
 };
 pub use shash::{Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta};
-pub use skew_normal::{SkewNormal, SkewNormalEta, SkewNormalMuSigmaNu, SkewNormalTheta};
+pub use skew_normal::{
+    SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
+    SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
+};
 pub use skew_student_t::{
-    SkewStudentT, SkewStudentTEta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
+    SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd, SkewStudentTMeanSdEta,
+    SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
 };
 pub use student_t::{
     StudentT, StudentTDynamic, StudentTEta, StudentTMuSdTau, StudentTMuSdTauEta,
@@ -163,7 +167,9 @@ pub mod prelude {
         NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean, PoissonTheta,
         PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu, PowerExponentialTheta,
         Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
-        SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta,
+        SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
+        SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd,
+        SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
         SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
         StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma,
         StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev,

@@ -3,14 +3,15 @@ use gamlss_family::{
     BeinfMuSigmaNuTau, BeinfTheta, GeneralizedGammaMuSigmaNu, GeneralizedGammaTheta,
     GevMuSigmaShape, GevTheta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, NormalMuSigma, NormalTheta,
     PowerExponentialMuSigmaNu, PowerExponentialTheta, ShashMuSigmaNuTau, ShashTheta,
-    SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
-    StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauTheta, StudentTTheta,
-    TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
-    ZagaMeanSigmaZeroProbability, ZagaTheta, ZagaTotalMeanCvZeroProbability,
-    ZagaTotalMeanCvZeroProbabilityTheta, ZinbMeanSizeZeroProbability, ZinbTheta,
-    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta,
-    ZipMeanZeroProbability, ZipTheta, ZipTotalMeanZeroProbability,
-    ZipTotalMeanZeroProbabilityTheta,
+    SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
+    SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
+    StudentTMuSdTau, StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau,
+    StudentTMuSigmaTauTheta, StudentTTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
+    TweedieMeanDispersionPower, TweedieTheta, ZagaMeanSigmaZeroProbability, ZagaTheta,
+    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta,
+    ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
+    ZinbTotalMeanSizeZeroProbabilityTheta, ZipMeanZeroProbability, ZipTheta,
+    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
 };
 
 const FD_REL_TOL: f64 = 8.0e-4;
@@ -75,12 +76,22 @@ fn new_continuous_family_gradients_match_finite_differences() {
         [0.1, -0.2, 0.3],
     );
     assert_gradient_matches_finite_difference::<_, 3>(
+        &SkewNormalMeanSdNu::new(),
+        0.4,
+        [0.1, -0.2, 0.3],
+    );
+    assert_gradient_matches_finite_difference::<_, 3>(
         &PowerExponentialMuSigmaNu::new(),
         0.4,
         [0.1, -0.2, 2.0_f64.ln()],
     );
     assert_gradient_matches_finite_difference::<_, 4>(
         &SkewStudentTMuSigmaNuTau::new(),
+        0.4,
+        [0.1, -0.2, 0.3, 5.0_f64.ln()],
+    );
+    assert_gradient_matches_finite_difference::<_, 4>(
+        &SkewStudentTMeanSdNuTau::new(),
         0.4,
         [0.1, -0.2, 0.3, 5.0_f64.ln()],
     );
@@ -400,6 +411,56 @@ fn invalid_domains_return_non_finite_likelihoods_for_new_families() {
             .is_infinite()
     );
     assert!(
+        SkewNormalMeanSdNu::new()
+            .nll(
+                0.0,
+                SkewNormalMeanSdTheta {
+                    mean: 0.0,
+                    sigma: 0.0,
+                    nu: 0.0,
+                },
+            )
+            .is_infinite()
+    );
+    assert!(
+        SkewNormalMeanSdNu::new()
+            .cdf(
+                0.0,
+                SkewNormalMeanSdTheta {
+                    mean: f64::NAN,
+                    sigma: 1.0,
+                    nu: 0.0,
+                },
+            )
+            .is_nan()
+    );
+    assert!(
+        SkewStudentTMeanSdNuTau::new()
+            .nll(
+                0.0,
+                SkewStudentTMeanSdTheta {
+                    mean: 0.0,
+                    sigma: 1.0,
+                    nu: 0.0,
+                    tau: 2.0,
+                },
+            )
+            .is_infinite()
+    );
+    assert!(
+        SkewStudentTMeanSdNuTau::new()
+            .quantile(
+                0.5,
+                SkewStudentTMeanSdTheta {
+                    mean: 0.0,
+                    sigma: 1.0,
+                    nu: f64::INFINITY,
+                    tau: 5.0,
+                },
+            )
+            .is_nan()
+    );
+    assert!(
         TweedieMeanDispersionPower::new()
             .nll(
                 -1.0,
@@ -527,6 +588,91 @@ fn student_t_dynamic_matches_fixed_df_equivalent() {
 }
 
 #[test]
+fn skew_normal_mean_sd_matches_location_scale_equivalent() {
+    let mean_sd = SkewNormalMeanSdNu::new();
+    let location_scale = SkewNormalMuSigmaNu::new();
+    let mean_sd_theta = SkewNormalMeanSdTheta {
+        mean: 0.2,
+        sigma: 1.3,
+        nu: 0.7,
+    };
+    let delta = mean_sd_theta.nu / mean_sd_theta.nu.hypot(1.0);
+    let standardized_mean = (2.0 / std::f64::consts::PI).sqrt() * delta;
+    let standardized_variance = 1.0 - standardized_mean * standardized_mean;
+    let scale = mean_sd_theta.sigma / standardized_variance.sqrt();
+    let location_scale_theta = SkewNormalTheta {
+        mu: mean_sd_theta.mean - scale * standardized_mean,
+        sigma: scale,
+        nu: mean_sd_theta.nu,
+    };
+
+    assert_close(
+        mean_sd.nll(0.7, mean_sd_theta),
+        location_scale.nll(0.7, location_scale_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_sd.cdf(0.7, mean_sd_theta),
+        location_scale.cdf(0.7, location_scale_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_sd.quantile(0.7, mean_sd_theta),
+        location_scale.quantile(0.7, location_scale_theta),
+        0.0,
+        1.0e-10,
+    );
+}
+
+#[test]
+fn skew_student_t_mean_sd_matches_location_scale_equivalent() {
+    let mean_sd = SkewStudentTMeanSdNuTau::new();
+    let location_scale = SkewStudentTMuSigmaNuTau::new();
+    let mean_sd_theta = SkewStudentTMeanSdTheta {
+        mean: 0.2,
+        sigma: 1.3,
+        nu: 0.7,
+        tau: 5.0,
+    };
+    let delta = mean_sd_theta.nu / mean_sd_theta.nu.hypot(1.0);
+    let log_mean_factor = 0.5 * mean_sd_theta.tau.ln()
+        + statrs::function::gamma::ln_gamma(0.5 * (mean_sd_theta.tau - 1.0))
+        - 0.5 * std::f64::consts::PI.ln()
+        - statrs::function::gamma::ln_gamma(0.5 * mean_sd_theta.tau);
+    let standardized_mean = delta * log_mean_factor.exp();
+    let standardized_variance =
+        mean_sd_theta.tau / (mean_sd_theta.tau - 2.0) - standardized_mean * standardized_mean;
+    let scale = mean_sd_theta.sigma / standardized_variance.sqrt();
+    let location_scale_theta = SkewStudentTTheta {
+        mu: mean_sd_theta.mean - scale * standardized_mean,
+        sigma: scale,
+        nu: mean_sd_theta.nu,
+        tau: mean_sd_theta.tau,
+    };
+
+    assert_close(
+        mean_sd.nll(0.7, mean_sd_theta),
+        location_scale.nll(0.7, location_scale_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_sd.cdf(0.7, mean_sd_theta),
+        location_scale.cdf(0.7, location_scale_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        mean_sd.quantile(0.7, mean_sd_theta),
+        location_scale.quantile(0.7, location_scale_theta),
+        0.0,
+        1.0e-10,
+    );
+}
+
+#[test]
 fn new_families_match_expected_symmetric_special_cases() {
     let normal = NormalMuSigma::new();
     let normal_theta = NormalTheta {
@@ -551,6 +697,51 @@ fn new_families_match_expected_symmetric_special_cases() {
         normal.cdf(0.7, normal_theta),
         0.0,
         2.0e-7,
+    );
+
+    let skew_normal_mean_sd = SkewNormalMeanSdNu::new();
+    let skew_normal_mean_sd_theta = SkewNormalMeanSdTheta {
+        mean: normal_theta.mu,
+        sigma: normal_theta.sigma,
+        nu: 0.0,
+    };
+    assert_close(
+        skew_normal_mean_sd.nll(0.7, skew_normal_mean_sd_theta),
+        normal.nll(0.7, normal_theta),
+        1.0e-9,
+        1.0e-9,
+    );
+    assert_close(
+        skew_normal_mean_sd.cdf(0.7, skew_normal_mean_sd_theta),
+        normal.cdf(0.7, normal_theta),
+        0.0,
+        2.0e-7,
+    );
+
+    let skew_t_mean_sd = SkewStudentTMeanSdNuTau::new();
+    let student_t_stddev = StudentTMuSdTau::new();
+    let skew_t_mean_sd_theta = SkewStudentTMeanSdTheta {
+        mean: 0.2,
+        sigma: 1.3,
+        nu: 0.0,
+        tau: 5.0,
+    };
+    let student_t_stddev_theta = StudentTMuSdTauTheta {
+        mu: skew_t_mean_sd_theta.mean,
+        sigma: skew_t_mean_sd_theta.sigma,
+        tau: skew_t_mean_sd_theta.tau,
+    };
+    assert_close(
+        skew_t_mean_sd.nll(0.7, skew_t_mean_sd_theta),
+        student_t_stddev.nll(0.7, student_t_stddev_theta),
+        0.0,
+        1.0e-12,
+    );
+    assert_close(
+        skew_t_mean_sd.cdf(0.7, skew_t_mean_sd_theta),
+        student_t_stddev.cdf(0.7, student_t_stddev_theta),
+        0.0,
+        2.0e-9,
     );
 
     let power_exponential = PowerExponentialMuSigmaNu::new();
@@ -586,5 +777,34 @@ fn new_families_match_expected_symmetric_special_cases() {
         normal.cdf(0.7, normal_theta),
         0.0,
         2.0e-7,
+    );
+}
+
+#[test]
+fn mean_sd_skew_parameterizations_handle_extreme_finite_skewness() {
+    assert!(
+        SkewNormalMeanSdNu::new()
+            .nll(
+                0.0,
+                SkewNormalMeanSdTheta {
+                    mean: 0.0,
+                    sigma: 1.0,
+                    nu: 1.0e200,
+                },
+            )
+            .is_finite()
+    );
+    assert!(
+        SkewStudentTMeanSdNuTau::new()
+            .nll(
+                0.0,
+                SkewStudentTMeanSdTheta {
+                    mean: 0.0,
+                    sigma: 1.0,
+                    nu: 1.0e200,
+                    tau: 5.0,
+                },
+            )
+            .is_finite()
     );
 }

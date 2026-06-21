@@ -592,7 +592,7 @@ pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
         (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
             / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
     } else {
-        let q = (-2.0 * (1.0 - p).ln()).sqrt();
+        let q = (-2.0 * (-p).ln_1p()).sqrt();
         -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
             / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
     }
@@ -655,6 +655,11 @@ mod tests {
         assert_relative_eq!(unit_normal_quantile(0.5), 0.0, epsilon = 1.0e-9);
         assert_relative_eq!(unit_normal_quantile(0.841_344_746), 1.0, epsilon = 1.0e-6);
         assert_relative_eq!(unit_normal_quantile(0.158_655_254), -1.0, epsilon = 1.0e-6);
+
+        let upper = unit_normal_quantile(1.0 - 1.0e-12);
+        let lower = unit_normal_quantile(1.0e-12);
+        assert!(upper.is_finite());
+        assert_relative_eq!(upper, -lower, epsilon = 5.0e-6);
     }
 
     #[test]
