@@ -522,7 +522,7 @@ pub(crate) fn log_ndtr(z: f64) -> f64 {
     if z == f64::INFINITY {
         return 0.0;
     }
-    if z < -10.0 {
+    if z <= -5.0 {
         return log_ndtr_left_tail(z);
     }
 
@@ -633,12 +633,22 @@ pub(crate) fn unit_normal_quantile(p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
+    use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
     use super::{
         digamma, discrete_quantile, integrate_finite, invert_bounded_cdf, invert_positive_cdf,
-        invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr, normal_mills_ratio,
+        invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr, normal_mills_ratio, owens_t,
         regularized_beta, regularized_gamma_lower, unit_normal_cdf, unit_normal_quantile,
     };
+
+    fn assert_close(actual: f64, expected: f64, rel_tol: f64, abs_tol: f64) {
+        let diff = (actual - expected).abs();
+        let scale = actual.abs().max(expected.abs()).max(1.0);
+        assert!(
+            diff <= abs_tol.max(rel_tol * scale),
+            "actual {actual:?} differs from expected {expected:?}; diff={diff:?}, rel_tol={rel_tol:?}, abs_tol={abs_tol:?}"
+        );
+    }
 
     #[test]
     fn ln_gamma_matches_known_constants() {
@@ -649,6 +659,20 @@ mod tests {
             epsilon = 1.0e-12
         );
         assert_relative_eq!(ln_gamma(5.0), 24.0_f64.ln(), epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn ln_gamma_matches_statrs_reference_grid() {
+        for value in [
+            0.001_f64, 0.01, 0.1, 0.5, 1.0, 1.5, 2.0, 5.0, 25.0, 75.0, 150.0,
+        ] {
+            assert_close(
+                ln_gamma(value),
+                statrs::function::gamma::ln_gamma(value),
+                2.0e-14,
+                2.0e-13,
+            );
+        }
     }
 
     #[test]
@@ -676,10 +700,49 @@ mod tests {
     }
 
     #[test]
+    fn digamma_matches_statrs_reference_grid() {
+        for value in [0.001_f64, 0.01, 0.1, 0.5, 1.0, 1.5, 8.0, 30.0, 120.0] {
+            assert_close(
+                digamma(value),
+                statrs::function::gamma::digamma(value),
+                2.0e-12,
+                2.0e-11,
+            );
+        }
+    }
+
+    #[test]
     fn unit_normal_cdf_matches_reference_points() {
         assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
         assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
+    }
+
+    #[test]
+    fn unit_normal_cdf_and_quantile_match_statrs_reference_grid() {
+        let reference = StatrsNormal::new(0.0, 1.0).unwrap();
+
+        for z in [-8.0_f64, -6.0, -3.0, -1.0, 0.0, 1.0, 3.0, 6.0, 8.0] {
+            assert_close(unit_normal_cdf(z), reference.cdf(z), 0.0, 8.0e-8);
+        }
+
+        for p in [
+            1.0e-12,
+            1.0e-10,
+            1.0e-8,
+            1.0e-4,
+            0.01,
+            0.5,
+            0.99,
+            1.0 - 1.0e-4,
+            1.0 - 1.0e-8,
+            1.0 - 1.0e-10,
+            1.0 - 1.0e-12,
+        ] {
+            let quantile = unit_normal_quantile(p);
+            assert_close(quantile, reference.inverse_cdf(p), 0.0, 1.0e-8);
+            assert_close(unit_normal_cdf(quantile), p, 0.0, 8.0e-8);
+        }
     }
 
     #[test]
@@ -702,6 +765,14 @@ mod tests {
     }
 
     #[test]
+    fn log_ndtr_matches_statrs_reference_where_cdf_is_representable() {
+        let reference = StatrsNormal::new(0.0, 1.0).unwrap();
+        for z in [-10.0_f64, -8.0, -5.0, -2.0, 0.0, 2.0, 5.0] {
+            assert_close(log_ndtr(z), reference.cdf(z).ln(), 0.0, 1.0e-4);
+        }
+    }
+
+    #[test]
     fn unit_normal_quantile_matches_reference_points() {
         assert_relative_eq!(unit_normal_quantile(0.5), 0.0, epsilon = 1.0e-9);
         assert_relative_eq!(unit_normal_quantile(0.841_344_746), 1.0, epsilon = 1.0e-6);
@@ -721,6 +792,26 @@ mod tests {
     }
 
     #[test]
+    fn regularized_beta_matches_statrs_reference_grid() {
+        for (a, b, x) in [
+            (0.1_f64, 0.2_f64, 1.0e-8_f64),
+            (0.1, 0.2, 0.01),
+            (0.1, 5.0, 0.8),
+            (0.5, 0.5, 0.99),
+            (2.0, 7.0, 0.25),
+            (25.0, 30.0, 0.45),
+            (75.0, 80.0, 0.55),
+        ] {
+            assert_close(
+                regularized_beta(a, b, x),
+                statrs::function::beta::beta_reg(a, b, x),
+                2.0e-11,
+                2.0e-12,
+            );
+        }
+    }
+
+    #[test]
     fn regularized_gamma_lower_matches_simple_cases() {
         assert_relative_eq!(regularized_gamma_lower(1.0, 2.0), 1.0 - (-2.0_f64).exp());
         assert_relative_eq!(
@@ -732,11 +823,50 @@ mod tests {
     }
 
     #[test]
+    fn regularized_gamma_lower_matches_statrs_reference_grid() {
+        for (a, x) in [
+            (0.1_f64, 1.0e-8_f64),
+            (0.1, 0.01),
+            (0.5, 0.5),
+            (1.0, 20.0),
+            (2.5, 1.5),
+            (10.0, 12.0),
+            (50.0, 45.0),
+            (100.0, 130.0),
+        ] {
+            assert_close(
+                regularized_gamma_lower(a, x),
+                statrs::function::gamma::gamma_lr(a, x),
+                2.0e-11,
+                2.0e-12,
+            );
+        }
+    }
+
+    #[test]
     fn regularized_gamma_lower_is_bounded_near_continued_fraction_singularity() {
         let value = regularized_gamma_lower(2.5, 1.5);
 
         assert!(value.is_finite());
         assert!((0.0..=1.0).contains(&value));
+    }
+
+    #[test]
+    fn owens_t_satisfies_basic_symmetry_and_special_cases() {
+        for h in [-4.0_f64, -1.0, 0.0, 1.0, 4.0] {
+            assert_eq!(owens_t(h, 0.0), 0.0);
+            assert_close(owens_t(h, 1.3), owens_t(-h, 1.3), 0.0, 1.0e-14);
+            assert_close(owens_t(h, -1.3), -owens_t(h, 1.3), 0.0, 1.0e-14);
+        }
+
+        for a in [-2.0_f64, -0.5, 0.5, 2.0] {
+            assert_close(
+                owens_t(0.0, a),
+                a.atan() / (2.0 * std::f64::consts::PI),
+                0.0,
+                1.0e-12,
+            );
+        }
     }
 
     #[test]

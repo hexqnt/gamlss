@@ -7,7 +7,8 @@ use gamlss_family::{
     LogNormalLogLocationLogSd, LogNormalTheta, LogisticEta, LogisticMuSigma, LogisticTheta,
     LomaxEta, LomaxShapeScale, LomaxTheta, NegativeBinomialEta, NegativeBinomialMeanSize,
     NegativeBinomialTheta, NormalEta, NormalMuSigma, NormalTheta, PoissonEta, PoissonMean,
-    PoissonTheta, StudentTEta, StudentTMuSigma, StudentTTheta, WeibullEta, WeibullScaleShape,
+    PoissonTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentTEta, StudentTMuSigma,
+    StudentTTheta, TweedieMeanDispersionPower, TweedieTheta, WeibullEta, WeibullScaleShape,
     WeibullTheta,
 };
 use proptest::prelude::*;
@@ -27,6 +28,14 @@ const FD_ABS_TOL: f64 = 2.0e-5;
 const REAL_REFERENCE_POINTS: [f64; 5] = [-3.0, -1.0, 0.0, 1.0, 3.0];
 const POSITIVE_REFERENCE_POINTS: [f64; 5] = [0.1, 0.5, 1.0, 2.0, 4.0];
 const REFERENCE_PROBABILITIES: [f64; 5] = [0.01, 0.1, 0.5, 0.9, 0.99];
+const TAIL_PROBABILITIES: [f64; 6] = [
+    1.0e-12,
+    1.0e-10,
+    1.0e-8,
+    1.0 - 1.0e-8,
+    1.0 - 1.0e-10,
+    1.0 - 1.0e-12,
+];
 
 struct ContinuousReferenceTolerances {
     cdf_abs: f64,
@@ -189,6 +198,29 @@ where
 
 fn nb_success_probability(theta: NegativeBinomialTheta) -> f64 {
     theta.shape / (theta.shape + theta.mu)
+}
+
+fn statrs_discrete_quantile<F>(p: f64, mut cdf: F) -> u64
+where
+    F: FnMut(u64) -> f64,
+{
+    let mut high = 1_u64;
+    while cdf(high) < p {
+        high = high.saturating_mul(2);
+        assert!(high > 1, "discrete reference quantile search overflowed");
+    }
+
+    let mut low = 0_u64;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if cdf(mid) < p {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    low
 }
 
 fn assert_continuous_statrs_reference<F, R>(
@@ -717,6 +749,242 @@ fn cdf_quantile_and_density_match_statrs_references() {
             density_abs: 1.0e-12,
             quantile_abs: 1.0e-12,
         },
+    );
+}
+
+#[test]
+fn tail_cdf_and_quantile_match_statrs_references() {
+    let normal = NormalMuSigma::new();
+    let normal_theta = NormalTheta {
+        mu: -0.2,
+        sigma: 1.1,
+    };
+    let statrs_normal = StatrsNormal::new(normal_theta.mu, normal_theta.sigma).unwrap();
+    for p in TAIL_PROBABILITIES {
+        let actual = normal.quantile(p, normal_theta);
+        let expected = statrs_normal.inverse_cdf(p);
+        assert_close(actual, expected, 0.0, 2.0e-8);
+        assert_close(normal.cdf(actual, normal_theta), p, 0.0, 8.0e-8);
+    }
+
+    let log_normal = LogNormalLogLocationLogSd::new();
+    let log_normal_theta = LogNormalTheta {
+        log_location: 0.2,
+        log_sd: 0.7,
+    };
+    let statrs_log_normal =
+        StatrsLogNormal::new(log_normal_theta.log_location, log_normal_theta.log_sd).unwrap();
+    for p in TAIL_PROBABILITIES {
+        let actual = log_normal.quantile(p, log_normal_theta);
+        let expected = statrs_log_normal.inverse_cdf(p);
+        assert_close(actual, expected, 2.0e-8, 1.0e-8);
+        assert_close(log_normal.cdf(actual, log_normal_theta), p, 0.0, 8.0e-8);
+    }
+
+    let student_t = StudentTMuSigma::try_new(5.0).unwrap();
+    let student_t_theta = StudentTTheta {
+        mu: 0.2,
+        sigma: 1.3,
+    };
+    let statrs_student_t =
+        StatrsStudentsT::new(student_t_theta.mu, student_t_theta.sigma, 5.0).unwrap();
+    for p in TAIL_PROBABILITIES {
+        let actual = student_t.quantile(p, student_t_theta);
+        let expected = statrs_student_t.inverse_cdf(p);
+        assert_close(actual, expected, 3.0e-5, 2.0e-5);
+        assert_close(student_t.cdf(actual, student_t_theta), p, 0.0, 2.0e-7);
+    }
+}
+
+#[test]
+fn gamma_and_beta_extreme_shape_cases_match_statrs_references() {
+    let gamma = GammaShapeRate::new();
+    for theta in [
+        GammaTheta {
+            shape: 0.15,
+            rate: 2.0,
+        },
+        GammaTheta {
+            shape: 75.0,
+            rate: 3.0,
+        },
+    ] {
+        let reference = StatrsGamma::new(theta.shape, theta.rate).unwrap();
+        for y in [0.01_f64, 0.1, 1.0, 10.0, 40.0] {
+            assert_close(gamma.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-9);
+        }
+        for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
+            let actual = gamma.quantile(p, theta);
+            let expected = reference.inverse_cdf(p);
+            if expected.is_finite() {
+                assert_close(actual, expected, 2.0e-8, 2.0e-8);
+            } else {
+                assert!(
+                    actual.is_finite(),
+                    "gamma quantile({p}) returned {actual:?}"
+                );
+                assert_close(gamma.cdf(actual, theta), p, 0.0, 2.0e-8);
+            }
+        }
+    }
+
+    let beta = BetaMeanPrecision::new();
+    for theta in [
+        BetaTheta {
+            mu: 0.2,
+            precision: 0.75,
+        },
+        BetaTheta {
+            mu: 0.45,
+            precision: 200.0,
+        },
+    ] {
+        let reference = StatrsBeta::new(
+            theta.mu * theta.precision,
+            (1.0 - theta.mu) * theta.precision,
+        )
+        .unwrap();
+        for y in [1.0e-8_f64, 0.01, 0.1, 0.5, 0.9, 1.0 - 1.0e-8] {
+            assert_close(beta.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-9);
+        }
+        for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
+            let actual = beta.quantile(p, theta);
+            let expected = reference.inverse_cdf(p);
+            if expected.is_finite() {
+                assert_close(actual, expected, 2.0e-8, 2.0e-8);
+            } else {
+                assert!(actual.is_finite(), "beta quantile({p}) returned {actual:?}");
+                assert_close(beta.cdf(actual, theta), p, 0.0, 2.0e-8);
+            }
+        }
+    }
+}
+
+#[test]
+fn large_discrete_cdf_and_quantile_cases_match_statrs_references() {
+    let poisson = PoissonMean::new();
+    for theta in [PoissonTheta { mu: 80.0 }, PoissonTheta { mu: 250.0 }] {
+        let reference = StatrsPoisson::new(theta.mu).unwrap();
+        for count in [
+            (theta.mu - 3.0 * theta.mu.sqrt()).floor().max(0.0) as u64,
+            theta.mu.floor() as u64,
+            (theta.mu + 3.0 * theta.mu.sqrt()).ceil() as u64,
+        ] {
+            assert_close(
+                poisson.cdf(count as f64, theta),
+                reference.cdf(count),
+                0.0,
+                2.0e-11,
+            );
+        }
+        for p in [0.001_f64, 0.01, 0.5, 0.99, 0.999] {
+            assert_eq!(
+                poisson.quantile(p, theta),
+                statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
+            );
+        }
+    }
+
+    let negative_binomial = NegativeBinomialMeanSize::new();
+    for theta in [
+        NegativeBinomialTheta {
+            mu: 80.0,
+            shape: 3.5,
+        },
+        NegativeBinomialTheta {
+            mu: 250.0,
+            shape: 120.0,
+        },
+    ] {
+        let reference =
+            StatrsNegativeBinomial::new(theta.shape, nb_success_probability(theta)).unwrap();
+        for count in [
+            (0.5 * theta.mu).floor() as u64,
+            theta.mu.floor() as u64,
+            (1.5 * theta.mu).ceil() as u64,
+        ] {
+            assert_close(
+                negative_binomial.cdf(count as f64, theta),
+                reference.cdf(count),
+                0.0,
+                3.0e-11,
+            );
+        }
+        for p in [0.001_f64, 0.01, 0.5, 0.99, 0.999] {
+            assert_eq!(
+                negative_binomial.quantile(p, theta),
+                statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
+            );
+        }
+    }
+}
+
+#[test]
+fn skew_student_t_symmetric_case_matches_student_t_reference() {
+    let skew_t = SkewStudentTMuSigmaNuTau::new();
+    let theta = SkewStudentTTheta {
+        mu: 0.3,
+        sigma: 1.4,
+        nu: 0.0,
+        tau: 8.0,
+    };
+    let reference = StatrsStudentsT::new(theta.mu, theta.sigma, theta.tau).unwrap();
+
+    for y in [-4.0_f64, -1.0, 0.3, 1.0, 5.0] {
+        assert_close(skew_t.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-6);
+    }
+    for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
+        assert_close(
+            skew_t.quantile(p, theta),
+            reference.inverse_cdf(p),
+            0.0,
+            2.0e-5,
+        );
+    }
+}
+
+#[test]
+fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
+    let tweedie = TweedieMeanDispersionPower::new();
+    let theta = TweedieTheta {
+        mean: 2.0,
+        dispersion: 0.8,
+        power: 1.5,
+    };
+    let lambda = theta.mean.powf(2.0 - theta.power) / (theta.dispersion * (2.0 - theta.power));
+    let atom = (-lambda).exp();
+
+    assert_close(tweedie.cdf(0.0, theta), atom, 0.0, 1.0e-14);
+    assert_eq!(tweedie.quantile(0.5 * atom, theta), 0.0);
+
+    let grid = [0.0_f64, 0.05, 0.25, 1.0, 2.0, 5.0, 10.0];
+    assert_cdf_monotone(&tweedie, theta, &grid);
+    for p in [atom + 0.01, 0.25, 0.5, 0.75, 0.95] {
+        assert_discrete_or_continuous_generalized_inverse(&tweedie, p, theta, 2.0e-7);
+    }
+
+    let lower = 1.0e-4;
+    let upper = tweedie.quantile(0.95, theta);
+    let integral = integrate_simpson(lower, upper, 2048, |y| (-tweedie.nll(y, theta)).exp());
+    let expected = tweedie.cdf(upper, theta) - tweedie.cdf(lower, theta);
+    assert_close(integral, expected, 0.0, 3.0e-4);
+}
+
+fn assert_discrete_or_continuous_generalized_inverse<F>(
+    family: &F,
+    p: f64,
+    theta: F::Theta,
+    tolerance: f64,
+) where
+    F: for<'obs> Family<Observation<'obs> = f64> + HasCdf + HasQuantile,
+    F::Theta: Copy,
+{
+    let q = family.quantile(p, theta);
+    assert!(q.is_finite(), "quantile({p}) returned {q:?}");
+    assert!(
+        family.cdf(q, theta) + tolerance >= p,
+        "cdf(q) must be at least p; p={p:?}, q={q:?}, cdf={:?}",
+        family.cdf(q, theta)
     );
 }
 
