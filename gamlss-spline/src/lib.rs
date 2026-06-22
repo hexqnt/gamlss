@@ -54,7 +54,7 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{MatrixPenalty, Penalty, PredictorBlock};
+    use gamlss_core::{MatrixPenalty, ModelError, Penalty, PredictorBlock};
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
@@ -387,10 +387,53 @@ mod tests {
     }
 
     #[test]
+    fn edge_monotonic_penalty_try_new_validates_weight() {
+        assert_eq!(EdgeMonotonicPenalty::try_new(2.0).unwrap().weight, 2.0);
+        assert_eq!(
+            EdgeMonotonicPenalty::try_new(f64::NAN).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
+    }
+
+    #[test]
     fn slope_limit_penalty_gradient_matches_finite_difference() {
         let penalty = SlopeLimitPenalty::new(5.0, 2.0, Some(0.4), Some(0.3));
         let beta = vec![0.6, 0.1, -0.1, 0.4];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn slope_limit_penalty_try_new_validates_inputs() {
+        assert_eq!(
+            SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), None)
+                .unwrap()
+                .cold_limit,
+            Some(0.4)
+        );
+        assert_eq!(
+            SlopeLimitPenalty::try_new(0.0, 2.0, Some(0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            SlopeLimitPenalty::try_new(5.0, f64::NAN, Some(0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty scale",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            SlopeLimitPenalty::try_new(5.0, 2.0, Some(-0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "cold penalty limit",
+                expected: "finite and >= 0",
+            }
+        );
     }
 
     #[test]

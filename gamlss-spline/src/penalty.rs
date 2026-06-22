@@ -1,4 +1,7 @@
-use gamlss_core::{MatrixPenalty, Penalty};
+use gamlss_core::{MatrixPenalty, ModelError, Penalty};
+
+const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
+const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -197,8 +200,23 @@ pub struct EdgeMonotonicPenalty {
 
 impl EdgeMonotonicPenalty {
     /// Creates an edge monotonicity penalty.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `weight`
+    /// comes from user input or dynamic configuration.
+    #[must_use]
     pub fn new(weight: f64) -> Self {
         Self { weight }
+    }
+
+    /// Creates an edge monotonicity penalty with a finite positive weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `weight` is not finite or
+    /// is not positive.
+    pub fn try_new(weight: f64) -> Result<Self, ModelError> {
+        validate_positive_finite("penalty weight", weight)?;
+        Ok(Self::new(weight))
     }
 }
 
@@ -261,6 +279,12 @@ impl SlopeLimitPenalty {
     /// `weight` — penalty strength, `scale` converts coefficient differences
     /// into a physical slope, `cold_limit` and `warm_limit` — optional limits
     /// (if `None`, the corresponding edge is not penalized).
+    ///
+    /// This constructor is unchecked and preserves the historical defensive
+    /// evaluation behavior: invalid `weight`, `scale` or limits make the
+    /// affected penalty contribution zero. Use [`Self::try_new`] for validated
+    /// runtime construction.
+    #[must_use]
     pub fn new(weight: f64, scale: f64, cold_limit: Option<f64>, warm_limit: Option<f64>) -> Self {
         Self {
             weight,
@@ -268,6 +292,26 @@ impl SlopeLimitPenalty {
             cold_limit,
             warm_limit,
         }
+    }
+
+    /// Creates a slope limit penalty with validated scalar parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `weight` or `scale` is
+    /// not finite and positive, or when a provided limit is not finite and
+    /// non-negative.
+    pub fn try_new(
+        weight: f64,
+        scale: f64,
+        cold_limit: Option<f64>,
+        warm_limit: Option<f64>,
+    ) -> Result<Self, ModelError> {
+        validate_positive_finite("penalty weight", weight)?;
+        validate_positive_finite("penalty scale", scale)?;
+        validate_limit("cold penalty limit", cold_limit)?;
+        validate_limit("warm penalty limit", warm_limit)?;
+        Ok(Self::new(weight, scale, cold_limit, warm_limit))
     }
 }
 
@@ -487,6 +531,27 @@ fn add_slope_limit_value(
         let d = 2.0 * penalty.weight * relative * penalty.scale * sign / denominator;
         grad[first] += d;
         grad[second] -= d;
+    }
+}
+
+fn validate_positive_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE_POSITIVE,
+        })
+    }
+}
+
+fn validate_limit(parameter: &'static str, value: Option<f64>) -> Result<(), ModelError> {
+    match value {
+        Some(value) if !value.is_finite() || value < 0.0 => Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE_NONNEGATIVE,
+        }),
+        _ => Ok(()),
     }
 }
 

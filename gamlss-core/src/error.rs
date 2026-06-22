@@ -141,4 +141,24 @@ pub enum ModelError {
         /// Name of the requested parameter.
         name: &'static str,
     },
+
+    /// A penalty references a coefficient index outside the model vector.
+    #[error("penalty coefficient index {index} is out of bounds for dimension {dim}")]
+    PenaltyIndexOutOfBounds {
+        /// Referenced coefficient index.
+        index: usize,
+        /// Full coefficient dimension.
+        dim: usize,
+    },
+
+    /// A segment penalty range is outside the coefficient vector.
+    #[error("penalty range {start}..{end} is out of bounds for dimension {dim}")]
+    PenaltyRangeOutOfBounds {
+        /// Start of the requested range.
+        start: usize,
+        /// End of the requested range.
+        end: usize,
+        /// Full coefficient dimension.
+        dim: usize,
+    },
 }

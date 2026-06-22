@@ -1,5 +1,10 @@
 use std::ops::Range;
 
+use crate::ModelError;
+
+const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
+const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
+
 /// Zero penalty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoPenalty;
@@ -92,10 +97,25 @@ pub struct SegmentPenalty<P> {
 
 impl<P> SegmentPenalty<P> {
     /// Creates a segment penalty over `range`.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `range` comes
+    /// from user input or dynamic model metadata.
     #[must_use]
     #[inline]
     pub const fn new(range: Range<usize>, penalty: P) -> Self {
         Self { range, penalty }
+    }
+
+    /// Creates a segment penalty after validating `range` against `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::PenaltyRangeOutOfBounds`] when `range` is
+    /// reversed or extends past `dim`.
+    #[inline]
+    pub fn try_new(range: Range<usize>, penalty: P, dim: usize) -> Result<Self, ModelError> {
+        validate_penalty_range(&range, dim)?;
+        Ok(Self::new(range, penalty))
     }
 
     /// Returns the local coefficient range affected by this penalty.
@@ -164,10 +184,26 @@ pub struct LinearForm {
 
 impl LinearForm {
     /// Creates a linear form from terms and a constant.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when term indices
+    /// come from user input or dynamic model metadata.
     #[must_use]
     #[inline]
     pub const fn new(terms: Vec<LinearTerm>, constant: f64) -> Self {
         Self { terms, constant }
+    }
+
+    /// Creates a linear form after validating term indices against `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::PenaltyIndexOutOfBounds`] when any term index is
+    /// outside `0..dim`.
+    #[inline]
+    pub fn try_new(terms: Vec<LinearTerm>, constant: f64, dim: usize) -> Result<Self, ModelError> {
+        let form = Self::new(terms, constant);
+        form.validate_dim(dim)?;
+        Ok(form)
     }
 
     /// Creates a builder for a linear form over the full beta vector.
@@ -192,6 +228,25 @@ impl LinearForm {
     #[inline]
     pub const fn absolute_limit(self, weight: f64, scale: f64, limit: f64) -> AbsoluteLimitPenalty {
         AbsoluteLimitPenalty::new(self, weight, scale, limit)
+    }
+
+    /// Validates that all term indices are in bounds for a beta vector of `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::PenaltyIndexOutOfBounds`] when any term index is
+    /// outside `0..dim`.
+    #[inline]
+    pub fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        for term in &self.terms {
+            if term.index >= dim {
+                return Err(ModelError::PenaltyIndexOutOfBounds {
+                    index: term.index,
+                    dim,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Evaluates the form at `beta`.
@@ -312,10 +367,41 @@ pub struct HingeQuadraticPenalty {
 
 impl HingeQuadraticPenalty {
     /// Creates a quadratic hinge penalty.
+    ///
+    /// This constructor is unchecked and preserves the historical defensive
+    /// evaluation behavior: non-finite or non-positive `weight` makes the
+    /// penalty contribute zero. Use [`Self::try_new`] for validated runtime
+    /// construction.
     #[must_use]
     #[inline]
     pub const fn new(form: LinearForm, weight: f64) -> Self {
         Self { form, weight }
+    }
+
+    /// Creates a quadratic hinge penalty with a finite positive weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `weight` is not finite or
+    /// is not positive.
+    #[inline]
+    pub fn try_new(form: LinearForm, weight: f64) -> Result<Self, ModelError> {
+        validate_positive_finite("penalty weight", weight)?;
+        Ok(Self::new(form, weight))
+    }
+
+    /// Creates a quadratic hinge penalty and validates the form against `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] for an invalid `weight`, or
+    /// [`ModelError::PenaltyIndexOutOfBounds`] when the form references an
+    /// index outside `0..dim`.
+    #[inline]
+    pub fn try_new_for_dim(form: LinearForm, weight: f64, dim: usize) -> Result<Self, ModelError> {
+        let penalty = Self::try_new(form, weight)?;
+        penalty.form.validate_dim(dim)?;
+        Ok(penalty)
     }
 
     #[inline]
@@ -372,6 +458,11 @@ pub struct AbsoluteLimitPenalty {
 
 impl AbsoluteLimitPenalty {
     /// Creates an absolute-limit penalty.
+    ///
+    /// This constructor is unchecked and preserves the historical defensive
+    /// evaluation behavior: invalid `weight`, `scale` or `limit` makes the
+    /// penalty contribute zero. Use [`Self::try_new`] for validated runtime
+    /// construction.
     #[must_use]
     #[inline]
     pub const fn new(form: LinearForm, weight: f64, scale: f64, limit: f64) -> Self {
@@ -381,6 +472,46 @@ impl AbsoluteLimitPenalty {
             scale,
             limit,
         }
+    }
+
+    /// Creates an absolute-limit penalty with validated scalar parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `weight` or `scale` is
+    /// not finite and positive, or when `limit` is not finite and
+    /// non-negative.
+    #[inline]
+    pub fn try_new(
+        form: LinearForm,
+        weight: f64,
+        scale: f64,
+        limit: f64,
+    ) -> Result<Self, ModelError> {
+        validate_positive_finite("penalty weight", weight)?;
+        validate_positive_finite("penalty scale", scale)?;
+        validate_nonnegative_finite("penalty limit", limit)?;
+        Ok(Self::new(form, weight, scale, limit))
+    }
+
+    /// Creates an absolute-limit penalty and validates the form against `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] for invalid scalar parameters,
+    /// or [`ModelError::PenaltyIndexOutOfBounds`] when the form references an
+    /// index outside `0..dim`.
+    #[inline]
+    pub fn try_new_for_dim(
+        form: LinearForm,
+        weight: f64,
+        scale: f64,
+        limit: f64,
+        dim: usize,
+    ) -> Result<Self, ModelError> {
+        let penalty = Self::try_new(form, weight, scale, limit)?;
+        penalty.form.validate_dim(dim)?;
+        Ok(penalty)
     }
 
     #[inline]
@@ -510,6 +641,40 @@ fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
     debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
 
+fn validate_penalty_range(range: &Range<usize>, dim: usize) -> Result<(), ModelError> {
+    if range.start > range.end || range.end > dim {
+        Err(ModelError::PenaltyRangeOutOfBounds {
+            start: range.start,
+            end: range.end,
+            dim,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_positive_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE_POSITIVE,
+        })
+    }
+}
+
+fn validate_nonnegative_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE_NONNEGATIVE,
+        })
+    }
+}
+
 macro_rules! impl_global_penalty_tuple {
     (types = ($($ty:ident),+); indices = ($($idx:tt),+)) => {
         impl<$($ty,)+> GlobalPenalty for ($($ty,)+)
@@ -568,12 +733,15 @@ impl_global_penalty_tuple!(types = (P1, P2, P3, P4, P5, P6, P7, P8); indices = (
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use approx::assert_relative_eq;
 
     use super::{
         AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
         LinearTerm, MatrixPenalty, NoPenalty, Penalty, RidgePenalty, SegmentPenalty,
     };
+    use crate::ModelError;
 
     #[derive(Debug, Clone, Copy)]
     struct LinearPenalty(f64);
@@ -632,6 +800,28 @@ mod tests {
         assert_relative_eq!(
             penalty.value(&beta),
             RidgePenalty::new(2.0).value(&beta[1..4])
+        );
+    }
+
+    #[test]
+    fn segment_penalty_try_new_validates_range() {
+        assert!(SegmentPenalty::try_new(1..3, RidgePenalty::new(2.0), 3).is_ok());
+        assert_eq!(
+            SegmentPenalty::try_new(Range { start: 3, end: 1 }, RidgePenalty::new(2.0), 4,)
+                .unwrap_err(),
+            ModelError::PenaltyRangeOutOfBounds {
+                start: 3,
+                end: 1,
+                dim: 4,
+            }
+        );
+        assert_eq!(
+            SegmentPenalty::try_new(1..5, RidgePenalty::new(2.0), 4).unwrap_err(),
+            ModelError::PenaltyRangeOutOfBounds {
+                start: 1,
+                end: 5,
+                dim: 4,
+            }
         );
     }
 
@@ -697,6 +887,15 @@ mod tests {
     }
 
     #[test]
+    fn linear_form_try_new_validates_term_indices() {
+        assert!(LinearForm::try_new(vec![LinearTerm::new(2, 0.5)], 1.0, 3).is_ok());
+        assert_eq!(
+            LinearForm::try_new(vec![LinearTerm::new(3, 0.5)], 1.0, 3).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 3, dim: 3 }
+        );
+    }
+
+    #[test]
     fn linear_form_builder_adds_terms_weighted_terms_and_constant() {
         let form = LinearForm::builder()
             .term(2, 0.5)
@@ -758,6 +957,37 @@ mod tests {
     }
 
     #[test]
+    fn hinge_quadratic_penalty_try_new_validates_weight_and_dim() {
+        assert!(
+            HingeQuadraticPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                1.0
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            HingeQuadraticPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                0.0,
+            )
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            HingeQuadraticPenalty::try_new_for_dim(
+                LinearForm::new(vec![LinearTerm::new(2, 1.0)], 0.0),
+                1.0,
+                2,
+            )
+            .unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
+    }
+
+    #[test]
     fn hinge_quadratic_penalty_ignores_nonpositive_side_and_invalid_weight() {
         let inactive =
             HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -2.0), 3.0);
@@ -801,6 +1031,43 @@ mod tests {
         let beta = [0.8, -0.2];
 
         assert_global_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn absolute_limit_penalty_try_new_validates_inputs_and_dim() {
+        assert!(
+            AbsoluteLimitPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                1.0,
+                2.0,
+                0.0,
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            AbsoluteLimitPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                1.0,
+                f64::NAN,
+                0.0,
+            )
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty scale",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            AbsoluteLimitPenalty::try_new_for_dim(
+                LinearForm::new(vec![LinearTerm::new(4, 1.0)], 0.0),
+                1.0,
+                2.0,
+                0.0,
+                4,
+            )
+            .unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 4, dim: 4 }
+        );
     }
 
     #[test]
