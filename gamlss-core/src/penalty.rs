@@ -74,7 +74,7 @@ impl MatrixPenalty for RidgePenalty {
         }
 
         for (row, row_values) in gram.chunks_exact_mut(dim).enumerate() {
-            row_values[row] += self.lambda;
+            row_values[row] += 2.0 * self.lambda;
         }
     }
 }
@@ -483,18 +483,20 @@ pub trait GlobalPenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
 }
 
-/// Penalty that can be expressed as a quadratic form `β^T P β`.
+/// Penalty that has a constant Hessian-like matrix contribution.
 ///
-/// This extension trait enables Fisher Scoring solvers to add the penalty
-/// matrix to the weighted Gram matrix: `X^T W X + P`. Penalties that cannot
-/// be expressed as a constant quadratic form (e.g., slope-limit or
-/// monotonic constraints) should not implement this trait.
+/// This extension trait enables Fisher Scoring and normal-equation solvers to
+/// add the penalty curvature to the weighted Gram matrix. For a scalar penalty
+/// value `λ β^T S β`, implementations add `2λS`, so the added matrix `H`
+/// satisfies `H β = ∇ penalty(β)`.
 ///
-/// Currently [`NoPenalty`] and [`RidgePenalty`] implement this trait.
-/// Spline penalties like [`crate::DifferencePenalty`] will implement it
-/// in `gamlss-spline`.
+/// Penalties that cannot be expressed with constant curvature (e.g.,
+/// slope-limit or monotonic constraints) should not implement this trait.
+///
+/// Currently [`NoPenalty`] and [`RidgePenalty`] implement this trait in
+/// `gamlss-core`. Spline difference penalties implement it in `gamlss-spline`.
 pub trait MatrixPenalty: Penalty {
-    /// Adds the penalty matrix `P` to `gram` in row-major order.
+    /// Adds the penalty curvature matrix to `gram` in row-major order.
     ///
     /// `gram` is a `dim × dim` matrix, where `dim` equals the number
     /// of coefficients in the parameter block. Implementations should add
@@ -880,15 +882,23 @@ mod tests {
     }
 
     #[test]
-    fn ridge_penalty_matrix_adds_lambda_to_diagonal() {
+    fn ridge_penalty_gradient_matches_finite_difference() {
+        let penalty = RidgePenalty::new(3.0);
+        let beta = [0.2, -0.4, 0.9];
+
+        assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn ridge_penalty_matrix_adds_curvature_to_diagonal() {
         let penalty = RidgePenalty::new(3.0);
         // 3x3 Gram matrix: [[1,2,3], [4,5,6], [7,8,9]]
         let mut gram = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
         penalty.add_penalty_matrix(3, &mut gram);
-        // Diagonal += lambda: [4, 2, 3, 4, 8, 6, 7, 8, 12]
-        assert_eq!(gram[0], 4.0);
-        assert_eq!(gram[4], 8.0);
-        assert_eq!(gram[8], 12.0);
+        // Diagonal += 2 * lambda: [7, 2, 3, 4, 11, 6, 7, 8, 15]
+        assert_eq!(gram[0], 7.0);
+        assert_eq!(gram[4], 11.0);
+        assert_eq!(gram[8], 15.0);
         // Off-diagonal unchanged
         assert_eq!(gram[1], 2.0);
         assert_eq!(gram[2], 3.0);
@@ -896,6 +906,55 @@ mod tests {
         assert_eq!(gram[5], 6.0);
         assert_eq!(gram[6], 7.0);
         assert_eq!(gram[7], 8.0);
+    }
+
+    #[test]
+    fn ridge_penalty_matrix_matches_gradient_convention() {
+        let penalty = RidgePenalty::new(3.0);
+        let beta = [0.2, -0.4, 0.9];
+        let mut grad = [0.0; 3];
+        let mut matrix = vec![0.0; 9];
+
+        penalty.add_gradient(&beta, &mut grad);
+        penalty.add_penalty_matrix(beta.len(), &mut matrix);
+
+        assert_matrix_vector_product_eq(&matrix, &beta, &grad);
+    }
+
+    fn assert_penalty_gradient_matches_finite_difference<P>(penalty: &P, beta: &[f64])
+    where
+        P: Penalty,
+    {
+        let epsilon = 1.0e-6;
+        let mut grad = vec![0.0; beta.len()];
+        penalty.add_gradient(beta, &mut grad);
+
+        for index in 0..beta.len() {
+            let mut plus = beta.to_vec();
+            plus[index] += epsilon;
+            let mut minus = beta.to_vec();
+            minus[index] -= epsilon;
+            let finite_difference =
+                (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * epsilon);
+
+            assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
+    }
+
+    fn assert_matrix_vector_product_eq(matrix: &[f64], vector: &[f64], expected: &[f64]) {
+        let dim = vector.len();
+        assert_eq!(matrix.len(), dim * dim);
+        assert_eq!(expected.len(), dim);
+
+        for (row, row_values) in matrix.chunks_exact(dim).enumerate() {
+            let actual = row_values
+                .iter()
+                .copied()
+                .zip(vector.iter().copied())
+                .map(|(matrix_value, vector_value)| matrix_value * vector_value)
+                .sum::<f64>();
+            assert_relative_eq!(actual, expected[row], epsilon = 1.0e-12);
+        }
     }
 
     fn assert_global_penalty_gradient_matches_finite_difference<P>(penalty: &P, beta: &[f64])

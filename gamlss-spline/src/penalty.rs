@@ -1,4 +1,4 @@
-use gamlss_core::Penalty;
+use gamlss_core::{MatrixPenalty, Penalty};
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,6 +30,13 @@ impl Penalty for DifferencePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let coefficients = self.coefficients();
         add_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+}
+
+impl MatrixPenalty for DifferencePenalty {
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        let coefficients = self.coefficients();
+        add_difference_penalty_matrix(self.lambda, &coefficients, dim, gram);
     }
 }
 
@@ -77,6 +84,12 @@ impl Penalty for PreparedDifferencePenalty {
     }
 }
 
+impl MatrixPenalty for PreparedDifferencePenalty {
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        add_difference_penalty_matrix(self.lambda, &self.coefficients, dim, gram);
+    }
+}
+
 /// Cyclic finite-difference penalty for periodic coefficient vectors.
 ///
 /// Differs from [`DifferencePenalty`] in that differences are taken modulo
@@ -109,6 +122,13 @@ impl Penalty for CyclicDifferencePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let coefficients = difference_coefficients(self.order);
         add_cyclic_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+}
+
+impl MatrixPenalty for CyclicDifferencePenalty {
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        let coefficients = difference_coefficients(self.order);
+        add_cyclic_difference_penalty_matrix(self.lambda, &coefficients, dim, gram);
     }
 }
 
@@ -153,6 +173,12 @@ impl Penalty for PreparedCyclicDifferencePenalty {
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         add_cyclic_difference_penalty_gradient(self.lambda, &self.coefficients, beta, grad);
+    }
+}
+
+impl MatrixPenalty for PreparedCyclicDifferencePenalty {
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        add_cyclic_difference_penalty_matrix(self.lambda, &self.coefficients, dim, gram);
     }
 }
 
@@ -311,6 +337,26 @@ fn add_cyclic_difference_penalty_gradient(
     }
 }
 
+fn add_cyclic_difference_penalty_matrix(
+    lambda: f64,
+    coefficients: &[f64],
+    dim: usize,
+    gram: &mut [f64],
+) {
+    debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
+
+    if dim == 0 || dim < coefficients.len() {
+        return;
+    }
+
+    let scale = 2.0 * lambda / dim as f64;
+    for start in 0..dim {
+        add_difference_outer_product(scale, coefficients, dim, gram, |offset| {
+            (start + offset) % dim
+        });
+    }
+}
+
 fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
     if beta.len() < coefficients.len() {
         return 0.0;
@@ -352,6 +398,37 @@ fn add_difference_penalty_gradient(
 
         for (offset, coefficient) in coefficients.iter().copied().enumerate() {
             grad[start + offset] += 2.0 * lambda * diff * coefficient;
+        }
+    }
+}
+
+fn add_difference_penalty_matrix(lambda: f64, coefficients: &[f64], dim: usize, gram: &mut [f64]) {
+    debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
+
+    if dim < coefficients.len() {
+        return;
+    }
+
+    let scale = 2.0 * lambda;
+    for start in 0..=(dim - coefficients.len()) {
+        add_difference_outer_product(scale, coefficients, dim, gram, |offset| start + offset);
+    }
+}
+
+fn add_difference_outer_product<F>(
+    scale: f64,
+    coefficients: &[f64],
+    dim: usize,
+    gram: &mut [f64],
+    index: F,
+) where
+    F: Fn(usize) -> usize,
+{
+    for (left_offset, left) in coefficients.iter().copied().enumerate() {
+        let row = index(left_offset);
+        for (right_offset, right) in coefficients.iter().copied().enumerate() {
+            let col = index(right_offset);
+            gram[row * dim + col] += scale * left * right;
         }
     }
 }

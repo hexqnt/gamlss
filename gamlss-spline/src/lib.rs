@@ -54,7 +54,7 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Penalty, PredictorBlock};
+    use gamlss_core::{MatrixPenalty, Penalty, PredictorBlock};
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
@@ -80,20 +80,14 @@ mod tests {
     fn difference_penalty_gradient_matches_finite_difference() {
         let penalty = DifferencePenalty::new(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
-        let eps = 1.0e-6;
-        let mut grad = vec![0.0; beta.len()];
+        assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
 
-        penalty.add_gradient(&beta, &mut grad);
-
-        for index in 0..beta.len() {
-            let mut plus = beta.clone();
-            plus[index] += eps;
-            let mut minus = beta.clone();
-            minus[index] -= eps;
-            let finite_difference = (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * eps);
-
-            assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
-        }
+    #[test]
+    fn difference_penalty_matrix_matches_gradient_convention() {
+        let penalty = DifferencePenalty::new(0.7, 2);
+        let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
+        assert_penalty_matrix_matches_gradient(&penalty, &beta);
     }
 
     #[test]
@@ -103,20 +97,7 @@ mod tests {
         for order in 0..=2 {
             let unprepared = DifferencePenalty::new(0.7, order);
             let prepared = PreparedDifferencePenalty::new(0.7, order);
-            let mut unprepared_grad = vec![0.0; beta.len()];
-            let mut prepared_grad = vec![0.0; beta.len()];
-
-            unprepared.add_gradient(&beta, &mut unprepared_grad);
-            prepared.add_gradient(&beta, &mut prepared_grad);
-
-            assert_relative_eq!(
-                prepared.value(&beta),
-                unprepared.value(&beta),
-                epsilon = 1.0e-12
-            );
-            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
-                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
-            }
+            assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
         }
     }
 
@@ -381,26 +362,20 @@ mod tests {
     }
 
     #[test]
+    fn cyclic_difference_penalty_matrix_matches_gradient_convention() {
+        let penalty = CyclicDifferencePenalty::new(0.7, 2);
+        let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
+        assert_penalty_matrix_matches_gradient(&penalty, &beta);
+    }
+
+    #[test]
     fn prepared_cyclic_difference_penalty_matches_unprepared() {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
         for order in 0..=2 {
             let unprepared = CyclicDifferencePenalty::new(0.7, order);
             let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
-            let mut unprepared_grad = vec![0.0; beta.len()];
-            let mut prepared_grad = vec![0.0; beta.len()];
-
-            unprepared.add_gradient(&beta, &mut unprepared_grad);
-            prepared.add_gradient(&beta, &mut prepared_grad);
-
-            assert_relative_eq!(
-                prepared.value(&beta),
-                unprepared.value(&beta),
-                epsilon = 1.0e-12
-            );
-            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
-                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
-            }
+            assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
         }
     }
 
@@ -749,6 +724,56 @@ mod tests {
             let finite_difference = (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * eps);
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
+    }
+
+    fn assert_penalty_matrix_matches_gradient<P>(penalty: &P, beta: &[f64])
+    where
+        P: MatrixPenalty,
+    {
+        let dim = beta.len();
+        let mut grad = vec![0.0; dim];
+        let mut matrix = vec![0.0; dim * dim];
+
+        penalty.add_gradient(beta, &mut grad);
+        penalty.add_penalty_matrix(dim, &mut matrix);
+
+        for (row, row_values) in matrix.chunks_exact(dim).enumerate() {
+            let actual = row_values
+                .iter()
+                .copied()
+                .zip(beta.iter().copied())
+                .map(|(matrix_value, beta_value)| matrix_value * beta_value)
+                .sum::<f64>();
+            assert_relative_eq!(actual, grad[row], epsilon = 1.0e-12);
+        }
+    }
+
+    fn assert_matrix_penalty_matches<Actual, Expected>(
+        actual: &Actual,
+        expected: &Expected,
+        beta: &[f64],
+    ) where
+        Actual: MatrixPenalty,
+        Expected: MatrixPenalty,
+    {
+        let dim = beta.len();
+        let mut actual_grad = vec![0.0; dim];
+        let mut expected_grad = vec![0.0; dim];
+        let mut actual_matrix = vec![0.0; dim * dim];
+        let mut expected_matrix = vec![0.0; dim * dim];
+
+        actual.add_gradient(beta, &mut actual_grad);
+        expected.add_gradient(beta, &mut expected_grad);
+        actual.add_penalty_matrix(dim, &mut actual_matrix);
+        expected.add_penalty_matrix(dim, &mut expected_matrix);
+
+        assert_relative_eq!(actual.value(beta), expected.value(beta), epsilon = 1.0e-12);
+        for (actual, expected) in actual_grad.iter().zip(&expected_grad) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+        }
+        for (actual, expected) in actual_matrix.iter().zip(&expected_matrix) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
         }
     }
 
