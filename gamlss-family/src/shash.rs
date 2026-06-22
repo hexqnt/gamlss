@@ -11,6 +11,9 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 
 /// SHASH distribution with identity/log/log/log links.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// Sinh-arcsinh family using positive skewness and tail parameters.
 ///
@@ -18,6 +21,9 @@ pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// standard normal. Values of `nu` above or below one skew the distribution
 /// through `ln(nu)`, which keeps the default log link centered at the symmetric
 /// case.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shash<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

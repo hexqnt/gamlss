@@ -11,8 +11,14 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 
 /// Johnson SU distribution with identity/log/identity/log links.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 /// Johnson SU family in a location-scale-skewness-tail parameterization.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

@@ -14,10 +14,19 @@ const MAX_SERIES_TERMS: usize = 2_000;
 const SERIES_EPSILON: f64 = 1.0e-13;
 
 /// Tweedie distribution parameterized by mean, dispersion, and power.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type TweedieMeanDispersionPower = Tweedie<Log, Log, Logit>;
 /// Tweedie distribution parameterized by mean, CV, and power.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
 /// Tweedie compound Poisson-gamma family for `1 < power < 2`.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, DispersionLink, PowerLink)>,
@@ -338,6 +347,9 @@ impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
 }
 
 /// Tweedie compound Poisson-gamma family parameterized by mean, CV, and power.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, CvLink, PowerLink)>,

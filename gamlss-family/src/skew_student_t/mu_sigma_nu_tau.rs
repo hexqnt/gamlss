@@ -11,9 +11,15 @@ use crate::numeric::finite_difference_gradient_eta;
 use super::{cdf_location_scale, nll_location_scale, quantile_location_scale};
 
 /// Skew Student-t distribution with identity/log/identity/log links.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type SkewStudentTMuSigmaNuTau = SkewStudentT<Identity, Log, Identity, Log>;
 
 /// Azzalini/ST1-style skew Student-t family.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkewStudentT<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

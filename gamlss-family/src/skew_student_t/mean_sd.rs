@@ -14,9 +14,15 @@ use super::{
 };
 
 /// Skew Student-t distribution parameterized by mean, standard deviation, skewness and `tau > 2`.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type SkewStudentTMeanSdNuTau = SkewStudentTMeanSd<Identity, Log, Identity, LogPlus<2>>;
 
 /// Azzalini/ST1-style skew Student-t family parameterized by mean and standard deviation.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkewStudentTMeanSd<
     MeanLink = Identity,

@@ -13,6 +13,9 @@ use crate::numeric::finite_difference_gradient_eta;
 const LOG_2: f64 = std::f64::consts::LN_2;
 
 /// Power exponential distribution with identity/log/log links.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 pub type PowerExponentialMuSigmaNu = PowerExponential<Identity, Log, Log>;
 /// Alias commonly used for the generalized error distribution.
 pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
@@ -20,6 +23,9 @@ pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
 /// Default generalized error distribution alias.
 pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 /// Power exponential / generalized error distribution.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

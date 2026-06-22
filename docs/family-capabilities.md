@@ -8,32 +8,43 @@ This is available for every `Family` through the blanket `HasLogDensity` /
 `Sampling` requires the `rand` feature. In the facade crate this is exposed as
 `gamlss/rand`, which forwards to `gamlss-family/rand`.
 
-| Family                | NLL | Gradient | CDF | PDF | Quantile | CRPS | Sampling |
-| --------------------- | --- | -------- | --- | --- | -------- | ---- | -------- |
-| `Beinf`               | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Bernoulli`           | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Beta`                | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Exponential`         | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Gamma`               | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `GeneralizedGamma`    | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Gev`                 | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Gumbel`              | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `InverseGaussian`     | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `JohnsonSu`           | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Laplace`             | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `LogNormal`           | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Logistic`            | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Lomax`               | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `NegativeBinomial`    | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✓        |
-| `Normal`              | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Poisson`             | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `PowerExponential`    | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Shash`               | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `SkewNormal`          | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `SkewStudentT`        | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `StudentT`            | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Tweedie`             | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Weibull`             | ✓   | ✓        | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Zaga`                | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Zinb`                | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Zip`                 | ✓   | ✓        | ✓   | ✓   | ✓        | ✗    | ✗        |
+`Gradient kind` describes the implementation used by
+`Family::nll_and_gradient_eta`. `finite-diff` families are intentionally marked
+as slow path because each observation requires roughly `2K + 1` likelihood
+evaluations for `K` parameters.
+
+| Family                | NLL | Gradient | Gradient kind | CDF | PDF | Quantile | CRPS | Sampling |
+| --------------------- | --- | -------- | ------------- | --- | --- | -------- | ---- | -------- |
+| `Beinf`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Bernoulli`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Beta`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Exponential`         | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Gamma`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `GeneralizedGamma`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Gev`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Gumbel`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `InverseGaussian`     | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `JohnsonSu`           | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Laplace`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `LogNormal`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Logistic`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Lomax`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `NegativeBinomial`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Normal`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Poisson`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `PowerExponential`    | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Shash`               | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `SkewNormal`          | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `SkewStudentT`        | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `StudentT`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Tweedie`             | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Weibull`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `Zaga`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Zinb`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Zip`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+
+## Analytic gradient replacement queue
+
+The finite-difference families are MVP implementations, not the intended
+training hot path. Prefer replacing them in this order as usage justifies it:
+`Tweedie`, `SkewStudentT`, `JohnsonSu`, `Shash`, then `PowerExponential`.
