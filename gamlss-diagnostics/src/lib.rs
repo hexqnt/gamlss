@@ -199,14 +199,23 @@ where
     }
 
     fn weighted_mean_crps(&self, parameters: &[f64]) -> Result<f64, ModelError> {
-        let values = self.crps_values(parameters)?;
+        let theta = self.predict_theta(parameters)?;
+        let family = self.family();
+        let obs = self.obs();
         let mut weighted_sum = 0.0;
         let mut weight_sum = 0.0;
-        for (row, value) in values.iter().copied().enumerate() {
-            let weight = self.obs().weight_at(row);
+
+        for (row, theta) in theta.into_iter().enumerate() {
+            let weight = obs.weight_at(row);
+            if weight == 0.0 {
+                continue;
+            }
+
+            let value = family.crps(obs.observation_at(row), theta);
             weighted_sum += weight * value;
             weight_sum += weight;
         }
+
         Ok(weighted_sum / weight_sum)
     }
 }
@@ -321,6 +330,15 @@ mod tests {
         &'a [f64],
     >;
 
+    type WeightedTestModel<'a> = Gamlss<
+        Normal<Identity, Log>,
+        (
+            ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+            ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        ),
+        (&'a [f64], &'a [f64]),
+    >;
+
     fn normal_intercept_model(y: &[f64]) -> TestModel<'_> {
         let blocks = ParameterBlocks::new((
             ParameterBlock::<Mu, Identity, _, _>::linear(
@@ -336,6 +354,27 @@ mod tests {
         ));
 
         Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, y).expect("valid normal model")
+    }
+
+    fn weighted_normal_intercept_model<'a>(
+        y: &'a [f64],
+        weights: &'a [f64],
+    ) -> WeightedTestModel<'a> {
+        let blocks = ParameterBlocks::new((
+            ParameterBlock::<Mu, Identity, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+            ParameterBlock::<Sigma, Log, _, _>::linear(
+                DenseDesign::intercept(y.len()),
+                NoPenalty,
+                0,
+            ),
+        ));
+
+        Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, y, weights)
+            .expect("valid weighted normal model")
     }
 
     #[test]
@@ -451,20 +490,7 @@ mod tests {
     fn weighted_mean_crps_uses_observation_weights() {
         let y = [0.0, 1.0];
         let weights = [0.0, 2.0];
-        let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-        ));
-        let model =
-            Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, &y, &weights).unwrap();
+        let model = weighted_normal_intercept_model(&y, &weights);
         let crps = model.crps_values(&[0.0, 0.0]).unwrap();
 
         assert_relative_eq!(
@@ -475,23 +501,23 @@ mod tests {
     }
 
     #[test]
+    fn weighted_mean_crps_skips_zero_weighted_observations_before_crps() {
+        let y = [f64::NAN, 1.0];
+        let weights = [0.0, 2.0];
+        let model = weighted_normal_intercept_model(&y, &weights);
+
+        assert_relative_eq!(
+            model.weighted_mean_crps(&[0.0, 0.0]).unwrap(),
+            0.602_441_346_364_267_4,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
     fn weighted_mean_crps_returns_nan_when_all_weights_are_zero() {
         let y = [0.0, 1.0];
         let weights = [0.0, 0.0];
-        let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-        ));
-        let model =
-            Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, &y, &weights).unwrap();
+        let model = weighted_normal_intercept_model(&y, &weights);
 
         assert!(model.weighted_mean_crps(&[0.0, 0.0]).unwrap().is_nan());
     }
