@@ -7,10 +7,11 @@ use gamlss_core::{
 
 use gamlss_special::{integrate_finite, invert_positive_cdf, unit_normal_cdf};
 
-use super::InverseGaussian;
 use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
 };
+
+use super::InverseGaussian;
 
 /// Inverse Gaussian distribution with log links for mean and shape.
 pub type InverseGaussianMuShape = InverseGaussian<Log, Log>;

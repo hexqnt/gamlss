@@ -16,6 +16,15 @@ fn assert_close(actual: f64, expected: f64, rel_tol: f64, abs_tol: f64) {
     );
 }
 
+fn assert_tail_close(actual: f64, expected: f64, rel_tol: f64) {
+    let diff = (actual - expected).abs();
+    let scale = expected.abs().max(f64::MIN_POSITIVE);
+    assert!(
+        diff <= rel_tol * scale,
+        "actual {actual:?} differs from expected {expected:?}; diff={diff:?}, rel_tol={rel_tol:?}"
+    );
+}
+
 #[test]
 fn ln_gamma_matches_known_constants() {
     assert_relative_eq!(ln_gamma(1.0), 0.0, epsilon = 1.0e-12);
@@ -39,6 +48,27 @@ fn ln_gamma_matches_statrs_reference_grid() {
             2.0e-13,
         );
     }
+}
+
+#[test]
+fn ln_gamma_reflection_uses_absolute_gamma_and_rejects_poles() {
+    assert_close(
+        ln_gamma(-0.5),
+        (2.0 * std::f64::consts::PI.sqrt()).ln(),
+        0.0,
+        2.0e-14,
+    );
+    assert_close(
+        ln_gamma(-1.5),
+        (4.0 * std::f64::consts::PI.sqrt() / 3.0).ln(),
+        0.0,
+        2.0e-14,
+    );
+
+    assert!(ln_gamma(0.0).is_nan());
+    assert!(ln_gamma(-1.0).is_nan());
+    assert!(ln_gamma(f64::NEG_INFINITY).is_nan());
+    assert_eq!(ln_gamma(f64::INFINITY), f64::INFINITY);
 }
 
 #[test]
@@ -100,20 +130,31 @@ fn digamma_matches_statrs_reference_grid() {
 
 #[test]
 fn unit_normal_cdf_matches_reference_points() {
-    assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-7);
-    assert_relative_eq!(unit_normal_cdf(1.0), 0.841_344_746, epsilon = 1.0e-7);
-    assert_relative_eq!(unit_normal_cdf(-1.0), 0.158_655_254, epsilon = 1.0e-7);
+    assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-15);
+    assert_relative_eq!(
+        unit_normal_cdf(1.0),
+        0.841_344_746_068_542_9,
+        epsilon = 1.0e-15
+    );
+    assert_relative_eq!(
+        unit_normal_cdf(-1.0),
+        0.158_655_253_931_457_07,
+        epsilon = 1.0e-15
+    );
 }
 
 #[test]
 fn unit_normal_cdf_and_quantile_match_statrs_reference_grid() {
     let reference = StatrsNormal::new(0.0, 1.0).unwrap();
 
-    for z in [-8.0_f64, -6.0, -3.0, -1.0, 0.0, 1.0, 3.0, 6.0, 8.0] {
-        assert_close(unit_normal_cdf(z), reference.cdf(z), 0.0, 8.0e-8);
+    for z in [
+        -12.0_f64, -10.0, -8.0, -6.0, -3.0, -1.0, 0.0, 1.0, 3.0, 6.0, 8.0, 10.0, 12.0,
+    ] {
+        assert_close(unit_normal_cdf(z), reference.cdf(z), 0.0, 2.0e-10);
     }
 
     for p in [
+        1.0e-15,
         1.0e-12,
         1.0e-10,
         1.0e-8,
@@ -125,10 +166,24 @@ fn unit_normal_cdf_and_quantile_match_statrs_reference_grid() {
         1.0 - 1.0e-8,
         1.0 - 1.0e-10,
         1.0 - 1.0e-12,
+        1.0 - 1.0e-15,
     ] {
         let quantile = unit_normal_quantile(p);
-        assert_close(quantile, reference.inverse_cdf(p), 0.0, 1.0e-8);
-        assert_close(unit_normal_cdf(quantile), p, 0.0, 8.0e-8);
+        assert_close(quantile, reference.inverse_cdf(p), 0.0, 2.0e-12);
+        assert_close(unit_normal_cdf(quantile), p, 0.0, 2.0e-15);
+    }
+}
+
+#[test]
+fn unit_normal_cdf_matches_statrs_in_far_tails() {
+    let reference = StatrsNormal::new(0.0, 1.0).unwrap();
+
+    for z in [-8.0_f64, -10.0, -12.0] {
+        assert_tail_close(unit_normal_cdf(z), reference.cdf(z), 1.0e-10);
+    }
+
+    for z in [8.0_f64, 10.0, 12.0] {
+        assert_close(unit_normal_cdf(z), reference.cdf(z), 0.0, 2.0e-15);
     }
 }
 
@@ -312,6 +367,17 @@ fn cdf_inversion_helpers_find_quantiles() {
         unit_normal_quantile(0.75),
         epsilon = 1.0e-6
     );
+}
+
+#[test]
+fn cdf_inversion_helpers_reject_invalid_brackets_and_nan_cdf_values() {
+    assert!(invert_bounded_cdf(0.5, 1.0, 0.0, |x| x).is_nan());
+    assert!(invert_bounded_cdf(0.5, 0.0, 1.0, |_| f64::NAN).is_nan());
+    assert!(invert_bounded_cdf(0.5, 0.0, 1.0, |x| 1.0 - x).is_nan());
+    assert!(invert_bounded_cdf(0.5, 0.0, 1.0, |x| 0.75 + 0.25 * x).is_nan());
+
+    assert!(invert_positive_cdf(0.5, |_| f64::NAN).is_nan());
+    assert!(invert_real_cdf(0.5, |_| f64::NAN).is_nan());
 }
 
 #[test]

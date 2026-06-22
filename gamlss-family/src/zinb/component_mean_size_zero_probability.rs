@@ -5,11 +5,12 @@ use gamlss_core::{
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
-use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
+
+use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 
 /// ZINB distribution with log/log/logit links.
 pub type ZinbMeanSizeZeroProbability = Zinb<Log, Log, Logit>;

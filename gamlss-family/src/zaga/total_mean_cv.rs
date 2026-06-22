@@ -8,8 +8,9 @@ use gamlss_core::{
 
 use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
 
-use super::{Zaga, ZagaTheta};
 use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
+
+use super::{Zaga, ZagaTheta};
 
 /// ZAGA distribution parameterized by total mean, component CV, and zero probability.
 pub type ZagaTotalMeanCvZeroProbability = ZagaTotalMeanCv<Log, Log, Logit>;
