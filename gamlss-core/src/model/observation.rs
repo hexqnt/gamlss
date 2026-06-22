@@ -32,6 +32,30 @@ impl<'a> FiniteScalarObservations<'a> {
     }
 }
 
+impl<'row, 'a> ObservationView<'row> for FiniteScalarObservations<'a> {
+    type Observation = f64;
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[inline(always)]
+    fn observation_at(&'row self, row: usize) -> Self::Observation {
+        self.values[row]
+    }
+
+    #[inline(always)]
+    fn weight_at(&self, _row: usize) -> f64 {
+        1.0
+    }
+
+    #[inline]
+    fn validate(&self) -> Result<(), ModelError> {
+        validate_scalar_observations(self.values)
+    }
+}
+
 /// Read-only row-wise observation access for training objective evaluation.
 ///
 /// This trait is intentionally small: it describes the row-wise data needed by
@@ -92,30 +116,6 @@ impl<'row> ObservationView<'row> for &[f64] {
     #[inline(always)]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
-    }
-}
-
-impl<'row, 'a> ObservationView<'row> for FiniteScalarObservations<'a> {
-    type Observation = f64;
-
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    #[inline(always)]
-    fn observation_at(&'row self, row: usize) -> Self::Observation {
-        self.values[row]
-    }
-
-    #[inline(always)]
-    fn weight_at(&self, _row: usize) -> f64 {
-        1.0
-    }
-
-    #[inline]
-    fn validate(&self) -> Result<(), ModelError> {
-        validate_scalar_observations(self.values)
     }
 }
 

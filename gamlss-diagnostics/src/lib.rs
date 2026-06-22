@@ -170,45 +170,6 @@ where
     }
 }
 
-fn diagnostic_values_into<F, Blocks, Obs>(
-    model: &Gamlss<F, Blocks, Obs>,
-    parameters: &[f64],
-    out: &mut [f64],
-    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
-) -> Result<(), ModelError>
-where
-    F: for<'row> Family<Observation<'row> = f64>,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = f64>,
-{
-    validate_output_len(model.nobs(), out.len())?;
-    let family = model.family();
-    let obs = model.obs();
-    model.for_each_theta(parameters, |row, theta| {
-        out[row] = evaluate(family, obs.observation_at(row), theta);
-    })
-}
-
-fn diagnostic_values_with_blocks_into<'obs, F, Blocks, Obs, PBlocks, PObs>(
-    model: &Gamlss<F, Blocks, Obs>,
-    parameters: &[f64],
-    blocks: &PBlocks,
-    obs: &'obs PObs,
-    out: &mut [f64],
-    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
-) -> Result<(), ModelError>
-where
-    F: for<'row> Family<Observation<'row> = f64>,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = f64>,
-    PBlocks: GamlssBlocks<F>,
-    PObs: ObservationView<'obs, Observation = f64> + 'obs,
-{
-    model.for_each_theta_with_blocks(parameters, blocks, |row, theta| {
-        out[row] = evaluate(model.family(), obs.observation_at(row), theta);
-    })
-}
-
 /// CRPS-based diagnostics for fitted GAMLSS models.
 pub trait CrpsDiagnosticsExt<F, Blocks>
 where
@@ -336,6 +297,45 @@ where
 
         Ok(weighted_sum / weight_sum)
     }
+}
+
+fn diagnostic_values_into<F, Blocks, Obs>(
+    model: &Gamlss<F, Blocks, Obs>,
+    parameters: &[f64],
+    out: &mut [f64],
+    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+) -> Result<(), ModelError>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = f64>,
+{
+    validate_output_len(model.nobs(), out.len())?;
+    let family = model.family();
+    let obs = model.obs();
+    model.for_each_theta(parameters, |row, theta| {
+        out[row] = evaluate(family, obs.observation_at(row), theta);
+    })
+}
+
+fn diagnostic_values_with_blocks_into<'obs, F, Blocks, Obs, PBlocks, PObs>(
+    model: &Gamlss<F, Blocks, Obs>,
+    parameters: &[f64],
+    blocks: &PBlocks,
+    obs: &'obs PObs,
+    out: &mut [f64],
+    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+) -> Result<(), ModelError>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = f64>,
+    PBlocks: GamlssBlocks<F>,
+    PObs: ObservationView<'obs, Observation = f64> + 'obs,
+{
+    model.for_each_theta_with_blocks(parameters, blocks, |row, theta| {
+        out[row] = evaluate(model.family(), obs.observation_at(row), theta);
+    })
 }
 
 fn validate_prediction_observations<'obs, Obs>(

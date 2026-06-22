@@ -475,6 +475,24 @@ impl<Terms> SumBlock<Terms> {
     }
 }
 
+struct ProductRowMultiplier<'a, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    left: &'a [f64],
+    right: &'a M,
+}
+
+impl<M> RowMultiplier for ProductRowMultiplier<'_, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    #[inline(always)]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self.left[row] * self.right.multiplier_at(row)
+    }
+}
+
 /// Predictor block for one distribution parameter.
 ///
 /// Implementations map a local coefficient slice to a scalar linear predictor
@@ -599,24 +617,6 @@ fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
         .zip(multiplier)
         .map(|(score, multiplier)| score * multiplier)
         .sum()
-}
-
-struct ProductRowMultiplier<'a, M>
-where
-    M: RowMultiplier + ?Sized,
-{
-    left: &'a [f64],
-    right: &'a M,
-}
-
-impl<M> RowMultiplier for ProductRowMultiplier<'_, M>
-where
-    M: RowMultiplier + ?Sized,
-{
-    #[inline(always)]
-    fn multiplier_at(&self, row: usize) -> f64 {
-        self.left[row] * self.right.multiplier_at(row)
-    }
 }
 
 macro_rules! impl_sum_block {

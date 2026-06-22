@@ -16,3 +16,6 @@ include = ["src/**/*", "tests/**/*", "Cargo.toml", "README.md"]
 [dev-dependencies]
 approx.workspace = true
 statrs = "0.18"
+
+[lints]
+workspace = true
