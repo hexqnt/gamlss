@@ -373,15 +373,21 @@ where
     #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         self.inner.validate()?;
-        if self.multiplier.len() == self.inner.nrows() {
-            Ok(())
-        } else {
-            Err(ModelError::DesignRowMismatch {
+        if self.multiplier.len() != self.inner.nrows() {
+            return Err(ModelError::DesignRowMismatch {
                 parameter: "product multiplier",
                 expected_rows: self.inner.nrows(),
                 actual_rows: self.multiplier.len(),
-            })
+            });
         }
+
+        for (index, value) in self.multiplier.iter().copied().enumerate() {
+            if !value.is_finite() {
+                return Err(ModelError::InvalidMultiplier { index });
+            }
+        }
+
+        Ok(())
     }
 
     #[inline]
@@ -874,6 +880,17 @@ mod tests {
                 expected_rows: 2,
                 actual_rows: 1,
             }
+        );
+    }
+
+    #[test]
+    fn product_block_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+        let block = ProductBlock::new(vec![1.0, f64::INFINITY], inner);
+
+        assert_eq!(
+            block.validate().unwrap_err(),
+            ModelError::InvalidMultiplier { index: 1 }
         );
     }
 }

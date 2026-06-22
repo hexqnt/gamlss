@@ -1,12 +1,12 @@
 use gamlss_core::{
     ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion, Family,
-    FloorSoftplusScalar, Gamlss, HasDensity, HasDeviance, HasDiagonalFisherInfo,
-    HasExpectedInformation, HasInitialEta, HasLogDensity, Identity, LinearForm, LinearFormBuilder,
-    Log, LogLocation, LogSd, Logit, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
-    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterLayout,
-    ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power,
-    PredictorBlock, Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
-    TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
+    FiniteScalarObservations, FloorSoftplusScalar, Gamlss, HasDensity, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, Identity,
+    LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit, Mean, Median, Mu,
+    NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
+    OneProbability, ParameterBlock, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+    ParameterizedFamily, PositiveLink, Power, PredictorBlock, Probability, Sigma, Size, Softplus,
+    SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +139,16 @@ fn training_diagnostics_remains_a_root_reexport() {
     };
 
     assert_eq!(diagnostics.objective, 1.0);
+}
+
+#[test]
+fn finite_scalar_observations_remains_a_root_reexport() {
+    let values = [1.0, 2.0];
+    let obs = FiniteScalarObservations::new(&values).expect("finite values should validate");
+
+    assert_eq!(obs.values(), values);
+    assert_eq!(obs.len(), 2);
+    assert_eq!(obs.observation_at(1), 2.0);
 }
 
 #[test]

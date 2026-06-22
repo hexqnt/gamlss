@@ -74,6 +74,27 @@ pub enum ModelError {
         index: usize,
     },
 
+    /// A scalar observation has a non-finite value.
+    #[error("scalar observation at index {index} must be finite")]
+    InvalidObservation {
+        /// Index of the invalid observation.
+        index: usize,
+    },
+
+    /// A dense design matrix entry has a non-finite value.
+    #[error("design matrix value at row-major index {index} must be finite")]
+    InvalidDesignValue {
+        /// Row-major index of the invalid value.
+        index: usize,
+    },
+
+    /// A product-block multiplier has a non-finite value.
+    #[error("product multiplier at index {index} must be finite")]
+    InvalidMultiplier {
+        /// Index of the invalid multiplier.
+        index: usize,
+    },
+
     /// Beta vector length does not match the model coefficient count.
     #[error("beta length is {actual}, expected {expected}")]
     BetaLength {

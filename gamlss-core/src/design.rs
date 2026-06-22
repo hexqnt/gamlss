@@ -37,6 +37,29 @@ impl DenseDesign {
         })
     }
 
+    /// Creates a dense matrix from finite row-major values.
+    ///
+    /// This is the strict counterpart to [`Self::from_row_major`]. The default
+    /// constructor only checks shape so callers can decide how to represent
+    /// missing or masked rows; this constructor also rejects `NaN` and
+    /// infinities in the design.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DesignSize`] if `values.len() != nrows * ncols`.
+    /// Returns [`ModelError::ArithmeticOverflow`] if `nrows * ncols` does not
+    /// fit in `usize`. Returns [`ModelError::InvalidDesignValue`] if any matrix
+    /// entry is non-finite.
+    pub fn from_row_major_strict(
+        nrows: usize,
+        ncols: usize,
+        values: Vec<f64>,
+    ) -> Result<Self, ModelError> {
+        let design = Self::from_row_major(nrows, ncols, values)?;
+        design.validate_finite()?;
+        Ok(design)
+    }
+
     /// Creates a dense matrix from an array of fixed-width rows.
     #[must_use]
     #[inline]
@@ -125,6 +148,24 @@ impl DenseDesign {
     #[inline]
     pub fn values(&self) -> &[f64] {
         &self.values
+    }
+
+    /// Validates that every row-major matrix entry is finite.
+    ///
+    /// This is opt-in because some data ingestion paths may use non-finite
+    /// sentinel values before applying their own masking or row filtering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidDesignValue`] with the row-major index of
+    /// the first non-finite entry.
+    pub fn validate_finite(&self) -> Result<(), ModelError> {
+        for (index, value) in self.values.iter().copied().enumerate() {
+            if !value.is_finite() {
+                return Err(ModelError::InvalidDesignValue { index });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -365,6 +406,20 @@ mod tests {
             ModelError::ArithmeticOverflow {
                 context: "dense design row-major value count"
             }
+        );
+    }
+
+    #[test]
+    fn dense_design_strict_rejects_non_finite_values() {
+        assert_eq!(
+            DenseDesign::from_row_major_strict(2, 1, vec![1.0, f64::NAN]).unwrap_err(),
+            ModelError::InvalidDesignValue { index: 1 }
+        );
+
+        let design = DenseDesign::from_row_major(2, 1, vec![1.0, f64::INFINITY]).unwrap();
+        assert_eq!(
+            design.validate_finite().unwrap_err(),
+            ModelError::InvalidDesignValue { index: 1 }
         );
     }
 

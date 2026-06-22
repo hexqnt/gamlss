@@ -8,7 +8,7 @@ use crate::{
 pub use layout::{
     ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
-pub use observation::ObservationView;
+pub use observation::{FiniteScalarObservations, ObservationView};
 pub use workspace::GradientWorkspace;
 
 mod layout;
@@ -526,6 +526,22 @@ where
     /// Creates an unweighted model after validating the response and blocks.
     pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
         Self::try_new_with_observations(family, blocks, y)
+    }
+}
+
+impl<'a, F, Blocks> Gamlss<F, Blocks, FiniteScalarObservations<'a>>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
+    /// Creates an unweighted model that rejects non-finite scalar responses.
+    ///
+    /// The ordinary [`Gamlss::try_new`] constructor intentionally leaves scalar
+    /// response domain checks to the family and to weights-aware workflows. This
+    /// strict constructor rejects `NaN`, `inf` and `-inf` before model
+    /// construction.
+    pub fn try_new_strict(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, FiniteScalarObservations::new(y)?)
     }
 }
 
@@ -1827,6 +1843,30 @@ mod tests {
         assert_eq!(
             Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &negative_weights).unwrap_err(),
             ModelError::InvalidWeight { index: 1 }
+        );
+    }
+
+    #[test]
+    fn scalar_response_is_permissive_but_strict_constructor_rejects_non_finite() {
+        let y = vec![1.0, f64::NAN];
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+
+        Gamlss::try_new(FixedSigmaNormal, (mu.clone(),), &y).unwrap();
+
+        assert_eq!(
+            Gamlss::try_new_strict(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            ModelError::InvalidObservation { index: 1 }
+        );
+    }
+
+    #[test]
+    fn finite_scalar_observation_adapter_rejects_non_finite() {
+        let y = vec![1.0, f64::NEG_INFINITY];
+
+        assert_eq!(
+            crate::FiniteScalarObservations::new(&y).unwrap_err(),
+            ModelError::InvalidObservation { index: 1 }
         );
     }
 

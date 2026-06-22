@@ -21,7 +21,10 @@
 //! [`Gamlss::try_new`] builds an unweighted model over a borrowed response slice.
 //! [`Gamlss::try_new_weighted`] additionally accepts finite non-negative
 //! observation weights; a zero weight excludes the observation from the
-//! likelihood and gradient.
+//! likelihood and gradient. Scalar responses are otherwise validated by the
+//! family/domain layer; use [`Gamlss::try_new_strict`] or
+//! [`FiniteScalarObservations`] to reject non-finite scalar responses at model
+//! construction.
 //!
 //! Prediction methods return link-scale `Eta` or natural-scale `Theta`:
 //! `predict_eta`, `predict_theta` use training blocks, while the
@@ -40,8 +43,8 @@ pub use link::{
     UnitIntervalLink,
 };
 pub use model::{
-    Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale, ObservationView,
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics,
+    FiniteScalarObservations, Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale,
+    ObservationView, ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics,
     UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
@@ -84,17 +87,17 @@ pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
         CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation, DesignMatrix,
-        Dispersion, Family, Gamlss, GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf,
-        HasCrps, HasDensity, HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo,
-        HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile, HingeQuadraticPenalty,
-        Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder, LinearPredictorBlock,
-        LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit, MatrixPenalty, Mean, Median,
-        ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock,
-        OneProbability, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout,
-        ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink,
-        Power, Precision, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, Scale,
-        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedParameters,
-        WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
+        Dispersion, Family, FiniteScalarObservations, Gamlss, GamlssBlocks, GlobalPenalty,
+        GradientWorkspace, HasCdf, HasCrps, HasDensity, HasDesignMatrix, HasDeviance,
+        HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
+        HingeQuadraticPenalty, Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder,
+        LinearPredictorBlock, LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit,
+        MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
+        ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
+        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictorBlock, Probability,
+        ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus,
+        SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
+        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

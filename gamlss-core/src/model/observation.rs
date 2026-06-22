@@ -1,5 +1,37 @@
 use crate::ModelError;
 
+/// Borrowed scalar observations that reject `NaN` and infinities at validation.
+///
+/// The plain `&[f64]` observation view intentionally stays permissive so
+/// weighted workflows can keep rows whose response is missing or outside a
+/// family's domain when their weight is zero. Use this adapter, or
+/// [`Gamlss::try_new_strict`](crate::Gamlss::try_new_strict), when every scalar
+/// response value must be finite before objective evaluation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FiniteScalarObservations<'a> {
+    values: &'a [f64],
+}
+
+impl<'a> FiniteScalarObservations<'a> {
+    /// Creates a finite scalar observation view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidObservation`] when any response value is
+    /// `NaN`, `inf` or `-inf`.
+    pub fn new(values: &'a [f64]) -> Result<Self, ModelError> {
+        validate_scalar_observations(values)?;
+        Ok(Self { values })
+    }
+
+    /// Returns the underlying response slice.
+    #[must_use]
+    #[inline(always)]
+    pub const fn values(&self) -> &'a [f64] {
+        self.values
+    }
+}
+
 /// Read-only row-wise observation access for training objective evaluation.
 ///
 /// This trait is intentionally small: it describes the row-wise data needed by
@@ -60,6 +92,30 @@ impl<'row> ObservationView<'row> for &[f64] {
     #[inline(always)]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
+    }
+}
+
+impl<'row, 'a> ObservationView<'row> for FiniteScalarObservations<'a> {
+    type Observation = f64;
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[inline(always)]
+    fn observation_at(&'row self, row: usize) -> Self::Observation {
+        self.values[row]
+    }
+
+    #[inline(always)]
+    fn weight_at(&self, _row: usize) -> f64 {
+        1.0
+    }
+
+    #[inline]
+    fn validate(&self) -> Result<(), ModelError> {
+        validate_scalar_observations(self.values)
     }
 }
 
@@ -159,4 +215,13 @@ fn validate_observation_weight(index: usize, weight: f64) -> Result<(), ModelErr
     } else {
         Err(ModelError::InvalidWeight { index })
     }
+}
+
+fn validate_scalar_observations(values: &[f64]) -> Result<(), ModelError> {
+    for (index, value) in values.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(ModelError::InvalidObservation { index });
+        }
+    }
+    Ok(())
 }
