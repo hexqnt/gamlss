@@ -39,6 +39,7 @@
 //! ```
 
 use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView};
+use gamlss_special::unit_normal_quantile;
 
 /// Common diagnostics imports.
 pub mod prelude {
@@ -74,11 +75,10 @@ where
     ///
     /// For continuous distributions this is `Phi^-1(F(y_i; theta_i))`, where
     /// `Phi^-1` is the inverse standard-normal CDF and `F` is the family CDF.
-    /// Non-finite PIT values propagate as `NaN`; PIT values at or beyond the
+    /// Non-finite and out-of-range PIT values propagate as `NaN`; PIT values at
     /// unit interval boundaries map to infinities.
     fn quantile_residuals(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError> {
-        self.pit_values(parameters)
-            .map(|values| values.into_iter().map(inverse_unit_normal_cdf).collect())
+        self.pit_values(parameters).map(normalize_pit_values)
     }
 
     /// Returns normalized quantile residuals for supplied prediction rows.
@@ -93,7 +93,7 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
         self.pit_values_with_blocks(parameters, blocks, obs)
-            .map(|values| values.into_iter().map(inverse_unit_normal_cdf).collect())
+            .map(normalize_pit_values)
     }
 }
 
@@ -249,65 +249,8 @@ where
     obs.validate()
 }
 
-fn inverse_unit_normal_cdf(probability: f64) -> f64 {
-    const A: [f64; 6] = [
-        -3.969_683_028_665_376e1,
-        2.209_460_984_245_205e2,
-        -2.759_285_104_469_687e2,
-        1.383_577_518_672_69e2,
-        -3.066_479_806_614_716e1,
-        2.506_628_277_459_239,
-    ];
-    const B: [f64; 5] = [
-        -5.447_609_879_822_406e1,
-        1.615_858_368_580_409e2,
-        -1.556_989_798_598_866e2,
-        6.680_131_188_771_972e1,
-        -1.328_068_155_288_572e1,
-    ];
-    const C: [f64; 6] = [
-        -7.784_894_002_430_293e-3,
-        -3.223_964_580_411_365e-1,
-        -2.400_758_277_161_838,
-        -2.549_732_539_343_734,
-        4.374_664_141_464_968,
-        2.938_163_982_698_783,
-    ];
-    const D: [f64; 4] = [
-        7.784_695_709_041_462e-3,
-        3.224_671_290_700_398e-1,
-        2.445_134_137_142_996,
-        3.754_408_661_907_416,
-    ];
-    const LOW: f64 = 0.024_25;
-    const HIGH: f64 = 1.0 - LOW;
-
-    if probability.is_nan() {
-        return f64::NAN;
-    }
-    if probability <= 0.0 {
-        return f64::NEG_INFINITY;
-    }
-    if probability >= 1.0 {
-        return f64::INFINITY;
-    }
-
-    if probability < LOW {
-        let q = (-2.0 * probability.ln()).sqrt();
-        return (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
-            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0);
-    }
-
-    if probability <= HIGH {
-        let q = probability - 0.5;
-        let r = q * q;
-        return (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
-            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0);
-    }
-
-    let q = (-2.0 * (1.0 - probability).ln()).sqrt();
-    -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
-        / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+fn normalize_pit_values(values: Vec<f64>) -> Vec<f64> {
+    values.into_iter().map(unit_normal_quantile).collect()
 }
 
 #[cfg(test)]
@@ -319,7 +262,7 @@ mod tests {
     };
     use gamlss_family::Normal;
 
-    use super::{CdfDiagnosticsExt, CrpsDiagnosticsExt, inverse_unit_normal_cdf};
+    use super::{CdfDiagnosticsExt, CrpsDiagnosticsExt, normalize_pit_values};
 
     type TestModel<'a> = Gamlss<
         Normal<Identity, Log>,
@@ -405,11 +348,15 @@ mod tests {
 
     #[test]
     fn quantile_residuals_map_invalid_and_boundary_pit_values() {
-        assert!(inverse_unit_normal_cdf(f64::NAN).is_nan());
-        assert!(inverse_unit_normal_cdf(0.0).is_infinite());
-        assert!(inverse_unit_normal_cdf(0.0).is_sign_negative());
-        assert!(inverse_unit_normal_cdf(1.0).is_infinite());
-        assert!(inverse_unit_normal_cdf(1.0).is_sign_positive());
+        let residuals = normalize_pit_values(vec![f64::NAN, -0.1, 0.0, 1.0, 1.1]);
+
+        assert!(residuals[0].is_nan());
+        assert!(residuals[1].is_nan());
+        assert!(residuals[2].is_infinite());
+        assert!(residuals[2].is_sign_negative());
+        assert!(residuals[3].is_infinite());
+        assert!(residuals[3].is_sign_positive());
+        assert!(residuals[4].is_nan());
     }
 
     #[test]

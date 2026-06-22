@@ -190,6 +190,7 @@ dependencies = [
  "approx",
  "gamlss-core",
  "gamlss-family",
+ "gamlss-special",
 ]
 
 [[package]]
