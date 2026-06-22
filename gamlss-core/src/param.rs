@@ -209,18 +209,15 @@ impl ParameterName for Precision {
 /// Typed coefficient block for a single distribution parameter.
 ///
 /// `P` specifies the parameter role, `L` specifies the link function, `X` holds
-/// the predictor block, and `Penalty` adds regularization. `offset` and `len`
-/// describe the coefficient range of the block within the common beta vector.
+/// the predictor block, and `Penalty` adds regularization. The block stores its
+/// coefficient range within the common beta vector; use [`Self::range`] and
+/// [`Self::len`] to inspect that layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterBlock<P, L, X, Penalty> {
-    /// Predictor block.
-    pub x: X,
-    /// Penalty applied to the block's coefficients.
-    pub penalty: Penalty,
-    /// Start position of the block in the common beta vector.
-    pub offset: usize,
-    /// Number of coefficients in the block.
-    pub len: usize,
+    x: X,
+    penalty: Penalty,
+    offset: usize,
+    len: usize,
     marker: PhantomData<(P, L)>,
 }
 
@@ -277,6 +274,26 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     pub fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
+    }
+
+    /// Predictor block.
+    #[must_use]
+    #[inline]
+    pub fn x(&self) -> &X {
+        &self.x
+    }
+
+    /// Penalty applied to the block's coefficients.
+    #[must_use]
+    #[inline]
+    pub fn penalty(&self) -> &Penalty {
+        &self.penalty
+    }
+
+    #[must_use]
+    #[inline]
+    pub(crate) fn offset(&self) -> usize {
+        self.offset
     }
 
     /// Coefficient range of the block in the common beta vector.

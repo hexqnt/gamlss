@@ -107,8 +107,8 @@ where
         let theta = self.predict_theta(parameters)?;
         Ok(map_diagnostic_values(
             theta,
-            &self.obs,
-            |observation, theta| self.family.cdf(observation, theta),
+            self.obs(),
+            |observation, theta| self.family().cdf(observation, theta),
         ))
     }
 
@@ -125,7 +125,7 @@ where
         validate_prediction_observations(blocks.nrows(), obs)?;
         let theta = self.predict_theta_with_blocks(parameters, blocks)?;
         Ok(map_diagnostic_values(theta, obs, |observation, theta| {
-            self.family.cdf(observation, theta)
+            self.family().cdf(observation, theta)
         }))
     }
 }
@@ -176,8 +176,8 @@ where
         let theta = self.predict_theta(parameters)?;
         Ok(map_diagnostic_values(
             theta,
-            &self.obs,
-            |observation, theta| self.family.crps(observation, theta),
+            self.obs(),
+            |observation, theta| self.family().crps(observation, theta),
         ))
     }
 
@@ -194,7 +194,7 @@ where
         validate_prediction_observations(blocks.nrows(), obs)?;
         let theta = self.predict_theta_with_blocks(parameters, blocks)?;
         Ok(map_diagnostic_values(theta, obs, |observation, theta| {
-            self.family.crps(observation, theta)
+            self.family().crps(observation, theta)
         }))
     }
 
@@ -203,7 +203,7 @@ where
         let mut weighted_sum = 0.0;
         let mut weight_sum = 0.0;
         for (row, value) in values.iter().copied().enumerate() {
-            let weight = self.obs.weight_at(row);
+            let weight = self.obs().weight_at(row);
             weighted_sum += weight * value;
             weight_sum += weight;
         }
@@ -412,19 +412,19 @@ mod tests {
 
         assert_eq!(
             model
-                .pit_values_with_blocks(&parameters, &model.blocks, &obs)
+                .pit_values_with_blocks(&parameters, model.blocks(), &obs)
                 .unwrap(),
             model.pit_values(&parameters).unwrap()
         );
         assert_eq!(
             model
-                .quantile_residuals_with_blocks(&parameters, &model.blocks, &obs)
+                .quantile_residuals_with_blocks(&parameters, model.blocks(), &obs)
                 .unwrap(),
             model.quantile_residuals(&parameters).unwrap()
         );
         assert_eq!(
             model
-                .crps_values_with_blocks(&parameters, &model.blocks, &obs)
+                .crps_values_with_blocks(&parameters, model.blocks(), &obs)
                 .unwrap(),
             model.crps_values(&parameters).unwrap()
         );
@@ -438,7 +438,7 @@ mod tests {
 
         assert_eq!(
             model
-                .pit_values_with_blocks(&[0.0, 0.0], &model.blocks, &obs)
+                .pit_values_with_blocks(&[0.0, 0.0], model.blocks(), &obs)
                 .unwrap_err(),
             ModelError::ResponseLength {
                 expected: 2,

@@ -54,18 +54,44 @@ impl ObjectiveScale {
 /// evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gamlss<F, Blocks, Obs> {
-    /// Response distribution family.
-    pub family: F,
-    /// Typed parameter blocks.
-    pub blocks: Blocks,
-    /// Observation view used for training objective evaluation.
-    pub obs: Obs,
-    /// Scaling applied to the likelihood part of the objective.
-    pub objective_scale: ObjectiveScale,
+    family: F,
+    blocks: Blocks,
+    obs: Obs,
+    objective_scale: ObjectiveScale,
 }
 
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
+    /// Response distribution family.
+    #[must_use]
+    #[inline]
+    pub fn family(&self) -> &F {
+        &self.family
+    }
+
+    /// Typed parameter blocks.
+    #[must_use]
+    #[inline]
+    pub fn blocks(&self) -> &Blocks {
+        &self.blocks
+    }
+
+    /// Observation view used for training objective evaluation.
+    #[must_use]
+    #[inline]
+    pub fn obs(&self) -> &Obs {
+        &self.obs
+    }
+
+    /// Consumes the model and returns its family, blocks and observation view.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (F, Blocks, Obs) {
+        (self.family, self.blocks, self.obs)
+    }
+
     /// Wraps the model with penalties evaluated on the full beta vector.
+    #[must_use]
+    #[inline]
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
             objective: self,
@@ -556,10 +582,8 @@ where
 /// avoiding per-call allocation of row-gradient and local-gradient vectors.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceGamlss<F, Blocks, Obs> {
-    /// Wrapped compiled model.
-    pub model: Gamlss<F, Blocks, Obs>,
-    /// Reusable gradient workspace.
-    pub workspace: GradientWorkspace,
+    model: Gamlss<F, Blocks, Obs>,
+    workspace: GradientWorkspace,
 }
 
 impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
@@ -569,21 +593,48 @@ where
     for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
     /// Creates a workspace-backed objective from a compiled model.
+    #[must_use]
+    #[inline]
     pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
         model.into_workspace_objective()
     }
 
     /// Returns the wrapped model.
+    #[must_use]
+    #[inline]
     pub fn model(&self) -> &Gamlss<F, Blocks, Obs> {
         &self.model
     }
 
     /// Returns the wrapped model mutably.
+    #[inline]
     pub fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
         &mut self.model
     }
 
+    /// Returns the reusable gradient workspace.
+    #[must_use]
+    #[inline]
+    pub fn workspace(&self) -> &GradientWorkspace {
+        &self.workspace
+    }
+
+    /// Returns the reusable gradient workspace mutably.
+    #[inline]
+    pub fn workspace_mut(&mut self) -> &mut GradientWorkspace {
+        &mut self.workspace
+    }
+
+    /// Consumes the objective and returns the wrapped model and workspace.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (Gamlss<F, Blocks, Obs>, GradientWorkspace) {
+        (self.model, self.workspace)
+    }
+
     /// Consumes the workspace-backed objective and returns the wrapped model.
+    #[must_use]
+    #[inline]
     pub fn into_model(self) -> Gamlss<F, Blocks, Obs> {
         self.model
     }
@@ -632,6 +683,8 @@ where
     }
 
     /// Wraps the workspace-backed objective with penalties evaluated on the full beta vector.
+    #[must_use]
+    #[inline]
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
             objective: self,
@@ -675,10 +728,43 @@ where
 /// LASSO-like penalties).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithGlobalPenalties<O, GP> {
+    objective: O,
+    penalties: GP,
+}
+
+impl<O, GP> WithGlobalPenalties<O, GP> {
     /// Wrapped objective.
-    pub objective: O,
+    #[must_use]
+    #[inline]
+    pub fn objective(&self) -> &O {
+        &self.objective
+    }
+
+    /// Wrapped objective, mutably.
+    #[inline]
+    pub fn objective_mut(&mut self) -> &mut O {
+        &mut self.objective
+    }
+
     /// Global penalties evaluated on the full parameter vector.
-    pub penalties: GP,
+    #[must_use]
+    #[inline]
+    pub fn penalties(&self) -> &GP {
+        &self.penalties
+    }
+
+    /// Global penalties evaluated on the full parameter vector, mutably.
+    #[inline]
+    pub fn penalties_mut(&mut self) -> &mut GP {
+        &mut self.penalties
+    }
+
+    /// Consumes the wrapper and returns the wrapped objective and penalties.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (O, GP) {
+        (self.objective, self.penalties)
+    }
 }
 
 impl<O, GP> Objective for WithGlobalPenalties<O, GP>
@@ -910,19 +996,19 @@ macro_rules! impl_gamlss_blocks {
             $($penalty: Penalty,)+
         {
             fn nrows(&self) -> usize {
-                PredictorBlock::nrows(&self.0.x)
+                PredictorBlock::nrows(self.0.x())
             }
 
             fn len(&self) -> usize {
-                0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+
+                0$(.max(self.$idx.offset().saturating_add(self.$idx.len())))+
             }
 
             fn validate(&self, y_len: usize) -> Result<(), ModelError> {
                 $(
-                    self.$idx.x.validate()?;
+                    self.$idx.x().validate()?;
                     validate_block_rows(
                         <$param as ParameterName>::NAME,
-                        PredictorBlock::nrows(&self.$idx.x),
+                        PredictorBlock::nrows(self.$idx.x()),
                         y_len,
                     )?;
                 )+
@@ -964,7 +1050,7 @@ macro_rules! impl_gamlss_blocks {
                         continue;
                     }
                     let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
+                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
                     loss += weight * family.nll_eta(observation, eta);
                 }
 
@@ -977,14 +1063,14 @@ macro_rules! impl_gamlss_blocks {
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
-                F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+])
+                F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+])
             }
 
             fn penalty_value(&self, beta: &[f64]) -> f64 {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
 
-                0.0 $(+ $block.penalty.value($beta_block))+
+                0.0 $(+ $block.penalty().value($beta_block))+
             }
 
             fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
@@ -992,13 +1078,13 @@ macro_rules! impl_gamlss_blocks {
                 Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
             {
                 let eta = family.initial_eta_from_observations(obs);
-                let mut beta = vec![0.0; 0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+];
+                let mut beta = vec![0.0; 0$(.max(self.$idx.offset().saturating_add(self.$idx.len())))+];
                 $(
                     let $block = &self.$idx;
                     let value = eta.part($idx);
                     if value.is_finite() {
                         $block
-                            .x
+                            .x()
                             .set_constant_start(value, &mut beta[$block.range()]);
                     }
                 )+
@@ -1010,9 +1096,9 @@ macro_rules! impl_gamlss_blocks {
                 $(let $beta_block = &beta[$block.range()];)+
 
                 $(
-                    $block.penalty.add_gradient(
+                    $block.penalty().add_gradient(
                         $beta_block,
-                        &mut grad[$block.offset..$block.offset + $block.len],
+                        &mut grad[$block.offset()..$block.offset() + $block.len()],
                     );
                 )+
             }
@@ -1051,19 +1137,19 @@ macro_rules! impl_gamlss_blocks {
                         continue;
                     }
                     let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
+                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
                     let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
                     loss += weight * nll;
                     $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
 
                 $(
-                    loss += $block.penalty.value($beta_block);
+                    loss += $block.penalty().value($beta_block);
                     let ($row_gradient, $local_grad) =
                         workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
-                    $block.x.add_gradient($row_gradient, $beta_block, $local_grad);
-                    $block.penalty.add_gradient($beta_block, $local_grad);
-                    add_into(&mut grad[$block.offset..$block.offset + $block.len], $local_grad);
+                    $block.x().add_gradient($row_gradient, $beta_block, $local_grad);
+                    $block.penalty().add_gradient($beta_block, $local_grad);
+                    add_into(&mut grad[$block.offset()..$block.offset() + $block.len()], $local_grad);
                 )+
 
                 loss

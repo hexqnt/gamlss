@@ -135,8 +135,8 @@ fn supports_owned_response_columns() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.model().obs.as_slice(), &[0.0, 1.0, 2.0]);
-    assert!(matches!(built.model().obs, NumericResponse::Owned(_)));
+    assert_eq!(built.model().obs().as_slice(), &[0.0, 1.0, 2.0]);
+    assert!(matches!(built.model().obs(), NumericResponse::Owned(_)));
 }
 
 #[test]
@@ -394,9 +394,9 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
 
     for (row, values) in built
         .model()
-        .blocks
+        .blocks()
         .0
-        .x
+        .x()
         .dense()
         .values()
         .chunks_exact(8)
@@ -654,11 +654,11 @@ fn cyclic_pspline_prediction_blocks_preserve_penalty_metadata() {
     let theta = [0.0, 1.0, -1.0, 0.5, 0.25, -0.25];
     let mut grad = [0.0; 6];
 
-    let value = blocks.0.penalty.value(&theta);
-    blocks.0.penalty.add_gradient(&theta, &mut grad);
+    let value = blocks.0.penalty().value(&theta);
+    blocks.0.penalty().add_gradient(&theta, &mut grad);
 
     assert!(value > 0.0);
-    assert!(grad.iter().any(|value| value.abs() > 1.0e-8));
+    assert!(grad.iter().any(|value| f64::abs(*value) > 1.0e-8));
 }
 
 #[test]
