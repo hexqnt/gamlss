@@ -16,13 +16,13 @@ fn is_probability(value: f64) -> bool {
 }
 
 #[inline(always)]
-fn clamp_probability(value: f64) -> f64 {
+const fn clamp_probability(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
 #[inline(always)]
 fn midpoint(low: f64, high: f64) -> f64 {
-    low + 0.5 * (high - low)
+    0.5f64.mul_add(high - low, low)
 }
 
 #[inline(always)]
@@ -38,7 +38,7 @@ fn polynomial_ascending(value: f64, coefficients: &[f64]) -> f64 {
 
 #[inline(always)]
 fn polynomial_ascending_with_constant_one(value: f64, coefficients: &[f64]) -> f64 {
-    1.0 + value * polynomial_ascending(value, coefficients)
+    value.mul_add(polynomial_ascending(value, coefficients), 1.0)
 }
 
 #[inline(always)]
@@ -102,7 +102,7 @@ pub fn ln_gamma(value: f64) -> f64 {
     }
     let t = shifted + 7.5;
 
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (shifted + 0.5) * t.ln() - t + x.ln()
+    (shifted + 0.5).mul_add(t.ln(), 0.5 * (2.0 * std::f64::consts::PI).ln()) - t + x.ln()
 }
 
 /// Natural logarithm of the beta function for positive finite arguments.
@@ -162,7 +162,7 @@ pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
 #[inline]
 pub fn unit_normal_log_pdf(z: f64) -> f64 {
     const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
-    -HALF_LOG_2_PI - 0.5 * z * z
+    (0.5 * z).mul_add(-z, -HALF_LOG_2_PI)
 }
 
 /// Student-t normalizing constant on the negative log-density scale.
@@ -197,11 +197,11 @@ pub fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
         return 0.5;
     }
 
-    let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
+    let beta = regularized_beta(0.5 * nu, 0.5, nu / t.mul_add(t, nu));
     if t < 0.0 {
         0.5 * beta
     } else {
-        1.0 - 0.5 * beta
+        0.5f64.mul_add(-beta, 1.0)
     }
 }
 
@@ -222,7 +222,8 @@ pub fn digamma(value: f64) -> f64 {
 
     let inv = 1.0 / x;
     let inv2 = inv * inv;
-    result + x.ln() - 0.5 * inv - inv2 / 12.0 + inv2 * inv2 / 120.0 - inv2 * inv2 * inv2 / 252.0
+    0.5f64.mul_add(-inv, result + x.ln()) - inv2 / 12.0 + inv2 * inv2 / 120.0
+        - inv2 * inv2 * inv2 / 252.0
         + inv2 * inv2 * inv2 * inv2 / 240.0
 }
 
@@ -292,7 +293,7 @@ fn gamma_lower_series(a: f64, x: f64) -> f64 {
         }
     }
 
-    sum * (-x + a * x.ln() - ln_gamma(a)).exp()
+    sum * (a.mul_add(x.ln(), -x) - ln_gamma(a)).exp()
 }
 
 fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
@@ -312,7 +313,7 @@ fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
         let i = iteration as f64;
         let an = -i * (i - a);
         b += 2.0;
-        d = an * d + b;
+        d = an.mul_add(d, b);
         if d.abs() < TINY {
             d = TINY;
         }
@@ -328,7 +329,7 @@ fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
         }
     }
 
-    (-x + a * x.ln() - ln_gamma(a)).exp() * h
+    (a.mul_add(x.ln(), -x) - ln_gamma(a)).exp() * h
 }
 
 /// Generalized inverse for a discrete CDF on non-negative integer support.
@@ -598,7 +599,7 @@ where
 
 #[inline(always)]
 fn simpson(lower: f64, upper: f64, f_lower: f64, f_mid: f64, f_upper: f64) -> f64 {
-    (upper - lower) * (f_lower + 4.0 * f_mid + f_upper) / 6.0
+    (upper - lower) * (4.0f64.mul_add(f_mid, f_lower) + f_upper) / 6.0
 }
 
 fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
