@@ -3,10 +3,10 @@ use gamlss_family::*;
 use proptest::prelude::*;
 
 use common::{
-    PROB_MAX, PROB_MIN, assert_cdf_monotone, assert_close, assert_continuous_inverse,
-    assert_density_integrates_over_quantile_bracket, assert_discrete_inverse,
-    assert_discrete_mass_sums_to_one, assert_discrete_or_continuous_generalized_inverse,
-    integrate_simpson, proptest_config,
+    PROB_MAX, PROB_MIN, TAIL_PROBABILITIES, assert_cdf_monotone, assert_close,
+    assert_continuous_inverse, assert_density_integrates_over_quantile_bracket,
+    assert_discrete_inverse, assert_discrete_mass_sums_to_one,
+    assert_discrete_or_continuous_generalized_inverse, integrate_simpson, proptest_config,
 };
 
 #[path = "common/helpers.rs"]
@@ -313,4 +313,84 @@ fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
     let integral = integrate_simpson(lower, upper, 2048, |y| (-tweedie.nll(y, theta)).exp());
     let expected = tweedie.cdf(upper, theta) - tweedie.cdf(lower, theta);
     assert_close(integral, expected, 0.0, 3.0e-4);
+}
+
+#[test]
+fn tail_quantiles_follow_distribution_contracts() {
+    for p in TAIL_PROBABILITIES {
+        assert_continuous_inverse(
+            &NormalMuSigma::new(),
+            p,
+            NormalTheta {
+                mu: 0.2,
+                sigma: 1.1,
+            },
+            5.0e-7,
+        );
+        assert_continuous_inverse(
+            &GumbelMuSigma::new(),
+            p,
+            GumbelTheta {
+                mu: -0.2,
+                sigma: 0.9,
+            },
+            1.0e-8,
+        );
+        assert_continuous_inverse(
+            &LogisticMuSigma::new(),
+            p,
+            LogisticTheta {
+                mu: 0.1,
+                sigma: 1.3,
+            },
+            1.0e-8,
+        );
+    }
+
+    for p in TAIL_PROBABILITIES {
+        assert_discrete_inverse(&PoissonMean::new(), p, PoissonTheta { mu: 4.0 });
+        assert_discrete_inverse(
+            &NegativeBinomialMeanSize::new(),
+            p,
+            NegativeBinomialTheta {
+                mu: 4.0,
+                shape: 1.7,
+            },
+        );
+    }
+}
+
+#[test]
+fn mixed_distribution_quantiles_are_generalized_inverses() {
+    for p in [1.0e-12, 0.05, 0.25, 0.5, 0.9, 1.0 - 1.0e-12] {
+        assert_discrete_or_continuous_generalized_inverse(
+            &ZipMeanZeroProbability::new(),
+            p,
+            ZipTheta {
+                mu: 3.0,
+                sigma: 0.25,
+            },
+            1.0e-12,
+        );
+        assert_discrete_or_continuous_generalized_inverse(
+            &ZinbMeanSizeZeroProbability::new(),
+            p,
+            ZinbTheta {
+                mu: 3.0,
+                shape: 1.5,
+                nu: 0.25,
+            },
+            1.0e-12,
+        );
+        assert_discrete_or_continuous_generalized_inverse(
+            &ZagaMeanSigmaZeroProbability::new(),
+            p,
+            ZagaTheta {
+                mu: 2.0,
+                sigma: 0.5,
+                nu: 0.25,
+            },
+            1.0e-7,
+        );
+    }
 }

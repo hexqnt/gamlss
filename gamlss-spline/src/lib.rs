@@ -71,9 +71,19 @@ mod tests {
         let basis = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
 
         for value in x {
-            let sum = basis.evaluate(value).iter().sum::<f64>();
-            assert_relative_eq!(sum, 1.0, epsilon = 1.0e-12);
+            assert_nonnegative_partition_of_unity(&basis.evaluate(value));
         }
+    }
+
+    #[test]
+    fn open_uniform_bspline_has_expected_endpoint_rows() {
+        let x = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let basis = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let left = basis.evaluate(0.0);
+        let right = basis.evaluate(1.0);
+
+        assert_single_active_endpoint_basis(&left, 0);
+        assert_single_active_endpoint_basis(&right, basis.n_basis() - 1);
     }
 
     #[test]
@@ -98,6 +108,7 @@ mod tests {
             let unprepared = DifferencePenalty::new(0.7, order);
             let prepared = PreparedDifferencePenalty::new(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
+            assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
     }
 
@@ -192,6 +203,31 @@ mod tests {
 
         let ramp = (0..8).map(|value| value as f64).collect::<Vec<_>>();
         assert_relative_eq!(design.eta_row(0, &ramp), design.eta_row(2, &ramp));
+    }
+
+    #[test]
+    fn periodic_spline_design_is_equal_at_periodic_coordinates() {
+        let spec = PeriodicSplineSpec::new(8, SplineOrder::Cubic, 1.0, 0.0).unwrap();
+        let design = spec.design(&[-0.25, 0.0, 0.75, 1.0, 1.75]).unwrap();
+        let beta = (0..design.nparams())
+            .map(|index| index as f64 * 0.25 - 0.5)
+            .collect::<Vec<_>>();
+
+        assert_relative_eq!(
+            design.eta_row(0, &beta),
+            design.eta_row(2, &beta),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            design.eta_row(1, &beta),
+            design.eta_row(3, &beta),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            design.eta_row(2, &beta),
+            design.eta_row(4, &beta),
+            epsilon = 1.0e-12
+        );
     }
 
     #[test]
@@ -376,6 +412,7 @@ mod tests {
             let unprepared = CyclicDifferencePenalty::new(0.7, order);
             let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
+            assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
     }
 
@@ -767,6 +804,24 @@ mod tests {
             let finite_difference = (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * eps);
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
+    }
+
+    fn assert_nonnegative_partition_of_unity(values: &[f64]) {
+        let sum = values.iter().sum::<f64>();
+        assert_relative_eq!(sum, 1.0, epsilon = 1.0e-12);
+        for &basis_value in values {
+            assert!(
+                basis_value >= -1.0e-14,
+                "basis value {basis_value} is negative"
+            );
+        }
+    }
+
+    fn assert_single_active_endpoint_basis(values: &[f64], active_index: usize) {
+        for (index, &value) in values.iter().enumerate() {
+            let expected = if index == active_index { 1.0 } else { 0.0 };
+            assert_relative_eq!(value, expected, epsilon = 1.0e-12);
         }
     }
 

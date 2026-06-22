@@ -122,3 +122,53 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         [0.1, -0.2, 3.0_f64.ln()],
     );
 }
+
+#[test]
+fn gradient_contracts_hold_near_representative_boundaries() {
+    for eta in [[-6.0], [-2.0], [0.0], [2.0], [6.0]] {
+        assert_gradient_matches_finite_difference::<_, 1>(&BernoulliProbability::new(), 0.0, eta);
+        assert_gradient_matches_finite_difference::<_, 1>(&BernoulliProbability::new(), 1.0, eta);
+        assert_gradient_matches_finite_difference::<_, 1>(&PoissonMean::new(), 0.0, eta);
+        assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), 1.0e-6, eta);
+        assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), 30.0, eta);
+    }
+
+    for eta in [
+        [-2.0, -6.0],
+        [2.0, -6.0],
+        [-2.0, 4.0],
+        [2.0, 4.0],
+        [0.0, 0.0],
+    ] {
+        assert_gradient_matches_finite_difference::<_, 2>(&NormalMuSigma::new(), eta[0], eta);
+        assert_gradient_matches_finite_difference::<_, 2>(&GumbelMuSigma::new(), eta[0], eta);
+        assert_gradient_matches_finite_difference::<_, 2>(&LaplaceMuSigma::new(), eta[0], eta);
+        assert_gradient_matches_finite_difference::<_, 2>(&LogisticMuSigma::new(), eta[0], eta);
+        assert_gradient_matches_finite_difference::<_, 2>(&StudentTMuSigma::default(), eta[0], eta);
+    }
+
+    for eta in [
+        [-6.0, -2.0],
+        [6.0, -2.0],
+        [-2.0, 4.0],
+        [2.0, 4.0],
+        [0.0, 0.0],
+    ] {
+        assert_gradient_matches_finite_difference::<_, 2>(&BetaMeanPrecision::new(), 0.5, eta);
+    }
+
+    for eta in [[-4.0, -4.0], [0.0, 0.0], [4.0, 4.0]] {
+        assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), 1.0e-6, eta);
+        assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), 30.0, eta);
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &NegativeBinomialMeanSize::new(),
+            0.0,
+            eta,
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &NegativeBinomialMeanSize::new(),
+            40.0,
+            eta,
+        );
+    }
+}

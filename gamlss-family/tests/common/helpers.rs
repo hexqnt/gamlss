@@ -47,6 +47,29 @@ pub fn assert_close(actual: f64, expected: f64, rel_tol: f64, abs_tol: f64) {
     );
 }
 
+pub fn assert_nll_eta_matches_theta<F, const K: usize>(family: &F, y: f64, eta: [f64; K])
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    F::Eta: Copy + ParameterParts<K>,
+{
+    let eta = F::Eta::from_array(eta);
+    let via_eta = family.nll_eta(y, eta);
+    let via_theta = family.nll(y, family.theta(eta));
+
+    if via_eta.is_finite() && via_theta.is_finite() {
+        assert_close(via_eta, via_theta, 1.0e-12, 1.0e-12);
+        return;
+    }
+
+    assert!(
+        (via_eta.is_nan() && via_theta.is_nan())
+            || (via_eta.is_infinite()
+                && via_theta.is_infinite()
+                && via_eta.is_sign_positive() == via_theta.is_sign_positive()),
+        "nll_eta and nll(theta(eta)) disagree: {via_eta:?} vs {via_theta:?}"
+    );
+}
+
 pub fn assert_gradient_matches_finite_difference<F, const K: usize>(
     family: &F,
     y: f64,
