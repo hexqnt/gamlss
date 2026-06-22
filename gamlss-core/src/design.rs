@@ -232,8 +232,19 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(multiplier.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, (&weight, &multiplier)) in weights.iter().zip(multiplier).enumerate() {
-            let scaled_weight = weight * multiplier;
+        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
+    }
+
+    #[inline]
+    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(weights.len(), self.nrows);
+        debug_assert_eq!(out.len(), self.ncols);
+
+        for (row, &weight) in weights.iter().enumerate() {
+            let scaled_weight = weight * multiplier.multiplier_at(row);
             let offset = row * self.ncols;
             let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
@@ -299,10 +310,23 @@ pub trait DesignMatrix {
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), multiplier.len());
 
+        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
+    }
+
+    /// Adds `X^T (weights * multiplier(row))` into `out`.
+    ///
+    /// This variant lets nested predictor blocks provide a lazily evaluated
+    /// row multiplier and avoid materializing scaled weights. Matrix
+    /// implementations with direct row access should override this method.
+    #[inline]
+    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
         let scaled_weights = weights
             .iter()
-            .zip(multiplier)
-            .map(|(weight, multiplier)| weight * multiplier)
+            .enumerate()
+            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
             .collect::<Vec<_>>();
         self.add_t_mul_vec(&scaled_weights, out);
     }
@@ -341,6 +365,19 @@ pub trait DesignMatrix {
             let gram_col = &mut out[k * ncols..(k + 1) * ncols];
             self.add_t_mul_vec(&w_xk, gram_col);
         }
+    }
+}
+
+/// Row-wise multiplier used by fused weighted transpose products.
+pub trait RowMultiplier {
+    /// Multiplier value for `row`.
+    fn multiplier_at(&self, row: usize) -> f64;
+}
+
+impl RowMultiplier for [f64] {
+    #[inline(always)]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self[row]
     }
 }
 

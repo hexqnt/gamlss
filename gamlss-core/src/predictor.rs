@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{DesignMatrix, Link, ModelError, Softplus};
+use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus};
 
 /// Convenience predictor block alias for `softplus(beta)`.
 ///
@@ -78,6 +78,19 @@ where
         grad: &mut [f64],
     ) {
         self.x.add_weighted_t_mul_vec(scores, multiplier, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        self.x.add_weighted_t_mul_vec_by(scores, multiplier, grad);
     }
 
     #[inline]
@@ -371,6 +384,42 @@ where
     }
 
     #[inline]
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), self.nrows());
+        debug_assert_eq!(multiplier.len(), self.nrows());
+        debug_assert_eq!(self.multiplier.len(), self.nrows());
+
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.nrows());
+        debug_assert_eq!(self.multiplier.len(), self.nrows());
+
+        let product_multiplier = ProductRowMultiplier {
+            left: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_weighted_gradient_by(scores, &product_multiplier, beta, grad);
+    }
+
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         self.inner.validate()?;
         if self.multiplier.len() != self.inner.nrows() {
@@ -477,12 +526,30 @@ pub trait PredictorBlock {
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), multiplier.len());
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    /// Adds the gradient contribution implied by a lazy row multiplier.
+    ///
+    /// Default implementation materializes scaled scores and delegates to
+    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
+    /// this method to keep row scaling fused through composed predictors.
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.nrows());
 
         let scaled_scores = scores
             .iter()
-            .zip(multiplier)
-            .map(|(score, multiplier)| score * multiplier)
+            .enumerate()
+            .map(|(row, score)| score * multiplier.multiplier_at(row))
             .collect::<Vec<_>>();
         self.add_gradient(&scaled_scores, beta, grad);
     }
@@ -532,6 +599,24 @@ fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
         .zip(multiplier)
         .map(|(score, multiplier)| score * multiplier)
         .sum()
+}
+
+struct ProductRowMultiplier<'a, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    left: &'a [f64],
+    right: &'a M,
+}
+
+impl<M> RowMultiplier for ProductRowMultiplier<'_, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    #[inline(always)]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self.left[row] * self.right.multiplier_at(row)
+    }
 }
 
 macro_rules! impl_sum_block {

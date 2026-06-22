@@ -31,7 +31,7 @@
 //! `*_with_blocks` methods accept a compatible tuple of prediction blocks for new
 //! rows.
 
-pub use design::{DenseDesign, DesignMatrix};
+pub use design::{DenseDesign, DesignMatrix, RowMultiplier};
 pub use error::ModelError;
 pub use family::{
     CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDensity, HasDeviance,
@@ -96,8 +96,9 @@ pub mod prelude {
         ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
         ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
         ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictorBlock, Probability,
-        ProductBlock, Rate, RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus,
-        SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar, UnitIntervalLink,
-        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
+        ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size,
+        Softplus, SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar,
+        UnitIntervalLink, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+        ZeroProbability,
     };
 }

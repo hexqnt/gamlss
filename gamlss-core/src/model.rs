@@ -270,31 +270,28 @@ where
         &self,
         parameters: &[f64],
     ) -> Result<TrainingDiagnostics, ModelError> {
-        validate_len("parameters", parameters.len(), self.nparams())?;
+        let mut grad = vec![0.0; self.nparams()];
+        self.training_diagnostics_into(parameters, &mut grad)
+    }
+
+    /// Computes training diagnostics using a caller-provided gradient buffer.
+    ///
+    /// The buffer is overwritten with the objective gradient and then reused to
+    /// compute the reported gradient norm. This avoids allocating a temporary
+    /// gradient vector when diagnostics are evaluated repeatedly.
+    pub fn training_diagnostics_into(
+        &self,
+        parameters: &[f64],
+        grad: &mut [f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), parameters, grad)?;
 
         let likelihood_multiplier = self.likelihood_multiplier();
         let train_nll =
             likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, parameters);
         let penalty = self.blocks.penalty_value(parameters);
-        let mut grad = vec![0.0; self.nparams()];
-        self.try_gradient_into(parameters, &mut grad)?;
-        let (finite_gradient_sum_squares, nonfinite_gradient_count) =
-            grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
-                if value.is_finite() {
-                    (sum_squares + value * value, count)
-                } else {
-                    (sum_squares, count + 1)
-                }
-            });
-        let gradient_norm = finite_gradient_sum_squares.sqrt();
-
-        Ok(TrainingDiagnostics {
-            objective: train_nll + penalty,
-            train_nll,
-            penalty,
-            gradient_norm,
-            nonfinite_gradient_count,
-        })
+        self.try_gradient_into(parameters, grad)?;
+        Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
     }
 
     /// Predicts link-scale distribution predictors for one training row.
@@ -335,6 +332,41 @@ where
         Ok((0..self.nobs())
             .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
             .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters into an existing slice.
+    ///
+    /// `out` must have one slot per training row.
+    pub fn predict_theta_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        validate_output_len(self.nobs(), out.len())?;
+        for (row, out) in out.iter_mut().enumerate() {
+            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+        }
+        Ok(())
+    }
+
+    /// Streams natural-scale distribution parameters for each training row.
+    pub fn for_each_theta(
+        &self,
+        parameters: &[f64],
+        mut visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        for row in 0..self.nobs() {
+            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+        }
+        Ok(())
     }
 
     /// Predicts link-scale distribution predictors for one row from compatible prediction blocks.
@@ -424,6 +456,47 @@ where
         Ok((0..blocks.nrows())
             .map(|row| self.family.theta(blocks.eta_row(parameters, row)))
             .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters from prediction blocks into `out`.
+    ///
+    /// `out` must have one slot per row in `blocks`.
+    pub fn predict_theta_with_blocks_into<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        validate_prediction_blocks(&self.blocks, blocks)?;
+        validate_output_len(blocks.nrows(), out.len())?;
+        for (row, out) in out.iter_mut().enumerate() {
+            *out = self.family.theta(blocks.eta_row(parameters, row));
+        }
+        Ok(())
+    }
+
+    /// Streams natural-scale parameters for each row in compatible prediction blocks.
+    pub fn for_each_theta_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        mut visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        validate_prediction_blocks(&self.blocks, blocks)?;
+        for row in 0..blocks.nrows() {
+            visit(row, self.family.theta(blocks.eta_row(parameters, row)));
+        }
+        Ok(())
     }
 
     /// Validates beta length and computes the objective.
@@ -696,6 +769,30 @@ where
             .parameter_slice_of::<P>()
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
         Ok(BlockObjective::new(self, full_beta, range))
+    }
+
+    /// Computes training diagnostics using caller-provided objective-gradient storage.
+    ///
+    /// The reusable [`GradientWorkspace`] is used for internal per-parameter
+    /// buffers, while `grad` receives the full objective gradient and is reused
+    /// to compute the reported gradient norm.
+    pub fn training_diagnostics_into(
+        &mut self,
+        parameters: &[f64],
+        grad: &mut [f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        validate_beta_and_gradient_len(self.model.nparams(), parameters, grad)?;
+
+        let likelihood_multiplier = self.model.likelihood_multiplier();
+        let train_nll = likelihood_multiplier
+            * self
+                .model
+                .blocks
+                .train_nll(&self.model.family, &self.model.obs, parameters);
+        let penalty = self.model.blocks.penalty_value(parameters);
+        self.model
+            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)?;
+        Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
     }
 
     /// Wraps the workspace-backed objective with penalties evaluated on the full beta vector.
@@ -1442,6 +1539,37 @@ fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     }
 }
 
+fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ModelError::ResponseLength { expected, actual })
+    }
+}
+
+fn training_diagnostics_from_gradient(
+    train_nll: f64,
+    penalty: f64,
+    grad: &[f64],
+) -> TrainingDiagnostics {
+    let (finite_gradient_sum_squares, nonfinite_gradient_count) =
+        grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
+            if value.is_finite() {
+                (sum_squares + value * value, count)
+            } else {
+                (sum_squares, count + 1)
+            }
+        });
+
+    TrainingDiagnostics {
+        objective: train_nll + penalty,
+        train_nll,
+        penalty,
+        gradient_norm: finite_gradient_sum_squares.sqrt(),
+        nonfinite_gradient_count,
+    }
+}
+
 fn validate_prediction_blocks<F, Blocks, PBlocks>(
     expected_blocks: &Blocks,
     blocks: &PBlocks,
@@ -1882,6 +2010,23 @@ mod tests {
         assert_relative_eq!(model.predict_theta_row(&beta, 1).unwrap(), 1.0);
         assert_eq!(model.predict_eta(&beta).unwrap(), vec![0.5, 1.0]);
         assert_eq!(model.predict_theta(&beta).unwrap(), vec![0.5, 1.0]);
+
+        let mut theta = vec![f64::NAN; model.nobs()];
+        model.predict_theta_into(&beta, &mut theta).unwrap();
+        assert_eq!(theta, model.predict_theta(&beta).unwrap());
+
+        let mut streamed = Vec::new();
+        model
+            .for_each_theta(&beta, |row, theta| streamed.push((row, theta)))
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 0.5), (1, 1.0)]);
+        assert_eq!(
+            model.predict_theta_into(&beta, &mut [0.0]).unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
     }
 
     #[test]
@@ -1934,6 +2079,20 @@ mod tests {
                 .unwrap(),
             vec![1.0, 1.25, 1.5]
         );
+
+        let mut theta = vec![f64::NAN; 3];
+        model
+            .predict_theta_with_blocks_into(&beta, &prediction_blocks, &mut theta)
+            .unwrap();
+        assert_eq!(theta, vec![1.0, 1.25, 1.5]);
+
+        let mut streamed = Vec::new();
+        model
+            .for_each_theta_with_blocks(&beta, &prediction_blocks, |row, theta| {
+                streamed.push((row, theta));
+            })
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 1.0), (1, 1.25), (2, 1.5)]);
     }
 
     #[test]
@@ -2646,13 +2805,29 @@ mod tests {
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let parameters = vec![1.5];
+        let mut grad = vec![f64::NAN; parameters.len()];
         let diagnostics = model.training_diagnostics(&parameters).unwrap();
+        let diagnostics_into = model
+            .training_diagnostics_into(&parameters, &mut grad)
+            .unwrap();
 
         assert_relative_eq!(diagnostics.train_nll, 0.25);
         assert_relative_eq!(diagnostics.penalty, 1.125);
         assert_relative_eq!(diagnostics.objective, 1.375);
         assert_relative_eq!(diagnostics.gradient_norm, 1.5);
         assert_eq!(diagnostics.nonfinite_gradient_count, 0);
+        assert_eq!(diagnostics_into, diagnostics);
+        assert_relative_eq!(grad[0], 1.5);
+
+        let mut workspace_model = model.into_workspace_objective();
+        grad.fill(f64::NAN);
+        assert_eq!(
+            workspace_model
+                .training_diagnostics_into(&parameters, &mut grad)
+                .unwrap(),
+            diagnostics
+        );
+        assert_relative_eq!(grad[0], 1.5);
     }
 
     #[derive(Debug, Clone, Copy)]

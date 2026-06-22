@@ -227,6 +227,21 @@ macro_rules! define_spec {
                 Ok(self.model().predict_theta_with_blocks(parameters, design.blocks())?)
             }
 
+            /// Predicts natural-scale distribution parameters into an existing output slice.
+            pub fn predict_theta_with_design_into(
+                &self,
+                parameters: &[f64],
+                design: &PredictionDesign<$blocks>,
+                out: &mut [<$family as gamlss_core::Family>::Theta],
+            ) -> Result<(), FormulaError>
+            {
+                Ok(self.model().predict_theta_with_blocks_into(
+                    parameters,
+                    design.blocks(),
+                    out,
+                )?)
+            }
+
             /// Predicts natural-scale distribution parameters for new rows.
             pub fn predict_theta<D>(
                 &self,

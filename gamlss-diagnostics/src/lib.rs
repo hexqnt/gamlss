@@ -60,6 +60,9 @@ where
     /// error.
     fn pit_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>;
 
+    /// Writes PIT values for training rows into an existing output slice.
+    fn pit_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+
     /// Returns PIT values for supplied compatible prediction blocks and observations.
     fn pit_values_with_blocks<'obs, PBlocks, PObs>(
         &self,
@@ -67,6 +70,18 @@ where
         blocks: &PBlocks,
         obs: &'obs PObs,
     ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs;
+
+    /// Writes PIT values for supplied prediction rows into an existing output slice.
+    fn pit_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
     where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
@@ -104,12 +119,15 @@ where
     for<'row> Obs: ObservationView<'row, Observation = f64>,
 {
     fn pit_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError> {
-        let theta = self.predict_theta(parameters)?;
-        Ok(map_diagnostic_values(
-            theta,
-            self.obs(),
-            |observation, theta| self.family().cdf(observation, theta),
-        ))
+        let mut out = vec![0.0; self.nobs()];
+        self.pit_values_into(parameters, &mut out)?;
+        Ok(out)
+    }
+
+    fn pit_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        diagnostic_values_into(self, parameters, out, |family, observation, theta| {
+            family.cdf(observation, theta)
+        })
     }
 
     fn pit_values_with_blocks<'obs, PBlocks, PObs>(
@@ -123,11 +141,72 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
         validate_prediction_observations(blocks.nrows(), obs)?;
-        let theta = self.predict_theta_with_blocks(parameters, blocks)?;
-        Ok(map_diagnostic_values(theta, obs, |observation, theta| {
-            self.family().cdf(observation, theta)
-        }))
+        let mut out = vec![0.0; blocks.nrows()];
+        self.pit_values_with_blocks_into(parameters, blocks, obs, &mut out)?;
+        Ok(out)
     }
+
+    fn pit_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        validate_prediction_observations(blocks.nrows(), obs)?;
+        validate_output_len(blocks.nrows(), out.len())?;
+        diagnostic_values_with_blocks_into(
+            self,
+            parameters,
+            blocks,
+            obs,
+            out,
+            |family, observation, theta| family.cdf(observation, theta),
+        )
+    }
+}
+
+fn diagnostic_values_into<F, Blocks, Obs>(
+    model: &Gamlss<F, Blocks, Obs>,
+    parameters: &[f64],
+    out: &mut [f64],
+    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+) -> Result<(), ModelError>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = f64>,
+{
+    validate_output_len(model.nobs(), out.len())?;
+    let family = model.family();
+    let obs = model.obs();
+    model.for_each_theta(parameters, |row, theta| {
+        out[row] = evaluate(family, obs.observation_at(row), theta);
+    })
+}
+
+fn diagnostic_values_with_blocks_into<'obs, F, Blocks, Obs, PBlocks, PObs>(
+    model: &Gamlss<F, Blocks, Obs>,
+    parameters: &[f64],
+    blocks: &PBlocks,
+    obs: &'obs PObs,
+    out: &mut [f64],
+    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+) -> Result<(), ModelError>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = f64>,
+    PBlocks: GamlssBlocks<F>,
+    PObs: ObservationView<'obs, Observation = f64> + 'obs,
+{
+    model.for_each_theta_with_blocks(parameters, blocks, |row, theta| {
+        out[row] = evaluate(model.family(), obs.observation_at(row), theta);
+    })
 }
 
 /// CRPS-based diagnostics for fitted GAMLSS models.
@@ -143,6 +222,9 @@ where
     /// family CRPS result, usually `NaN`.
     fn crps_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>;
 
+    /// Writes CRPS values for training rows into an existing output slice.
+    fn crps_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+
     /// Returns CRPS values for supplied compatible prediction blocks and observations.
     fn crps_values_with_blocks<'obs, PBlocks, PObs>(
         &self,
@@ -150,6 +232,18 @@ where
         blocks: &PBlocks,
         obs: &'obs PObs,
     ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs;
+
+    /// Writes CRPS values for supplied prediction rows into an existing output slice.
+    fn crps_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
     where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
@@ -173,12 +267,15 @@ where
     for<'row> Obs: ObservationView<'row, Observation = f64>,
 {
     fn crps_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError> {
-        let theta = self.predict_theta(parameters)?;
-        Ok(map_diagnostic_values(
-            theta,
-            self.obs(),
-            |observation, theta| self.family().crps(observation, theta),
-        ))
+        let mut out = vec![0.0; self.nobs()];
+        self.crps_values_into(parameters, &mut out)?;
+        Ok(out)
+    }
+
+    fn crps_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        diagnostic_values_into(self, parameters, out, |family, observation, theta| {
+            family.crps(observation, theta)
+        })
     }
 
     fn crps_values_with_blocks<'obs, PBlocks, PObs>(
@@ -192,47 +289,53 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
         validate_prediction_observations(blocks.nrows(), obs)?;
-        let theta = self.predict_theta_with_blocks(parameters, blocks)?;
-        Ok(map_diagnostic_values(theta, obs, |observation, theta| {
-            self.family().crps(observation, theta)
-        }))
+        let mut out = vec![0.0; blocks.nrows()];
+        self.crps_values_with_blocks_into(parameters, blocks, obs, &mut out)?;
+        Ok(out)
+    }
+
+    fn crps_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        validate_prediction_observations(blocks.nrows(), obs)?;
+        validate_output_len(blocks.nrows(), out.len())?;
+        diagnostic_values_with_blocks_into(
+            self,
+            parameters,
+            blocks,
+            obs,
+            out,
+            |family, observation, theta| family.crps(observation, theta),
+        )
     }
 
     fn weighted_mean_crps(&self, parameters: &[f64]) -> Result<f64, ModelError> {
-        let theta = self.predict_theta(parameters)?;
         let family = self.family();
         let obs = self.obs();
         let mut weighted_sum = 0.0;
         let mut weight_sum = 0.0;
 
-        for (row, theta) in theta.into_iter().enumerate() {
+        self.for_each_theta(parameters, |row, theta| {
             let weight = obs.weight_at(row);
             if weight == 0.0 {
-                continue;
+                return;
             }
 
             let value = family.crps(obs.observation_at(row), theta);
             weighted_sum += weight * value;
             weight_sum += weight;
-        }
+        })?;
 
         Ok(weighted_sum / weight_sum)
     }
-}
-
-fn map_diagnostic_values<'obs, Theta, Obs>(
-    parameters: Vec<Theta>,
-    obs: &'obs Obs,
-    mut evaluate: impl FnMut(f64, Theta) -> f64,
-) -> Vec<f64>
-where
-    Obs: ObservationView<'obs, Observation = f64> + 'obs,
-{
-    parameters
-        .into_iter()
-        .enumerate()
-        .map(|(row, parameters)| evaluate(obs.observation_at(row), parameters))
-        .collect()
 }
 
 fn validate_prediction_observations<'obs, Obs>(
@@ -247,6 +350,14 @@ where
         return Err(ModelError::ResponseLength { expected, actual });
     }
     obs.validate()
+}
+
+fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ModelError::ResponseLength { expected, actual })
+    }
 }
 
 fn normalize_pit_values(values: Vec<f64>) -> Vec<f64> {
@@ -326,10 +437,15 @@ mod tests {
         let model = normal_intercept_model(&y);
 
         let pit = model.pit_values(&[0.0, 0.0]).expect("valid parameters");
+        let mut pit_into = vec![f64::NAN; y.len()];
+        model
+            .pit_values_into(&[0.0, 0.0], &mut pit_into)
+            .expect("valid parameters");
 
         assert_relative_eq!(pit[0], 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(pit[1], 0.841_344_746, epsilon = 1.0e-7);
         assert_relative_eq!(pit[2], 0.158_655_254, epsilon = 1.0e-7);
+        assert_eq!(pit_into, pit);
     }
 
     #[test]
@@ -371,6 +487,13 @@ mod tests {
                 actual: 0
             }
         );
+        assert_eq!(
+            model.pit_values_into(&[0.0, 0.0], &mut []).unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 1,
+                actual: 0
+            }
+        );
     }
 
     #[test]
@@ -379,9 +502,14 @@ mod tests {
         let model = normal_intercept_model(&y);
 
         let crps = model.crps_values(&[0.0, 0.0]).expect("valid parameters");
+        let mut crps_into = vec![f64::NAN; y.len()];
+        model
+            .crps_values_into(&[0.0, 0.0], &mut crps_into)
+            .expect("valid parameters");
 
         assert_relative_eq!(crps[0], 0.233_694_977_255_109_13, epsilon = 1.0e-12);
         assert_relative_eq!(crps[1], 0.602_441_357_627_616_5, epsilon = 1.0e-12);
+        assert_eq!(crps_into, crps);
         assert_relative_eq!(
             model.mean_crps(&[0.0, 0.0]).expect("valid parameters"),
             (crps[0] + crps[1]) / 2.0,
@@ -478,6 +606,13 @@ mod tests {
             model.crps_values(&[]).unwrap_err(),
             ModelError::BetaLength {
                 expected: 2,
+                actual: 0
+            }
+        );
+        assert_eq!(
+            model.crps_values_into(&[0.0, 0.0], &mut []).unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 1,
                 actual: 0
             }
         );
