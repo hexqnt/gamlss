@@ -475,6 +475,11 @@ where
     }
 
     /// Computes training diagnostics for a candidate optimizer-parameter vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension.
     pub fn training_diagnostics(
         &self,
         parameters: &[f64],
@@ -488,10 +493,43 @@ where
     /// The buffer is overwritten with the objective gradient and then reused to
     /// compute the reported gradient norm. This avoids allocating a temporary
     /// gradient vector when diagnostics are evaluated repeatedly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
     pub fn training_diagnostics_into(
         &self,
         parameters: &[f64],
         grad: &mut [f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.training_diagnostics_into_workspace(parameters, grad, &mut workspace)
+    }
+
+    /// Computes training diagnostics using caller-provided gradient and workspace buffers.
+    ///
+    /// The reusable [`GradientWorkspace`] is used for internal per-parameter
+    /// buffers, while `grad` receives the full objective gradient and is reused
+    /// to compute the reported gradient norm. Prefer
+    /// [`Gamlss::into_workspace_objective`] in training loops:
+    ///
+    /// ```ignore
+    /// let mut objective = model.into_workspace_objective();
+    /// objective.training_diagnostics_into(parameters, &mut grad)?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
+    pub fn training_diagnostics_into_workspace(
+        &self,
+        parameters: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
     ) -> Result<TrainingDiagnostics, ModelError> {
         validate_beta_and_gradient_len(self.nparams(), parameters, grad)?;
 
@@ -499,7 +537,7 @@ where
         let train_nll =
             likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, parameters);
         let penalty = self.blocks.penalty_value(parameters);
-        self.try_gradient_into(parameters, grad)?;
+        self.try_gradient_into_workspace(parameters, grad, workspace)?;
         Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
     }
 
@@ -981,23 +1019,19 @@ where
     /// The reusable [`GradientWorkspace`] is used for internal per-parameter
     /// buffers, while `grad` receives the full objective gradient and is reused
     /// to compute the reported gradient norm.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
     pub fn training_diagnostics_into(
         &mut self,
         parameters: &[f64],
         grad: &mut [f64],
     ) -> Result<TrainingDiagnostics, ModelError> {
-        validate_beta_and_gradient_len(self.model.nparams(), parameters, grad)?;
-
-        let likelihood_multiplier = self.model.likelihood_multiplier();
-        let train_nll = likelihood_multiplier
-            * self
-                .model
-                .blocks
-                .train_nll(&self.model.family, &self.model.obs, parameters);
-        let penalty = self.model.blocks.penalty_value(parameters);
         self.model
-            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)?;
-        Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
+            .training_diagnostics_into_workspace(parameters, grad, &mut self.workspace)
     }
 
     /// Wraps the workspace-backed objective with unchecked penalties evaluated on the full beta vector.
@@ -3211,6 +3245,16 @@ mod tests {
         assert_relative_eq!(diagnostics.gradient_norm, 1.5);
         assert_eq!(diagnostics.nonfinite_gradient_count, 0);
         assert_eq!(diagnostics_into, diagnostics);
+        assert_relative_eq!(grad[0], 1.5);
+
+        let mut workspace = model.gradient_workspace();
+        grad.fill(f64::NAN);
+        assert_eq!(
+            model
+                .training_diagnostics_into_workspace(&parameters, &mut grad, &mut workspace)
+                .unwrap(),
+            diagnostics
+        );
         assert_relative_eq!(grad[0], 1.5);
 
         let mut workspace_model = model.into_workspace_objective();
