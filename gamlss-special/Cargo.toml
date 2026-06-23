@@ -10,6 +10,7 @@ documentation = "https://docs.rs/gamlss-special"
 keywords.workspace = true
 categories.workspace = true
 include = ["src/**/*", "tests/**/*", "Cargo.toml", "README.md"]
+readme = "README.md"
 
 [dependencies]
 
