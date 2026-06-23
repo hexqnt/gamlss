@@ -391,7 +391,7 @@ where
                 let width = basis.n_basis();
                 let range = checked_range(offset, width)?;
                 let coefficients = indexed_names(parameter, term.col.name(), "pspline", width);
-                penalty.add_spline(range.clone(), term.lambda, term.penalty_order);
+                penalty.add_spline(range.clone(), term.lambda, term.penalty_order)?;
                 prepared.push(PreparedDenseTerm::PSpline {
                     values,
                     basis,
@@ -414,7 +414,7 @@ where
                 let range = checked_range(offset, width)?;
                 let coefficients =
                     indexed_names(parameter, term.col.name(), "cyclic_pspline", width);
-                penalty.add_cyclic_spline(range.clone(), term.lambda, term.penalty_order);
+                penalty.add_cyclic_spline(range.clone(), term.lambda, term.penalty_order)?;
                 prepared.push(PreparedDenseTerm::CyclicPSpline {
                     values,
                     spec,

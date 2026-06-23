@@ -14,9 +14,35 @@ pub struct DifferencePenalty {
 
 impl DifferencePenalty {
     /// Creates a difference penalty.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
+    /// `order` comes from user input or dynamic configuration.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
+        Self::new_unchecked(lambda, order)
+    }
+
+    /// Creates a difference penalty without validating penalty parameters.
+    ///
+    /// By contract, `lambda` should be finite and non-negative, `order` should
+    /// be positive, and its binomial coefficients should fit in `usize`.
+    #[must_use]
+    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
+    }
+
+    /// Creates a difference penalty with validated parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `lambda` is not finite or
+    /// is negative, or when `order` is zero. Returns
+    /// [`ModelError::ArithmeticOverflow`] when the finite-difference
+    /// coefficients cannot be represented without integer overflow.
+    pub fn try_new(lambda: f64, order: usize) -> Result<Self, ModelError> {
+        validate_difference_lambda(lambda)?;
+        validate_difference_order(order)?;
+        Ok(Self::new_unchecked(lambda, order))
     }
 
     fn coefficients(&self) -> Vec<f64> {
@@ -55,13 +81,43 @@ pub struct PreparedDifferencePenalty {
 
 impl PreparedDifferencePenalty {
     /// Creates a prepared difference penalty.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
+    /// `order` comes from user input or dynamic configuration.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
+        Self::new_unchecked(lambda, order)
+    }
+
+    /// Creates a prepared difference penalty without validating penalty
+    /// parameters.
+    ///
+    /// By contract, `lambda` should be finite and non-negative, `order` should
+    /// be positive, and its binomial coefficients should fit in `usize`.
+    #[must_use]
+    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self {
             lambda,
             order,
             coefficients: difference_coefficients(order),
         }
+    }
+
+    /// Creates a prepared difference penalty with validated parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `lambda` is not finite or
+    /// is negative, or when `order` is zero. Returns
+    /// [`ModelError::ArithmeticOverflow`] when the finite-difference
+    /// coefficients cannot be represented without integer overflow.
+    pub fn try_new(lambda: f64, order: usize) -> Result<Self, ModelError> {
+        let coefficients = validated_difference_coefficients(lambda, order)?;
+        Ok(Self {
+            lambda,
+            order,
+            coefficients,
+        })
     }
 
     /// Returns the cached finite-difference coefficients.
@@ -73,7 +129,7 @@ impl PreparedDifferencePenalty {
 
 impl From<DifferencePenalty> for PreparedDifferencePenalty {
     fn from(value: DifferencePenalty) -> Self {
-        Self::new(value.lambda, value.order)
+        Self::new_unchecked(value.lambda, value.order)
     }
 }
 
@@ -110,9 +166,36 @@ impl CyclicDifferencePenalty {
     ///
     /// `lambda` sets the penalty strength, `order` sets the finite-difference
     /// order.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
+    /// `order` comes from user input or dynamic configuration.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
+        Self::new_unchecked(lambda, order)
+    }
+
+    /// Creates a cyclic difference penalty without validating penalty
+    /// parameters.
+    ///
+    /// By contract, `lambda` should be finite and non-negative, `order` should
+    /// be positive, and its binomial coefficients should fit in `usize`.
+    #[must_use]
+    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
+    }
+
+    /// Creates a cyclic difference penalty with validated parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `lambda` is not finite or
+    /// is negative, or when `order` is zero. Returns
+    /// [`ModelError::ArithmeticOverflow`] when the finite-difference
+    /// coefficients cannot be represented without integer overflow.
+    pub fn try_new(lambda: f64, order: usize) -> Result<Self, ModelError> {
+        validate_difference_lambda(lambda)?;
+        validate_difference_order(order)?;
+        Ok(Self::new_unchecked(lambda, order))
     }
 }
 
@@ -147,13 +230,43 @@ pub struct PreparedCyclicDifferencePenalty {
 
 impl PreparedCyclicDifferencePenalty {
     /// Creates a prepared cyclic difference penalty.
+    ///
+    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
+    /// `order` comes from user input or dynamic configuration.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
+        Self::new_unchecked(lambda, order)
+    }
+
+    /// Creates a prepared cyclic difference penalty without validating penalty
+    /// parameters.
+    ///
+    /// By contract, `lambda` should be finite and non-negative, `order` should
+    /// be positive, and its binomial coefficients should fit in `usize`.
+    #[must_use]
+    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self {
             lambda,
             order,
             coefficients: difference_coefficients(order),
         }
+    }
+
+    /// Creates a prepared cyclic difference penalty with validated parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `lambda` is not finite or
+    /// is negative, or when `order` is zero. Returns
+    /// [`ModelError::ArithmeticOverflow`] when the finite-difference
+    /// coefficients cannot be represented without integer overflow.
+    pub fn try_new(lambda: f64, order: usize) -> Result<Self, ModelError> {
+        let coefficients = validated_difference_coefficients(lambda, order)?;
+        Ok(Self {
+            lambda,
+            order,
+            coefficients,
+        })
     }
 
     /// Returns the cached finite-difference coefficients.
@@ -165,7 +278,7 @@ impl PreparedCyclicDifferencePenalty {
 
 impl From<CyclicDifferencePenalty> for PreparedCyclicDifferencePenalty {
     fn from(value: CyclicDifferencePenalty) -> Self {
-        Self::new(value.lambda, value.order)
+        Self::new_unchecked(value.lambda, value.order)
     }
 }
 
@@ -545,6 +658,17 @@ fn validate_positive_finite(parameter: &'static str, value: f64) -> Result<(), M
     }
 }
 
+fn validate_nonnegative_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE_NONNEGATIVE,
+        })
+    }
+}
+
 fn validate_limit(parameter: &'static str, value: Option<f64>) -> Result<(), ModelError> {
     match value {
         Some(value) if !value.is_finite() || value < 0.0 => Err(ModelError::InvalidParameter {
@@ -555,11 +679,41 @@ fn validate_limit(parameter: &'static str, value: Option<f64>) -> Result<(), Mod
     }
 }
 
+fn validate_difference_lambda(lambda: f64) -> Result<(), ModelError> {
+    validate_nonnegative_finite("penalty lambda", lambda)?;
+    Ok(())
+}
+
+fn validate_difference_order(order: usize) -> Result<(), ModelError> {
+    if order == 0 {
+        return Err(ModelError::InvalidParameter {
+            parameter: "difference penalty order",
+            expected: "> 0",
+        });
+    }
+
+    for index in 0..=order {
+        checked_binomial(order, index)?;
+    }
+    Ok(())
+}
+
+fn validated_difference_coefficients(lambda: f64, order: usize) -> Result<Vec<f64>, ModelError> {
+    validate_difference_lambda(lambda)?;
+    try_difference_coefficients(order)
+}
+
 /// Finite-difference coefficients of the given order.
 ///
 /// Returns alternating-sign binomial coefficients:
 /// `(-1)^{order-i} * C(order, i)`.
 fn difference_coefficients(order: usize) -> Vec<f64> {
+    try_difference_coefficients(order)
+        .expect("difference penalty order must have binomial coefficients that fit in usize")
+}
+
+fn try_difference_coefficients(order: usize) -> Result<Vec<f64>, ModelError> {
+    validate_difference_order(order)?;
     (0..=order)
         .map(|index| {
             let sign = if (order - index).is_multiple_of(2) {
@@ -567,17 +721,25 @@ fn difference_coefficients(order: usize) -> Vec<f64> {
             } else {
                 -1.0
             };
-            sign * binomial(order, index) as f64
+            checked_binomial(order, index).map(|coefficient| sign * coefficient as f64)
         })
         .collect()
 }
 
-/// Binomial coefficient C(n, k).
-fn binomial(n: usize, k: usize) -> usize {
+fn checked_binomial(n: usize, k: usize) -> Result<usize, ModelError> {
     if k > n {
-        return 0;
+        return Ok(0);
     }
 
     let k = k.min(n - k);
-    (0..k).fold(1, |acc, index| acc * (n - index) / (index + 1))
+    let coefficient = (0..k).try_fold(1u128, |acc, index| {
+        acc.checked_mul((n - index) as u128)
+            .map(|product| product / (index + 1) as u128)
+            .ok_or(ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            })
+    })?;
+    usize::try_from(coefficient).map_err(|_| ModelError::ArithmeticOverflow {
+        context: "difference penalty coefficients",
+    })
 }

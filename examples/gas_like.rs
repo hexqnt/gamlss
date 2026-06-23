@@ -54,8 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mu = ParameterBlock::<Mu, Identity, _, _>::new(mu_predictor, NoPenalty, 0);
     let sigma = ParameterBlock::<Sigma, ClampedLog<-12, 12>, _, _>::new(
         sigma_predictor,
-        PreparedCyclicDifferencePenalty::new(0.05, 2), // λ=0.05, d=2 — smoothing second differences
-        mu.len(),                                      // σ parameters follow μ parameters in θ
+        PreparedCyclicDifferencePenalty::try_new(0.05, 2)?, // λ=0.05, d=2 — smoothing second differences
+        mu.len(),                                           // σ parameters follow μ parameters in θ
     );
 
     // try_new checks dimensional consistency (design matrix rows = y length,

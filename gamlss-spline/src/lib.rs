@@ -104,12 +104,56 @@ mod tests {
     fn prepared_difference_penalty_matches_unprepared() {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
-        for order in 0..=2 {
+        for order in 1..=2 {
             let unprepared = DifferencePenalty::new(0.7, order);
             let prepared = PreparedDifferencePenalty::new(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
             assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
+    }
+
+    #[test]
+    fn difference_penalty_try_new_validates_inputs() {
+        assert_eq!(DifferencePenalty::try_new(0.0, 1).unwrap().lambda, 0.0);
+        assert_eq!(
+            PreparedDifferencePenalty::try_new(0.5, 2)
+                .unwrap()
+                .coefficients(),
+            &[1.0, -2.0, 1.0]
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(f64::NAN, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(-1.0, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(1.0, 0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+        assert_eq!(
+            PreparedDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
     }
 
     #[test]
@@ -408,12 +452,49 @@ mod tests {
     fn prepared_cyclic_difference_penalty_matches_unprepared() {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
-        for order in 0..=2 {
+        for order in 1..=2 {
             let unprepared = CyclicDifferencePenalty::new(0.7, order);
             let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
             assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
+    }
+
+    #[test]
+    fn cyclic_difference_penalty_try_new_validates_inputs() {
+        assert_eq!(CyclicDifferencePenalty::try_new(0.5, 2).unwrap().order, 2);
+        assert_eq!(
+            PreparedCyclicDifferencePenalty::try_new(0.5, 2)
+                .unwrap()
+                .coefficients(),
+            &[1.0, -2.0, 1.0]
+        );
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(f64::INFINITY, 2).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(1.0, 0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+        assert_eq!(
+            PreparedCyclicDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
     }
 
     #[test]
