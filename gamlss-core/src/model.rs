@@ -1947,6 +1947,26 @@ mod tests {
     }
 
     #[test]
+    fn zero_weight_excludes_invalid_observation_and_design_row_from_value_and_gradient() {
+        let y = vec![1.0, f64::NAN, 2.0];
+        let weights = vec![1.0, 0.0, 1.0];
+        let x = DenseDesign::from_row_major(3, 2, vec![1.0, 0.0, f64::NAN, f64::NAN, 1.0, 1.0])
+            .unwrap();
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let beta = vec![1.0, 1.0];
+        let mut grad = vec![f64::NAN, f64::NAN];
+
+        assert_relative_eq!(model.try_value(&beta).unwrap(), 0.0);
+
+        model.try_gradient_into(&beta, &mut grad).unwrap();
+
+        assert!(grad.iter().all(|value| value.is_finite()));
+        assert_relative_eq!(grad[0], 0.0);
+        assert_relative_eq!(grad[1], 0.0);
+    }
+
+    #[test]
     fn weighted_model_rejects_invalid_weights() {
         let y = vec![1.0, 2.0];
         let short_weights = vec![1.0];

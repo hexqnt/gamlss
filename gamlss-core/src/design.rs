@@ -199,6 +199,10 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(out.len(), self.ncols);
 
         for (row, weight) in weights.iter().copied().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+
             let offset = row * self.ncols;
             let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
@@ -243,8 +247,16 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(weights.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, &weight) in weights.iter().enumerate() {
+        for (row, weight) in weights.iter().copied().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+
             let scaled_weight = weight * multiplier.multiplier_at(row);
+            if scaled_weight == 0.0 {
+                continue;
+            }
+
             let offset = row * self.ncols;
             let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
@@ -259,6 +271,10 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(out.len(), ncols * ncols);
 
         for (row, weight) in weights.iter().copied().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+
             let row_offset = row * ncols;
             let row_values = &self.values[row_offset..row_offset + ncols];
             for (j, x_j) in row_values.iter().copied().enumerate() {
@@ -389,10 +405,14 @@ fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usiz
 
 #[cfg(test)]
 mod tests {
-    use super::{DenseDesign, DesignMatrix};
+    use super::{DenseDesign, DesignMatrix, RowMultiplier};
     use approx::assert_relative_eq;
 
     use crate::ModelError;
+
+    fn design_with_masked_nan_row() -> DenseDesign {
+        DenseDesign::from_row_major(3, 2, vec![1.0, 2.0, f64::NAN, f64::NAN, 3.0, 4.0]).unwrap()
+    }
 
     #[test]
     fn dense_design_multiplies_rows_and_transpose() {
@@ -422,6 +442,34 @@ mod tests {
         assert_relative_eq!(out[0], -1.0);
         assert_relative_eq!(out[1], -6.0);
         assert_relative_eq!(out[2], -15.0);
+    }
+
+    #[test]
+    fn dense_design_skips_zero_weighted_nan_rows_in_transpose_products() {
+        struct PanicOnMaskedRow;
+
+        impl RowMultiplier for PanicOnMaskedRow {
+            fn multiplier_at(&self, row: usize) -> f64 {
+                assert_ne!(row, 1, "zero-weight row must not read multiplier");
+                2.0
+            }
+        }
+
+        // Row 1 contains NaN, but its observation weight is zero. Transpose
+        // products should not read that row, so outputs remain finite.
+        let design = design_with_masked_nan_row();
+
+        let mut out = vec![0.0, 0.0];
+        design.add_t_mul_vec(&[0.5, 0.0, 2.0], &mut out);
+        assert_relative_eq!(out[0], 6.5);
+        assert_relative_eq!(out[1], 9.0);
+        assert!(out.iter().all(|value| value.is_finite()));
+
+        let mut weighted_out = vec![1.0, 1.0];
+        design.add_weighted_t_mul_vec_by(&[0.5, 0.0, 2.0], &PanicOnMaskedRow, &mut weighted_out);
+        assert_relative_eq!(weighted_out[0], 14.0);
+        assert_relative_eq!(weighted_out[1], 19.0);
+        assert!(weighted_out.iter().all(|value| value.is_finite()));
     }
 
     #[test]
@@ -485,6 +533,20 @@ mod tests {
         assert_relative_eq!(gram2[1], 27.0);
         assert_relative_eq!(gram2[2], 28.0);
         assert_relative_eq!(gram2[3], 38.0);
+    }
+
+    #[test]
+    fn dense_design_weighted_gram_skips_zero_weighted_nan_rows() {
+        let design = design_with_masked_nan_row();
+        let mut gram = vec![0.0; 4];
+
+        design.gram_weighted(&[0.5, 0.0, 2.0], &mut gram);
+
+        assert_relative_eq!(gram[0], 18.5);
+        assert_relative_eq!(gram[1], 25.0);
+        assert_relative_eq!(gram[2], 25.0);
+        assert_relative_eq!(gram[3], 34.0);
+        assert!(gram.iter().all(|value| value.is_finite()));
     }
 
     #[test]
