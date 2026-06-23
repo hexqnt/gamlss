@@ -58,6 +58,7 @@ pub struct Gamlss<F, Blocks, Obs> {
     blocks: Blocks,
     obs: Obs,
     objective_scale: ObjectiveScale,
+    weight_sum: f64,
 }
 
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
@@ -120,20 +121,43 @@ where
             return Err(ModelError::EmptyResponse);
         }
 
+        let nobs = obs.len();
         obs.validate()?;
-        blocks.validate(obs.len())?;
+        let weight_sum = observation_weight_sum(&obs);
+        blocks.validate(nobs)?;
         blocks.try_len()?;
         Ok(Self {
             family,
             blocks,
             obs,
             objective_scale: ObjectiveScale::Sum,
+            weight_sum,
         })
     }
 
     /// Number of observations.
+    #[must_use]
+    #[inline]
     pub fn nobs(&self) -> usize {
         self.obs.len()
+    }
+
+    /// Sum of observation weights used as the denominator for mean likelihood objectives.
+    ///
+    /// For unweighted observation views this is equal to [`Gamlss::nobs`] as `f64`.
+    #[must_use]
+    #[inline]
+    pub fn weight_sum(&self) -> f64 {
+        self.weight_sum
+    }
+
+    /// Effective number of observations represented by the observation weights.
+    ///
+    /// This is currently the same value as [`Gamlss::weight_sum`].
+    #[must_use]
+    #[inline]
+    pub fn effective_nobs(&self) -> f64 {
+        self.weight_sum()
     }
 
     /// Number of coefficients in the common beta vector.
@@ -159,8 +183,7 @@ where
     }
 
     fn likelihood_multiplier(&self) -> f64 {
-        self.objective_scale
-            .likelihood_multiplier(observation_weight_sum(&self.obs))
+        self.objective_scale.likelihood_multiplier(self.weight_sum)
     }
 
     /// Zero-valued initial optimizer parameter vector of the right length.
@@ -1960,6 +1983,39 @@ mod tests {
             .unwrap();
 
         assert_relative_eq!(grad[0], weighted_grad[0]);
+    }
+
+    #[test]
+    fn model_exposes_weight_sum_and_effective_nobs() {
+        let y = vec![1.0, 2.0, 3.0];
+        let weights = vec![0.5, 0.0, 2.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x.clone(), NoPenalty, 0);
+        let weighted_mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let weighted =
+            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), &y, &weights).unwrap();
+
+        assert_relative_eq!(model.weight_sum(), 3.0);
+        assert_relative_eq!(model.effective_nobs(), 3.0);
+        assert_relative_eq!(weighted.weight_sum(), 2.5);
+        assert_relative_eq!(weighted.effective_nobs(), 2.5);
+
+        let mean_weighted = weighted.with_objective_scale(ObjectiveScale::Mean);
+        let row0_nll = 0.5 * (1.0_f64 - 2.0).powi(2);
+        let row1_nll = 0.5 * (2.0_f64 - 2.0).powi(2);
+        let row2_nll = 0.5 * (3.0_f64 - 2.0).powi(2);
+        let weighted_nll_sum = weights
+            .iter()
+            .copied()
+            .zip([row0_nll, row1_nll, row2_nll])
+            .map(|(weight, nll)| weight * nll)
+            .sum::<f64>();
+
+        assert_relative_eq!(
+            mean_weighted.try_value(&[2.0]).unwrap(),
+            weighted_nll_sum / mean_weighted.weight_sum()
+        );
     }
 
     #[test]
