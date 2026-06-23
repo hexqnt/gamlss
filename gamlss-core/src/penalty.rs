@@ -4,6 +4,7 @@ use crate::ModelError;
 
 const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
 const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
+const EXPECTED_FINITE: &str = "finite";
 
 /// Zero penalty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -157,9 +158,9 @@ where
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LinearTerm {
     /// Index in the full flat coefficient vector.
-    pub index: usize,
+    index: usize,
     /// Multiplicative coefficient for `beta[index]`.
-    pub weight: f64,
+    weight: f64,
 }
 
 impl LinearTerm {
@@ -169,6 +170,31 @@ impl LinearTerm {
     pub const fn new(index: usize, weight: f64) -> Self {
         Self { index, weight }
     }
+
+    /// Creates a linear-form term with a finite weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `weight` is not finite.
+    #[inline]
+    pub fn try_new(index: usize, weight: f64) -> Result<Self, ModelError> {
+        validate_finite("linear term weight", weight)?;
+        Ok(Self::new(index, weight))
+    }
+
+    /// Returns the index in the full flat coefficient vector.
+    #[must_use]
+    #[inline]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the multiplicative coefficient for `beta[index]`.
+    #[must_use]
+    #[inline]
+    pub const fn weight(&self) -> f64 {
+        self.weight
+    }
 }
 
 /// Linear form over a full flat coefficient vector.
@@ -177,9 +203,9 @@ impl LinearTerm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearForm {
     /// Coefficients participating in the form.
-    pub terms: Vec<LinearTerm>,
+    terms: Vec<LinearTerm>,
     /// Additive constant.
-    pub constant: f64,
+    constant: f64,
 }
 
 impl LinearForm {
@@ -193,15 +219,38 @@ impl LinearForm {
         Self { terms, constant }
     }
 
-    /// Creates a linear form after validating term indices against `dim`.
+    /// Returns the coefficients participating in the form.
+    #[must_use]
+    #[inline]
+    pub fn terms(&self) -> &[LinearTerm] {
+        &self.terms
+    }
+
+    /// Returns the additive constant.
+    #[must_use]
+    #[inline]
+    pub const fn constant(&self) -> f64 {
+        self.constant
+    }
+
+    /// Consumes the form and returns `(terms, constant)`.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (Vec<LinearTerm>, f64) {
+        (self.terms, self.constant)
+    }
+
+    /// Creates a linear form after validating term indices and finite scalars.
     ///
     /// # Errors
     ///
     /// Returns [`ModelError::PenaltyIndexOutOfBounds`] when any term index is
-    /// outside `0..dim`.
+    /// outside `0..dim`, or [`ModelError::InvalidParameter`] when `constant`
+    /// or any term weight is not finite.
     #[inline]
     pub fn try_new(terms: Vec<LinearTerm>, constant: f64, dim: usize) -> Result<Self, ModelError> {
         let form = Self::new(terms, constant);
+        form.validate_finite()?;
         form.validate_dim(dim)?;
         Ok(form)
     }
@@ -245,6 +294,21 @@ impl LinearForm {
                     dim,
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Validates that the constant and all term weights are finite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when any scalar in the form is
+    /// not finite.
+    #[inline]
+    pub fn validate_finite(&self) -> Result<(), ModelError> {
+        validate_finite("linear form constant", self.constant)?;
+        for term in &self.terms {
+            validate_finite("linear term weight", term.weight)?;
         }
         Ok(())
     }
@@ -675,6 +739,17 @@ fn validate_nonnegative_finite(parameter: &'static str, value: f64) -> Result<()
     }
 }
 
+fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE,
+        })
+    }
+}
+
 macro_rules! impl_global_penalty_tuple {
     (types = ($($ty:ident),+); indices = ($($idx:tt),+)) => {
         impl<$($ty,)+> GlobalPenalty for ($($ty,)+)
@@ -883,7 +958,31 @@ mod tests {
         let form = LinearForm::new(vec![LinearTerm::new(2, 0.5), LinearTerm::new(0, -2.0)], 1.0);
         let beta = [3.0, 10.0, 8.0];
 
+        assert_eq!(form.terms().len(), 2);
+        assert_eq!(form.terms()[0].index(), 2);
+        assert_relative_eq!(form.terms()[0].weight(), 0.5);
+        assert_relative_eq!(form.constant(), 1.0);
         assert_relative_eq!(form.value(&beta), -1.0);
+    }
+
+    #[test]
+    fn linear_term_try_new_validates_weight() {
+        assert_eq!(
+            LinearTerm::try_new(0, f64::NAN).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "linear term weight",
+                expected: "finite",
+            }
+        );
+    }
+
+    #[test]
+    fn linear_form_into_parts_returns_owned_terms_and_constant() {
+        let form = LinearForm::new(vec![LinearTerm::new(1, 0.5)], -2.0);
+        let (terms, constant) = form.into_parts();
+
+        assert_eq!(terms, vec![LinearTerm::new(1, 0.5)]);
+        assert_relative_eq!(constant, -2.0);
     }
 
     #[test]
@@ -892,6 +991,24 @@ mod tests {
         assert_eq!(
             LinearForm::try_new(vec![LinearTerm::new(3, 0.5)], 1.0, 3).unwrap_err(),
             ModelError::PenaltyIndexOutOfBounds { index: 3, dim: 3 }
+        );
+    }
+
+    #[test]
+    fn linear_form_try_new_validates_finite_scalars() {
+        assert_eq!(
+            LinearForm::try_new(vec![LinearTerm::new(0, 0.5)], f64::NAN, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "linear form constant",
+                expected: "finite",
+            }
+        );
+        assert_eq!(
+            LinearForm::try_new(vec![LinearTerm::new(0, f64::INFINITY)], 0.0, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "linear term weight",
+                expected: "finite",
+            }
         );
     }
 

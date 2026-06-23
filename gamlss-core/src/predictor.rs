@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus};
 
+const EXPECTED_FINITE: &str = "finite";
+
 /// Convenience predictor block alias for `softplus(beta)`.
 ///
 /// The generic building block is [`TransformedScalar`]; this alias is provided
@@ -21,7 +23,7 @@ pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LinearPredictorBlock<X> {
     /// Design matrix used by this predictor.
-    pub x: X,
+    x: X,
 }
 
 impl<X> LinearPredictorBlock<X> {
@@ -30,6 +32,13 @@ impl<X> LinearPredictorBlock<X> {
     #[inline]
     pub const fn new(x: X) -> Self {
         Self { x }
+    }
+
+    /// Returns the wrapped design matrix.
+    #[must_use]
+    #[inline]
+    pub const fn x(&self) -> &X {
+        &self.x
     }
 
     /// Returns the wrapped design matrix.
@@ -144,7 +153,7 @@ impl CoefficientTransform for NegativeSoftplusTransform {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransformedScalar<T> {
     /// Number of observations this scalar contribution applies to.
-    pub nrows: usize,
+    nrows: usize,
     marker: PhantomData<T>,
 }
 
@@ -157,6 +166,13 @@ impl<T> TransformedScalar<T> {
             nrows,
             marker: PhantomData,
         }
+    }
+
+    /// Returns the number of observations this scalar contribution applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
     }
 }
 
@@ -218,9 +234,9 @@ where
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FloorSoftplusScalar {
     /// Number of observations this scalar contribution applies to.
-    pub nrows: usize,
+    nrows: usize,
     /// Constant floor added after the softplus transform.
-    pub floor: f64,
+    floor: f64,
 }
 
 impl FloorSoftplusScalar {
@@ -229,6 +245,31 @@ impl FloorSoftplusScalar {
     #[inline]
     pub const fn new(nrows: usize, floor: f64) -> Self {
         Self { nrows, floor }
+    }
+
+    /// Creates a floor-plus-softplus scalar predictor with a finite floor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `floor` is not finite.
+    #[inline]
+    pub fn try_new(nrows: usize, floor: f64) -> Result<Self, ModelError> {
+        validate_finite("floor", floor)?;
+        Ok(Self::new(nrows, floor))
+    }
+
+    /// Returns the number of observations this scalar contribution applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Returns the constant floor added after the softplus transform.
+    #[must_use]
+    #[inline]
+    pub const fn floor(&self) -> f64 {
+        self.floor
     }
 }
 
@@ -288,9 +329,9 @@ impl PredictorBlock for FloorSoftplusScalar {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OffsetBlock {
     /// Number of observations this offset applies to.
-    pub nrows: usize,
+    nrows: usize,
     /// Constant contribution.
-    pub value: f64,
+    value: f64,
 }
 
 impl OffsetBlock {
@@ -299,6 +340,31 @@ impl OffsetBlock {
     #[inline]
     pub const fn new(nrows: usize, value: f64) -> Self {
         Self { nrows, value }
+    }
+
+    /// Creates a constant predictor block with a finite value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `value` is not finite.
+    #[inline]
+    pub fn try_new(nrows: usize, value: f64) -> Result<Self, ModelError> {
+        validate_finite("offset value", value)?;
+        Ok(Self::new(nrows, value))
+    }
+
+    /// Returns the number of observations this offset applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Returns the constant contribution.
+    #[must_use]
+    #[inline]
+    pub const fn value(&self) -> f64 {
+        self.value
     }
 }
 
@@ -334,24 +400,67 @@ impl PredictorBlock for OffsetBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductBlock<X> {
     /// Per-observation multiplier.
-    pub multiplier: Vec<f64>,
+    multiplier: Vec<f64>,
     /// Wrapped predictor block.
-    pub inner: X,
+    inner: X,
 }
 
 impl<X> ProductBlock<X> {
-    /// Creates a product predictor block.
+    /// Creates a product predictor block without validating dimensions.
+    ///
+    /// Use [`Self::try_new`] when the multiplier comes from user input or
+    /// dynamic model metadata.
     #[must_use]
     #[inline]
     pub const fn new(multiplier: Vec<f64>, inner: X) -> Self {
         Self { multiplier, inner }
     }
 
+    /// Returns the per-observation multiplier.
+    #[must_use]
+    #[inline]
+    pub fn multiplier(&self) -> &[f64] {
+        &self.multiplier
+    }
+
+    /// Returns the wrapped predictor block.
+    #[must_use]
+    #[inline]
+    pub const fn inner(&self) -> &X {
+        &self.inner
+    }
+
+    /// Consumes the wrapper and returns the wrapped predictor block.
+    #[must_use]
+    #[inline]
+    pub fn into_inner(self) -> X {
+        self.inner
+    }
+
     /// Consumes the wrapper and returns `(multiplier, inner)`.
     #[must_use]
     #[inline]
-    pub fn into_inner(self) -> (Vec<f64>, X) {
+    pub fn into_parts(self) -> (Vec<f64>, X) {
         (self.multiplier, self.inner)
+    }
+}
+
+impl<X> ProductBlock<X>
+where
+    X: PredictorBlock,
+{
+    /// Creates a product predictor block after validating multiplier shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DesignRowMismatch`] when `multiplier.len()` does
+    /// not match `inner.nrows()`, or [`ModelError::InvalidMultiplier`] when a
+    /// multiplier value is not finite.
+    #[inline]
+    pub fn try_new(multiplier: Vec<f64>, inner: X) -> Result<Self, ModelError> {
+        let block = Self::new(multiplier, inner);
+        block.validate()?;
+        Ok(block)
     }
 }
 
@@ -619,6 +728,17 @@ fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
         .sum()
 }
 
+fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE,
+        })
+    }
+}
+
 macro_rules! impl_sum_block {
     (
         terms = ($($term:ident),+);
@@ -835,7 +955,7 @@ impl_sum_block!(
 mod tests {
     use approx::assert_relative_eq;
 
-    use crate::{DenseDesign, ModelError, PredictorBlock};
+    use crate::{DenseDesign, DesignMatrix, ModelError, PredictorBlock};
 
     use super::{
         FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar, OffsetBlock,
@@ -848,6 +968,7 @@ mod tests {
         let block = LinearPredictorBlock::new(design);
         let beta = [10.0, 1.0];
 
+        assert_eq!(block.x().nrows(), 2);
         assert_relative_eq!(block.eta_row(1, &beta), 34.0);
 
         let mut grad = vec![0.0, 0.0];
@@ -897,14 +1018,27 @@ mod tests {
 
     #[test]
     fn transformed_scalar_blocks_match_finite_difference() {
-        assert_scalar_gradient_matches_finite_difference(SoftplusScalar::new(3), &[0.5, 1.0, 2.0]);
+        let softplus = SoftplusScalar::new(3);
+        assert_eq!(softplus.nrows(), 3);
+        assert_scalar_gradient_matches_finite_difference(softplus, &[0.5, 1.0, 2.0]);
         assert_scalar_gradient_matches_finite_difference(
             NegativeSoftplusScalar::new(3),
             &[0.5, 1.0, 2.0],
         );
-        assert_scalar_gradient_matches_finite_difference(
-            FloorSoftplusScalar::new(3, 10.0),
-            &[0.5, 1.0, 2.0],
+        let floored = FloorSoftplusScalar::try_new(3, 10.0).unwrap();
+        assert_eq!(floored.nrows(), 3);
+        assert_relative_eq!(floored.floor(), 10.0);
+        assert_scalar_gradient_matches_finite_difference(floored, &[0.5, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn floor_softplus_scalar_try_new_validates_floor() {
+        assert_eq!(
+            FloorSoftplusScalar::try_new(2, f64::NAN).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "floor",
+                expected: "finite",
+            }
         );
     }
 
@@ -929,22 +1063,37 @@ mod tests {
 
     #[test]
     fn offset_block_is_constant_and_has_no_gradient() {
-        let block = OffsetBlock::new(2, 3.5);
+        let block = OffsetBlock::try_new(2, 3.5).unwrap();
         let mut grad = [];
 
+        assert_eq!(block.nrows(), 2);
+        assert_relative_eq!(block.value(), 3.5);
         assert_eq!(block.nparams(), 0);
         assert_relative_eq!(block.eta_row(1, &[]), 3.5);
         block.add_gradient(&[1.0, 2.0], &[], &mut grad);
     }
 
     #[test]
+    fn offset_block_try_new_validates_value() {
+        assert_eq!(
+            OffsetBlock::try_new(2, f64::INFINITY).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "offset value",
+                expected: "finite",
+            }
+        );
+    }
+
+    #[test]
     fn product_block_scales_eta_and_gradient() {
         let inner = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
-        let block = ProductBlock::new(vec![2.0, -1.0], inner);
+        let block = ProductBlock::try_new(vec![2.0, -1.0], inner).unwrap();
         let beta = [0.5, 1.0];
         let scores = [0.25, 2.0];
         let mut grad = [0.0, 0.0];
 
+        assert_eq!(block.multiplier(), &[2.0, -1.0]);
+        assert_eq!(block.inner().nparams(), 2);
         assert_relative_eq!(block.eta_row(0, &beta), 5.0);
         assert_relative_eq!(block.eta_row(1, &beta), -5.5);
 
@@ -958,8 +1107,36 @@ mod tests {
         let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
         let block = ProductBlock::new(vec![1.0], inner);
 
+        assert_multiplier_length_error(block.validate().unwrap_err());
+    }
+
+    #[test]
+    fn product_block_try_new_validates_multiplier_length() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+
+        assert_multiplier_length_error(ProductBlock::try_new(vec![1.0], inner).unwrap_err());
+    }
+
+    #[test]
+    fn product_block_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+        let block = ProductBlock::new(vec![1.0, f64::INFINITY], inner);
+
+        assert_invalid_multiplier_error(block.validate().unwrap_err());
+    }
+
+    #[test]
+    fn product_block_try_new_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+
+        assert_invalid_multiplier_error(
+            ProductBlock::try_new(vec![1.0, f64::INFINITY], inner).unwrap_err(),
+        );
+    }
+
+    fn assert_multiplier_length_error(error: ModelError) {
         assert_eq!(
-            block.validate().unwrap_err(),
+            error,
             ModelError::DesignRowMismatch {
                 parameter: "product multiplier",
                 expected_rows: 2,
@@ -968,14 +1145,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn product_block_validates_multiplier_finiteness() {
-        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
-        let block = ProductBlock::new(vec![1.0, f64::INFINITY], inner);
-
-        assert_eq!(
-            block.validate().unwrap_err(),
-            ModelError::InvalidMultiplier { index: 1 }
-        );
+    fn assert_invalid_multiplier_error(error: ModelError) {
+        assert_eq!(error, ModelError::InvalidMultiplier { index: 1 });
     }
 }
