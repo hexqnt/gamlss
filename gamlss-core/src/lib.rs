@@ -60,8 +60,8 @@ pub use penalty::{
 };
 pub use predictor::{
     CoefficientTransform, FloorSoftplusScalar, HasDesignMatrix, LinearPredictorBlock,
-    NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock, PredictorBlock, ProductBlock,
-    SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
+    LinearPredictorGeometry, NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock,
+    PredictorBlock, ProductBlock, SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
 
 /// Design matrix abstractions.
@@ -92,14 +92,15 @@ pub mod prelude {
         GradientWorkspace, HasCdf, HasCrps, HasDensity, HasDesignMatrix, HasDeviance,
         HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
         HingeQuadraticPenalty, Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder,
-        LinearPredictorBlock, LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit,
-        MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
-        ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictionView,
-        PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale,
-        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, UnitIntervalLink,
-        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
+        LinearPredictorBlock, LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus,
+        LogSd, Logit, MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective,
+        ObjectiveScale, ObservationView, OffsetBlock, OneProbability, ParameterBlock,
+        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
+        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Power, Precision,
+        PredictionView, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty,
+        RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau,
+        TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets,
+        UnitIntervalLink, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+        ZeroProbability,
     };
 }

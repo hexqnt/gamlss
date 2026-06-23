@@ -117,6 +117,53 @@ impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     }
 }
 
+impl<X: DesignMatrix> LinearPredictorGeometry for LinearPredictorBlock<X> {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_geometry_lengths(self.x.nrows(), self.x.ncols(), row_weights, out)?;
+        self.x.gram_weighted(row_weights, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_geometry_lengths(self.x.nrows(), self.x.ncols(), row_weights, out)?;
+        self.x.gram_weighted_by(row_weights, multiplier, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_vector_geometry_lengths(self.x.nrows(), self.x.ncols(), row_scores, out)?;
+        self.x.add_t_mul_vec(row_scores, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_vector_geometry_lengths(self.x.nrows(), self.x.ncols(), row_scores, out)?;
+        self.x
+            .add_weighted_t_mul_vec_by(row_scores, multiplier, out);
+        Ok(())
+    }
+}
+
 /// Softplus coefficient transform: `softplus(beta)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SoftplusTransform;
@@ -565,6 +612,96 @@ where
     }
 }
 
+impl<X> LinearPredictorGeometry for ProductBlock<X>
+where
+    X: LinearPredictorGeometry,
+{
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.add_weighted_gram_by(row_weights, &UnitRowMultiplier, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.validate_geometry_outer_lengths(row_weights, out)?;
+        let product_multiplier = ProductSquaredRowMultiplier {
+            product: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_weighted_gram_by(row_weights, &product_multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.add_t_mul_vec_by(row_scores, &UnitRowMultiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.validate_vector_geometry_outer_lengths(row_scores, out)?;
+        let product_multiplier = ProductRowMultiplier {
+            left: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_t_mul_vec_by(row_scores, &product_multiplier, out)
+    }
+}
+
+impl<X> ProductBlock<X>
+where
+    X: LinearPredictorGeometry,
+{
+    #[inline]
+    fn validate_geometry_outer_lengths(
+        &self,
+        row_weights: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier_rows()?;
+        validate_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_weights, out)
+    }
+
+    #[inline]
+    fn validate_vector_geometry_outer_lengths(
+        &self,
+        row_scores: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier_rows()?;
+        validate_vector_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_scores, out)
+    }
+
+    #[inline]
+    fn validate_multiplier_rows(&self) -> Result<(), ModelError> {
+        if self.multiplier.len() != self.inner.nrows() {
+            return Err(ModelError::DesignRowMismatch {
+                parameter: "product multiplier",
+                expected_rows: self.inner.nrows(),
+                actual_rows: self.multiplier.len(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Sum of several predictor blocks sharing the same observations.
 ///
 /// The local beta slice is split between terms in tuple order. This keeps
@@ -599,6 +736,33 @@ where
     #[inline(always)]
     fn multiplier_at(&self, row: usize) -> f64 {
         self.left[row] * self.right.multiplier_at(row)
+    }
+}
+
+struct ProductSquaredRowMultiplier<'a, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    product: &'a [f64],
+    right: &'a M,
+}
+
+impl<M> RowMultiplier for ProductSquaredRowMultiplier<'_, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    #[inline]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self.product[row] * self.product[row] * self.right.multiplier_at(row)
+    }
+}
+
+struct UnitRowMultiplier;
+
+impl RowMultiplier for UnitRowMultiplier {
+    #[inline]
+    fn multiplier_at(&self, _: usize) -> f64 {
+        1.0
     }
 }
 
@@ -693,22 +857,99 @@ pub trait PredictorBlock {
     }
 }
 
-/// Predictor blocks that expose an underlying [`DesignMatrix`].
+/// Predictor blocks that expose a concrete underlying [`DesignMatrix`].
 ///
-/// This extension trait enables Fisher Scoring solvers to construct the
-/// weighted Gram matrix `X^T W X` for each parameter block. Only predictor
-/// blocks with a linear structure can provide this — nonlinear blocks like
-/// [`TransformedScalar`] or [`ProductBlock`] must fall back to gradient-only
-/// optimizers.
-///
-/// Currently only [`LinearPredictorBlock`] implements this trait.
-/// Future sparse or structured matrix backends will implement it as well.
+/// This is intentionally narrower than [`LinearPredictorGeometry`]: it is for
+/// callers that need direct access to the matrix object itself. Solvers that
+/// only need products such as `X^T W X` and `X^T v` should prefer
+/// [`LinearPredictorGeometry`], which also supports lazily row-scaled linear
+/// predictors such as [`ProductBlock<LinearPredictorBlock<_>>`].
 pub trait HasDesignMatrix: PredictorBlock {
     /// The underlying design matrix type.
     type Matrix: DesignMatrix;
 
     /// Returns a reference to the design matrix.
     fn design(&self) -> &Self::Matrix;
+}
+
+/// Predictor blocks that are linear in their local coefficients.
+///
+/// This capability separates Fisher/IRLS geometry from concrete design-matrix
+/// ownership. A block may expose `X^T W X` and `X^T v` operations even when its
+/// effective row design is represented lazily, for example
+/// [`ProductBlock<LinearPredictorBlock<_>>`], where row `i` contributes
+/// `multiplier[i] * x_i`.
+pub trait LinearPredictorGeometry: PredictorBlock {
+    /// Adds the weighted local Gram matrix into `out`.
+    ///
+    /// `out` is row-major with shape `nparams × nparams`. Implementations add
+    /// into existing values rather than clearing the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_weights` or `out` do not match the
+    /// block dimensions.
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+    /// Adds a weighted local Gram matrix with an extra lazy row multiplier.
+    ///
+    /// The default implementation materializes scaled row weights before
+    /// delegating to [`Self::add_weighted_gram`]. Composed predictors override
+    /// this to keep row scaling lazy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_weights` or `out` do not match the
+    /// block dimensions.
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        let scaled_weights = row_weights
+            .iter()
+            .enumerate()
+            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
+            .collect::<Vec<_>>();
+        self.add_weighted_gram(&scaled_weights, out)
+    }
+    /// Adds the transposed row geometry times `row_scores` into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_scores` or `out` do not match the block
+    /// dimensions.
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+    /// Adds a transposed product with an extra lazy row multiplier.
+    ///
+    /// The default implementation materializes scaled row scores before
+    /// delegating to [`Self::add_t_mul_vec`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_scores` or `out` do not match the block
+    /// dimensions.
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        let scaled_scores = row_scores
+            .iter()
+            .enumerate()
+            .map(|(row, score)| score * multiplier.multiplier_at(row))
+            .collect::<Vec<_>>();
+        self.add_t_mul_vec(&scaled_scores, out)
+    }
 }
 
 /// Transform for a single coefficient used by [`TransformedScalar`].
@@ -737,6 +978,53 @@ fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError
             expected: EXPECTED_FINITE,
         })
     }
+}
+
+fn validate_geometry_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_weights: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_weights)?;
+    let expected_values = nparams
+        .checked_mul(nparams)
+        .ok_or(ModelError::ArithmeticOverflow {
+            context: "linear predictor geometry Gram value count",
+        })?;
+    if out.len() != expected_values {
+        return Err(ModelError::DesignSize {
+            expected_values,
+            actual_values: out.len(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_vector_geometry_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_scores: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_scores)?;
+    if out.len() != nparams {
+        return Err(ModelError::GradientLength {
+            expected: nparams,
+            actual: out.len(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
+    if row_values.len() != nrows {
+        return Err(ModelError::WeightLength {
+            expected: nrows,
+            actual: row_values.len(),
+        });
+    }
+    Ok(())
 }
 
 macro_rules! impl_sum_block {
@@ -955,7 +1243,7 @@ impl_sum_block!(
 mod tests {
     use approx::assert_relative_eq;
 
-    use crate::{DenseDesign, DesignMatrix, ModelError, PredictorBlock};
+    use crate::{DenseDesign, DesignMatrix, LinearPredictorGeometry, ModelError, PredictorBlock};
 
     use super::{
         FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar, OffsetBlock,
@@ -989,6 +1277,55 @@ mod tests {
 
         assert_relative_eq!(grad[0], -4.0);
         assert_relative_eq!(grad[1], -5.0);
+    }
+
+    #[test]
+    fn linear_predictor_geometry_delegates_dense_products() {
+        let block = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+
+        assert_eq!(block.nrows(), 2);
+        assert_eq!(block.nparams(), 2);
+
+        let mut gram = vec![1.0, 2.0, 3.0, 4.0];
+        block.add_weighted_gram(&[0.5, 2.0], &mut gram).unwrap();
+        assert_relative_eq!(gram[0], 19.5);
+        assert_relative_eq!(gram[1], 27.0);
+        assert_relative_eq!(gram[2], 28.0);
+        assert_relative_eq!(gram[3], 38.0);
+
+        let mut t_mul = vec![1.0, 1.0];
+        block.add_t_mul_vec(&[0.5, 2.0], &mut t_mul).unwrap();
+        assert_relative_eq!(t_mul[0], 7.5);
+        assert_relative_eq!(t_mul[1], 10.0);
+    }
+
+    #[test]
+    fn linear_predictor_geometry_validates_lengths() {
+        let block = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+
+        assert_eq!(
+            block.add_weighted_gram(&[1.0], &mut [0.0; 4]).unwrap_err(),
+            ModelError::WeightLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
+        assert_eq!(
+            block
+                .add_weighted_gram(&[1.0, 1.0], &mut [0.0; 3])
+                .unwrap_err(),
+            ModelError::DesignSize {
+                expected_values: 4,
+                actual_values: 3,
+            }
+        );
+        assert_eq!(
+            block.add_t_mul_vec(&[1.0, 1.0], &mut [0.0]).unwrap_err(),
+            ModelError::GradientLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
     }
 
     #[test]
@@ -1098,8 +1435,28 @@ mod tests {
         assert_relative_eq!(block.eta_row(1, &beta), -5.5);
 
         block.add_gradient(&scores, &beta, &mut grad);
-        assert_relative_eq!(grad[0], 2.0 * 0.25 * 1.0 - 1.0 * 2.0 * 3.0);
-        assert_relative_eq!(grad[1], 2.0 * 0.25 * 2.0 - 1.0 * 2.0 * 4.0);
+        assert_relative_eq!(grad[0], -5.5);
+        assert_relative_eq!(grad[1], -7.0);
+    }
+
+    #[test]
+    fn product_block_geometry_scales_rows_lazily() {
+        let inner = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+        let block = ProductBlock::try_new(vec![2.0, -1.0], inner).unwrap();
+
+        let mut gram = vec![0.0; 4];
+        block.add_weighted_gram(&[0.5, 2.0], &mut gram).unwrap();
+
+        // Effective weights are [0.5 * 2^2, 2.0 * (-1)^2] = [2.0, 2.0].
+        assert_relative_eq!(gram[0], 20.0);
+        assert_relative_eq!(gram[1], 28.0);
+        assert_relative_eq!(gram[2], 28.0);
+        assert_relative_eq!(gram[3], 40.0);
+
+        let mut t_mul = vec![0.0, 0.0];
+        block.add_t_mul_vec(&[0.25, 2.0], &mut t_mul).unwrap();
+        assert_relative_eq!(t_mul[0], -5.5);
+        assert_relative_eq!(t_mul[1], -7.0);
     }
 
     #[test]

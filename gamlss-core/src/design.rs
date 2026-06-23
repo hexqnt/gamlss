@@ -265,29 +265,30 @@ impl DesignMatrix for DenseDesign {
         }
     }
 
+    #[inline]
+    fn gram_weighted_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        add_dense_weighted_gram_by(
+            self.nrows,
+            self.ncols,
+            &self.values,
+            weights,
+            multiplier,
+            out,
+        );
+    }
+
     fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
-        let ncols = self.ncols;
-        debug_assert_eq!(weights.len(), self.nrows);
-        debug_assert_eq!(out.len(), ncols * ncols);
-
-        for (row, weight) in weights.iter().copied().enumerate() {
-            if weight == 0.0 {
-                continue;
-            }
-
-            let row_offset = row * ncols;
-            let row_values = &self.values[row_offset..row_offset + ncols];
-            for (j, x_j) in row_values.iter().copied().enumerate() {
-                let xw_j = x_j * weight;
-                for (k, x_k) in row_values.iter().copied().enumerate().skip(j) {
-                    let delta = x_k * xw_j;
-                    out[j * ncols + k] += delta;
-                    if k != j {
-                        out[k * ncols + j] += delta;
-                    }
-                }
-            }
-        }
+        add_dense_weighted_gram_by(
+            self.nrows,
+            self.ncols,
+            &self.values,
+            weights,
+            &UnitRowMultiplier,
+            out,
+        );
     }
 }
 
@@ -382,6 +383,25 @@ pub trait DesignMatrix {
             self.add_t_mul_vec(&w_xk, gram_col);
         }
     }
+
+    /// Adds `X^T diag(weights * multiplier(row)) X` into `out`.
+    ///
+    /// This variant lets composed predictor blocks provide lazy row scaling
+    /// without constructing a row-scaled design matrix. The default
+    /// implementation materializes scaled weights; matrix implementations used
+    /// in Gram hot paths should override it.
+    #[inline]
+    fn gram_weighted_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        let scaled_weights = weights
+            .iter()
+            .enumerate()
+            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
+            .collect::<Vec<_>>();
+        self.gram_weighted(&scaled_weights, out);
+    }
 }
 
 /// Row-wise multiplier used by fused weighted transpose products.
@@ -394,6 +414,54 @@ impl RowMultiplier for [f64] {
     #[inline(always)]
     fn multiplier_at(&self, row: usize) -> f64 {
         self[row]
+    }
+}
+
+struct UnitRowMultiplier;
+
+impl RowMultiplier for UnitRowMultiplier {
+    #[inline]
+    fn multiplier_at(&self, _: usize) -> f64 {
+        1.0
+    }
+}
+
+fn add_dense_weighted_gram_by<M>(
+    nrows: usize,
+    ncols: usize,
+    values: &[f64],
+    weights: &[f64],
+    multiplier: &M,
+    out: &mut [f64],
+) where
+    M: RowMultiplier + ?Sized,
+{
+    debug_assert_eq!(weights.len(), nrows);
+    debug_assert_eq!(values.len(), nrows * ncols);
+    debug_assert_eq!(out.len(), ncols * ncols);
+
+    for (row, weight) in weights.iter().copied().enumerate() {
+        if weight == 0.0 {
+            continue;
+        }
+
+        let scaled_weight = weight * multiplier.multiplier_at(row);
+        if scaled_weight == 0.0 {
+            continue;
+        }
+
+        let row_offset = row * ncols;
+        let row_values = &values[row_offset..row_offset + ncols];
+        for (j, x_j) in row_values.iter().copied().enumerate() {
+            let xw_j = x_j * scaled_weight;
+            for (k, x_k) in row_values.iter().copied().enumerate().skip(j) {
+                let delta = x_k * xw_j;
+                out[j * ncols + k] += delta;
+                if k != j {
+                    out[k * ncols + j] += delta;
+                }
+            }
+        }
     }
 }
 
