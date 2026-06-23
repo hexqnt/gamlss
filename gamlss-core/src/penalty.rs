@@ -505,6 +505,11 @@ impl GlobalPenalty for HingeQuadraticPenalty {
                 .add_scaled_gradient(contribution.gradient_scale, grad);
         }
     }
+
+    #[inline]
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        self.form.validate_dim(dim)
+    }
 }
 
 /// Relative quadratic penalty for exceeding an absolute linear-form limit.
@@ -626,6 +631,11 @@ impl GlobalPenalty for AbsoluteLimitPenalty {
                 .add_scaled_gradient(contribution.gradient_scale, grad);
         }
     }
+
+    #[inline]
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        self.form.validate_dim(dim)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -676,6 +686,14 @@ pub trait GlobalPenalty {
     fn value(&self, beta: &[f64]) -> f64;
     /// Adds the penalty gradient into an existing full gradient vector.
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
+    /// Validates that this penalty can be evaluated on a beta vector of `dim`.
+    ///
+    /// Implementations with indexed or ranged access should override this
+    /// method so checked model construction can reject invalid penalties before
+    /// objective evaluation.
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        Ok(())
+    }
 }
 
 /// Penalty that has a constant Hessian-like matrix contribution.
@@ -764,6 +782,12 @@ macro_rules! impl_global_penalty_tuple {
             #[inline]
             fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
                 $(self.$idx.add_gradient(beta, grad);)+
+            }
+
+            #[inline]
+            fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+                $(self.$idx.validate_dim(dim)?;)+
+                Ok(())
             }
         }
     };
@@ -951,6 +975,24 @@ mod tests {
         assert_relative_eq!(GlobalPenalty::value(&penalty, &beta), 72.0);
         GlobalPenalty::add_gradient(&penalty, &beta, &mut grad);
         assert_relative_eq!(grad[0], 37.0);
+    }
+
+    #[test]
+    fn global_penalty_tuple_validates_dimensions() {
+        let valid =
+            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0), 1.0);
+        let invalid = AbsoluteLimitPenalty::new(
+            LinearForm::new(vec![LinearTerm::new(2, 1.0)], 0.0),
+            1.0,
+            1.0,
+            1.0,
+        );
+        let penalties = (valid, invalid);
+
+        assert_eq!(
+            penalties.validate_dim(2).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
     }
 
     #[test]

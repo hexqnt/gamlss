@@ -248,7 +248,10 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
         (self.family, self.blocks, self.obs)
     }
 
-    /// Wraps the model with penalties evaluated on the full beta vector.
+    /// Wraps the model with unchecked penalties evaluated on the full beta vector.
+    ///
+    /// Use [`Self::try_with_global_penalties`] when penalties are assembled
+    /// from dynamic indices or ranges.
     #[must_use]
     #[inline]
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
@@ -256,6 +259,30 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
             objective: self,
             penalties,
         }
+    }
+
+    /// Wraps the model with dimension-validated full-vector penalties.
+    ///
+    /// This is the checked counterpart of [`Self::with_global_penalties`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::PenaltyIndexOutOfBounds`] or
+    /// [`ModelError::PenaltyRangeOutOfBounds`] when a penalty implementation
+    /// reports references outside the model parameter vector.
+    #[inline]
+    pub fn try_with_global_penalties<GP>(
+        self,
+        penalties: GP,
+    ) -> Result<WithGlobalPenalties<Self, GP>, ModelError>
+    where
+        F: Family,
+        Blocks: GamlssBlocks<F>,
+        for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+        GP: GlobalPenalty,
+    {
+        let dim = self.nparams();
+        with_validated_global_penalties(self, penalties, dim)
     }
 }
 
@@ -973,7 +1000,10 @@ where
         Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
     }
 
-    /// Wraps the workspace-backed objective with penalties evaluated on the full beta vector.
+    /// Wraps the workspace-backed objective with unchecked penalties evaluated on the full beta vector.
+    ///
+    /// Use [`Self::try_with_global_penalties`] when penalties are assembled
+    /// from dynamic indices or ranges.
     #[must_use]
     #[inline]
     pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
@@ -981,6 +1011,25 @@ where
             objective: self,
             penalties,
         }
+    }
+
+    /// Wraps the workspace-backed objective with dimension-validated full-vector penalties.
+    ///
+    /// This is the checked counterpart of [`Self::with_global_penalties`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation error reported by [`GlobalPenalty::validate_dim`].
+    #[inline]
+    pub fn try_with_global_penalties<GP>(
+        self,
+        penalties: GP,
+    ) -> Result<WithGlobalPenalties<Self, GP>, ModelError>
+    where
+        GP: GlobalPenalty,
+    {
+        let dim = self.model.nparams();
+        with_validated_global_penalties(self, penalties, dim)
     }
 }
 
@@ -1056,6 +1105,22 @@ impl<O, GP> WithGlobalPenalties<O, GP> {
     pub fn into_parts(self) -> (O, GP) {
         (self.objective, self.penalties)
     }
+}
+
+#[inline]
+fn with_validated_global_penalties<O, GP>(
+    objective: O,
+    penalties: GP,
+    dim: usize,
+) -> Result<WithGlobalPenalties<O, GP>, ModelError>
+where
+    GP: GlobalPenalty,
+{
+    penalties.validate_dim(dim)?;
+    Ok(WithGlobalPenalties {
+        objective,
+        penalties,
+    })
 }
 
 impl<O, GP> Objective for WithGlobalPenalties<O, GP>
@@ -1822,10 +1887,11 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty, Identity, LinearPredictorBlock,
-        ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock,
-        ParameterBlock, ParameterBlocks, ParameterLayout, ParameterName, ParameterSlice,
-        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
+        DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty, HingeQuadraticPenalty, Identity,
+        LinearFormBuilder, LinearPredictorBlock, ModelError, Mu, NoPenalty, Nu, Objective,
+        ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
+        ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
+        RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -3209,6 +3275,38 @@ mod tests {
 
         assert_relative_eq!(grad[0], 5.0);
         assert_relative_eq!(grad[1], -5.0);
+    }
+
+    #[test]
+    fn try_with_global_penalties_validates_full_parameter_dimension() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
+    }
+
+    #[test]
+    fn workspace_try_with_global_penalties_validates_full_parameter_dimension() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
+            .unwrap()
+            .into_workspace_objective();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
     }
 
     #[test]
