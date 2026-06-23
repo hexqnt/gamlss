@@ -162,10 +162,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = vec![1.0, 1.4, 1.8, 2.2, 2.6];
     let n = y.len();
 
-    let blocks = ParameterBlocks::new((
+    let blocks = ParameterBlocks::try_new((
         ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
         ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
-    ));
+    ))?;
 
     let family = UserNormal::<Identity, Log>::new();
     let mut model = Gamlss::try_new(family, blocks, &y)?;

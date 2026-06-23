@@ -14,6 +14,12 @@ pub struct ParameterBlocks;
 
 impl ParameterBlocks {
     /// Assigns sequential offsets starting at zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the sequential layout does not fit in `usize`. Use
+    /// [`Self::try_new`] when block sizes may come from unchecked external
+    /// input.
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     #[inline]
@@ -25,6 +31,12 @@ impl ParameterBlocks {
     }
 
     /// Assigns sequential offsets starting at `start`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the sequential layout does not fit in `usize`. Use
+    /// [`Self::try_with_start`] when block sizes may come from unchecked
+    /// external input.
     #[must_use]
     #[inline]
     pub fn with_start<Blocks>(start: usize, blocks: Blocks) -> Blocks
@@ -32,6 +44,35 @@ impl ParameterBlocks {
         Blocks: AssignParameterOffsets,
     {
         blocks.assign_offsets(start)
+    }
+
+    /// Assigns sequential offsets starting at zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if any assigned block range
+    /// would not fit in `usize`.
+    #[allow(clippy::new_ret_no_self)]
+    #[inline]
+    pub fn try_new<Blocks>(blocks: Blocks) -> Result<Blocks, ModelError>
+    where
+        Blocks: TryAssignParameterOffsets,
+    {
+        Self::try_with_start(0, blocks)
+    }
+
+    /// Assigns sequential offsets starting at `start`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if any assigned block range
+    /// would not fit in `usize`.
+    #[inline]
+    pub fn try_with_start<Blocks>(start: usize, blocks: Blocks) -> Result<Blocks, ModelError>
+    where
+        Blocks: TryAssignParameterOffsets,
+    {
+        blocks.try_assign_offsets(start)
     }
 }
 
@@ -374,6 +415,17 @@ pub trait AssignParameterOffsets: Sized {
     fn assign_offsets(self, start: usize) -> Self;
 }
 
+/// Fallible tuple contract for assigning typed parameter block offsets.
+pub trait TryAssignParameterOffsets: Sized {
+    /// Returns `self` with sequential offsets starting at `start`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
+    /// fit in `usize`.
+    fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
+}
+
 macro_rules! impl_assign_offsets {
     (
         types = ($($block:ident),+);
@@ -389,10 +441,38 @@ macro_rules! impl_assign_offsets {
                 let mut offset = start;
                 $(
                     let $var = $var.with_assigned_offset(offset);
-                    offset = offset.saturating_add($var.assigned_len());
+                    let len = $var.assigned_len();
+                    offset = offset
+                        .checked_add(len)
+                        .expect("parameter block layout must fit in usize");
                 )+
                 let _ = offset;
                 ($($var,)+)
+            }
+        }
+
+        impl<$($block,)+> TryAssignParameterOffsets for ($($block,)+)
+        where
+            $($block: TryOffsetAssignable,)+
+        {
+            #[inline]
+            fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError> {
+                let ($($var,)+) = self;
+                let mut offset = start;
+                $(
+                    let $var = $var.with_assigned_offset(offset);
+                    let assigned_offset = $var.assigned_offset();
+                    let assigned_len = $var.assigned_len();
+                    offset = offset.checked_add(assigned_len).ok_or(
+                        ModelError::BlockRangeOverflow {
+                            parameter: $var.assigned_name(),
+                            offset: assigned_offset,
+                            len: assigned_len,
+                        },
+                    )?;
+                )+
+                let _ = offset;
+                Ok(($($var,)+))
             }
         }
     };
@@ -411,6 +491,34 @@ impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
 trait OffsetAssignable: Sized {
     fn with_assigned_offset(self, offset: usize) -> Self;
     fn assigned_len(&self) -> usize;
+}
+
+impl<P, L, X, Penalty> TryOffsetAssignable for ParameterBlock<P, L, X, Penalty>
+where
+    P: ParameterName,
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.offset()
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        P::NAME
+    }
+}
+
+trait TryOffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_offset(&self) -> usize;
+    fn assigned_len(&self) -> usize;
+    fn assigned_name(&self) -> &'static str;
 }
 
 impl_assign_offsets!(types = (B1); vars = (b1));
@@ -503,6 +611,24 @@ mod tests {
 
         assert_eq!(
             block.try_range().unwrap_err(),
+            crate::ModelError::BlockRangeOverflow {
+                parameter: "mu",
+                offset: usize::MAX,
+                len: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn parameter_blocks_try_with_start_reports_layout_overflow() {
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+            DenseDesign::from_rows(&[[1.0, 2.0]]),
+            NoPenalty,
+            99,
+        );
+
+        assert_eq!(
+            ParameterBlocks::try_with_start(usize::MAX, (mu,)).unwrap_err(),
             crate::ModelError::BlockRangeOverflow {
                 parameter: "mu",
                 offset: usize::MAX,

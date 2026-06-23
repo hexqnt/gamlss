@@ -122,6 +122,7 @@ where
 
         obs.validate()?;
         blocks.validate(obs.len())?;
+        blocks.try_len()?;
         Ok(Self {
             family,
             blocks,
@@ -177,7 +178,7 @@ where
     /// blocks or non-finite family starts. Future projection-based
     /// initializers may return recoverable errors.
     pub fn initial_parameters(&self) -> Result<Vec<f64>, ModelError> {
-        Ok(self.blocks.initial_parameters(&self.family, &self.obs))
+        self.blocks.try_initial_parameters(&self.family, &self.obs)
     }
 
     /// Creates reusable gradient buffers sized for this model.
@@ -922,6 +923,15 @@ where
     fn nrows(&self) -> usize;
     /// Length of the common beta vector covering all blocks.
     fn len(&self) -> usize;
+    /// Validates and returns the common beta-vector length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if any block end index does
+    /// not fit in `usize`.
+    fn try_len(&self) -> Result<usize, ModelError> {
+        Ok(self.len())
+    }
 
     /// `true` if the blocks require no coefficients.
     fn is_empty(&self) -> bool {
@@ -950,6 +960,18 @@ where
     fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Fallible variant of [`Self::initial_parameters`] for layouts whose
+    /// total coefficient length must be checked first.
+    fn try_initial_parameters<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        Ok(self.initial_parameters(family, obs))
+    }
     /// Adds the local penalty gradient into an existing full gradient vector.
     ///
     /// Implementations with local penalties should override this method. It is
@@ -1113,7 +1135,23 @@ macro_rules! impl_gamlss_blocks {
             }
 
             fn len(&self) -> usize {
-                0$(.max(self.$idx.offset().saturating_add(self.$idx.len())))+
+                <Self as GamlssBlocks<F>>::try_len(self)
+                    .expect("validated parameter block layout must fit in usize")
+            }
+
+            fn try_len(&self) -> Result<usize, ModelError> {
+                let mut len = 0;
+                $(
+                    let end = self.$idx.offset().checked_add(self.$idx.len()).ok_or(
+                        ModelError::BlockRangeOverflow {
+                            parameter: <$param as ParameterName>::NAME,
+                            offset: self.$idx.offset(),
+                            len: self.$idx.len(),
+                        },
+                    )?;
+                    len = len.max(end);
+                )+
+                Ok(len)
             }
 
             fn validate(&self, y_len: usize) -> Result<(), ModelError> {
@@ -1190,8 +1228,20 @@ macro_rules! impl_gamlss_blocks {
             where
                 Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
             {
+                <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
+                    .expect("validated parameter block layout must fit in usize")
+            }
+
+            fn try_initial_parameters<'obs, Obs>(
+                &self,
+                family: &F,
+                obs: &'obs Obs,
+            ) -> Result<Vec<f64>, ModelError>
+            where
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+            {
                 let eta = family.initial_eta_from_observations(obs);
-                let mut beta = vec![0.0; 0$(.max(self.$idx.offset().saturating_add(self.$idx.len())))+];
+                let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
                 $(
                     let $block = &self.$idx;
                     let value = eta.part($idx);
@@ -1201,7 +1251,7 @@ macro_rules! impl_gamlss_blocks {
                             .set_constant_start(value, &mut beta[$block.range()]);
                     }
                 )+
-                beta
+                Ok(beta)
             }
 
             fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
@@ -1595,10 +1645,10 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock,
-        ParameterBlocks, ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily,
-        PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
+        DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty, Identity, LinearPredictorBlock,
+        ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock,
+        ParameterBlock, ParameterBlocks, ParameterLayout, ParameterName, ParameterSlice,
+        ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma, SumBlock, Tau,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -2198,6 +2248,23 @@ mod tests {
 
         assert_eq!(
             Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            ModelError::BlockRangeOverflow {
+                parameter: "mu",
+                offset: usize::MAX,
+                len: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn blocks_try_len_reports_overflowing_total_length() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
+        let blocks = (mu,);
+
+        assert_eq!(
+            GamlssBlocks::<FixedSigmaNormal>::try_len(&blocks).unwrap_err(),
             ModelError::BlockRangeOverflow {
                 parameter: "mu",
                 offset: usize::MAX,

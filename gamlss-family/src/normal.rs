@@ -325,10 +325,10 @@ where
     PMu: Penalty,
     PSigma: Penalty,
 {
-    let blocks = ParameterBlocks::new((
+    let blocks = ParameterBlocks::try_new((
         ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, mu_penalty, 0),
         ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, 0),
-    ));
+    ))?;
 
     Gamlss::try_new(NormalMuSigma::new(), blocks, y)
 }

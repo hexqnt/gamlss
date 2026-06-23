@@ -51,7 +51,8 @@ pub use objective::{BlockObjective, Objective};
 pub use param::{
     AssignParameterOffsets, ComponentMean, Cv, Dispersion, LogLocation, LogSd, Mean, Median, Mu,
     Nu, OneProbability, ParameterBlock, ParameterBlocks, ParameterName, Power, Precision,
-    Probability, Rate, Scale, Shape, Sigma, Size, Tau, TotalMean, ZeroProbability,
+    Probability, Rate, Scale, Shape, Sigma, Size, Tau, TotalMean, TryAssignParameterOffsets,
+    ZeroProbability,
 };
 pub use penalty::{
     AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
@@ -98,7 +99,7 @@ pub mod prelude {
         ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictorBlock, Probability,
         ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size,
         Softplus, SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar,
-        UnitIntervalLink, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
-        ZeroProbability,
+        TryAssignParameterOffsets, UnitIntervalLink, UnpackedParameters, WithGlobalPenalties,
+        WorkspaceGamlss, ZeroProbability,
     };
 }

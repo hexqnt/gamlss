@@ -35,7 +35,7 @@
 //! let y = [0.0, 1.0, 2.0];
 //! let weights = [1.0, 0.5, 1.0];
 //!
-//! let blocks = ParameterBlocks::new((
+//! let blocks = ParameterBlocks::try_new((
 //!     ParameterBlock::<Mu, Identity, _, _>::linear(
 //!         DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]]),
 //!         NoPenalty,
@@ -46,7 +46,7 @@
 //!         NoPenalty,
 //!         0,
 //!     ),
-//! ));
+//! ))?;
 //!
 //! let model = Gamlss::try_new_weighted(
 //!     gamlss::family::NormalMuSigma::new(),

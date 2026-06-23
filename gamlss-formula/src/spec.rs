@@ -158,7 +158,7 @@ macro_rules! define_spec {
                     second_build.penalty,
                     0,
                 );
-                let blocks: $blocks = ParameterBlocks::new((first, second));
+                let blocks: $blocks = ParameterBlocks::try_new((first, second))?;
                 let model: $compiled<'a> =
                     Gamlss::try_new_with_observations(<$family>::new(), blocks, response)?;
                 let layout = model.parameter_layout();
@@ -203,7 +203,7 @@ macro_rules! define_spec {
                     0,
                 );
 
-                Ok(ParameterBlocks::new((first, second)))
+                Ok(ParameterBlocks::try_new((first, second))?)
             }
 
             /// Builds reusable prediction design from fitted term metadata.
