@@ -44,8 +44,8 @@ pub use link::{
 };
 pub use model::{
     FiniteScalarObservations, Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale,
-    ObservationView, ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics,
-    UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+    ObservationView, ParameterCoefficients, ParameterLayout, ParameterSlice, PredictionView,
+    TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -96,10 +96,10 @@ pub mod prelude {
         MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
         ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
         ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictorBlock, Probability,
-        ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size,
-        Softplus, SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar,
-        TryAssignParameterOffsets, UnitIntervalLink, UnpackedParameters, WithGlobalPenalties,
-        WorkspaceGamlss, ZeroProbability,
+        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictionView,
+        PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale,
+        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
+        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, UnitIntervalLink,
+        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

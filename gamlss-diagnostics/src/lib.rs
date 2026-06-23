@@ -38,12 +38,172 @@
 //! # Ok::<_, gamlss_core::ModelError>(())
 //! ```
 
-use gamlss_core::{Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView};
+use gamlss_core::{
+    Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView, PredictionView,
+};
 use gamlss_special::unit_normal_quantile;
 
 /// Common diagnostics imports.
 pub mod prelude {
-    pub use crate::{CdfDiagnosticsExt, CrpsDiagnosticsExt};
+    pub use crate::{
+        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt, PredictionDiagnosticsView,
+    };
+}
+
+/// Validated diagnostics view over prediction rows and observations.
+///
+/// This view is built from a core [`PredictionView`] plus an observation view,
+/// validating the prediction observation length and observation invariants once.
+/// Reuse it when computing multiple diagnostics over the same prediction rows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PredictionDiagnosticsView<'a, 'obs, F, PBlocks, PObs> {
+    prediction: PredictionView<'a, F, PBlocks>,
+    obs: &'obs PObs,
+}
+
+impl<'a, 'obs, F, PBlocks, PObs> PredictionDiagnosticsView<'a, 'obs, F, PBlocks, PObs>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    PBlocks: GamlssBlocks<F>,
+    PObs: ObservationView<'obs, Observation = f64> + 'obs,
+{
+    fn new(
+        prediction: &PredictionView<'a, F, PBlocks>,
+        obs: &'obs PObs,
+    ) -> Result<Self, ModelError> {
+        validate_prediction_observations(prediction.nrows(), obs)?;
+        Ok(Self {
+            prediction: *prediction,
+            obs,
+        })
+    }
+
+    /// Number of prediction rows.
+    #[must_use]
+    #[inline]
+    pub fn nrows(&self) -> usize {
+        self.prediction.nrows()
+    }
+
+    /// Returns PIT values for the validated prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn pit_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>
+    where
+        F: HasCdf,
+    {
+        let mut out = vec![0.0; self.nrows()];
+        self.pit_values_into(parameters, &mut out)?;
+        Ok(out)
+    }
+
+    /// Writes PIT values for the validated prediction rows into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
+    pub fn pit_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>
+    where
+        F: HasCdf,
+    {
+        self.diagnostic_values_into(parameters, out, |family, observation, theta| {
+            family.cdf(observation, theta)
+        })
+    }
+
+    /// Returns normalized quantile residuals for the validated prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn quantile_residuals(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>
+    where
+        F: HasCdf,
+    {
+        self.pit_values(parameters).map(normalize_pit_values)
+    }
+
+    /// Returns CRPS values for the validated prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn crps_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>
+    where
+        F: HasCrps,
+    {
+        let mut out = vec![0.0; self.nrows()];
+        self.crps_values_into(parameters, &mut out)?;
+        Ok(out)
+    }
+
+    /// Writes CRPS values for the validated prediction rows into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
+    pub fn crps_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>
+    where
+        F: HasCrps,
+    {
+        self.diagnostic_values_into(parameters, out, |family, observation, theta| {
+            family.crps(observation, theta)
+        })
+    }
+
+    fn diagnostic_values_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [f64],
+        mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+    ) -> Result<(), ModelError> {
+        validate_output_len(self.nrows(), out.len())?;
+        self.prediction.for_each_theta(parameters, |row, theta| {
+            out[row] = evaluate(
+                self.prediction.family(),
+                self.obs.observation_at(row),
+                theta,
+            );
+        })
+    }
+}
+
+/// Diagnostics extension for a validated core [`PredictionView`].
+pub trait PredictionDiagnosticsExt<F, PBlocks>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    PBlocks: GamlssBlocks<F>,
+{
+    /// Adds validated prediction observations to this prediction view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `obs` has the wrong length or invalid
+    /// observation/weight values.
+    fn with_observations<'obs, PObs>(
+        &self,
+        obs: &'obs PObs,
+    ) -> Result<PredictionDiagnosticsView<'_, 'obs, F, PBlocks, PObs>, ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = f64> + 'obs;
+}
+
+impl<'a, F, PBlocks> PredictionDiagnosticsExt<F, PBlocks> for PredictionView<'a, F, PBlocks>
+where
+    F: for<'row> Family<Observation<'row> = f64>,
+    PBlocks: GamlssBlocks<F>,
+{
+    fn with_observations<'obs, PObs>(
+        &self,
+        obs: &'obs PObs,
+    ) -> Result<PredictionDiagnosticsView<'_, 'obs, F, PBlocks, PObs>, ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        PredictionDiagnosticsView::new(self, obs)
+    }
 }
 
 /// CDF-based diagnostics for fitted GAMLSS models.
@@ -140,9 +300,10 @@ where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        validate_prediction_observations(blocks.nrows(), obs)?;
-        let mut out = vec![0.0; blocks.nrows()];
-        self.pit_values_with_blocks_into(parameters, blocks, obs, &mut out)?;
+        let prediction = self.prediction_view(blocks)?;
+        let diagnostics = prediction.with_observations(obs)?;
+        let mut out = vec![0.0; diagnostics.nrows()];
+        diagnostics.pit_values_into(parameters, &mut out)?;
         Ok(out)
     }
 
@@ -157,16 +318,10 @@ where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        validate_prediction_observations(blocks.nrows(), obs)?;
-        validate_output_len(blocks.nrows(), out.len())?;
-        diagnostic_values_with_blocks_into(
-            self,
-            parameters,
-            blocks,
-            obs,
-            out,
-            |family, observation, theta| family.cdf(observation, theta),
-        )
+        let prediction = self.prediction_view(blocks)?;
+        prediction
+            .with_observations(obs)?
+            .pit_values_into(parameters, out)
     }
 }
 
@@ -249,9 +404,10 @@ where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        validate_prediction_observations(blocks.nrows(), obs)?;
-        let mut out = vec![0.0; blocks.nrows()];
-        self.crps_values_with_blocks_into(parameters, blocks, obs, &mut out)?;
+        let prediction = self.prediction_view(blocks)?;
+        let diagnostics = prediction.with_observations(obs)?;
+        let mut out = vec![0.0; diagnostics.nrows()];
+        diagnostics.crps_values_into(parameters, &mut out)?;
         Ok(out)
     }
 
@@ -266,16 +422,10 @@ where
         PBlocks: GamlssBlocks<F>,
         PObs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        validate_prediction_observations(blocks.nrows(), obs)?;
-        validate_output_len(blocks.nrows(), out.len())?;
-        diagnostic_values_with_blocks_into(
-            self,
-            parameters,
-            blocks,
-            obs,
-            out,
-            |family, observation, theta| family.crps(observation, theta),
-        )
+        let prediction = self.prediction_view(blocks)?;
+        prediction
+            .with_observations(obs)?
+            .crps_values_into(parameters, out)
     }
 
     fn weighted_mean_crps(&self, parameters: &[f64]) -> Result<f64, ModelError> {
@@ -318,26 +468,6 @@ where
     })
 }
 
-fn diagnostic_values_with_blocks_into<'obs, F, Blocks, Obs, PBlocks, PObs>(
-    model: &Gamlss<F, Blocks, Obs>,
-    parameters: &[f64],
-    blocks: &PBlocks,
-    obs: &'obs PObs,
-    out: &mut [f64],
-    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
-) -> Result<(), ModelError>
-where
-    F: for<'row> Family<Observation<'row> = f64>,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = f64>,
-    PBlocks: GamlssBlocks<F>,
-    PObs: ObservationView<'obs, Observation = f64> + 'obs,
-{
-    model.for_each_theta_with_blocks(parameters, blocks, |row, theta| {
-        out[row] = evaluate(model.family(), obs.observation_at(row), theta);
-    })
-}
-
 fn validate_prediction_observations<'obs, Obs>(
     expected: usize,
     obs: &'obs Obs,
@@ -373,7 +503,9 @@ mod tests {
     };
     use gamlss_family::Normal;
 
-    use super::{CdfDiagnosticsExt, CrpsDiagnosticsExt, normalize_pit_values};
+    use super::{
+        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt, normalize_pit_values,
+    };
 
     type TestModel<'a> = Gamlss<
         Normal<Identity, Log>,
@@ -523,11 +655,17 @@ mod tests {
         let model = normal_intercept_model(&y);
         let parameters = [0.0, 0.0];
         let obs = &y[..];
+        let prediction = model.prediction_view(model.blocks()).unwrap();
+        let diagnostics = prediction.with_observations(&obs).unwrap();
 
         assert_eq!(
             model
                 .pit_values_with_blocks(&parameters, model.blocks(), &obs)
                 .unwrap(),
+            model.pit_values(&parameters).unwrap()
+        );
+        assert_eq!(
+            diagnostics.pit_values(&parameters).unwrap(),
             model.pit_values(&parameters).unwrap()
         );
         assert_eq!(
@@ -537,11 +675,29 @@ mod tests {
             model.quantile_residuals(&parameters).unwrap()
         );
         assert_eq!(
+            diagnostics.quantile_residuals(&parameters).unwrap(),
+            model.quantile_residuals(&parameters).unwrap()
+        );
+        assert_eq!(
             model
                 .crps_values_with_blocks(&parameters, model.blocks(), &obs)
                 .unwrap(),
             model.crps_values(&parameters).unwrap()
         );
+        assert_eq!(
+            diagnostics.crps_values(&parameters).unwrap(),
+            model.crps_values(&parameters).unwrap()
+        );
+
+        let mut pit = vec![f64::NAN; diagnostics.nrows()];
+        diagnostics.pit_values_into(&parameters, &mut pit).unwrap();
+        assert_eq!(pit, model.pit_values(&parameters).unwrap());
+
+        let mut crps = vec![f64::NAN; diagnostics.nrows()];
+        diagnostics
+            .crps_values_into(&parameters, &mut crps)
+            .unwrap();
+        assert_eq!(crps, model.crps_values(&parameters).unwrap());
     }
 
     #[test]

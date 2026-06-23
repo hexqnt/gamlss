@@ -61,6 +61,164 @@ pub struct Gamlss<F, Blocks, Obs> {
     weight_sum: f64,
 }
 
+/// Validated prediction view over compatible parameter blocks.
+///
+/// The view borrows the fitted family and prediction blocks after validating
+/// that the prediction block layout matches the fitted model. Reusing it avoids
+/// repeating prediction-block validation across batch inference calls.
+#[derive(Debug, PartialEq)]
+pub struct PredictionView<'a, F, PBlocks> {
+    family: &'a F,
+    blocks: &'a PBlocks,
+    nrows: usize,
+    nparams: usize,
+}
+
+impl<F, PBlocks> Clone for PredictionView<'_, F, PBlocks> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F, PBlocks> Copy for PredictionView<'_, F, PBlocks> {}
+
+impl<'a, F, PBlocks> PredictionView<'a, F, PBlocks>
+where
+    F: Family,
+    PBlocks: GamlssBlocks<F>,
+{
+    fn new<Blocks, Obs>(
+        model: &'a Gamlss<F, Blocks, Obs>,
+        blocks: &'a PBlocks,
+    ) -> Result<Self, ModelError>
+    where
+        Blocks: GamlssBlocks<F>,
+    {
+        validate_prediction_blocks(&model.blocks, blocks)?;
+        Ok(Self {
+            family: &model.family,
+            blocks,
+            nrows: blocks.nrows(),
+            nparams: model.blocks.len(),
+        })
+    }
+
+    /// Response distribution family.
+    #[must_use]
+    #[inline]
+    pub fn family(&self) -> &'a F {
+        self.family
+    }
+
+    /// Typed prediction parameter blocks.
+    #[must_use]
+    #[inline]
+    pub fn blocks(&self) -> &'a PBlocks {
+        self.blocks
+    }
+
+    /// Number of prediction rows.
+    #[must_use]
+    #[inline]
+    pub fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Number of coefficients expected in the flat parameter vector.
+    #[must_use]
+    #[inline]
+    pub fn nparams(&self) -> usize {
+        self.nparams
+    }
+
+    /// Predicts link-scale distribution predictors for one prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length or `row` is
+    /// out of bounds for the validated prediction blocks.
+    pub fn predict_eta_row(&self, parameters: &[f64], row: usize) -> Result<F::Eta, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        validate_row(row, self.nrows)?;
+        Ok(self.blocks.eta_row(parameters, row))
+    }
+
+    /// Predicts natural-scale distribution parameters for one prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length or `row` is
+    /// out of bounds for the validated prediction blocks.
+    pub fn predict_theta_row(
+        &self,
+        parameters: &[f64],
+        row: usize,
+    ) -> Result<F::Theta, ModelError> {
+        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
+    }
+
+    /// Predicts link-scale distribution predictors for all prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn predict_eta(&self, parameters: &[f64]) -> Result<Vec<F::Eta>, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        Ok((0..self.nrows)
+            .map(|row| self.blocks.eta_row(parameters, row))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters for all prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn predict_theta(&self, parameters: &[f64]) -> Result<Vec<F::Theta>, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        Ok((0..self.nrows)
+            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters into an existing slice.
+    ///
+    /// `out` must have one slot per prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
+    pub fn predict_theta_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        validate_output_len(self.nrows, out.len())?;
+        for (row, out) in out.iter_mut().enumerate() {
+            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+        }
+        Ok(())
+    }
+
+    /// Streams natural-scale parameters for each prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn for_each_theta(
+        &self,
+        parameters: &[f64],
+        mut visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        for row in 0..self.nrows {
+            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+        }
+        Ok(())
+    }
+}
+
 impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
     /// Response distribution family.
     #[must_use]
@@ -410,10 +568,8 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("parameters", parameters.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        validate_row(row, blocks.nrows())?;
-        Ok(blocks.eta_row(parameters, row))
+        self.prediction_view(blocks)?
+            .predict_eta_row(parameters, row)
     }
 
     /// Predicts natural-scale distribution parameters for one row from compatible prediction blocks.
@@ -433,9 +589,8 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        Ok(self
-            .family
-            .theta(self.predict_eta_row_with_blocks(parameters, blocks, row)?))
+        self.prediction_view(blocks)?
+            .predict_theta_row(parameters, row)
     }
 
     /// Predicts link-scale distribution predictors for all rows in compatible prediction blocks.
@@ -453,11 +608,7 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("parameters", parameters.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        Ok((0..blocks.nrows())
-            .map(|row| blocks.eta_row(parameters, row))
-            .collect())
+        self.prediction_view(blocks)?.predict_eta(parameters)
     }
 
     /// Predicts natural-scale distribution parameters for all rows in compatible prediction blocks.
@@ -475,11 +626,7 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("parameters", parameters.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        Ok((0..blocks.nrows())
-            .map(|row| self.family.theta(blocks.eta_row(parameters, row)))
-            .collect())
+        self.prediction_view(blocks)?.predict_theta(parameters)
     }
 
     /// Predicts natural-scale distribution parameters from prediction blocks into `out`.
@@ -495,13 +642,8 @@ where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("parameters", parameters.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        validate_output_len(blocks.nrows(), out.len())?;
-        for (row, out) in out.iter_mut().enumerate() {
-            *out = self.family.theta(blocks.eta_row(parameters, row));
-        }
-        Ok(())
+        self.prediction_view(blocks)?
+            .predict_theta_into(parameters, out)
     }
 
     /// Streams natural-scale parameters for each row in compatible prediction blocks.
@@ -509,18 +651,30 @@ where
         &self,
         parameters: &[f64],
         blocks: &PBlocks,
-        mut visit: impl FnMut(usize, F::Theta),
+        visit: impl FnMut(usize, F::Theta),
     ) -> Result<(), ModelError>
     where
         F: Family,
         PBlocks: GamlssBlocks<F>,
     {
-        validate_len("parameters", parameters.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        for row in 0..blocks.nrows() {
-            visit(row, self.family.theta(blocks.eta_row(parameters, row)));
-        }
-        Ok(())
+        self.prediction_view(blocks)?
+            .for_each_theta(parameters, visit)
+    }
+
+    /// Creates a validated reusable prediction view over compatible blocks.
+    ///
+    /// The returned view caches the prediction row count and validated
+    /// parameter layout compatibility, so repeated `predict_*` calls only check
+    /// parameter and output slice lengths.
+    pub fn prediction_view<'a, PBlocks>(
+        &'a self,
+        blocks: &'a PBlocks,
+    ) -> Result<PredictionView<'a, F, PBlocks>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        PredictionView::new(self, blocks)
     }
 
     /// Validates beta length and computes the objective.
@@ -2186,6 +2340,7 @@ mod tests {
             ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
         let prediction_blocks = (prediction_mu,);
         let beta = vec![0.5, 0.25];
+        let prediction = model.prediction_view(&prediction_blocks).unwrap();
 
         assert_relative_eq!(
             model
@@ -2193,16 +2348,25 @@ mod tests {
                 .unwrap(),
             1.25
         );
+        assert_eq!(prediction.nrows(), 3);
+        assert_eq!(prediction.nparams(), 2);
+        assert_relative_eq!(prediction.predict_eta_row(&beta, 1).unwrap(), 1.25);
+        assert_relative_eq!(prediction.predict_theta_row(&beta, 1).unwrap(), 1.25);
         assert_eq!(
             model
                 .predict_eta_with_blocks(&beta, &prediction_blocks)
                 .unwrap(),
             vec![1.0, 1.25, 1.5]
         );
+        assert_eq!(prediction.predict_eta(&beta).unwrap(), vec![1.0, 1.25, 1.5]);
         assert_eq!(
             model
                 .predict_theta_with_blocks(&beta, &prediction_blocks)
                 .unwrap(),
+            vec![1.0, 1.25, 1.5]
+        );
+        assert_eq!(
+            prediction.predict_theta(&beta).unwrap(),
             vec![1.0, 1.25, 1.5]
         );
 
@@ -2211,12 +2375,20 @@ mod tests {
             .predict_theta_with_blocks_into(&beta, &prediction_blocks, &mut theta)
             .unwrap();
         assert_eq!(theta, vec![1.0, 1.25, 1.5]);
+        theta.fill(f64::NAN);
+        prediction.predict_theta_into(&beta, &mut theta).unwrap();
+        assert_eq!(theta, vec![1.0, 1.25, 1.5]);
 
         let mut streamed = Vec::new();
         model
             .for_each_theta_with_blocks(&beta, &prediction_blocks, |row, theta| {
                 streamed.push((row, theta));
             })
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 1.0), (1, 1.25), (2, 1.5)]);
+        streamed.clear();
+        prediction
+            .for_each_theta(&beta, |row, theta| streamed.push((row, theta)))
             .unwrap();
         assert_eq!(streamed, vec![(0, 1.0), (1, 1.25), (2, 1.5)]);
     }
@@ -2236,6 +2408,19 @@ mod tests {
             model
                 .predict_eta_with_blocks(&[0.5, 0.25], &prediction_blocks)
                 .unwrap_err(),
+            ModelError::PredictionLayoutMismatch {
+                expected: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..2,
+                }]),
+                got: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..3,
+                }]),
+            }
+        );
+        assert_eq!(
+            model.prediction_view(&prediction_blocks).unwrap_err(),
             ModelError::PredictionLayoutMismatch {
                 expected: ParameterLayout::new(vec![ParameterSlice {
                     name: "mu",
