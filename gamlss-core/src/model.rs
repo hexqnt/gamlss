@@ -1053,7 +1053,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns the validation error reported by [`GlobalPenalty::validate_dim`].
+    /// Returns the invariant or dimension validation error reported by
+    /// [`GlobalPenalty::validate`].
     #[inline]
     pub fn try_with_global_penalties<GP>(
         self,
@@ -1150,7 +1151,7 @@ fn with_validated_global_penalties<O, GP>(
 where
     GP: GlobalPenalty,
 {
-    penalties.validate_dim(dim)?;
+    penalties.validate(dim)?;
     Ok(WithGlobalPenalties {
         objective,
         penalties,
@@ -3333,6 +3334,24 @@ mod tests {
         assert_eq!(
             model.try_with_global_penalties(penalty).unwrap_err(),
             ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
+    }
+
+    #[test]
+    fn try_with_global_penalties_validates_penalty_invariants() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(0, f64::NAN).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "linear term weight",
+                expected: "finite",
+            }
         );
     }
 

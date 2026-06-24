@@ -115,12 +115,10 @@ mod tests {
     #[test]
     fn difference_penalty_try_new_validates_inputs() {
         assert_eq!(DifferencePenalty::try_new(0.0, 1).unwrap().lambda, 0.0);
-        assert_eq!(
-            PreparedDifferencePenalty::try_new(0.5, 2)
-                .unwrap()
-                .coefficients(),
-            &[1.0, -2.0, 1.0]
-        );
+        let prepared = PreparedDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
         assert_eq!(
             DifferencePenalty::try_new(f64::NAN, 1).unwrap_err(),
             ModelError::InvalidParameter {
@@ -152,6 +150,24 @@ mod tests {
             PreparedDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
             ModelError::ArithmeticOverflow {
                 context: "difference penalty coefficients",
+            }
+        );
+    }
+
+    #[test]
+    fn preparing_difference_penalty_revalidates_source() {
+        let prepared =
+            PreparedDifferencePenalty::try_from(DifferencePenalty::new_unchecked(0.5, 2)).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+
+        assert_eq!(
+            PreparedDifferencePenalty::try_from(DifferencePenalty::new_unchecked(1.0, 0))
+                .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
             }
         );
     }
@@ -479,12 +495,10 @@ mod tests {
     #[test]
     fn cyclic_difference_penalty_try_new_validates_inputs() {
         assert_eq!(CyclicDifferencePenalty::try_new(0.5, 2).unwrap().order, 2);
-        assert_eq!(
-            PreparedCyclicDifferencePenalty::try_new(0.5, 2)
-                .unwrap()
-                .coefficients(),
-            &[1.0, -2.0, 1.0]
-        );
+        let prepared = PreparedCyclicDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
         assert_eq!(
             CyclicDifferencePenalty::try_new(f64::INFINITY, 2).unwrap_err(),
             ModelError::InvalidParameter {
@@ -514,6 +528,28 @@ mod tests {
     }
 
     #[test]
+    fn preparing_cyclic_difference_penalty_revalidates_source() {
+        let prepared = PreparedCyclicDifferencePenalty::try_from(
+            CyclicDifferencePenalty::new_unchecked(0.5, 2),
+        )
+        .unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+
+        assert_eq!(
+            PreparedCyclicDifferencePenalty::try_from(CyclicDifferencePenalty::new_unchecked(
+                1.0, 0
+            ))
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
+    }
+
+    #[test]
     fn edge_monotonic_penalty_gradient_matches_finite_difference() {
         let penalty = EdgeMonotonicPenalty::new(3.0);
         let beta = vec![0.2, 0.8, 0.4, -0.1];
@@ -522,7 +558,7 @@ mod tests {
 
     #[test]
     fn edge_monotonic_penalty_try_new_validates_weight() {
-        assert_eq!(EdgeMonotonicPenalty::try_new(2.0).unwrap().weight, 2.0);
+        assert_eq!(EdgeMonotonicPenalty::try_new(2.0).unwrap().weight(), 2.0);
         assert_eq!(
             EdgeMonotonicPenalty::try_new(f64::NAN).unwrap_err(),
             ModelError::InvalidParameter {
@@ -541,12 +577,11 @@ mod tests {
 
     #[test]
     fn slope_limit_penalty_try_new_validates_inputs() {
-        assert_eq!(
-            SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), None)
-                .unwrap()
-                .cold_limit,
-            Some(0.4)
-        );
+        let penalty = SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), None).unwrap();
+        assert_eq!(penalty.weight(), 5.0);
+        assert_eq!(penalty.scale(), 2.0);
+        assert_eq!(penalty.cold_limit(), Some(0.4));
+        assert_eq!(penalty.warm_limit(), None);
         assert_eq!(
             SlopeLimitPenalty::try_new(0.0, 2.0, Some(0.4), None).unwrap_err(),
             ModelError::InvalidParameter {

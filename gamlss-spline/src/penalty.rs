@@ -72,10 +72,8 @@ impl MatrixPenalty for DifferencePenalty {
 /// Difference penalty with finite-difference coefficients computed once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedDifferencePenalty {
-    /// Penalty weight.
-    pub lambda: f64,
-    /// Finite difference order.
-    pub order: usize,
+    lambda: f64,
+    order: usize,
     coefficients: Vec<f64>,
 }
 
@@ -84,6 +82,11 @@ impl PreparedDifferencePenalty {
     ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `order` is zero or its binomial coefficients do not fit in
+    /// `usize`.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self::new_unchecked(lambda, order)
@@ -94,6 +97,10 @@ impl PreparedDifferencePenalty {
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `order` violates this contract.
     #[must_use]
     pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self {
@@ -120,6 +127,18 @@ impl PreparedDifferencePenalty {
         })
     }
 
+    /// Returns the penalty weight.
+    #[must_use]
+    pub const fn lambda(&self) -> f64 {
+        self.lambda
+    }
+
+    /// Returns the finite-difference order.
+    #[must_use]
+    pub const fn order(&self) -> usize {
+        self.order
+    }
+
     /// Returns the cached finite-difference coefficients.
     #[must_use]
     pub fn coefficients(&self) -> &[f64] {
@@ -127,9 +146,11 @@ impl PreparedDifferencePenalty {
     }
 }
 
-impl From<DifferencePenalty> for PreparedDifferencePenalty {
-    fn from(value: DifferencePenalty) -> Self {
-        Self::new_unchecked(value.lambda, value.order)
+impl TryFrom<DifferencePenalty> for PreparedDifferencePenalty {
+    type Error = ModelError;
+
+    fn try_from(value: DifferencePenalty) -> Result<Self, Self::Error> {
+        Self::try_new(value.lambda, value.order)
     }
 }
 
@@ -221,10 +242,8 @@ impl MatrixPenalty for CyclicDifferencePenalty {
 /// Cyclic difference penalty with finite-difference coefficients computed once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedCyclicDifferencePenalty {
-    /// Penalty weight.
-    pub lambda: f64,
-    /// Finite difference order.
-    pub order: usize,
+    lambda: f64,
+    order: usize,
     coefficients: Vec<f64>,
 }
 
@@ -233,6 +252,11 @@ impl PreparedCyclicDifferencePenalty {
     ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `order` is zero or its binomial coefficients do not fit in
+    /// `usize`.
     #[must_use]
     pub fn new(lambda: f64, order: usize) -> Self {
         Self::new_unchecked(lambda, order)
@@ -243,6 +267,10 @@ impl PreparedCyclicDifferencePenalty {
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `order` violates this contract.
     #[must_use]
     pub fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self {
@@ -269,6 +297,18 @@ impl PreparedCyclicDifferencePenalty {
         })
     }
 
+    /// Returns the penalty weight.
+    #[must_use]
+    pub const fn lambda(&self) -> f64 {
+        self.lambda
+    }
+
+    /// Returns the finite-difference order.
+    #[must_use]
+    pub const fn order(&self) -> usize {
+        self.order
+    }
+
     /// Returns the cached finite-difference coefficients.
     #[must_use]
     pub fn coefficients(&self) -> &[f64] {
@@ -276,9 +316,11 @@ impl PreparedCyclicDifferencePenalty {
     }
 }
 
-impl From<CyclicDifferencePenalty> for PreparedCyclicDifferencePenalty {
-    fn from(value: CyclicDifferencePenalty) -> Self {
-        Self::new_unchecked(value.lambda, value.order)
+impl TryFrom<CyclicDifferencePenalty> for PreparedCyclicDifferencePenalty {
+    type Error = ModelError;
+
+    fn try_from(value: CyclicDifferencePenalty) -> Result<Self, Self::Error> {
+        Self::try_new(value.lambda, value.order)
     }
 }
 
@@ -304,11 +346,7 @@ impl MatrixPenalty for PreparedCyclicDifferencePenalty {
 /// `beta[n-2] - beta[n-1]`, encouraging decrease at the edges.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EdgeMonotonicPenalty {
-    /// Penalty weight.
-    ///
-    /// The larger `weight`, the stronger the penalty for non-monotonicity at
-    /// the edges.
-    pub weight: f64,
+    weight: f64,
 }
 
 impl EdgeMonotonicPenalty {
@@ -317,7 +355,8 @@ impl EdgeMonotonicPenalty {
     /// This constructor is unchecked. Use [`Self::try_new`] when `weight`
     /// comes from user input or dynamic configuration.
     #[must_use]
-    pub fn new(weight: f64) -> Self {
+    #[inline]
+    pub const fn new(weight: f64) -> Self {
         Self { weight }
     }
 
@@ -327,9 +366,17 @@ impl EdgeMonotonicPenalty {
     ///
     /// Returns [`ModelError::InvalidParameter`] when `weight` is not finite or
     /// is not positive.
+    #[inline]
     pub fn try_new(weight: f64) -> Result<Self, ModelError> {
         validate_positive_finite("penalty weight", weight)?;
         Ok(Self::new(weight))
+    }
+
+    /// Returns the penalty weight.
+    #[must_use]
+    #[inline]
+    pub const fn weight(&self) -> f64 {
+        self.weight
     }
 }
 
@@ -374,16 +421,10 @@ impl Penalty for EdgeMonotonicPenalty {
 /// temperature) at the range edges.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlopeLimitPenalty {
-    /// Penalty weight.
-    ///
-    /// The larger `weight`, the stronger the penalty.
-    pub weight: f64,
-    /// Converts edge coefficient differences into a physical slope.
-    pub scale: f64,
-    /// Optional slope limit on the cold edge.
-    pub cold_limit: Option<f64>,
-    /// Optional slope limit on the warm edge.
-    pub warm_limit: Option<f64>,
+    weight: f64,
+    scale: f64,
+    cold_limit: Option<f64>,
+    warm_limit: Option<f64>,
 }
 
 impl SlopeLimitPenalty {
@@ -398,7 +439,13 @@ impl SlopeLimitPenalty {
     /// affected penalty contribution zero. Use [`Self::try_new`] for validated
     /// runtime construction.
     #[must_use]
-    pub fn new(weight: f64, scale: f64, cold_limit: Option<f64>, warm_limit: Option<f64>) -> Self {
+    #[inline]
+    pub const fn new(
+        weight: f64,
+        scale: f64,
+        cold_limit: Option<f64>,
+        warm_limit: Option<f64>,
+    ) -> Self {
         Self {
             weight,
             scale,
@@ -414,6 +461,7 @@ impl SlopeLimitPenalty {
     /// Returns [`ModelError::InvalidParameter`] when `weight` or `scale` is
     /// not finite and positive, or when a provided limit is not finite and
     /// non-negative.
+    #[inline]
     pub fn try_new(
         weight: f64,
         scale: f64,
@@ -425,6 +473,34 @@ impl SlopeLimitPenalty {
         validate_limit("cold penalty limit", cold_limit)?;
         validate_limit("warm penalty limit", warm_limit)?;
         Ok(Self::new(weight, scale, cold_limit, warm_limit))
+    }
+
+    /// Returns the penalty weight.
+    #[must_use]
+    #[inline]
+    pub const fn weight(&self) -> f64 {
+        self.weight
+    }
+
+    /// Returns the physical-slope multiplier.
+    #[must_use]
+    #[inline]
+    pub const fn scale(&self) -> f64 {
+        self.scale
+    }
+
+    /// Returns the optional cold-edge slope limit.
+    #[must_use]
+    #[inline]
+    pub const fn cold_limit(&self) -> Option<f64> {
+        self.cold_limit
+    }
+
+    /// Returns the optional warm-edge slope limit.
+    #[must_use]
+    #[inline]
+    pub const fn warm_limit(&self) -> Option<f64> {
+        self.warm_limit
     }
 }
 
