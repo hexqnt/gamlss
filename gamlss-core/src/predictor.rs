@@ -1112,11 +1112,33 @@ macro_rules! impl_sum_block {
                 beta: &[f64],
                 grad: &mut [f64],
             ) {
+                debug_assert_eq!(scores.len(), self.nrows());
+                debug_assert_eq!(multiplier.len(), self.nrows());
+                debug_assert_eq!(beta.len(), self.nparams());
+                debug_assert_eq!(grad.len(), self.nparams());
+
+                self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+            }
+
+            #[inline]
+            fn add_weighted_gradient_by<M>(
+                &self,
+                scores: &[f64],
+                multiplier: &M,
+                beta: &[f64],
+                grad: &mut [f64],
+            ) where
+                M: RowMultiplier + ?Sized,
+            {
+                debug_assert_eq!(scores.len(), self.nrows());
+                debug_assert_eq!(beta.len(), self.nparams());
+                debug_assert_eq!(grad.len(), self.nparams());
+
                 let mut start = 0;
                 $(
                     let $var = &self.terms.$idx;
                     let end = start + $var.nparams();
-                    $var.add_weighted_gradient(
+                    $var.add_weighted_gradient_by(
                         scores,
                         multiplier,
                         &beta[start..end],
@@ -1293,6 +1315,42 @@ mod tests {
         fn multiplier_at(&self, row: usize) -> f64 {
             assert_ne!(row, 1, "zero row must not read multiplier");
             2.0
+        }
+    }
+
+    struct LazyGradientBlock;
+
+    impl PredictorBlock for LazyGradientBlock {
+        fn nrows(&self) -> usize {
+            3
+        }
+
+        fn nparams(&self) -> usize {
+            1
+        }
+
+        fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
+            beta[0]
+        }
+
+        fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {
+            panic!("composed lazy path must not materialize scores");
+        }
+
+        fn add_weighted_gradient_by<M>(
+            &self,
+            scores: &[f64],
+            multiplier: &M,
+            _: &[f64],
+            grad: &mut [f64],
+        ) where
+            M: RowMultiplier + ?Sized,
+        {
+            for (row, score) in scores.iter().copied().enumerate() {
+                if score != 0.0 {
+                    grad[0] = score.mul_add(multiplier.multiplier_at(row), grad[0]);
+                }
+            }
         }
     }
 
@@ -1545,6 +1603,25 @@ mod tests {
         let mut gradient = [0.0];
         block.add_weighted_gradient_by(&values, &PanicOnMaskedRow, &[], &mut gradient);
         assert_relative_eq!(gradient[0], 8.0);
+    }
+
+    #[test]
+    fn product_of_sum_keeps_weighted_gradient_multiplier_lazy() {
+        let sum = crate::SumBlock::new((LazyGradientBlock, LazyGradientBlock));
+        // The inactive row deliberately contains an invalid product multiplier.
+        // A materialized or eagerly evaluated path would read it.
+        let block = ProductBlock::new(vec![2.0, f64::NAN, 4.0], sum);
+        let mut gradient = [0.0, 0.0];
+
+        block.add_weighted_gradient_by(
+            &[1.0, 0.0, 3.0],
+            &PanicOnMaskedRow,
+            &[0.0, 0.0],
+            &mut gradient,
+        );
+
+        assert_relative_eq!(gradient[0], 28.0);
+        assert_relative_eq!(gradient[1], 28.0);
     }
 
     #[test]

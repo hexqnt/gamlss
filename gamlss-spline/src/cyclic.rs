@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::local::{LocalBasis, cyclic_local_basis};
 use crate::row_basis::SplineRowBasis;
@@ -162,18 +162,31 @@ impl PredictorBlock for CyclicSplineDesign {
         &self,
         scores: &[f64],
         multiplier: &[f64],
-        _: &[f64],
+        beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.phi.len());
         debug_assert_eq!(multiplier.len(), self.phi.len());
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.phi.len());
         debug_assert_eq!(grad.len(), self.spec.n_basis);
 
         for (row, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
-            let scaled_score = score * multiplier[row];
+            let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;
             }

@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
@@ -147,23 +147,36 @@ where
         &self,
         scores: &[f64],
         multiplier: &[f64],
-        _: &[f64],
+        beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(multiplier.len(), self.nrows);
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(grad.len(), self.nparams);
 
         for (row, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
-            let scaled_score = score * multiplier[row];
+            let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;
             }
             self.for_each_row_basis(row, |index, weight| {
-                grad[index] += scaled_score * weight;
+                grad[index] = scaled_score.mul_add(weight, grad[index]);
             });
         }
     }

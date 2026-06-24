@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::cyclic::{CyclicSplineDesign, CyclicSplineSpec};
 use crate::row_basis::SplineRowBasis;
@@ -165,7 +165,21 @@ impl PredictorBlock for PeriodicSplineDesign {
         beta: &[f64],
         grad: &mut [f64],
     ) {
+        debug_assert_eq!(multiplier.len(), PredictorBlock::nrows(self));
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
         self.phase_design
-            .add_weighted_gradient(scores, multiplier, beta, grad);
+            .add_weighted_gradient_by(scores, multiplier, beta, grad);
     }
 }
