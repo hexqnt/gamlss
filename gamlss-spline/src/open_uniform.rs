@@ -1,4 +1,4 @@
-use gamlss_core::{PredictorBlock, RowMultiplier};
+use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
 use crate::local::{LocalBasis, open_uniform_local_basis};
 use crate::row_basis::SplineRowBasis;
@@ -320,4 +320,120 @@ impl PredictorBlock for OpenUniformSplineDesign {
             self.basis_for_row(row).add_scaled(scaled_score, grad);
         }
     }
+}
+
+impl LinearPredictorGeometry for OpenUniformSplineDesign {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_gram_lengths(self.x.len(), self.basis.n_basis, row_weights, out)?;
+
+        for (row, weight) in row_weights.iter().copied().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+            self.basis_for_row(row)
+                .add_scaled_outer(weight, self.basis.n_basis, out);
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_gram_lengths(self.x.len(), self.basis.n_basis, row_weights, out)?;
+
+        for (row, weight) in row_weights.iter().copied().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+            let scaled_weight = weight * multiplier.multiplier_at(row);
+            if scaled_weight == 0.0 {
+                continue;
+            }
+            self.basis_for_row(row)
+                .add_scaled_outer(scaled_weight, self.basis.n_basis, out);
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_transpose_lengths(self.x.len(), self.basis.n_basis, row_scores, out)?;
+        self.add_gradient(row_scores, &[], out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_transpose_lengths(self.x.len(), self.basis.n_basis, row_scores, out)?;
+        self.add_weighted_gradient_by(row_scores, multiplier, &[], out);
+        Ok(())
+    }
+}
+
+#[inline]
+fn validate_gram_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_weights: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_weights)?;
+    let expected_values = nparams
+        .checked_mul(nparams)
+        .ok_or(ModelError::ArithmeticOverflow {
+            context: "linear predictor geometry Gram value count",
+        })?;
+    if out.len() != expected_values {
+        return Err(ModelError::DesignSize {
+            expected_values,
+            actual_values: out.len(),
+        });
+    }
+    Ok(())
+}
+
+#[inline]
+fn validate_transpose_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_scores: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_scores)?;
+    if out.len() != nparams {
+        return Err(ModelError::GradientLength {
+            expected: nparams,
+            actual: out.len(),
+        });
+    }
+    Ok(())
+}
+
+#[inline]
+const fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
+    if row_values.len() != nrows {
+        return Err(ModelError::WeightLength {
+            expected: nrows,
+            actual: row_values.len(),
+        });
+    }
+    Ok(())
 }

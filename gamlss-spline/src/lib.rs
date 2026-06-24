@@ -54,7 +54,9 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{MatrixPenalty, ModelError, Penalty, PredictorBlock};
+    use gamlss_core::{
+        LinearPredictorGeometry, MatrixPenalty, ModelError, Penalty, PredictorBlock, ProductBlock,
+    };
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
@@ -431,6 +433,119 @@ mod tests {
 
         assert_eq!(weighted, expected);
         assert!(weighted.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn open_uniform_spline_geometry_matches_dense_products() {
+        let design = OpenUniformSplineDesign::with_range(
+            &[0.0, 0.2, 0.6, 1.0],
+            0.0,
+            1.0,
+            6,
+            SplineOrder::Cubic,
+        )
+        .unwrap();
+        let weights: [f64; 4] = [0.5, -0.25, 0.0, 2.0];
+        let scores: [f64; 4] = [0.3, -0.7, 0.0, 1.2];
+        let nparams = design.nparams();
+        let mut expected_gram = vec![1.0; nparams * nparams];
+        let mut expected_transpose = vec![1.0; nparams];
+
+        for row in 0..design.nrows() {
+            let mut basis = vec![0.0; nparams];
+            crate::SplineRowBasis::for_each_row_basis(&design, row, |index, value| {
+                basis[index] = value;
+            });
+            for j in 0..nparams {
+                expected_transpose[j] = scores[row].mul_add(basis[j], expected_transpose[j]);
+                for k in 0..nparams {
+                    let index = j * nparams + k;
+                    expected_gram[index] =
+                        (weights[row] * basis[j]).mul_add(basis[k], expected_gram[index]);
+                }
+            }
+        }
+
+        let mut gram = vec![1.0; nparams * nparams];
+        let mut transpose = vec![1.0; nparams];
+        design.add_weighted_gram(&weights, &mut gram).unwrap();
+        design.add_t_mul_vec(&scores, &mut transpose).unwrap();
+
+        for (actual, expected) in gram.iter().zip(expected_gram) {
+            assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+        }
+        for (actual, expected) in transpose.iter().zip(expected_transpose) {
+            assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn product_open_uniform_spline_geometry_scales_rows_lazily() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
+                .unwrap();
+        let nparams = design.nparams();
+        let product = ProductBlock::new(vec![2.0, f64::NAN, -3.0], design.clone());
+        let mut gram = vec![0.0; nparams * nparams];
+        let mut transpose = vec![0.0; nparams];
+        let mut expected_gram = vec![0.0; nparams * nparams];
+        let mut expected_transpose = vec![0.0; nparams];
+
+        product
+            .add_weighted_gram(&[0.5, 0.0, 2.0], &mut gram)
+            .unwrap();
+        product
+            .add_t_mul_vec(&[0.25, 0.0, -1.0], &mut transpose)
+            .unwrap();
+        design
+            .add_weighted_gram(
+                &[0.5 * 2.0_f64.powi(2), 0.0, 2.0 * (-3.0_f64).powi(2)],
+                &mut expected_gram,
+            )
+            .unwrap();
+        design
+            .add_t_mul_vec(&[0.5, 0.0, 3.0], &mut expected_transpose)
+            .unwrap();
+
+        assert_eq!(gram, expected_gram);
+        assert_eq!(transpose, expected_transpose);
+        assert!(gram.iter().all(|value| value.is_finite()));
+        assert!(transpose.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn open_uniform_spline_geometry_validates_lengths() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5], 0.0, 1.0, 4, SplineOrder::Cubic)
+                .unwrap();
+
+        assert_eq!(
+            design
+                .add_weighted_gram(&[1.0], &mut [0.0; 16])
+                .unwrap_err(),
+            ModelError::WeightLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
+        assert_eq!(
+            design
+                .add_weighted_gram(&[1.0, 1.0], &mut [0.0; 15])
+                .unwrap_err(),
+            ModelError::DesignSize {
+                expected_values: 16,
+                actual_values: 15,
+            }
+        );
+        assert_eq!(
+            design
+                .add_t_mul_vec(&[1.0, 1.0], &mut [0.0; 3])
+                .unwrap_err(),
+            ModelError::GradientLength {
+                expected: 4,
+                actual: 3,
+            }
+        );
     }
 
     #[test]

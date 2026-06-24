@@ -38,6 +38,25 @@ impl LocalBasis {
             out[index] += scale * weight;
         });
     }
+
+    /// Adds `scale * self * self^T` into a row-major `nparams × nparams`
+    /// matrix.
+    pub(crate) fn add_scaled_outer(self, scale: f64, nparams: usize, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), nparams * nparams);
+
+        for local_j in 0..self.len {
+            let j = self.indices[local_j];
+            let scaled_j = scale * self.weights[local_j];
+            for local_k in local_j..self.len {
+                let k = self.indices[local_k];
+                let delta = scaled_j * self.weights[local_k];
+                out[j * nparams + k] += delta;
+                if k != j {
+                    out[k * nparams + j] += delta;
+                }
+            }
+        }
+    }
 }
 
 /// Computes the local basis of an open-uniform spline for the normalized
