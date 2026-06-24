@@ -23,12 +23,12 @@ impl TargetTransform for AsinhScale {
         Ok(AsinhScaleState { scale })
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y / state.scale).asinh()
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.sinh() * state.scale
     }
@@ -65,5 +65,13 @@ mod tests {
 
         assert_relative_eq!(state.scale, 1.0);
         assert_relative_eq!(AsinhScale::transform(&state, 0.0), 0.0);
+    }
+
+    #[test]
+    fn fits_extreme_even_length_samples_without_midpoint_overflow() {
+        let state = AsinhScale::fit(&[f64::MAX, f64::MAX]).unwrap();
+
+        assert_eq!(state.scale, f64::MAX);
+        assert!(AsinhScale::transform(&state, f64::MAX).is_finite());
     }
 }

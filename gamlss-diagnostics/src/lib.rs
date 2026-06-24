@@ -5,11 +5,15 @@
 //! GAMLSS parity but should not be part of the core [`gamlss_core::Family`]
 //! contract.
 //!
+//! Current utilities include:
+//!
+//! - PIT/CDF residuals;
+//! - CRPS summaries;
+//! - reusable diagnostics views for prediction rows.
+//!
 //! Planned utilities include:
 //!
 //! - randomized quantile residuals;
-//! - PIT/CDF residuals;
-//! - CRPS summaries;
 //! - worm plot data;
 //! - centile curve data;
 //! - fitted parameter extraction helpers;
@@ -190,7 +194,7 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
 }
 
-impl<'a, F, PBlocks> PredictionDiagnosticsExt<F, PBlocks> for PredictionView<'a, F, PBlocks>
+impl<F, PBlocks> PredictionDiagnosticsExt<F, PBlocks> for PredictionView<'_, F, PBlocks>
 where
     F: for<'row> Family<Observation<'row> = f64>,
     PBlocks: GamlssBlocks<F>,
@@ -218,12 +222,25 @@ where
     /// order. Invalid observation or parameter domains are represented by the
     /// family CDF result, usually `NaN`, rather than an additional diagnostics
     /// error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
     fn pit_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>;
 
     /// Writes PIT values for training rows into an existing output slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
     fn pit_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
 
     /// Returns PIT values for supplied compatible prediction blocks and observations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parameters, prediction blocks, or observations
+    /// are incompatible with the fitted model.
     fn pit_values_with_blocks<'obs, PBlocks, PObs>(
         &self,
         parameters: &[f64],
@@ -235,6 +252,11 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
 
     /// Writes PIT values for supplied prediction rows into an existing output slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parameters, prediction blocks, observations,
+    /// or `out` are incompatible with the fitted model.
     fn pit_values_with_blocks_into<'obs, PBlocks, PObs>(
         &self,
         parameters: &[f64],
@@ -252,11 +274,20 @@ where
     /// `Phi^-1` is the inverse standard-normal CDF and `F` is the family CDF.
     /// Non-finite and out-of-range PIT values propagate as `NaN`; PIT values at
     /// unit interval boundaries map to infinities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
     fn quantile_residuals(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError> {
         self.pit_values(parameters).map(normalize_pit_values)
     }
 
     /// Returns normalized quantile residuals for supplied prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parameters, prediction blocks, or observations
+    /// are incompatible with the fitted model.
     fn quantile_residuals_with_blocks<'obs, PBlocks, PObs>(
         &self,
         parameters: &[f64],
@@ -336,12 +367,25 @@ where
     /// The returned vector has one value per training observation, in row
     /// order. Invalid observation or parameter domains are represented by the
     /// family CRPS result, usually `NaN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
     fn crps_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>;
 
     /// Writes CRPS values for training rows into an existing output slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
     fn crps_values_into(&self, parameters: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
 
     /// Returns CRPS values for supplied compatible prediction blocks and observations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parameters, prediction blocks, or observations
+    /// are incompatible with the fitted model.
     fn crps_values_with_blocks<'obs, PBlocks, PObs>(
         &self,
         parameters: &[f64],
@@ -353,6 +397,11 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
 
     /// Writes CRPS values for supplied prediction rows into an existing output slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parameters, prediction blocks, observations,
+    /// or `out` are incompatible with the fitted model.
     fn crps_values_with_blocks_into<'obs, PBlocks, PObs>(
         &self,
         parameters: &[f64],
@@ -365,6 +414,11 @@ where
         PObs: ObservationView<'obs, Observation = f64> + 'obs;
 
     /// Returns the arithmetic mean of [`Self::crps_values`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    #[allow(clippy::cast_precision_loss)]
     fn mean_crps(&self, parameters: &[f64]) -> Result<f64, ModelError> {
         let values = self.crps_values(parameters)?;
         Ok(values.iter().sum::<f64>() / values.len() as f64)
@@ -373,6 +427,10 @@ where
     /// Returns the observation-weighted mean CRPS for training rows.
     ///
     /// If all observation weights are zero, returns `NaN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
     fn weighted_mean_crps(&self, parameters: &[f64]) -> Result<f64, ModelError>;
 }
 
@@ -441,7 +499,7 @@ where
             }
 
             let value = family.crps(obs.observation_at(row), theta);
-            weighted_sum += weight * value;
+            weighted_sum = weight.mul_add(value, weighted_sum);
             weight_sum += weight;
         })?;
 
@@ -482,7 +540,7 @@ where
     obs.validate()
 }
 
-fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
+const fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
     if actual == expected {
         Ok(())
     } else {
@@ -644,7 +702,7 @@ mod tests {
         assert_eq!(crps_into, crps);
         assert_relative_eq!(
             model.mean_crps(&[0.0, 0.0]).expect("valid parameters"),
-            (crps[0] + crps[1]) / 2.0,
+            crps[0].midpoint(crps[1]),
             epsilon = 1.0e-12
         );
     }

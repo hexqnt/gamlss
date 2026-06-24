@@ -12,12 +12,12 @@ impl TargetTransform for IdentityPositive {
         Ok(IdentityPositiveState)
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(_: &Self::State, y: f64) -> f64 {
         y
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(_: &Self::State, value: f64) -> f64 {
         value
     }

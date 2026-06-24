@@ -31,8 +31,8 @@ Workspace также публикует отдельные crate-ы для бо�
 - `gamlss-core` — type-driven ядро для links, parameter blocks, objectives и
   compiled models.
 - `gamlss-family` — распределения, likelihoods и score helpers.
-- `gamlss-diagnostics` — post-fit PIT/CDF diagnostics и normalized quantile
-  residuals для supported continuous CDF families.
+- `gamlss-diagnostics` — post-fit PIT/CDF diagnostics, normalized quantile
+  residuals и CRPS summaries для поддерживаемых families.
 - `gamlss-special` — special functions и общие численные helpers для
   likelihood/CDF/quantile кода.
 - `gamlss-spline` — spline/Fourier predictors, penalties и spline metadata.
@@ -68,7 +68,7 @@ cargo test --workspace --all-features
 cargo test -p gamlss-family --tests --all-features
 ```
 
-## Общая ионформация о GAMLSS
+## Общая информация о GAMLSS
 
 GAMLSS можно читать как distributional regression: модель описывает не только
 условное среднее отклика, а всё условное распределение. Это полезно, когда

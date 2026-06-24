@@ -21,11 +21,6 @@ const fn clamp_probability(value: f64) -> f64 {
 }
 
 #[inline(always)]
-fn midpoint(low: f64, high: f64) -> f64 {
-    0.5f64.mul_add(high - low, low)
-}
-
-#[inline(always)]
 fn polynomial_ascending(value: f64, coefficients: &[f64]) -> f64 {
     // AS241 coefficients below are stored from constant term to highest degree.
     coefficients
@@ -125,11 +120,14 @@ pub fn is_nonnegative_integer(value: f64) -> bool {
 
 /// Converts a finite CDF query point into the largest included count.
 ///
-/// Returning `None` keeps discrete CDF implementations from doing unbounded
-/// work for pathologically large query points.
+/// Returning `None` for non-finite or excessively large query points keeps
+/// discrete CDF implementations from doing unbounded work.
 #[must_use]
 #[inline]
 pub fn included_count(value: f64, max_terms: u64) -> Option<u64> {
+    if !value.is_finite() {
+        return None;
+    }
     if value < 0.0 {
         return Some(0);
     }
@@ -146,11 +144,17 @@ pub fn included_count(value: f64, max_terms: u64) -> Option<u64> {
 #[must_use]
 #[inline]
 pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
+    if log_left.is_nan() || log_right.is_nan() {
+        return f64::NAN;
+    }
     if log_left == f64::NEG_INFINITY {
         return log_right;
     }
     if log_right == f64::NEG_INFINITY {
         return log_left;
+    }
+    if log_left == f64::INFINITY || log_right == f64::INFINITY {
+        return f64::INFINITY;
     }
 
     let max = log_left.max(log_right);
@@ -173,10 +177,16 @@ pub fn student_t_nll_constant(nu: f64) -> f64 {
 }
 
 /// Standard Student-t log-density.
+///
+/// Returns `NaN` for invalid degrees of freedom or a `NaN` variate, and
+/// negative infinity at either infinite tail.
 #[must_use]
 #[inline]
 pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
-    if nu <= 0.0 || !nu.is_finite() || !t.is_finite() {
+    if nu <= 0.0 || !nu.is_finite() || t.is_nan() {
+        return f64::NAN;
+    }
+    if t.is_infinite() {
         return f64::NEG_INFINITY;
     }
 
@@ -184,10 +194,13 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
 }
 
 /// Standard Student-t CDF.
+///
+/// Returns `NaN` for invalid degrees of freedom or a `NaN` variate. Infinite
+/// tails map to zero and one.
 #[must_use]
 #[inline]
 pub fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
-    if nu <= 0.0 || !nu.is_finite() {
+    if nu <= 0.0 || !nu.is_finite() || t.is_nan() {
         return f64::NAN;
     }
     if !t.is_finite() {
@@ -403,7 +416,7 @@ where
     }
 
     for _ in 0..120 {
-        let mid = midpoint(low, high);
+        let mid = low.midpoint(high);
         let cdf_mid = cdf(mid);
         if !cdf_mid.is_finite() {
             return f64::NAN;
@@ -415,7 +428,7 @@ where
         }
     }
 
-    midpoint(low, high)
+    low.midpoint(high)
 }
 
 /// Inverts a monotone CDF on `[0, +inf)` by bracketing and bisection.
@@ -526,7 +539,7 @@ where
         return 0.0;
     }
 
-    let mid = 0.5 * (lower + upper);
+    let mid = lower.midpoint(upper);
     let f_lower = function(lower);
     let f_mid = function(mid);
     let f_upper = function(upper);
@@ -559,9 +572,9 @@ where
     F: FnMut(f64) -> f64,
 {
     let [f_lower, f_mid, f_upper] = values;
-    let mid = 0.5 * (lower + upper);
-    let left_mid = 0.5 * (lower + mid);
-    let right_mid = 0.5 * (mid + upper);
+    let mid = lower.midpoint(upper);
+    let left_mid = lower.midpoint(mid);
+    let right_mid = mid.midpoint(upper);
     let f_left_mid = function(left_mid);
     let f_right_mid = function(right_mid);
     if !f_left_mid.is_finite() || !f_right_mid.is_finite() {
@@ -787,10 +800,30 @@ fn log_ndtr_left_tail(z: f64) -> f64 {
 }
 
 /// Standard normal Mills ratio `phi(z) / Phi(z)`.
+///
+/// Infinite tails map to positive infinity and zero, respectively; `NaN`
+/// propagates.
 #[must_use]
 #[inline]
 pub fn normal_mills_ratio(z: f64) -> f64 {
-    (unit_normal_log_pdf(z) - log_ndtr(z)).exp()
+    if z.is_nan() {
+        return f64::NAN;
+    }
+    if z == f64::NEG_INFINITY {
+        return f64::INFINITY;
+    }
+    if z == f64::INFINITY {
+        return 0.0;
+    }
+
+    let log_ratio = unit_normal_log_pdf(z) - log_ndtr(z);
+    if log_ratio.is_nan() && z < 0.0 {
+        // Both log terms may underflow to `-inf` for extreme finite left-tail
+        // inputs. The leading asymptotic term remains representable.
+        -z
+    } else {
+        log_ratio.exp()
+    }
 }
 
 /// Owen's T function `T(h, a)`.

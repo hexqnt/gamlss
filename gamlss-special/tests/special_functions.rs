@@ -1,9 +1,10 @@
 use approx::assert_relative_eq;
 use gamlss_special::{
-    digamma, discrete_quantile, integrate_finite, invert_bounded_cdf, invert_positive_cdf,
-    invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr, normal_mills_ratio, owens_t,
-    regularized_beta, regularized_gamma_lower, student_t_cdf_standardized,
-    student_t_log_pdf_standardized, student_t_nll_constant, unit_normal_cdf, unit_normal_quantile,
+    digamma, discrete_quantile, included_count, integrate_finite, invert_bounded_cdf,
+    invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr,
+    normal_mills_ratio, owens_t, regularized_beta, regularized_gamma_lower,
+    student_t_cdf_standardized, student_t_log_pdf_standardized, student_t_nll_constant,
+    unit_normal_cdf, unit_normal_quantile,
 };
 use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
@@ -204,6 +205,10 @@ fn log_ndtr_and_mills_ratio_stay_finite_in_left_tail() {
     assert_eq!(log_ndtr(f64::INFINITY), 0.0);
     assert_eq!(log_ndtr(f64::NEG_INFINITY), f64::NEG_INFINITY);
     assert!(log_ndtr(f64::NAN).is_nan());
+    assert_eq!(normal_mills_ratio(f64::INFINITY), 0.0);
+    assert_eq!(normal_mills_ratio(f64::NEG_INFINITY), f64::INFINITY);
+    assert_eq!(normal_mills_ratio(-f64::MAX), f64::MAX);
+    assert!(normal_mills_ratio(f64::NAN).is_nan());
 }
 
 #[test]
@@ -241,8 +246,16 @@ fn standardized_student_t_helpers_match_statrs_reference() {
         }
     }
 
-    assert!(student_t_log_pdf_standardized(0.0, 0.0).is_infinite());
+    assert!(student_t_log_pdf_standardized(0.0, 0.0).is_nan());
     assert!(student_t_cdf_standardized(0.0, 0.0).is_nan());
+    assert!(student_t_log_pdf_standardized(f64::NAN, 5.0).is_nan());
+    assert!(student_t_cdf_standardized(f64::NAN, 5.0).is_nan());
+    assert_eq!(
+        student_t_log_pdf_standardized(f64::INFINITY, 5.0),
+        f64::NEG_INFINITY
+    );
+    assert_eq!(student_t_cdf_standardized(f64::NEG_INFINITY, 5.0), 0.0);
+    assert_eq!(student_t_cdf_standardized(f64::INFINITY, 5.0), 1.0);
 }
 
 #[test]
@@ -351,6 +364,16 @@ fn discrete_quantile_returns_generalized_inverse() {
 }
 
 #[test]
+fn included_count_rejects_non_finite_and_excessive_queries() {
+    assert_eq!(included_count(-1.0, 10), Some(0));
+    assert_eq!(included_count(3.9, 10), Some(3));
+    assert_eq!(included_count(11.0, 10), None);
+    assert_eq!(included_count(f64::INFINITY, 10), None);
+    assert_eq!(included_count(f64::NEG_INFINITY, 10), None);
+    assert_eq!(included_count(f64::NAN, 10), None);
+}
+
+#[test]
 fn cdf_inversion_helpers_find_quantiles() {
     assert_relative_eq!(
         invert_bounded_cdf(0.25, 0.0, 1.0, |x| x),
@@ -389,6 +412,13 @@ fn integrate_finite_matches_polynomial_and_handles_invalid_bounds() {
     );
     assert_eq!(integrate_finite(2.0, 2.0, |_| 1.0), 0.0);
     assert!(integrate_finite(2.0, 1.0, |_| 1.0).is_nan());
+
+    let lower = 1.0e308;
+    let upper = 1.1e308;
+    let integral = integrate_finite(lower, upper, |x| {
+        if x.is_finite() { 1.0e-308 } else { f64::NAN }
+    });
+    assert_relative_eq!(integral, (upper - lower) * 1.0e-308, epsilon = 1.0e-12);
 }
 
 #[test]
@@ -401,4 +431,7 @@ fn log_add_exp_combines_log_terms_without_underflow() {
 
     let combined = log_add_exp(f64::NEG_INFINITY, -3.0);
     assert_relative_eq!(combined, -3.0, epsilon = 1.0e-12);
+    assert_eq!(log_add_exp(f64::INFINITY, f64::INFINITY), f64::INFINITY);
+    assert_eq!(log_add_exp(f64::INFINITY, -3.0), f64::INFINITY);
+    assert!(log_add_exp(f64::NAN, -3.0).is_nan());
 }

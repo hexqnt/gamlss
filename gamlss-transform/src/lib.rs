@@ -159,7 +159,10 @@ pub(crate) fn map_slice_into(
     Ok(())
 }
 
-pub(crate) fn validate_output_len(expected: usize, actual: usize) -> Result<(), TransformError> {
+pub(crate) const fn validate_output_len(
+    expected: usize,
+    actual: usize,
+) -> Result<(), TransformError> {
     if actual == expected {
         Ok(())
     } else {
@@ -203,13 +206,13 @@ pub(crate) fn validate_shifted_non_negative(
     }
 }
 
-pub(crate) fn median_sorted(values: &[f64]) -> Option<f64> {
+pub(crate) const fn median_sorted(values: &[f64]) -> Option<f64> {
     match values.len() {
         0 => None,
         len if len % 2 == 1 => Some(values[len / 2]),
         len => {
             let upper = len / 2;
-            Some((values[upper - 1] + values[upper]) / 2.0)
+            Some(values[upper - 1].midpoint(values[upper]))
         }
     }
 }

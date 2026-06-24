@@ -12,12 +12,12 @@ impl TargetTransform for Log {
         Ok(LogState)
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(_: &Self::State, y: f64) -> f64 {
         y.ln()
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(_: &Self::State, value: f64) -> f64 {
         value.exp()
     }
