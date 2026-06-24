@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus};
+use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus, design::scale_active_rows};
 
 const EXPECTED_FINITE: &str = "finite";
 
@@ -775,7 +775,9 @@ impl RowMultiplier for UnitRowMultiplier {
 /// The model validates row counts before evaluation. In release builds,
 /// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
 /// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
-/// must add into the existing `grad` buffer rather than clearing it.
+/// must add into the existing `grad` buffer rather than clearing it. Gradient
+/// operations must treat an exactly zero score as disabling that row and avoid
+/// reading its multiplier or row geometry.
 pub trait PredictorBlock {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -837,11 +839,7 @@ pub trait PredictorBlock {
     {
         debug_assert_eq!(scores.len(), self.nrows());
 
-        let scaled_scores = scores
-            .iter()
-            .enumerate()
-            .map(|(row, score)| score * multiplier.multiplier_at(row))
-            .collect::<Vec<_>>();
+        let scaled_scores = scale_active_rows(scores, multiplier);
         self.add_gradient(&scaled_scores, beta, grad);
     }
 
@@ -878,7 +876,8 @@ pub trait HasDesignMatrix: PredictorBlock {
 /// ownership. A block may expose `X^T W X` and `X^T v` operations even when its
 /// effective row design is represented lazily, for example
 /// [`ProductBlock<LinearPredictorBlock<_>>`], where row `i` contributes
-/// `multiplier[i] * x_i`.
+/// `multiplier[i] * x_i`. Exactly zero row weights or scores disable the row;
+/// implementations should not evaluate its lazy multiplier or geometry.
 pub trait LinearPredictorGeometry: PredictorBlock {
     /// Adds the weighted local Gram matrix into `out`.
     ///
@@ -910,11 +909,7 @@ pub trait LinearPredictorGeometry: PredictorBlock {
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_weights = row_weights
-            .iter()
-            .enumerate()
-            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
-            .collect::<Vec<_>>();
+        let scaled_weights = scale_active_rows(row_weights, multiplier);
         self.add_weighted_gram(&scaled_weights, out)
     }
     /// Adds the transposed row geometry times `row_scores` into `out`.
@@ -943,11 +938,7 @@ pub trait LinearPredictorGeometry: PredictorBlock {
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_scores = row_scores
-            .iter()
-            .enumerate()
-            .map(|(row, score)| score * multiplier.multiplier_at(row))
-            .collect::<Vec<_>>();
+        let scaled_scores = scale_active_rows(row_scores, multiplier);
         self.add_t_mul_vec(&scaled_scores, out)
     }
 }
@@ -964,8 +955,15 @@ pub trait CoefficientTransform {
 fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
     scores
         .iter()
-        .zip(multiplier)
-        .map(|(score, multiplier)| score * multiplier)
+        .copied()
+        .enumerate()
+        .map(|(row, score)| {
+            if score == 0.0 {
+                0.0
+            } else {
+                score * multiplier[row]
+            }
+        })
         .sum()
 }
 
@@ -1243,12 +1241,60 @@ impl_sum_block!(
 mod tests {
     use approx::assert_relative_eq;
 
-    use crate::{DenseDesign, DesignMatrix, LinearPredictorGeometry, ModelError, PredictorBlock};
+    use crate::{
+        DenseDesign, DesignMatrix, LinearPredictorGeometry, ModelError, PredictorBlock,
+        RowMultiplier,
+    };
 
     use super::{
         FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar, OffsetBlock,
         ProductBlock, SoftplusScalar,
     };
+
+    struct DefaultPaths;
+
+    impl PredictorBlock for DefaultPaths {
+        fn nrows(&self) -> usize {
+            3
+        }
+
+        fn nparams(&self) -> usize {
+            1
+        }
+
+        fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
+            beta[0]
+        }
+
+        fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+            grad[0] += scores.iter().sum::<f64>();
+        }
+    }
+
+    impl LinearPredictorGeometry for DefaultPaths {
+        fn add_weighted_gram(
+            &self,
+            row_weights: &[f64],
+            out: &mut [f64],
+        ) -> Result<(), ModelError> {
+            out[0] += row_weights.iter().sum::<f64>();
+            Ok(())
+        }
+
+        fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+            out[0] += row_scores.iter().sum::<f64>();
+            Ok(())
+        }
+    }
+
+    struct PanicOnMaskedRow;
+
+    impl RowMultiplier for PanicOnMaskedRow {
+        fn multiplier_at(&self, row: usize) -> f64 {
+            assert_ne!(row, 1, "zero row must not read multiplier");
+            2.0
+        }
+    }
 
     #[test]
     fn linear_predictor_block_matches_design_matrix_operations() {
@@ -1489,6 +1535,42 @@ mod tests {
         assert_invalid_multiplier_error(
             ProductBlock::try_new(vec![1.0, f64::INFINITY], inner).unwrap_err(),
         );
+    }
+
+    #[test]
+    fn predictor_gradient_default_skips_zero_score_multiplier() {
+        let block = DefaultPaths;
+        let values = [1.0, 0.0, 3.0];
+
+        let mut gradient = [0.0];
+        block.add_weighted_gradient_by(&values, &PanicOnMaskedRow, &[], &mut gradient);
+        assert_relative_eq!(gradient[0], 8.0);
+    }
+
+    #[test]
+    fn predictor_geometry_defaults_skip_zero_row_multipliers() {
+        let block = DefaultPaths;
+        let values = [1.0, 0.0, 3.0];
+        let mut gram = [0.0];
+        block
+            .add_weighted_gram_by(&values, &PanicOnMaskedRow, &mut gram)
+            .unwrap();
+        assert_relative_eq!(gram[0], 8.0);
+
+        let mut transpose = [0.0];
+        block
+            .add_t_mul_vec_by(&values, &PanicOnMaskedRow, &mut transpose)
+            .unwrap();
+        assert_relative_eq!(transpose[0], 8.0);
+    }
+
+    #[test]
+    fn scalar_weighted_gradient_skips_zero_score_nan_multiplier() {
+        let values = [1.0, 0.0, 3.0];
+        let scalar = SoftplusScalar::new(3);
+        let mut scalar_gradient = [0.0];
+        scalar.add_weighted_gradient(&values, &[2.0, f64::NAN, 2.0], &[0.0], &mut scalar_gradient);
+        assert!(scalar_gradient[0].is_finite());
     }
 
     fn assert_multiplier_length_error(error: ModelError) {

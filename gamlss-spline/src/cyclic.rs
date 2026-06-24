@@ -150,6 +150,9 @@ impl PredictorBlock for CyclicSplineDesign {
         debug_assert_eq!(grad.len(), self.spec.n_basis);
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.basis_for_row(row).add_scaled(score, grad);
         }
     }
@@ -166,8 +169,15 @@ impl PredictorBlock for CyclicSplineDesign {
         debug_assert_eq!(multiplier.len(), self.phi.len());
         debug_assert_eq!(grad.len(), self.spec.n_basis);
 
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
-            self.basis_for_row(row).add_scaled(score * multiplier, grad);
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier[row];
+            if scaled_score == 0.0 {
+                continue;
+            }
+            self.basis_for_row(row).add_scaled(scaled_score, grad);
         }
     }
 }

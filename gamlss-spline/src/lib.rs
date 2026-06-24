@@ -402,6 +402,22 @@ mod tests {
     }
 
     #[test]
+    fn spline_gradient_skips_multiplier_for_zero_score_rows() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
+                .unwrap();
+        let scores = [1.0, 0.0, 2.0];
+        let mut expected = vec![0.0; design.nparams()];
+        let mut weighted = vec![0.0; design.nparams()];
+
+        design.add_gradient(&scores, &[], &mut expected);
+        design.add_weighted_gradient(&scores, &[1.0, f64::NAN, 1.0], &[], &mut weighted);
+
+        assert_eq!(weighted, expected);
+        assert!(weighted.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
     fn open_uniform_spline_basis_reuses_training_range_for_new_data() {
         let train = [0.0, 0.5, 1.0];
         let basis = OpenUniformSplineBasis::from_data(&train, 6, SplineOrder::Cubic).unwrap();

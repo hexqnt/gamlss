@@ -297,7 +297,9 @@ impl DesignMatrix for DenseDesign {
 /// Implementations must interpret `beta` as a vector of length `ncols()` and
 /// `weights` as a vector of length `nrows()`. Methods are not required to
 /// re-check lengths in release builds, so the calling code validates sizes
-/// upfront.
+/// upfront. Weighted operations must treat an exactly zero row weight as
+/// disabling that row: they should not read its row multiplier or design
+/// values.
 pub trait DesignMatrix {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -340,11 +342,7 @@ pub trait DesignMatrix {
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_weights = weights
-            .iter()
-            .enumerate()
-            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
-            .collect::<Vec<_>>();
+        let scaled_weights = scale_active_rows(weights, multiplier);
         self.add_t_mul_vec(&scaled_weights, out);
     }
 
@@ -376,7 +374,12 @@ pub trait DesignMatrix {
             unit_beta[k] = 1.0;
 
             for row in 0..nrows {
-                w_xk[row] = self.dot_row(row, &unit_beta) * weights[row];
+                let weight = weights[row];
+                w_xk[row] = if weight == 0.0 {
+                    0.0
+                } else {
+                    self.dot_row(row, &unit_beta) * weight
+                };
             }
 
             let gram_col = &mut out[k * ncols..(k + 1) * ncols];
@@ -395,11 +398,7 @@ pub trait DesignMatrix {
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_weights = weights
-            .iter()
-            .enumerate()
-            .map(|(row, weight)| weight * multiplier.multiplier_at(row))
-            .collect::<Vec<_>>();
+        let scaled_weights = scale_active_rows(weights, multiplier);
         self.gram_weighted(&scaled_weights, out);
     }
 }
@@ -424,6 +423,25 @@ impl RowMultiplier for UnitRowMultiplier {
     fn multiplier_at(&self, _: usize) -> f64 {
         1.0
     }
+}
+
+#[inline]
+pub(crate) fn scale_active_rows<M>(values: &[f64], multiplier: &M) -> Vec<f64>
+where
+    M: RowMultiplier + ?Sized,
+{
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(row, value)| {
+            if value == 0.0 {
+                0.0
+            } else {
+                value * multiplier.multiplier_at(row)
+            }
+        })
+        .collect()
 }
 
 fn add_dense_weighted_gram_by<M>(
@@ -654,5 +672,55 @@ mod tests {
         assert_relative_eq!(gram_default[1], gram_override[1]);
         assert_relative_eq!(gram_default[2], gram_override[2]);
         assert_relative_eq!(gram_default[3], gram_override[3]);
+    }
+
+    #[test]
+    fn design_defaults_do_not_read_zero_weight_rows_or_multipliers() {
+        #[derive(Debug)]
+        struct MaskedDesign(DenseDesign);
+
+        impl DesignMatrix for MaskedDesign {
+            fn nrows(&self) -> usize {
+                self.0.nrows()
+            }
+
+            fn ncols(&self) -> usize {
+                self.0.ncols()
+            }
+
+            fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
+                assert_ne!(row, 1, "zero-weight row must not read design");
+                self.0.dot_row(row, beta)
+            }
+
+            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec(weights, out);
+            }
+        }
+
+        struct PanicOnMaskedRow;
+
+        impl RowMultiplier for PanicOnMaskedRow {
+            fn multiplier_at(&self, row: usize) -> f64 {
+                assert_ne!(row, 1, "zero-weight row must not read multiplier");
+                2.0
+            }
+        }
+
+        let design = MaskedDesign(design_with_masked_nan_row());
+        let weights = [0.5, 0.0, 2.0];
+
+        let mut transpose = vec![0.0; 2];
+        design.add_weighted_t_mul_vec_by(&weights, &PanicOnMaskedRow, &mut transpose);
+        assert_relative_eq!(transpose[0], 13.0);
+        assert_relative_eq!(transpose[1], 18.0);
+
+        let mut gram = vec![0.0; 4];
+        design.gram_weighted(&weights, &mut gram);
+        assert_eq!(gram, [18.5, 25.0, 25.0, 34.0]);
+
+        let mut weighted_gram = vec![0.0; 4];
+        design.gram_weighted_by(&weights, &PanicOnMaskedRow, &mut weighted_gram);
+        assert_eq!(weighted_gram, [37.0, 50.0, 50.0, 68.0]);
     }
 }

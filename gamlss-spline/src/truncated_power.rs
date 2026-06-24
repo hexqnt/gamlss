@@ -327,6 +327,9 @@ impl PredictorBlock for TruncatedPowerDesign {
         debug_assert_eq!(grad.len(), self.basis.n_basis());
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.for_each_row_basis(row, |index, weight| {
                 grad[index] += score * weight;
             });
@@ -345,9 +348,16 @@ impl PredictorBlock for TruncatedPowerDesign {
         debug_assert_eq!(multiplier.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
 
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier[row];
+            if scaled_score == 0.0 {
+                continue;
+            }
             self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * multiplier * weight;
+                grad[index] += scaled_score * weight;
             });
         }
     }
