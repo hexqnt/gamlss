@@ -275,7 +275,7 @@ mod tests {
         let spec = PeriodicSplineSpec::new(8, SplineOrder::Cubic, 1.0, 0.0).unwrap();
         let design = spec.design(&[-0.25, 0.0, 0.75, 1.0, 1.75]).unwrap();
         let beta = (0..design.nparams())
-            .map(|index| index as f64 * 0.25 - 0.5)
+            .map(|index| (index as f64).mul_add(0.25, -0.5))
             .collect::<Vec<_>>();
 
         assert_relative_eq!(

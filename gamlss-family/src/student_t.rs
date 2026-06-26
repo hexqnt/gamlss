@@ -89,11 +89,11 @@ pub(super) fn student_t_standard_cdf(nu: f64, t: f64) -> f64 {
         return 0.5;
     }
 
-    let beta = regularized_beta(0.5 * nu, 0.5, nu / (nu + t * t));
+    let beta = regularized_beta(0.5 * nu, 0.5, nu / t.mul_add(t, nu));
     if t < 0.0 {
         0.5 * beta
     } else {
-        1.0 - 0.5 * beta
+        0.5f64.mul_add(-beta, 1.0)
     }
 }
 
@@ -133,7 +133,7 @@ pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64
     let z = (y - theta.mu) / theta.sigma;
     let cdf = student_t_standard_cdf(nu, z);
     let density = student_t_standard_density(nu, z);
-    let tail_moment = 2.0 * density * (nu + z * z) / (nu - 1.0);
+    let tail_moment = 2.0 * density * z.mul_add(z, nu) / (nu - 1.0);
 
     theta.sigma * (z * (2.0 * cdf - 1.0) + tail_moment - student_t_standard_crps_constant(nu))
 }

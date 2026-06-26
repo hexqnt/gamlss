@@ -22,7 +22,7 @@ const DIRECT_BESSEL_MU_LIMIT: f64 = 350.0;
 pub type PoissonMean = Poisson<Log>;
 
 /// Poisson family parameterized by positive mean.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Poisson<MuLink = Log> {
     marker: PhantomData<MuLink>,
 }

@@ -15,7 +15,7 @@ use crate::initial::{
 /// BEINF distribution with logit/logit/log/log links.
 pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;
 /// Beta distribution inflated at both zero and one.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beinf<MuLink = Logit, SigmaLink = Logit, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
 }
@@ -250,11 +250,11 @@ where
             .filter(|(y, _)| *y > 0.0 && *y < 1.0)
             .collect::<Vec<_>>();
         let summary = weighted_summary(&interior);
-        let mu = probability_floor(summary.map(|s| s.mean).unwrap_or(0.5));
+        let mu = probability_floor(summary.map_or(0.5, |s| s.mean));
         let max_variance = (mu * (1.0 - mu)).max(VARIANCE_FLOOR);
-        let variance = summary
-            .map(|s| s.variance.clamp(VARIANCE_FLOOR, max_variance * 0.99))
-            .unwrap_or(max_variance * 0.5);
+        let variance = summary.map_or(max_variance * 0.5, |s| {
+            s.variance.clamp(VARIANCE_FLOOR, max_variance * 0.99)
+        });
         let precision = positive_floor(max_variance / variance - 1.0);
         let sigma = probability_floor(1.0 / (precision + 1.0));
 

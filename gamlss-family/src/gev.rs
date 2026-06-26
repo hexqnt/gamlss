@@ -12,7 +12,7 @@ const XI_EPSILON: f64 = 1.0e-8;
 /// GEV distribution with identity/log/identity links.
 pub type GevMuSigmaShape = Gev<Identity, Log, Identity>;
 /// Generalized extreme value family for block maxima.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gev<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
 }
@@ -58,7 +58,7 @@ where
             return theta.sigma.ln() + z + exp_neg_z + theta.nu * d_nu;
         }
 
-        let t = 1.0 + theta.nu * z;
+        let t = theta.nu.mul_add(z, 1.0);
         if t <= 0.0 || !t.is_finite() {
             return f64::INFINITY;
         }
@@ -79,12 +79,12 @@ where
             let d_z = 1.0 - exp_neg_z;
             return GevTheta {
                 mu: -d_z / theta.sigma,
-                sigma: (1.0 - z * d_z) / theta.sigma,
+                sigma: z.mul_add(-d_z, 1.0) / theta.sigma,
                 nu: Self::gumbel_limit_nu_score(z, exp_neg_z),
             };
         }
 
-        let t = 1.0 + theta.nu * z;
+        let t = theta.nu.mul_add(z, 1.0);
         let log_t = t.ln();
         let inv = t.powf(-1.0 / theta.nu);
         let d_z = (1.0 + theta.nu - inv) / t;
@@ -93,7 +93,7 @@ where
 
         GevTheta {
             mu: -d_z / theta.sigma,
-            sigma: (1.0 - z * d_z) / theta.sigma,
+            sigma: z.mul_add(-d_z, 1.0) / theta.sigma,
             nu: d_nu,
         }
     }
@@ -207,7 +207,7 @@ where
         if theta.nu.abs() < XI_EPSILON {
             return (-(-z).exp()).exp();
         }
-        let t = 1.0 + theta.nu * z;
+        let t = theta.nu.mul_add(z, 1.0);
         if t <= 0.0 {
             return if theta.nu > 0.0 { 0.0 } else { 1.0 };
         }
@@ -247,7 +247,7 @@ where
 
         let log_p = -p.ln();
         if theta.nu.abs() < XI_EPSILON {
-            theta.mu - theta.sigma * log_p.ln()
+            theta.sigma.mul_add(-log_p.ln(), theta.mu)
         } else {
             theta.mu + theta.sigma * (-theta.nu * log_p.ln()).exp_m1() / theta.nu
         }

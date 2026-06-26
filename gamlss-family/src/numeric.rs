@@ -22,9 +22,8 @@ where
     let mut base_nll = None;
     let mut gradient = [0.0; K];
     let eta_parts = parts_to_array::<Eta, K>(eta);
-    for index in 0..K {
-        gradient[index] =
-            finite_difference_component(eta, eta_parts, index, &mut base_nll, &mut nll_at);
+    for (index, g) in gradient.iter_mut().enumerate() {
+        *g = finite_difference_component(eta, eta_parts, index, &mut base_nll, &mut nll_at);
     }
 
     gradient
@@ -84,14 +83,14 @@ where
     Eta: Copy,
     F: FnMut(Eta) -> f64,
 {
-    match *base_nll {
-        Some(value) => value,
-        None => {
+    base_nll.map_or_else(
+        || {
             let value = nll_at(eta);
             *base_nll = Some(value);
             value
-        }
-    }
+        },
+        |value| value,
+    )
 }
 
 fn parts_to_array<Eta, const K: usize>(eta: Eta) -> [f64; K]

@@ -36,9 +36,8 @@ impl ObjectiveScale {
     #[inline(always)]
     fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
         match self {
-            Self::Sum => 1.0,
             Self::Mean if weight_sum > 0.0 => 1.0 / weight_sum,
-            Self::Mean => 1.0,
+            Self::Sum | Self::Mean => 1.0,
         }
     }
 }
@@ -66,7 +65,7 @@ pub struct Gamlss<F, Blocks, Obs> {
 /// The view borrows the fitted family and prediction blocks after validating
 /// that the prediction block layout matches the fitted model. Reusing it avoids
 /// repeating prediction-block validation across batch inference calls.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PredictionView<'a, F, PBlocks> {
     family: &'a F,
     blocks: &'a PBlocks,
@@ -106,28 +105,28 @@ where
     /// Response distribution family.
     #[must_use]
     #[inline]
-    pub fn family(&self) -> &'a F {
+    pub const fn family(&self) -> &'a F {
         self.family
     }
 
     /// Typed prediction parameter blocks.
     #[must_use]
     #[inline]
-    pub fn blocks(&self) -> &'a PBlocks {
+    pub const fn blocks(&self) -> &'a PBlocks {
         self.blocks
     }
 
     /// Number of prediction rows.
     #[must_use]
     #[inline]
-    pub fn nrows(&self) -> usize {
+    pub const fn nrows(&self) -> usize {
         self.nrows
     }
 
     /// Number of coefficients expected in the flat parameter vector.
     #[must_use]
     #[inline]
-    pub fn nparams(&self) -> usize {
+    pub const fn nparams(&self) -> usize {
         self.nparams
     }
 
@@ -223,21 +222,21 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
     /// Response distribution family.
     #[must_use]
     #[inline]
-    pub fn family(&self) -> &F {
+    pub const fn family(&self) -> &F {
         &self.family
     }
 
     /// Typed parameter blocks.
     #[must_use]
     #[inline]
-    pub fn blocks(&self) -> &Blocks {
+    pub const fn blocks(&self) -> &Blocks {
         &self.blocks
     }
 
     /// Observation view used for training objective evaluation.
     #[must_use]
     #[inline]
-    pub fn obs(&self) -> &Obs {
+    pub const fn obs(&self) -> &Obs {
         &self.obs
     }
 
@@ -254,7 +253,7 @@ impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
     /// from dynamic indices or ranges.
     #[must_use]
     #[inline]
-    pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
+    pub const fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
             objective: self,
             penalties,
@@ -332,7 +331,7 @@ where
     /// For unweighted observation views this is equal to [`Gamlss::nobs`] as `f64`.
     #[must_use]
     #[inline]
-    pub fn weight_sum(&self) -> f64 {
+    pub const fn weight_sum(&self) -> f64 {
         self.weight_sum
     }
 
@@ -341,7 +340,7 @@ where
     /// This is currently the same value as [`Gamlss::weight_sum`].
     #[must_use]
     #[inline]
-    pub fn effective_nobs(&self) -> f64 {
+    pub const fn effective_nobs(&self) -> f64 {
         self.weight_sum()
     }
 
@@ -351,13 +350,13 @@ where
     }
 
     /// Returns the likelihood scaling convention used by this objective.
-    pub fn objective_scale(&self) -> ObjectiveScale {
+    pub const fn objective_scale(&self) -> ObjectiveScale {
         self.objective_scale
     }
 
     /// Returns `self` with a different likelihood scaling convention.
     #[must_use]
-    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+    pub const fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
         self.objective_scale = objective_scale;
         self
     }
@@ -941,26 +940,26 @@ where
     /// Returns the wrapped model.
     #[must_use]
     #[inline]
-    pub fn model(&self) -> &Gamlss<F, Blocks, Obs> {
+    pub const fn model(&self) -> &Gamlss<F, Blocks, Obs> {
         &self.model
     }
 
     /// Returns the wrapped model mutably.
     #[inline]
-    pub fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
+    pub const fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
         &mut self.model
     }
 
     /// Returns the reusable gradient workspace.
     #[must_use]
     #[inline]
-    pub fn workspace(&self) -> &GradientWorkspace {
+    pub const fn workspace(&self) -> &GradientWorkspace {
         &self.workspace
     }
 
     /// Returns the reusable gradient workspace mutably.
     #[inline]
-    pub fn workspace_mut(&mut self) -> &mut GradientWorkspace {
+    pub const fn workspace_mut(&mut self) -> &mut GradientWorkspace {
         &mut self.workspace
     }
 
@@ -979,7 +978,7 @@ where
     }
 
     /// Returns the likelihood scaling convention used by this objective.
-    pub fn objective_scale(&self) -> ObjectiveScale {
+    pub const fn objective_scale(&self) -> ObjectiveScale {
         self.model.objective_scale()
     }
 
@@ -1054,7 +1053,7 @@ where
     /// from dynamic indices or ranges.
     #[must_use]
     #[inline]
-    pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
+    pub const fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
         WithGlobalPenalties {
             objective: self,
             penalties,
@@ -1125,26 +1124,26 @@ impl<O, GP> WithGlobalPenalties<O, GP> {
     /// Wrapped objective.
     #[must_use]
     #[inline]
-    pub fn objective(&self) -> &O {
+    pub const fn objective(&self) -> &O {
         &self.objective
     }
 
     /// Wrapped objective, mutably.
     #[inline]
-    pub fn objective_mut(&mut self) -> &mut O {
+    pub const fn objective_mut(&mut self) -> &mut O {
         &mut self.objective
     }
 
     /// Global penalties evaluated on the full parameter vector.
     #[must_use]
     #[inline]
-    pub fn penalties(&self) -> &GP {
+    pub const fn penalties(&self) -> &GP {
         &self.penalties
     }
 
     /// Global penalties evaluated on the full parameter vector, mutably.
     #[inline]
-    pub fn penalties_mut(&mut self) -> &mut GP {
+    pub const fn penalties_mut(&mut self) -> &mut GP {
         &mut self.penalties
     }
 
@@ -1830,7 +1829,7 @@ fn validate_block_rows(
 }
 
 /// Checks whether two ranges overlap (non-empty intersection).
-fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
+const fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
     first.start < second.end && second.start < first.end
 }
 
@@ -1872,7 +1871,7 @@ fn validate_beta_and_gradient_len(
     validate_len("gradient", grad.len(), expected)
 }
 
-fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
+const fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     if row < nrows {
         Ok(())
     } else {
@@ -1880,7 +1879,7 @@ fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     }
 }
 
-fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
+const fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
     if actual == expected {
         Ok(())
     } else {
@@ -1987,7 +1986,7 @@ mod tests {
         fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
             let first = theta.0 - y;
             let second = theta.1 - 1.0;
-            0.5 * (first * first + second * second)
+            f64::midpoint(first * first, second * second)
         }
 
         fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
@@ -2614,7 +2613,7 @@ mod tests {
 
     #[test]
     fn blocks_try_len_reports_overflowing_total_length() {
-        let y = vec![1.0];
+        let y = [1.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
         let blocks = (mu,);
@@ -2836,7 +2835,7 @@ mod tests {
         fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
             let first = theta - observation[0];
             let second = theta - observation[1];
-            0.5 * (first * first + second * second)
+            f64::midpoint(first * first, second * second)
         }
 
         fn nll_and_gradient_eta(
@@ -3408,7 +3407,7 @@ mod tests {
             fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
                 let first = theta.0 - y;
                 let second = theta.1 - 1.0;
-                0.5 * (first * first + second * second)
+                f64::midpoint(first * first, second * second)
             }
 
             fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {

@@ -86,7 +86,7 @@ where
         let d_mean = d_scale * scale_shape.scale / theta.mean;
         let a = 1.0 + 1.0 / theta.shape;
         let d_scale_d_shape = scale_shape.scale * digamma(a) / (theta.shape * theta.shape);
-        let d_shape = d_shape_kernel + d_scale * d_scale_d_shape;
+        let d_shape = d_scale.mul_add(d_scale_d_shape, d_shape_kernel);
 
         (
             nll,

@@ -105,7 +105,7 @@ impl PeriodicSplineDesign {
     /// Metadata.
     #[must_use]
     #[inline(always)]
-    pub fn spec(&self) -> PeriodicSplineSpec {
+    pub const fn spec(&self) -> PeriodicSplineSpec {
         self.spec
     }
 

@@ -56,7 +56,7 @@ impl FourierDesign {
 
     /// Number of harmonics.
     #[inline(always)]
-    pub fn order(&self) -> usize {
+    pub const fn order(&self) -> usize {
         self.order
     }
 
@@ -68,7 +68,7 @@ impl FourierDesign {
 
     /// Returns `true` if the predictor contains an intercept.
     #[inline(always)]
-    pub fn include_intercept(&self) -> bool {
+    pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 

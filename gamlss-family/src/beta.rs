@@ -26,7 +26,7 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 ///
 /// let _ = Beta::<Identity, Log>::new();
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,
 }
@@ -235,7 +235,7 @@ where
     MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&y)
             || !y.is_finite()
             || theta.mu <= 0.0

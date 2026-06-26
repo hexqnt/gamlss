@@ -26,7 +26,7 @@ pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
 }
@@ -191,7 +191,7 @@ where
         if z < 0.0 {
             0.5 * (1.0 - p)
         } else {
-            0.5 * (1.0 + p)
+            f64::midpoint(1.0, p)
         }
     }
 }

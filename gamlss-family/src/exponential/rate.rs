@@ -45,7 +45,7 @@ pub struct ExponentialRateTheta {
 impl From<ExponentialMeanTheta> for ExponentialRateTheta {
     #[inline(always)]
     fn from(theta: ExponentialMeanTheta) -> Self {
-        ExponentialRateTheta {
+        Self {
             rate: 1.0 / theta.mean,
         }
     }

@@ -253,7 +253,7 @@ impl ParameterName for Precision {
 /// the predictor block, and `Penalty` adds regularization. The block stores its
 /// coefficient range within the common beta vector; use [`Self::range`] and
 /// [`Self::len`] to inspect that layout.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterBlock<P, L, X, Penalty> {
     x: X,
     penalty: Penalty,
@@ -299,7 +299,7 @@ where
 
 impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     #[inline]
-    fn from_len(x: X, penalty: Penalty, offset: usize, len: usize) -> Self {
+    const fn from_len(x: X, penalty: Penalty, offset: usize, len: usize) -> Self {
         Self {
             x,
             penalty,
@@ -312,7 +312,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// Returns a copy of the block with a new offset.
     #[must_use]
     #[inline]
-    pub fn with_offset(mut self, offset: usize) -> Self {
+    pub const fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
     }
@@ -320,20 +320,20 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// Predictor block.
     #[must_use]
     #[inline]
-    pub fn x(&self) -> &X {
+    pub const fn x(&self) -> &X {
         &self.x
     }
 
     /// Penalty applied to the block's coefficients.
     #[must_use]
     #[inline]
-    pub fn penalty(&self) -> &Penalty {
+    pub const fn penalty(&self) -> &Penalty {
         &self.penalty
     }
 
     #[must_use]
     #[inline]
-    pub(crate) fn offset(&self) -> usize {
+    pub(crate) const fn offset(&self) -> usize {
         self.offset
     }
 
@@ -366,14 +366,14 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// Number of coefficients in the block.
     #[must_use]
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
     /// `true` if the block contains no coefficients.
     #[must_use]
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 }

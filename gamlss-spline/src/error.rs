@@ -2,7 +2,7 @@ use gamlss_core::ModelError;
 use thiserror::Error;
 
 /// Errors for spline basis and spline design matrix construction.
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SplineError {
     /// Input vector is empty.
     #[error("spline input must contain at least one value")]
@@ -66,7 +66,7 @@ pub enum SplineError {
 }
 
 /// Errors for Fourier basis and Fourier predictor construction.
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FourierError {
     /// Input vector contains `NaN` or infinity.
     #[error("Fourier input contains a non-finite value")]

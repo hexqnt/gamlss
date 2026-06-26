@@ -62,7 +62,7 @@ impl InverseGaussianMeanCvTheta {
 }
 
 /// Inverse Gaussian mean/CV implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussianCv<MeanLink = Log, CvLink = Log> {
     marker: PhantomData<(MeanLink, CvLink)>,
 }
@@ -204,7 +204,7 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         InverseGaussian::<Log, Log>::new().crps(y, theta.mean_shape())
     }
 }

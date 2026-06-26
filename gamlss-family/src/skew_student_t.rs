@@ -86,9 +86,12 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
         return f64::INFINITY;
     }
 
-    invert_bounded_cdf(p, mu - 100.0 * sigma, mu + 100.0 * sigma, |y| {
-        cdf_location_scale(y, mu, sigma, nu, tau)
-    })
+    invert_bounded_cdf(
+        p,
+        100.0f64.mul_add(-sigma, mu),
+        100.0f64.mul_add(sigma, mu),
+        |y| cdf_location_scale(y, mu, sigma, nu, tau),
+    )
 }
 
 #[inline(always)]

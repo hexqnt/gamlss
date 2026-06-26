@@ -118,28 +118,28 @@ impl OpenUniformSplineBasis {
     /// Lower boundary of the basis range.
     #[must_use]
     #[inline(always)]
-    pub fn min(&self) -> f64 {
+    pub const fn min(&self) -> f64 {
         self.min
     }
 
     /// Upper boundary of the basis range.
     #[must_use]
     #[inline(always)]
-    pub fn max(&self) -> f64 {
+    pub const fn max(&self) -> f64 {
         self.max
     }
 
     /// Number of spline coefficients.
     #[must_use]
     #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 
     /// Spline order.
     #[must_use]
     #[inline(always)]
-    pub fn order(&self) -> SplineOrder {
+    pub const fn order(&self) -> SplineOrder {
         self.order
     }
 

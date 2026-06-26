@@ -21,7 +21,7 @@ pub type LaplaceMuSigma = Laplace<Identity, Log>;
 ///
 /// `MuLink` and `SigmaLink` control the link functions. Defaults to
 /// `Identity` for `mu` and `Log` for `sigma` (positive link).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Laplace<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -182,7 +182,7 @@ where
         if standardized < 0.0 {
             0.5 * standardized.exp()
         } else {
-            1.0 - 0.5 * (-standardized).exp()
+            0.5f64.mul_add(-(-standardized).exp(), 1.0)
         }
     }
 }

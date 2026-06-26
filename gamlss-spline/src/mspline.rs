@@ -92,14 +92,14 @@ impl MSplineBasis {
     /// Degree.
     #[must_use]
     #[inline(always)]
-    pub fn degree(&self) -> usize {
+    pub const fn degree(&self) -> usize {
         self.degree
     }
 
     /// Number of basis functions.
     #[must_use]
     #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 
@@ -158,7 +158,7 @@ impl MSplineDesign {
     /// Returns the basis metadata.
     #[must_use]
     #[inline(always)]
-    pub fn basis(&self) -> &MSplineBasis {
+    pub const fn basis(&self) -> &MSplineBasis {
         &self.basis
     }
 

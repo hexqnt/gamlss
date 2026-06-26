@@ -20,7 +20,7 @@ impl<const K: usize> DenseInformation<K> {
     /// Creates a diagonal information matrix.
     #[must_use]
     #[inline]
-    pub fn diagonal(diagonal: [f64; K]) -> Self {
+    pub const fn diagonal(diagonal: [f64; K]) -> Self {
         let mut values = [[0.0; K]; K];
         let mut index = 0;
         while index < K {
@@ -33,7 +33,7 @@ impl<const K: usize> DenseInformation<K> {
     /// Returns the matrix entry at `row`, `col`.
     #[must_use]
     #[inline(always)]
-    pub fn get(&self, row: usize, col: usize) -> f64 {
+    pub const fn get(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
 
@@ -82,9 +82,9 @@ pub trait Family {
     /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
     fn theta(&self, eta: Self::Eta) -> Self::Theta;
     /// Negative log-likelihood for one observation on the natural scale.
-    fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
     /// Negative log-likelihood for one observation on the link scale.
-    fn nll_eta<'obs>(&self, observation: Self::Observation<'obs>, eta: Self::Eta) -> f64 {
+    fn nll_eta(&self, observation: Self::Observation<'_>, eta: Self::Eta) -> f64 {
         self.nll(observation, self.theta(eta))
     }
     /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
@@ -372,7 +372,7 @@ pub trait HasQuantile: Family {
 /// trait, while discrete families expose a log-PMF.
 pub trait HasLogDensity: Family {
     /// Log-density or log-mass at `observation` for natural-scale parameters.
-    fn log_density<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn log_density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         -self.nll(observation, theta)
     }
 }
@@ -386,7 +386,7 @@ impl<T> HasLogDensity for T where T: Family {}
 /// [`Family::nll`] and [`Family::nll_and_gradient_eta`].
 pub trait HasDensity: HasLogDensity {
     /// Density or mass at `observation` for natural-scale parameters.
-    fn density<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         self.log_density(observation, theta).exp()
     }
 }
@@ -399,7 +399,7 @@ pub trait HasCrps: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// observation or parameter domains rather than panicking.
-    fn crps<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+    fn crps(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
 }
 
 /// Distribution helper for simulation.
@@ -419,7 +419,7 @@ pub trait HasDeviance: Family {
     /// Implementations should return a non-finite value for invalid observation
     /// or parameter domains rather than panicking, matching the rest of the
     /// family helper contracts.
-    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
 }
 
 /// Distribution helper for family-specific link-scale initialization.
@@ -433,5 +433,5 @@ pub trait HasInitialEta: Family {
     /// Implementations should return finite values when the observation is
     /// inside the supported domain. Unsupported or invalid observations may
     /// produce non-finite components instead of panicking.
-    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta;
+    fn initial_eta(&self, observation: Self::Observation<'_>) -> Self::Eta;
 }

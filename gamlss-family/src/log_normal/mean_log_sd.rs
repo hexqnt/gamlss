@@ -85,7 +85,7 @@ where
 
         let (d_location, d_log_sd_kernel) = Self::gradient_log_location_log_sd(y, canonical);
         let d_mean = d_location / theta.mean;
-        let d_log_sd = d_log_sd_kernel - d_location * theta.log_sd;
+        let d_log_sd = d_location.mul_add(-theta.log_sd, d_log_sd_kernel);
 
         (
             nll,

@@ -189,16 +189,10 @@ where
             .collect::<Vec<_>>();
         let summary = weighted_summary(&positives);
         let total_mean = positive_floor(
-            weighted_summary(&values)
-                .map(|s| s.mean)
-                .unwrap_or_else(|| summary.map(|s| s.mean).unwrap_or(1.0)),
+            weighted_summary(&values).map_or_else(|| summary.map_or(1.0, |s| s.mean), |s| s.mean),
         );
-        let positive_mean = positive_floor(summary.map(|s| s.mean).unwrap_or(total_mean));
-        let cv = positive_floor(
-            summary
-                .map(|s| s.variance.sqrt() / positive_mean)
-                .unwrap_or(1.0),
-        );
+        let positive_mean = positive_floor(summary.map_or(total_mean, |s| s.mean));
+        let cv = positive_floor(summary.map_or(1.0, |s| s.variance.sqrt() / positive_mean));
         let zero_weight = values
             .iter()
             .filter(|(y, _)| *y == 0.0)

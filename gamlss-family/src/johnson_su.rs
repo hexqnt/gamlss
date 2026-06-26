@@ -19,7 +19,7 @@ pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
 }
@@ -63,7 +63,7 @@ where
         }
 
         let s = (y - theta.mu) / theta.sigma;
-        let z = theta.nu + theta.tau * s.asinh();
+        let z = theta.tau.mul_add(s.asinh(), theta.nu);
         theta.sigma.ln() - theta.tau.ln() + 0.5 * (1.0 + s * s).ln() - unit_normal_log_pdf(z)
     }
 

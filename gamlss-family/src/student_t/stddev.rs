@@ -20,7 +20,7 @@ use super::{
 /// volatility-style targets than the canonical Student-t scale. Internally it
 /// maps `sigma` to the location-scale Student-t scale by
 /// `scale = sigma * sqrt((tau - 2) / tau)`, so `tau` must be greater than two.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTStdDev<
     MuLink = gamlss_core::Identity,
     SigmaLink = gamlss_core::Log,
@@ -75,7 +75,7 @@ where
         let scale_per_sd = location_scale.sigma / theta.sigma;
         let scale_per_tau = location_scale.sigma / (theta.tau * (theta.tau - 2.0));
         let d_sigma = gradient.sigma * scale_per_sd;
-        let d_tau = gradient.tau + gradient.sigma * scale_per_tau;
+        let d_tau = gradient.sigma.mul_add(scale_per_tau, gradient.tau);
 
         (
             nll,
@@ -191,7 +191,9 @@ where
             return f64::NAN;
         };
 
-        theta.mu + location_scale.sigma * student_t_standard_quantile(theta.tau, p)
+        location_scale
+            .sigma
+            .mul_add(student_t_standard_quantile(theta.tau, p), theta.mu)
     }
 }
 

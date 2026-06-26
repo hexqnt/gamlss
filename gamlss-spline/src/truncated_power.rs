@@ -116,14 +116,14 @@ impl TruncatedPowerBasis {
     /// Returns `true` if the first coefficient is an intercept.
     #[must_use]
     #[inline(always)]
-    pub fn include_intercept(&self) -> bool {
+    pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Number of basis functions.
     #[must_use]
     #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 

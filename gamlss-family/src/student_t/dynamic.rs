@@ -15,7 +15,7 @@ use super::{
 };
 
 /// Student's t location-scale family with estimated degrees of freedom.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTDynamic<
     MuLink = gamlss_core::Identity,
     SigmaLink = gamlss_core::Log,
@@ -178,7 +178,9 @@ where
             return f64::NAN;
         }
 
-        theta.mu + theta.sigma * student_t_standard_quantile(theta.tau, p)
+        theta
+            .sigma
+            .mul_add(student_t_standard_quantile(theta.tau, p), theta.mu)
     }
 }
 
@@ -188,7 +190,7 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !valid_dynamic_theta(theta) {
             return f64::NAN;
         }
@@ -265,7 +267,7 @@ pub struct StudentTMuSigmaTauTheta {
 
 impl StudentTMuSigmaTauTheta {
     #[inline(always)]
-    fn location_scale(self) -> StudentTTheta {
+    const fn location_scale(self) -> StudentTTheta {
         StudentTTheta {
             mu: self.mu,
             sigma: self.sigma,

@@ -19,7 +19,7 @@ mod mean_shape;
 mod shape_rate;
 
 /// Gamma family implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gamma<Param = ShapeRate, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
@@ -148,7 +148,7 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
-            fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::crps_shape_rate(y, theta.into())
             }
         }

@@ -32,7 +32,7 @@ impl<'a> FiniteScalarObservations<'a> {
     }
 }
 
-impl<'row, 'a> ObservationView<'row> for FiniteScalarObservations<'a> {
+impl<'row> ObservationView<'row> for FiniteScalarObservations<'_> {
     type Observation = f64;
 
     #[inline(always)]

@@ -28,7 +28,7 @@ pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 /// The default parameterization models the Poisson component mean and the
 /// zero-inflation probability. Use [`ZipTotalMeanZeroProbability`] for the
 /// derived unconditional-mean parameterization.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zip<Param = ComponentMeanZeroProbability, MeanLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(Param, MeanLink, ZeroProbabilityLink)>,
 }
@@ -48,7 +48,7 @@ where
 
     #[inline(always)]
     fn poisson_log_pmf(y: f64, mu: f64) -> f64 {
-        -mu + y * mu.ln() - ln_gamma(y + 1.0)
+        y.mul_add(mu.ln(), -mu) - ln_gamma(y + 1.0)
     }
 
     #[inline(always)]
@@ -73,7 +73,7 @@ where
     pub(super) fn gradient_component_theta(y: f64, theta: ZipTheta) -> ZipTheta {
         if y == 0.0 {
             let q0 = (-theta.mu).exp();
-            let p0 = theta.sigma + (1.0 - theta.sigma) * q0;
+            let p0 = (1.0 - theta.sigma).mul_add(q0, theta.sigma);
             ZipTheta {
                 mu: (1.0 - theta.sigma) * q0 / p0,
                 sigma: -(1.0 - q0) / p0,
@@ -100,7 +100,9 @@ where
             return 0.0;
         }
         let base_cdf = Poisson::<Log>::cdf_theta(y, PoissonTheta { mu: theta.mu });
-        (theta.sigma + (1.0 - theta.sigma) * base_cdf).clamp(0.0, 1.0)
+        (1.0 - theta.sigma)
+            .mul_add(base_cdf, theta.sigma)
+            .clamp(0.0, 1.0)
     }
 }
 

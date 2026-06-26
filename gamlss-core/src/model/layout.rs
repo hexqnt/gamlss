@@ -27,21 +27,21 @@ impl ParameterLayout {
     /// Creates a layout from named slices.
     #[must_use]
     #[inline]
-    pub fn new(slices: Vec<ParameterSlice>) -> Self {
+    pub const fn new(slices: Vec<ParameterSlice>) -> Self {
         Self { slices }
     }
 
     /// Number of parameter blocks represented by this layout.
     #[must_use]
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.slices.len()
     }
 
     /// `true` if this layout has no parameter blocks.
     #[must_use]
     #[inline(always)]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.slices.is_empty()
     }
 

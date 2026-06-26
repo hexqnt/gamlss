@@ -27,7 +27,7 @@ pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, DispersionLink, PowerLink)>,
 }

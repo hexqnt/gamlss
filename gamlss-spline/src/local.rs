@@ -132,13 +132,23 @@ fn edge_extrapolation_basis(
     if right {
         LocalBasis {
             indices: [n_basis - 2, n_basis - 1, 0, 0],
-            weights: [-slope_scale * offset, 1.0 + slope_scale * offset, 0.0, 0.0],
+            weights: [
+                -slope_scale * offset,
+                slope_scale.mul_add(offset, 1.0),
+                0.0,
+                0.0,
+            ],
             len: 2,
         }
     } else {
         LocalBasis {
             indices: [0, 1, 0, 0],
-            weights: [1.0 - slope_scale * offset, slope_scale * offset, 0.0, 0.0],
+            weights: [
+                slope_scale.mul_add(-offset, 1.0),
+                slope_scale * offset,
+                0.0,
+                0.0,
+            ],
             len: 2,
         }
     }
@@ -150,7 +160,7 @@ fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
     let last_control = n_basis - 1;
     let mut low = degree;
     let mut high = n_basis;
-    let mut mid = (low + high) / 2;
+    let mut mid = usize::midpoint(low, high);
     while u < open_uniform_knot(mid, n_basis, degree)
         || u >= open_uniform_knot(mid + 1, n_basis, degree)
     {
@@ -159,7 +169,7 @@ fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
         } else {
             low = mid;
         }
-        mid = (low + high) / 2;
+        mid = usize::midpoint(low, high);
     }
     mid.min(last_control)
 }
@@ -183,7 +193,7 @@ fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -
             } else {
                 weights[r] / denominator
             };
-            weights[r] = saved + right[r + 1] * temp;
+            weights[r] = right[r + 1].mul_add(temp, saved);
             saved = left[j - r] * temp;
         }
         weights[j] = saved;

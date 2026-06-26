@@ -796,16 +796,17 @@ fn unit_normal_erfc(x: f64) -> f64 {
         return if x < 0.0 { 2.0 } else { 0.0 };
     }
 
-    let numerator;
-    let denominator;
-    if abs_x < 8.0 {
-        numerator = polynomial_descending(abs_x, &ERFC_NUMERATOR);
-        denominator = polynomial_descending_with_implicit_leading_one(abs_x, &ERFC_DENOMINATOR);
+    let (numerator, denominator) = if abs_x < 8.0 {
+        (
+            polynomial_descending(abs_x, &ERFC_NUMERATOR),
+            polynomial_descending_with_implicit_leading_one(abs_x, &ERFC_DENOMINATOR),
+        )
     } else {
-        numerator = polynomial_descending(abs_x, &ERFC_TAIL_NUMERATOR);
-        denominator =
-            polynomial_descending_with_implicit_leading_one(abs_x, &ERFC_TAIL_DENOMINATOR);
-    }
+        (
+            polynomial_descending(abs_x, &ERFC_TAIL_NUMERATOR),
+            polynomial_descending_with_implicit_leading_one(abs_x, &ERFC_TAIL_DENOMINATOR),
+        )
+    };
 
     let erfc = (-abs_x * abs_x).exp() * numerator / denominator;
     if x < 0.0 { 2.0 - erfc } else { erfc }

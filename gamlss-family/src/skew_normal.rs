@@ -97,7 +97,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
         return f64::INFINITY;
     }
 
-    invert_real_cdf(p, |z| standard_cdf(z, nu)) * sigma + mu
+    invert_real_cdf(p, |z| standard_cdf(z, nu)).mul_add(sigma, mu)
 }
 
 #[inline(always)]

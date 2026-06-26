@@ -127,8 +127,8 @@ where
             .filter(|(y, _)| *y > 0.0)
             .collect::<Vec<_>>();
         let summary = weighted_summary(&positives);
-        let mu = positive_floor(summary.map(|s| s.mean).unwrap_or(1.0));
-        let sigma = positive_floor(summary.map(|s| s.variance.sqrt() / mu).unwrap_or(1.0));
+        let mu = positive_floor(summary.map_or(1.0, |s| s.mean));
+        let sigma = positive_floor(summary.map_or(1.0, |s| s.variance.sqrt() / mu));
         let zero_weight = values
             .iter()
             .filter(|(y, _)| *y == 0.0)

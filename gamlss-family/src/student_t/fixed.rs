@@ -47,7 +47,7 @@ where
 
     /// Returns the fixed degrees of freedom.
     #[must_use]
-    pub fn degrees_of_freedom(&self) -> f64 {
+    pub const fn degrees_of_freedom(&self) -> f64 {
         self.degrees_of_freedom
     }
 

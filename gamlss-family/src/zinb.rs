@@ -25,7 +25,7 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 /// component size, and zero-inflation probability. Use
 /// [`ZinbTotalMeanSizeZeroProbability`] for the derived unconditional-mean
 /// parameterization.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zinb<MuLink = Log, ShapeLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, ShapeLink, NuLink)>,
 }
@@ -87,7 +87,7 @@ where
         let (d_mu, d_shape) = Self::negative_binomial_gradient_theta(y, theta.mu, theta.shape);
         if y == 0.0 {
             let q0 = (theta.shape / (theta.shape + theta.mu)).powf(theta.shape);
-            let p0 = theta.nu + (1.0 - theta.nu) * q0;
+            let p0 = (1.0 - theta.nu).mul_add(q0, theta.nu);
             let responsibility = (1.0 - theta.nu) * q0 / p0;
             ZinbTheta {
                 mu: responsibility * d_mu,
@@ -126,7 +126,7 @@ where
                 shape: theta.shape,
             },
         );
-        (theta.nu + (1.0 - theta.nu) * base_cdf).clamp(0.0, 1.0)
+        (1.0 - theta.nu).mul_add(base_cdf, theta.nu).clamp(0.0, 1.0)
     }
 }
 

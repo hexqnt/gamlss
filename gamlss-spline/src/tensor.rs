@@ -4,7 +4,7 @@ use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
 
 /// Structured tensor-product spline predictor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorSplineDesign<A, B> {
     left: A,
     right: B,
@@ -47,28 +47,28 @@ where
     /// Left basis.
     #[must_use]
     #[inline(always)]
-    pub fn left(&self) -> &A {
+    pub const fn left(&self) -> &A {
         &self.left
     }
 
     /// Right basis.
     #[must_use]
     #[inline(always)]
-    pub fn right(&self) -> &B {
+    pub const fn right(&self) -> &B {
         &self.right
     }
 
     /// Number of parameters in the left basis.
     #[must_use]
     #[inline(always)]
-    pub fn left_nparams(&self) -> usize {
+    pub const fn left_nparams(&self) -> usize {
         self.nparams / self.right_nparams
     }
 
     /// Number of parameters in the right basis.
     #[must_use]
     #[inline(always)]
-    pub fn right_nparams(&self) -> usize {
+    pub const fn right_nparams(&self) -> usize {
         self.right_nparams
     }
 }

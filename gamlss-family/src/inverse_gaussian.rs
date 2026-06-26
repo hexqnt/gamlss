@@ -15,7 +15,7 @@ mod mean_shape;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
 /// Inverse Gaussian family parameterized by positive mean and shape.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,
 }

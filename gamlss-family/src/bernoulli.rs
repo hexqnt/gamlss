@@ -22,7 +22,7 @@ pub type BernoulliProbability = Bernoulli<Logit>;
 ///
 /// let _ = Bernoulli::<Identity>::new();
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bernoulli<MuLink = Logit> {
     marker: PhantomData<MuLink>,
 }

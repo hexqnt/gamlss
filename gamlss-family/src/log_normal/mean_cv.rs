@@ -53,7 +53,7 @@ impl LogNormalMeanCvTheta {
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
         let log_sd_squared = (self.cv * self.cv).ln_1p();
         LogNormalLogLocationLogSdTheta {
-            log_location: self.mean.ln() - 0.5 * log_sd_squared,
+            log_location: 0.5f64.mul_add(-log_sd_squared, self.mean.ln()),
             log_sd: log_sd_squared.sqrt(),
         }
     }

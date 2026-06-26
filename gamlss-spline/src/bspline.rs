@@ -70,7 +70,7 @@ impl BSplineBasis {
     }
 
     /// Spline degree.
-    pub fn degree(&self) -> usize {
+    pub const fn degree(&self) -> usize {
         self.degree
     }
 
@@ -80,7 +80,7 @@ impl BSplineBasis {
     }
 
     /// Number of basis functions.
-    pub fn n_basis(&self) -> usize {
+    pub const fn n_basis(&self) -> usize {
         self.knots.len() - self.degree - 1
     }
 

@@ -20,7 +20,7 @@ pub type GeneralizedGammaScaleSigmaNu = GeneralizedGamma<Log, Log, Identity>;
 ///
 /// The first parameter is the positive scale/location used in `(y / scale)`,
 /// not the arithmetic mean except in special cases.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneralizedGamma<ScaleLink = Log, SigmaLink = Log, NuLink = Identity> {
     marker: PhantomData<(ScaleLink, SigmaLink, NuLink)>,
 }

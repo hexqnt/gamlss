@@ -24,7 +24,7 @@ pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shash<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
 }

@@ -102,9 +102,7 @@ pub(crate) fn robust_location_scale(values: &[(f64, f64)]) -> Option<(f64, f64)>
         .map(|(value, weight)| ((value - location).abs(), *weight))
         .collect::<Vec<_>>();
     let mad_scale = weighted_median(&deviations).unwrap_or(0.0) * 1.4826;
-    let moment_scale = weighted_summary(values)
-        .map(|summary| summary.variance.sqrt())
-        .unwrap_or(0.0);
+    let moment_scale = weighted_summary(values).map_or(0.0, |summary| summary.variance.sqrt());
 
     let scale = positive_floor(
         [mad_scale, iqr_scale, moment_scale, POSITIVE_FLOOR]

@@ -21,7 +21,7 @@ mod scale_shape;
 const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
 
 /// Weibull family implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
@@ -167,7 +167,7 @@ macro_rules! impl_weibull_helpers {
             <Weibull<$param, $first, $second> as Family>::Theta:
                 Copy + Into<WeibullScaleShapeTheta>,
         {
-            fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::crps_scale_shape(y, theta.into())
             }
         }

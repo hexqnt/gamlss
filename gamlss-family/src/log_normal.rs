@@ -21,7 +21,7 @@ mod median_log_sd;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
 /// Log-normal family implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
@@ -138,7 +138,7 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
-            fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::crps_log_location_log_sd(y, theta.into())
             }
         }

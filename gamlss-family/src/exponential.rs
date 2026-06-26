@@ -13,7 +13,7 @@ mod mean;
 mod rate;
 
 /// Exponential family implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exponential<Param = RateParam, Link = Log> {
     marker: PhantomData<(Param, Link)>,
 }
@@ -105,7 +105,7 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
-            fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::crps_rate(y, theta.into())
             }
         }

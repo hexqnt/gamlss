@@ -14,7 +14,7 @@ use crate::initial::{robust_location_scale, weighted_values};
 pub type LogisticMuSigma = Logistic<Identity, Log>;
 
 /// Logistic family parameterized by location and positive scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Logistic<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -92,7 +92,7 @@ where
         let z = (y - theta.mu) / theta.sigma;
         let d_z = 2.0 * Self::logistic(z) - 1.0;
         let d_mu = -d_z / theta.sigma;
-        let d_sigma = (1.0 - z * d_z) / theta.sigma;
+        let d_sigma = z.mul_add(-d_z, 1.0) / theta.sigma;
         let gradient_eta = LogisticEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
@@ -200,7 +200,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }

@@ -13,7 +13,7 @@ pub enum MonotoneDirection {
 }
 
 impl MonotoneDirection {
-    fn sign(self) -> f64 {
+    const fn sign(self) -> f64 {
         match self {
             Self::Increasing => 1.0,
             Self::Decreasing => -1.0,
@@ -48,7 +48,7 @@ impl MonotoneISplineDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    pub fn basis(&self) -> &ISplineBasis {
+    pub const fn basis(&self) -> &ISplineBasis {
         &self.basis
     }
 
@@ -66,7 +66,7 @@ impl MonotoneISplineDesign {
 
     /// Monotonicity direction.
     #[must_use]
-    pub fn direction(&self) -> MonotoneDirection {
+    pub const fn direction(&self) -> MonotoneDirection {
         self.direction
     }
 

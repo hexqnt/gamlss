@@ -282,10 +282,6 @@ fn integrate_piecewise(knots: &[f64], start: f64, end: f64, f: impl Fn(f64) -> f
 }
 
 fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
-    if right <= left {
-        return 0.0;
-    }
-
     const NODES: [f64; 5] = [
         -0.906_179_845_938_664,
         -0.538_469_310_105_683_1,
@@ -301,7 +297,10 @@ fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
         0.236_926_885_056_189_1,
     ];
 
-    let midpoint = 0.5 * (left + right);
+    if right <= left {
+        return 0.0;
+    }
+    let midpoint = f64::midpoint(left, right);
     let half = 0.5 * (right - left);
     half * NODES
         .iter()

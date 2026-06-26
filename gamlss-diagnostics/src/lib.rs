@@ -59,7 +59,7 @@ pub mod prelude {
 /// This view is built from a core [`PredictionView`] plus an observation view,
 /// validating the prediction observation length and observation invariants once.
 /// Reuse it when computing multiple diagnostics over the same prediction rows.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PredictionDiagnosticsView<'a, 'obs, F, PBlocks, PObs> {
     prediction: PredictionView<'a, F, PBlocks>,
     obs: &'obs PObs,

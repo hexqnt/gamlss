@@ -18,7 +18,7 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 /// Negative binomial family parameterized by positive mean and shape.
 ///
 /// The variance is `mu + mu^2 / shape`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomial<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,
 }

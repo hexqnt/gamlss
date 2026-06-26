@@ -38,7 +38,7 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
 ///
 /// `SigmaLink` must be a positive link so that the scale parameter stays
 /// positive at the type level.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -187,7 +187,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn deviance<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn deviance(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
@@ -221,7 +221,7 @@ where
             return f64::NAN;
         }
 
-        theta.mu + theta.sigma * unit_normal_quantile(p)
+        theta.sigma.mul_add(unit_normal_quantile(p), theta.mu)
     }
 }
 
@@ -230,7 +230,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
@@ -243,7 +243,7 @@ where
 }
 
 impl HasInitialEta for Normal<Identity, Log> {
-    fn initial_eta<'obs>(&self, y: Self::Observation<'obs>) -> Self::Eta {
+    fn initial_eta(&self, y: Self::Observation<'_>) -> Self::Eta {
         NormalEta {
             mu: y,
             sigma: DEFAULT_INITIAL_LOG_SIGMA,
