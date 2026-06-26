@@ -347,8 +347,8 @@ fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
 
 /// Generalized inverse for a discrete CDF on non-negative integer support.
 ///
-/// Returns `NaN` when `p` is outside `[0, 1]` or when `max_count` is reached
-/// before the supplied CDF reaches `p`.
+/// Returns `NaN` when `p` is outside `[0, 1]`, when the supplied CDF returns a
+/// non-finite value, or when `max_count` is reached before the CDF reaches `p`.
 #[must_use]
 pub fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
 where
@@ -361,18 +361,40 @@ where
         return 0.0;
     }
 
-    let mut high = 1_u64;
-    while high < max_count && cdf(high) < p {
-        high = high.saturating_mul(2).min(max_count);
-    }
-    if cdf(high) < p {
+    let cdf_zero = cdf(0);
+    if !cdf_zero.is_finite() {
         return f64::NAN;
+    }
+    if cdf_zero >= p {
+        return 0.0;
+    }
+    if max_count == 0 {
+        return f64::NAN;
+    }
+
+    let mut high = 1_u64.min(max_count);
+    loop {
+        let cdf_high = cdf(high);
+        if !cdf_high.is_finite() {
+            return f64::NAN;
+        }
+        if cdf_high >= p {
+            break;
+        }
+        if high == max_count {
+            return f64::NAN;
+        }
+        high = high.saturating_mul(2).min(max_count);
     }
 
     let mut low = 0_u64;
     while low < high {
         let mid = low + (high - low) / 2;
-        if cdf(mid) < p {
+        let cdf_mid = cdf(mid);
+        if !cdf_mid.is_finite() {
+            return f64::NAN;
+        }
+        if cdf_mid < p {
             low = mid + 1;
         } else {
             high = mid;
@@ -404,8 +426,8 @@ where
 
     let mut low = lower;
     let mut high = upper;
-    let cdf_low = cdf(low);
-    let cdf_high = cdf(high);
+    let mut cdf_low = cdf(low);
+    let mut cdf_high = cdf(high);
     if !cdf_low.is_finite()
         || !cdf_high.is_finite()
         || cdf_low > cdf_high
@@ -423,18 +445,36 @@ where
         }
         if cdf_mid < p {
             low = mid;
+            cdf_low = cdf_mid;
         } else {
             high = mid;
+            cdf_high = cdf_mid;
         }
     }
 
-    low.midpoint(high)
+    let mid = low.midpoint(high);
+    let cdf_mid = cdf(mid);
+    if !cdf_mid.is_finite() {
+        return f64::NAN;
+    }
+
+    let low_error = (cdf_low - p).abs();
+    let mid_error = (cdf_mid - p).abs();
+    let high_error = (cdf_high - p).abs();
+    if low_error <= mid_error && low_error <= high_error {
+        low
+    } else if high_error <= mid_error {
+        high
+    } else {
+        mid
+    }
 }
 
 /// Inverts a monotone CDF on `[0, +inf)` by bracketing and bisection.
 ///
 /// Returns `0` for `p == 0`, `+inf` for `p == 1`, and `NaN` for invalid
-/// probabilities.
+/// probabilities, non-finite CDF values, or failed finite bracketing for
+/// interior probabilities.
 #[must_use]
 pub fn invert_positive_cdf<F>(p: f64, mut cdf: F) -> f64
 where
@@ -461,7 +501,7 @@ where
         }
         high *= 2.0;
         if !high.is_finite() {
-            return f64::INFINITY;
+            return f64::NAN;
         }
     }
 
@@ -471,7 +511,8 @@ where
 /// Inverts a monotone CDF on the real line by bracketing and bisection.
 ///
 /// Returns infinite tails for boundary probabilities and `NaN` for invalid
-/// probabilities.
+/// probabilities, non-finite CDF values, or failed finite bracketing for
+/// interior probabilities.
 #[must_use]
 pub fn invert_real_cdf<F>(p: f64, mut cdf: F) -> f64
 where
@@ -498,7 +539,7 @@ where
         }
         low *= 2.0;
         if !low.is_finite() {
-            return f64::NEG_INFINITY;
+            return f64::NAN;
         }
     }
 
@@ -513,7 +554,7 @@ where
         }
         high *= 2.0;
         if !high.is_finite() {
-            return f64::INFINITY;
+            return f64::NAN;
         }
     }
 
@@ -783,7 +824,7 @@ pub fn log_ndtr(z: f64) -> f64 {
     if z == f64::INFINITY {
         return 0.0;
     }
-    if z <= -5.0 {
+    if z <= -10.0 {
         return log_ndtr_left_tail(z);
     }
 
@@ -793,8 +834,21 @@ pub fn log_ndtr(z: f64) -> f64 {
 fn log_ndtr_left_tail(z: f64) -> f64 {
     let x = -z;
     let inv2 = 1.0 / (x * x);
-    let correction = 1.0 - inv2 + 3.0 * inv2 * inv2 - 15.0 * inv2 * inv2 * inv2
-        + 105.0 * inv2 * inv2 * inv2 * inv2;
+    let correction = polynomial_descending(
+        inv2,
+        &[
+            -34_459_425.0,
+            2_027_025.0,
+            -135_135.0,
+            10_395.0,
+            -945.0,
+            105.0,
+            -15.0,
+            3.0,
+            -1.0,
+            1.0,
+        ],
+    );
 
     unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
 }

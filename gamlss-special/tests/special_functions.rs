@@ -220,6 +220,19 @@ fn log_ndtr_matches_statrs_reference_where_cdf_is_representable() {
 }
 
 #[test]
+fn log_ndtr_matches_high_precision_left_tail_references() {
+    for (z, expected) in [
+        (-5.0_f64, -15.064_998_393_988_727),
+        (-8.0, -35.013_437_159_914_55),
+        (-10.0, -53.231_285_150_512_47),
+        (-20.0, -203.917_155_371_097_27),
+        (-40.0, -804.608_442_013_753_8),
+    ] {
+        assert_close(log_ndtr(z), expected, 0.0, 1.0e-8);
+    }
+}
+
+#[test]
 fn standardized_student_t_helpers_match_statrs_reference() {
     for nu in [1.5_f64, 2.5, 5.0, 30.0] {
         let reference = StudentsT::new(0.0, 1.0, nu).unwrap();
@@ -364,6 +377,28 @@ fn discrete_quantile_returns_generalized_inverse() {
 }
 
 #[test]
+fn discrete_quantile_rejects_non_finite_cdf_values() {
+    assert!(discrete_quantile(0.5, 10, |_| f64::NAN).is_nan());
+
+    let infinite_after_zero = |k| match k {
+        0 => 0.0,
+        _ => f64::INFINITY,
+    };
+    assert!(discrete_quantile(0.5, 10, infinite_after_zero).is_nan());
+
+    assert!(
+        discrete_quantile(0.5, 4, |k| match k {
+            0 => 0.0,
+            1 => 0.1,
+            2 => 0.2,
+            3 => f64::NAN,
+            _ => 0.9,
+        })
+        .is_nan()
+    );
+}
+
+#[test]
 fn included_count_rejects_non_finite_and_excessive_queries() {
     assert_eq!(included_count(-1.0, 10), Some(0));
     assert_eq!(included_count(3.9, 10), Some(3));
@@ -401,6 +436,9 @@ fn cdf_inversion_helpers_reject_invalid_brackets_and_nan_cdf_values() {
 
     assert!(invert_positive_cdf(0.5, |_| f64::NAN).is_nan());
     assert!(invert_real_cdf(0.5, |_| f64::NAN).is_nan());
+    assert!(invert_positive_cdf(0.5, |_| 0.25).is_nan());
+    assert!(invert_real_cdf(0.5, |_| 0.25).is_nan());
+    assert!(invert_real_cdf(0.5, |_| 0.75).is_nan());
 }
 
 #[test]

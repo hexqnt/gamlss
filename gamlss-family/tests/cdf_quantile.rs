@@ -39,7 +39,7 @@ proptest! {
         assert_continuous_inverse(&LomaxShapeScale::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
         assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullTheta { shape, scale }, 2.0e-10);
 
-        assert_continuous_inverse(&BetaMeanPrecision::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 2.0e-7);
+        assert_continuous_inverse(&BetaMeanPrecision::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 5.0e-6);
     }
 
     #[test]

@@ -39,12 +39,30 @@ pub fn proptest_config() -> ProptestConfig {
 }
 
 pub fn assert_close(actual: f64, expected: f64, rel_tol: f64, abs_tol: f64) {
+    assert_close_with_context(actual, expected, rel_tol, abs_tol, "");
+}
+
+pub fn assert_close_with_context(
+    actual: f64,
+    expected: f64,
+    rel_tol: f64,
+    abs_tol: f64,
+    context: &str,
+) {
     let diff = (actual - expected).abs();
     let scale = actual.abs().max(expected.abs()).max(1.0);
-    assert!(
-        diff <= abs_tol.max(rel_tol * scale),
-        "actual {actual:?} differs from expected {expected:?}; diff={diff:?}, rel_tol={rel_tol:?}, abs_tol={abs_tol:?}"
-    );
+    let within_tolerance = diff <= abs_tol.max(rel_tol * scale);
+    if context.is_empty() {
+        assert!(
+            within_tolerance,
+            "actual {actual:?} differs from expected {expected:?}; diff={diff:?}, rel_tol={rel_tol:?}, abs_tol={abs_tol:?}"
+        );
+    } else {
+        assert!(
+            within_tolerance,
+            "{context} actual {actual:?} differs from expected {expected:?}; diff={diff:?}, rel_tol={rel_tol:?}, abs_tol={abs_tol:?}"
+        );
+    }
 }
 
 pub fn assert_nll_eta_matches_theta<F, const K: usize>(family: &F, y: f64, eta: [f64; K])
@@ -153,8 +171,19 @@ where
     F::Theta: Copy,
 {
     let y = family.quantile(p, theta);
-    assert!(y.is_finite(), "quantile({p}) returned {y:?}");
-    assert_close(family.cdf(y, theta), p, 0.0, tolerance);
+    assert!(
+        y.is_finite(),
+        "{} quantile({p}) returned {y:?}",
+        std::any::type_name::<F>()
+    );
+    let cdf = family.cdf(y, theta);
+    assert_close_with_context(
+        cdf,
+        p,
+        0.0,
+        tolerance,
+        &format!("{} y={y:?}", std::any::type_name::<F>()),
+    );
 }
 
 pub fn assert_discrete_inverse<F>(family: &F, p: f64, theta: F::Theta)

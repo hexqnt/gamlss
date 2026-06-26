@@ -218,7 +218,15 @@ where
             return f64::NAN;
         }
 
-        invert_bounded_cdf(p, 0.0, 1.0, |y| self.cdf(y, theta))
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        if p <= 0.5 {
+            invert_bounded_cdf(p, 0.0, 1.0, |y| regularized_beta(alpha, beta, y))
+        } else {
+            1.0 - invert_bounded_cdf(1.0 - p, 0.0, 1.0, |tail| {
+                regularized_beta(beta, alpha, tail)
+            })
+        }
     }
 }
 
