@@ -454,7 +454,14 @@ where
             .blocks
             .parameter_slice_of::<P>()
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
-        Ok(BlockObjective::new(self, full_beta, range))
+        BlockObjective::try_new(
+            self,
+            full_beta,
+            ParameterSlice {
+                name: P::NAME,
+                range,
+            },
+        )
     }
 
     /// Unpacks a flat optimizer-parameter vector into named coefficient blocks.
@@ -1011,7 +1018,14 @@ where
             .blocks
             .parameter_slice_of::<P>()
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
-        Ok(BlockObjective::new(self, full_beta, range))
+        BlockObjective::try_new(
+            self,
+            full_beta,
+            ParameterSlice {
+                name: P::NAME,
+                range,
+            },
+        )
     }
 
     /// Computes training diagnostics using caller-provided objective-gradient storage.

@@ -153,6 +153,21 @@ pub enum ModelError {
         len: usize,
     },
 
+    /// Parameter block coefficient range is outside the model vector.
+    #[error(
+        "{parameter} parameter block range {start}..{end} is out of bounds for dimension {dim}"
+    )]
+    BlockRangeOutOfBounds {
+        /// Parameter name.
+        parameter: &'static str,
+        /// Start of the requested range.
+        start: usize,
+        /// End of the requested range.
+        end: usize,
+        /// Full coefficient dimension.
+        dim: usize,
+    },
+
     /// Model does not contain a parameter block with the given name.
     ///
     /// Raised when attempting to create a `BlockObjective` for a parameter
