@@ -19,7 +19,7 @@ authors = ["hexqnt <hexqntlab@gmail.com>"]
 repository = "https://github.com/hexqnt/gamlss"
 documentation = "https://docs.rs/gamlss"
 readme = "README.md"
-keywords = ["gamlss"]
+keywords = ["gamlss", "statistics", "regression", "distributional"]
 categories = ["algorithms", "mathematics", "science"]
 
 [workspace.dependencies]
