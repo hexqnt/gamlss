@@ -25,6 +25,13 @@ impl Penalty for SegmentPenaltyKind {
             Self::Cyclic(penalty) => penalty.add_gradient(beta, grad),
         }
     }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        match self {
+            Self::Difference(penalty) => penalty.validate_dim(dim),
+            Self::Cyclic(penalty) => penalty.validate_dim(dim),
+        }
+    }
 }
 
 /// Formula-local segment penalty representation.
@@ -93,6 +100,13 @@ impl Penalty for FormulaPenalty {
         for segment in &self.spline_segments {
             segment.add_gradient(beta, grad);
         }
+    }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        for segment in &self.spline_segments {
+            segment.validate_dim(dim)?;
+        }
+        Ok(())
     }
 }
 

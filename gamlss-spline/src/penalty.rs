@@ -2,6 +2,8 @@ use gamlss_core::{MatrixPenalty, ModelError, Penalty};
 
 const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
 const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
+const EXPECTED_DIFFERENCE_ORDER_FOR_DIM: &str = "> 0 and < dimension";
+const EXPECTED_DIFFERENCE_COEFFICIENTS: &str = "consistent with difference penalty order";
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,9 +28,11 @@ impl DifferencePenalty {
         Self { lambda, order }
     }
 
-    /// Creates a difference penalty with validated parameters.
+    /// Creates a difference penalty with validated scalar parameters.
     ///
     /// Uses the same normalized scale convention as [`Self::new_unchecked`].
+    /// The block-size invariant `order < dim` is checked by
+    /// [`Penalty::validate_dim`] during model validation.
     ///
     /// # Errors
     ///
@@ -68,6 +72,10 @@ impl Penalty for DifferencePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let coefficients = self.coefficients();
         add_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        validate_difference_penalty_for_dim(self.lambda, self.order, dim)
     }
 }
 
@@ -109,9 +117,11 @@ impl PreparedDifferencePenalty {
         }
     }
 
-    /// Creates a prepared difference penalty with validated parameters.
+    /// Creates a prepared difference penalty with validated scalar parameters.
     ///
     /// Uses the same normalized scale convention as [`Self::new_unchecked`].
+    /// The block-size invariant `order < dim` is checked by
+    /// [`Penalty::validate_dim`] during model validation.
     ///
     /// # Errors
     ///
@@ -163,6 +173,15 @@ impl Penalty for PreparedDifferencePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         add_difference_penalty_gradient(self.lambda, &self.coefficients, beta, grad);
     }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        validate_prepared_difference_penalty_for_dim(
+            self.lambda,
+            self.order,
+            &self.coefficients,
+            dim,
+        )
+    }
 }
 
 impl MatrixPenalty for PreparedDifferencePenalty {
@@ -199,9 +218,11 @@ impl CyclicDifferencePenalty {
         Self { lambda, order }
     }
 
-    /// Creates a cyclic difference penalty with validated parameters.
+    /// Creates a cyclic difference penalty with validated scalar parameters.
     ///
     /// Uses the same normalized scale convention as [`Self::new_unchecked`].
+    /// The block-size invariant `order < dim` is checked by
+    /// [`Penalty::validate_dim`] during model validation.
     ///
     /// # Errors
     ///
@@ -241,6 +262,10 @@ impl Penalty for CyclicDifferencePenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         let coefficients = self.coefficients();
         add_cyclic_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
+    }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        validate_difference_penalty_for_dim(self.lambda, self.order, dim)
     }
 }
 
@@ -283,9 +308,12 @@ impl PreparedCyclicDifferencePenalty {
         }
     }
 
-    /// Creates a prepared cyclic difference penalty with validated parameters.
+    /// Creates a prepared cyclic difference penalty with validated scalar
+    /// parameters.
     ///
     /// Uses the same normalized scale convention as [`Self::new_unchecked`].
+    /// The block-size invariant `order < dim` is checked by
+    /// [`Penalty::validate_dim`] during model validation.
     ///
     /// # Errors
     ///
@@ -336,6 +364,15 @@ impl Penalty for PreparedCyclicDifferencePenalty {
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         add_cyclic_difference_penalty_gradient(self.lambda, &self.coefficients, beta, grad);
+    }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        validate_prepared_difference_penalty_for_dim(
+            self.lambda,
+            self.order,
+            &self.coefficients,
+            dim,
+        )
     }
 }
 
@@ -416,6 +453,10 @@ impl Penalty for EdgeMonotonicPenalty {
             grad[prev] += d;
             grad[last] -= d;
         }
+    }
+
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        validate_positive_finite("penalty weight", self.weight)
     }
 }
 
@@ -522,6 +563,13 @@ impl Penalty for SlopeLimitPenalty {
         let mut value = 0.0;
         add_slope_limit_value(beta, self, true, &mut value, Some(&mut *grad));
         add_slope_limit_value(beta, self, false, &mut value, Some(&mut *grad));
+    }
+
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        validate_positive_finite("penalty weight", self.weight)?;
+        validate_positive_finite("penalty scale", self.scale)?;
+        validate_limit("cold penalty limit", self.cold_limit)?;
+        validate_limit("warm penalty limit", self.warm_limit)
     }
 }
 
@@ -805,6 +853,45 @@ fn validated_difference_coefficients(lambda: f64, order: usize) -> Result<Vec<f6
     try_difference_coefficients(order)
 }
 
+fn validate_difference_penalty_for_dim(
+    lambda: f64,
+    order: usize,
+    dim: usize,
+) -> Result<(), ModelError> {
+    validate_difference_lambda(lambda)?;
+    validate_difference_order(order)?;
+    validate_difference_order_for_dim(order, dim)
+}
+
+fn validate_prepared_difference_penalty_for_dim(
+    lambda: f64,
+    order: usize,
+    coefficients: &[f64],
+    dim: usize,
+) -> Result<(), ModelError> {
+    validate_difference_penalty_for_dim(lambda, order, dim)?;
+    let expected = try_difference_coefficients(order)?;
+    if coefficients == expected {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter: "difference penalty coefficients",
+            expected: EXPECTED_DIFFERENCE_COEFFICIENTS,
+        })
+    }
+}
+
+const fn validate_difference_order_for_dim(order: usize, dim: usize) -> Result<(), ModelError> {
+    if order < dim {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter: "difference penalty order",
+            expected: EXPECTED_DIFFERENCE_ORDER_FOR_DIM,
+        })
+    }
+}
+
 /// Finite-difference coefficients of the given order.
 ///
 /// Returns alternating-sign binomial coefficients:
@@ -844,4 +931,103 @@ fn checked_binomial(n: usize, k: usize) -> Result<usize, ModelError> {
     usize::try_from(coefficient).map_err(|_| ModelError::ArithmeticOverflow {
         context: "difference penalty coefficients",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use gamlss_core::{ModelError, Penalty};
+
+    use super::{
+        CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+    };
+
+    fn invalid_parameter(parameter: &'static str, expected: &'static str) -> ModelError {
+        ModelError::InvalidParameter {
+            parameter,
+            expected,
+        }
+    }
+
+    #[test]
+    fn difference_penalty_validation_rejects_invalid_unchecked_parameters() {
+        assert_eq!(
+            DifferencePenalty::new_unchecked(f64::NAN, 1)
+                .validate_dim(3)
+                .unwrap_err(),
+            invalid_parameter("penalty lambda", "finite and >= 0")
+        );
+        assert_eq!(
+            DifferencePenalty::new_unchecked(1.0, 0)
+                .validate_dim(3)
+                .unwrap_err(),
+            invalid_parameter("difference penalty order", "> 0")
+        );
+        assert_eq!(
+            DifferencePenalty::new_unchecked(1.0, 3)
+                .validate_dim(3)
+                .unwrap_err(),
+            invalid_parameter("difference penalty order", "> 0 and < dimension")
+        );
+    }
+
+    #[test]
+    fn cyclic_difference_penalty_validation_rejects_order_too_high() {
+        assert_eq!(
+            CyclicDifferencePenalty::new_unchecked(1.0, 2)
+                .validate_dim(2)
+                .unwrap_err(),
+            invalid_parameter("difference penalty order", "> 0 and < dimension")
+        );
+    }
+
+    #[test]
+    fn prepared_difference_penalty_validation_checks_cached_coefficients() {
+        let invalid = PreparedDifferencePenalty {
+            lambda: 1.0,
+            order: 2,
+            coefficients: vec![1.0, -1.0],
+        };
+
+        assert_eq!(
+            invalid.validate_dim(4).unwrap_err(),
+            invalid_parameter(
+                "difference penalty coefficients",
+                "consistent with difference penalty order",
+            )
+        );
+    }
+
+    #[test]
+    fn prepared_cyclic_difference_penalty_validation_checks_cached_coefficients() {
+        let invalid = PreparedCyclicDifferencePenalty {
+            lambda: 1.0,
+            order: 1,
+            coefficients: vec![1.0, 1.0],
+        };
+
+        assert_eq!(
+            invalid.validate_dim(3).unwrap_err(),
+            invalid_parameter(
+                "difference penalty coefficients",
+                "consistent with difference penalty order",
+            )
+        );
+    }
+
+    #[test]
+    fn edge_and_slope_penalty_validation_reject_unchecked_invalid_scalars() {
+        assert_eq!(
+            EdgeMonotonicPenalty::new(f64::NAN)
+                .validate_dim(3)
+                .unwrap_err(),
+            invalid_parameter("penalty weight", "finite and > 0")
+        );
+        assert_eq!(
+            SlopeLimitPenalty::new(1.0, f64::INFINITY, Some(0.0), None)
+                .validate_dim(3)
+                .unwrap_err(),
+            invalid_parameter("penalty scale", "finite and > 0")
+        );
+    }
 }

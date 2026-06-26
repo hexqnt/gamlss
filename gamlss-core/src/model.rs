@@ -1454,6 +1454,7 @@ macro_rules! impl_gamlss_blocks {
                         PredictorBlock::nrows(self.$idx.x()),
                         y_len,
                     )?;
+                    self.$idx.penalty().validate_dim(self.$idx.len())?;
                 )+
 
                 let ranges = [$((
@@ -2629,6 +2630,25 @@ mod tests {
                 parameter: "mu",
                 offset: usize::MAX,
                 len: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn blocks_validate_rejects_invalid_local_penalty() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+            x,
+            RidgePenalty::new_unchecked(f64::NAN),
+            0,
+        );
+
+        assert_eq!(
+            Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "ridge penalty lambda",
+                expected: "finite and >= 0",
             }
         );
     }

@@ -18,6 +18,11 @@ impl Penalty for NoPenalty {
 
     #[inline]
     fn add_gradient(&self, _: &[f64], _: &mut [f64]) {}
+
+    #[inline]
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        Ok(())
+    }
 }
 
 impl GlobalPenalty for NoPenalty {
@@ -88,6 +93,11 @@ impl Penalty for RidgePenalty {
         for (grad_value, beta_value) in grad.iter_mut().zip(beta) {
             *grad_value = scale.mul_add(*beta_value, *grad_value);
         }
+    }
+
+    #[inline]
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        validate_nonnegative_finite("ridge penalty lambda", self.lambda)
     }
 }
 
@@ -173,6 +183,12 @@ where
         let end = self.range.end;
         self.penalty
             .add_gradient(&beta[start..end], &mut grad[start..end]);
+    }
+
+    #[inline]
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        validate_penalty_range(&self.range, dim)?;
+        self.penalty.validate_dim(self.range.len())
     }
 }
 
@@ -750,6 +766,20 @@ pub trait Penalty {
     /// Implementations must add into `grad` and must not clear it, because the
     /// likelihood gradient may already be present in the same buffer.
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]);
+    /// Validates all penalty invariants for a local coefficient block of `dim`.
+    ///
+    /// Implementations with construction-time invariants or indexed/ranged
+    /// access should override this method so checked model construction can
+    /// reject invalid local penalties before objective evaluation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an implementation-specific error when an invariant is violated
+    /// or the penalty cannot be evaluated on a local coefficient block of
+    /// length `dim`.
+    fn validate_dim(&self, _dim: usize) -> Result<(), ModelError> {
+        Ok(())
+    }
 }
 
 /// Penalty evaluated on the full model parameter vector.
@@ -890,6 +920,12 @@ macro_rules! impl_penalty_tuple {
             fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
                 $(self.$idx.add_gradient(beta, grad);)+
             }
+
+            #[inline]
+            fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+                $(self.$idx.validate_dim(dim)?;)+
+                Ok(())
+            }
         }
     };
 }
@@ -972,6 +1008,35 @@ mod tests {
     }
 
     #[test]
+    fn ridge_penalty_validation_rejects_unchecked_invalid_lambda() {
+        assert_eq!(
+            RidgePenalty::new_unchecked(f64::NAN)
+                .validate_dim(1)
+                .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "ridge penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+    }
+
+    #[test]
+    fn penalty_tuple_validates_each_penalty() {
+        let penalties = (
+            RidgePenalty::new_unchecked(1.0),
+            RidgePenalty::new_unchecked(f64::INFINITY),
+        );
+
+        assert_eq!(
+            penalties.validate_dim(2).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "ridge penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+    }
+
+    #[test]
     fn segment_penalty_applies_value_to_selected_range() {
         let penalty = SegmentPenalty::new(1..4, RidgePenalty::new_unchecked(2.0));
         let beta = [10.0, 1.0, -2.0, 3.0, 20.0];
@@ -1006,6 +1071,28 @@ mod tests {
                 start: 1,
                 end: 5,
                 dim: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn segment_penalty_validation_checks_range_and_inner_penalty() {
+        let invalid_range = SegmentPenalty::new(100..200, RidgePenalty::new_unchecked(1.0));
+        assert_eq!(
+            invalid_range.validate_dim(3).unwrap_err(),
+            ModelError::PenaltyRangeOutOfBounds {
+                start: 100,
+                end: 200,
+                dim: 3,
+            }
+        );
+
+        let invalid_inner = SegmentPenalty::new(0..2, RidgePenalty::new_unchecked(f64::NAN));
+        assert_eq!(
+            invalid_inner.validate_dim(3).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "ridge penalty lambda",
+                expected: "finite and >= 0",
             }
         );
     }
