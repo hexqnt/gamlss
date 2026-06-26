@@ -47,6 +47,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::INFINITY;
@@ -59,6 +60,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn gradient_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> (f64, f64) {
         let log_ratio = y.ln() - theta.scale.ln();
         let power = (theta.shape * log_ratio).exp();
@@ -91,6 +93,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops, clippy::imprecise_flops)]
     fn crps_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::NAN;
@@ -259,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn weibull_rejects_invalid_domains_and_handles_boundaries() {
         let family = WeibullMeanShape::new();
         let theta = WeibullMeanShapeTheta {

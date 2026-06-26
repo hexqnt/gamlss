@@ -38,6 +38,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub(super) fn nll_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
         if !is_nonnegative_integer(y)
             || theta.mu <= 0.0
@@ -87,6 +88,7 @@ where
         )
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn cdf_by_recurrence(
         shape: f64,
         failure_probability: f64,
@@ -106,6 +108,7 @@ where
         sum.clamp(0.0, 1.0)
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn cdf_by_log_sum(
         shape: f64,
         success_probability: f64,
@@ -177,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn negative_binomial_mean_dispersion_matches_mean_size_equivalent() {
         let mean_size = NegativeBinomialMeanSize::new();
         let mean_dispersion = NegativeBinomialMeanDispersion::new();
@@ -228,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     fn negative_binomial_cdf_matches_reference_points() {
         let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
@@ -276,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     fn negative_binomial_quantile_matches_statrs_reference() {
         let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {

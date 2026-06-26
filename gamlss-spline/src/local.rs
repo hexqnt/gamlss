@@ -23,6 +23,7 @@ impl LocalBasis {
     }
 
     /// Dot product of the basis with coefficients.
+    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn dot(self, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.for_each(|index, weight| {
@@ -33,6 +34,7 @@ impl LocalBasis {
 
     /// Adds `scale * weights[i]` into `out[indices[i]]` for each non-zero
     /// element of the basis.
+    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn add_scaled(self, scale: f64, out: &mut [f64]) {
         self.for_each(|index, weight| {
             out[index] += scale * weight;
@@ -95,6 +97,11 @@ pub fn open_uniform_local_basis(
 /// Computes the local basis of a cyclic spline for phase `phi`.
 ///
 /// `phi` is reduced to `[0, 1)` via `rem_euclid`.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
     let x = phi.rem_euclid(1.0) * n_basis as f64;
     let cell = x.floor() as usize;
@@ -121,6 +128,7 @@ pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> Local
 ///
 /// Uses the first/last two control coefficients to continue the spline beyond
 /// `[0, 1)` while preserving continuity.
+#[allow(clippy::cast_precision_loss)]
 fn edge_extrapolation_basis(
     offset: f64,
     degree: usize,
@@ -205,6 +213,7 @@ fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -
 ///
 /// Knots are uniformly distributed between 0 and 1 with repeated boundary
 /// knots.
+#[allow(clippy::cast_precision_loss)]
 fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
     if index <= degree {
         0.0
@@ -216,6 +225,7 @@ fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
 }
 
 /// Local spline weights (linear, quadratic, cubic) for parameter `u`.
+#[allow(clippy::suboptimal_flops)]
 fn spline_weights(order: SplineOrder, u: f64) -> [f64; 4] {
     match order {
         SplineOrder::Linear => [1.0 - u, u, 0.0, 0.0],

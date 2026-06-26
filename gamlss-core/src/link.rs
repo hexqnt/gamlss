@@ -129,6 +129,7 @@ pub struct LogPlus<const OFFSET: i64>;
 
 impl<const OFFSET: i64> Link<f64> for LogPlus<OFFSET> {
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn inverse(eta: f64) -> f64 {
         OFFSET as f64 + eta.exp()
     }
@@ -141,6 +142,7 @@ impl<const OFFSET: i64> Link<f64> for LogPlus<OFFSET> {
 
 impl<const OFFSET: i64> InitialEtaFromTheta<f64> for LogPlus<OFFSET> {
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         (theta - OFFSET as f64).max(INITIAL_POSITIVE_FLOOR).ln()
     }
@@ -155,6 +157,7 @@ pub struct ClampedLog<const MIN: i64, const MAX: i64>;
 
 impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn inverse(eta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;
@@ -170,6 +173,7 @@ impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
     }
 
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn derivative_inverse(eta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;
@@ -187,6 +191,7 @@ impl<const MIN: i64, const MAX: i64> PositiveLink<f64> for ClampedLog<MIN, MAX> 
 
 impl<const MIN: i64, const MAX: i64> InitialEtaFromTheta<f64> for ClampedLog<MIN, MAX> {
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;
@@ -240,6 +245,7 @@ mod tests {
     use crate::{ClampedLog, InitialEtaFromTheta, Link, Log, LogPlus, Logit, Softplus};
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn clamped_log_clamps_value_and_derivative() {
         type LinkUnderTest = ClampedLog<-2, 2>;
 
@@ -253,6 +259,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::items_after_statements)]
     fn initial_eta_from_theta_guards_link_boundaries() {
         assert!(Log::initial_eta_from_theta(0.0).is_finite());
         assert!(Softplus::initial_eta_from_theta(1.0e-300).is_finite());

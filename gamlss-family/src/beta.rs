@@ -54,6 +54,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: BetaTheta) -> f64 {
         if y <= 0.0
             || y >= 1.0
@@ -76,6 +77,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: BetaEta) -> (f64, BetaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -390,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn beta_cdf_and_quantile_handle_boundaries_and_invalid_domains() {
         let family = BetaMeanPrecision::new();
         let theta = BetaTheta {

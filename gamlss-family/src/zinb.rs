@@ -46,6 +46,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nb_log_pmf(y: f64, mu: f64, shape: f64) -> f64 {
         ln_gamma(y + shape) - ln_gamma(shape) - ln_gamma(y + 1.0)
             + shape * (shape / (shape + mu)).ln()

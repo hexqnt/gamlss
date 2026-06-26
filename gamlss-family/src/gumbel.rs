@@ -176,6 +176,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;

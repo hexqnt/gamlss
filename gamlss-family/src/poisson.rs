@@ -48,6 +48,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: PoissonTheta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::INFINITY;
@@ -92,6 +93,7 @@ where
         Self::cdf_by_log_sum(theta.mu, max_count)
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn cdf_by_recurrence(mu: f64, max_count: u64, mut term: f64) -> f64 {
         let mut sum = term;
         for count in 1..=max_count {
@@ -105,6 +107,7 @@ where
         sum.clamp(0.0, 1.0)
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn cdf_by_log_sum(mu: f64, max_count: u64) -> f64 {
         let log_mu = mu.ln();
         let mut log_sum = f64::NEG_INFINITY;
@@ -118,6 +121,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn pmf_theta(y: f64, theta: PoissonTheta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
@@ -139,6 +143,7 @@ where
         Self::scaled_bessel_i0_plus_i1_asymptotic(2.0 * mu)
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn scaled_bessel_i0_plus_i1_by_series(mu: f64) -> f64 {
         let mu2 = mu * mu;
         let scale = (-2.0 * mu).exp();
@@ -168,6 +173,7 @@ where
         i0_sum + i1_sum
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn scaled_bessel_i0_plus_i1_asymptotic(x: f64) -> f64 {
         let inv = 1.0 / (8.0 * x);
         let inv2 = inv * inv;
@@ -254,6 +260,7 @@ impl<MuLink> HasQuantile for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
+    #[allow(clippy::cast_precision_loss)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
@@ -269,6 +276,7 @@ impl<MuLink> HasCrps for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
@@ -363,6 +371,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::float_cmp,
+        clippy::suboptimal_flops,
+        clippy::cast_precision_loss
+    )]
     fn poisson_cdf_matches_reference_points() {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
@@ -388,6 +401,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     fn poisson_quantile_matches_statrs_reference() {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
@@ -449,6 +463,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss)]
     fn poisson_crps_returns_nan_for_invalid_domains() {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
@@ -471,6 +486,7 @@ mod tests {
         assert!(family.crps(1000.0, PoissonTheta { mu: 1000.0 }) >= 0.0);
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn poisson_crps_by_truncated_expectations(y: u64, mu: f64) -> f64 {
         let mut term = (-mu).exp();
         let mut cdf = term;

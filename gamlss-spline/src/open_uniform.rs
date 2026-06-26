@@ -53,6 +53,7 @@ impl OpenUniformSplineBasis {
     ///
     /// Returns an error if the boundaries are not finite, `min >= max`, or
     /// `n_basis` is insufficient for `order`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn new(
         min: f64,
         max: f64,

@@ -42,6 +42,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: GevTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -68,6 +69,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn gumbel_limit_nu_score(z: f64, exp_neg_z: f64) -> f64 {
         z + 0.5 * z * z * (exp_neg_z - 1.0)
     }
@@ -222,6 +224,7 @@ where
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
+    #[allow(clippy::float_cmp)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&p)
             || !theta.mu.is_finite()

@@ -218,6 +218,7 @@ impl DesignMatrix for DenseDesign {
             return false;
         }
 
+        #[allow(clippy::float_cmp)]
         let has_intercept = (0..self.nrows).all(|row| {
             let first_value = self.values[row * self.ncols];
             first_value == 1.0
@@ -289,6 +290,15 @@ impl DesignMatrix for DenseDesign {
             &UnitRowMultiplier,
             out,
         );
+    }
+}
+
+struct UnitRowMultiplier;
+
+impl RowMultiplier for UnitRowMultiplier {
+    #[inline]
+    fn multiplier_at(&self, _: usize) -> f64 {
+        1.0
     }
 }
 
@@ -413,15 +423,6 @@ impl RowMultiplier for [f64] {
     #[inline]
     fn multiplier_at(&self, row: usize) -> f64 {
         self[row]
-    }
-}
-
-struct UnitRowMultiplier;
-
-impl RowMultiplier for UnitRowMultiplier {
-    #[inline]
-    fn multiplier_at(&self, _: usize) -> f64 {
-        1.0
     }
 }
 

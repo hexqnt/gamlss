@@ -64,6 +64,7 @@ fn nll_gradient_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> SkewNorm
         return SkewNormalGradient::nan();
     }
 
+    #[allow(clippy::suboptimal_flops)]
     SkewNormalGradient {
         mu: (nu * mills - z) / sigma,
         sigma: (1.0 - z * z + nu * z * mills) / sigma,
@@ -72,6 +73,7 @@ fn nll_gradient_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> SkewNorm
 }
 
 #[inline]
+#[allow(clippy::suboptimal_flops)]
 fn standard_cdf(z: f64, nu: f64) -> f64 {
     (unit_normal_cdf(z) - 2.0 * owens_t(z, nu)).clamp(0.0, 1.0)
 }
@@ -93,6 +95,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     if p == 0.0 {
         return f64::NEG_INFINITY;
     }
+    #[allow(clippy::float_cmp)]
     if p == 1.0 {
         return f64::INFINITY;
     }

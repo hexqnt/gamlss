@@ -115,6 +115,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn difference_penalty_try_new_validates_inputs() {
         let penalty = DifferencePenalty::try_new(0.0, 1).unwrap();
         assert_eq!(penalty.lambda(), 0.0);
@@ -160,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn preparing_difference_penalty_revalidates_source() {
         let prepared =
             PreparedDifferencePenalty::try_from(DifferencePenalty::new_unchecked(0.5, 2)).unwrap();
@@ -271,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss)]
     fn periodic_spline_design_is_equal_at_periodic_coordinates() {
         let spec = PeriodicSplineSpec::new(8, SplineOrder::Cubic, 1.0, 0.0).unwrap();
         let design = spec.design(&[-0.25, 0.0, 0.75, 1.0, 1.75]).unwrap();
@@ -296,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::suboptimal_flops)]
     fn fourier_design_evaluates_harmonics_without_materialized_matrix() {
         let design = FourierDesign::new(&[0.0, 0.25, 0.5, 1.25], 1.0, 2, true).unwrap();
         let beta = [0.5, 1.0, 2.0, -0.25, 0.75];
@@ -327,6 +331,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::suboptimal_flops)]
     fn fourier_design_without_intercept_uses_two_coefficients_per_harmonic() {
         let design = FourierDesign::new(&[1.0], 4.0, 1, false).unwrap();
         let beta = [2.0, 3.0];
@@ -621,6 +626,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn cyclic_difference_penalty_try_new_validates_inputs() {
         let penalty = CyclicDifferencePenalty::try_new(0.5, 2).unwrap();
         assert_eq!(penalty.lambda(), 0.5);
@@ -659,6 +665,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn preparing_cyclic_difference_penalty_revalidates_source() {
         let prepared = PreparedCyclicDifferencePenalty::try_from(
             CyclicDifferencePenalty::new_unchecked(0.5, 2),
@@ -688,6 +695,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn edge_monotonic_penalty_try_new_validates_weight() {
         assert_eq!(EdgeMonotonicPenalty::try_new(2.0).unwrap().weight(), 2.0);
         assert_eq!(
@@ -707,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn slope_limit_penalty_try_new_validates_inputs() {
         let penalty = SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), None).unwrap();
         assert_eq!(penalty.weight(), 5.0);
@@ -737,6 +746,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn slope_limit_penalty_ignores_invalid_inputs() {
         let cases = [
             SlopeLimitPenalty::new(f64::NAN, 2.0, Some(0.4), Some(0.3)),
@@ -952,6 +962,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn tensor_spline_matches_rowwise_kronecker_and_gradient() {
         let x = [0.0, 0.3, 0.8];
         let left =

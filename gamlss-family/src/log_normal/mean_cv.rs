@@ -73,6 +73,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: LogNormalMeanCvEta) -> (f64, LogNormalMeanCvEta) {
         let theta = Self::theta_from_eta(eta);
         let canonical = theta.log_location_log_sd();

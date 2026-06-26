@@ -50,6 +50,7 @@ pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 
     student_t_constant(nu) + theta.sigma.ln() + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
 }
 
+#[allow(clippy::suboptimal_flops)]
 pub(super) fn student_t_nll_gradient_theta(
     nu: f64,
     y: f64,
@@ -97,6 +98,7 @@ pub(super) fn student_t_standard_cdf(nu: f64, t: f64) -> f64 {
     }
 }
 
+#[allow(clippy::float_cmp)]
 pub(super) fn student_t_standard_quantile(nu: f64, p: f64) -> f64 {
     if p < 0.0 || !p.is_finite() || p > 1.0 || nu <= 0.0 || !nu.is_finite() {
         return f64::NAN;
@@ -122,6 +124,7 @@ fn student_t_standard_density(nu: f64, t: f64) -> f64 {
     (-student_t_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()).exp()
 }
 
+#[allow(clippy::suboptimal_flops)]
 fn student_t_standard_crps_constant(nu: f64) -> f64 {
     let log_beta_half_nu_minus_half = ln_beta(0.5, nu - 0.5);
     let log_beta_half_nu_half = ln_beta(0.5, 0.5 * nu);
@@ -129,6 +132,7 @@ fn student_t_standard_crps_constant(nu: f64) -> f64 {
     2.0 * nu.sqrt() / (nu - 1.0) * (log_beta_half_nu_minus_half - 2.0 * log_beta_half_nu_half).exp()
 }
 
+#[allow(clippy::suboptimal_flops)]
 pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
     let z = (y - theta.mu) / theta.sigma;
     let cdf = student_t_standard_cdf(nu, z);
@@ -259,6 +263,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn student_t_quantile_inverts_cdf() {
         let family = StudentTMuSigma::try_new(5.0).unwrap();
         let theta = StudentTTheta {

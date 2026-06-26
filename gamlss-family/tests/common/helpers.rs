@@ -1,5 +1,11 @@
 #![allow(dead_code)]
-
+#![allow(
+    clippy::float_cmp,
+    clippy::suboptimal_flops,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 use gamlss_core::{Family, HasCdf, HasDensity, HasQuantile, ParameterParts};
 use gamlss_family::NegativeBinomialTheta;
 use proptest::prelude::*;
@@ -24,6 +30,7 @@ pub const TAIL_PROBABILITIES: [f64; 6] = [
     1.0 - 1.0e-12,
 ];
 
+#[derive(Copy, Clone)]
 pub struct ContinuousReferenceTolerances {
     pub cdf_abs: f64,
     pub density_rel: f64,

@@ -284,6 +284,7 @@ mod initializer_tests {
         ZagaMeanSigmaZeroProbability, ZinbMeanSizeZeroProbability, ZipMeanZeroProbability,
     };
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_finite_initial_eta<F, const K: usize>(family: F, data: &[f64], probe: f64)
     where
         F: for<'obs> Family<Observation<'obs> = f64> + ParameterizedFamily<K>,

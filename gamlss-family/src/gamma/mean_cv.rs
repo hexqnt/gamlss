@@ -75,6 +75,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanCvEta) -> (f64, GammaMeanCvEta) {
         let theta = Self::theta_from_eta(eta);
         let shape_rate = theta.shape_rate();

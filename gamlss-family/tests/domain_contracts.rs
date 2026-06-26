@@ -1,3 +1,4 @@
+#![allow(clippy::float_cmp)]
 use gamlss_core::{Family, HasCdf, HasQuantile};
 use gamlss_family::*;
 

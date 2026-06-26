@@ -85,6 +85,7 @@ impl MonotoneISplineDesign {
             .sum()
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;

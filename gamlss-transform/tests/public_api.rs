@@ -1,3 +1,4 @@
+#![allow(clippy::float_cmp)]
 use approx::assert_relative_eq;
 use gamlss_transform::{
     Log1pShift, Standardize, TargetTransform, TransformError,

@@ -51,6 +51,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: JohnsonSuTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -163,6 +164,7 @@ where
     NuLink: Link<f64>,
     TauLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -187,6 +189,7 @@ where
     NuLink: Link<f64>,
     TauLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if theta.sigma <= 0.0
             || !theta.sigma.is_finite()

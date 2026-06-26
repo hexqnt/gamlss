@@ -49,6 +49,7 @@ impl TruncatedPowerBasis {
     ///
     /// Returns an error if `x` is empty, contains non-finite values, has a
     /// degenerate range, or if the coefficient count overflows `usize`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn uniform_from_data(
         x: &[f64],
         n_knots: usize,
@@ -149,6 +150,7 @@ impl TruncatedPowerBasis {
 
     /// Visits non-zero basis-function values at `x` without allocating.
     #[inline]
+    #[allow(clippy::useless_let_if_seq)]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -195,6 +197,7 @@ impl TruncatedPowerBasis {
 
     /// Visits non-zero first derivatives at `x` without allocating.
     #[inline]
+    #[allow(clippy::cast_precision_loss, clippy::useless_let_if_seq)]
     pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -267,6 +270,7 @@ impl TruncatedPowerDesign {
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -310,6 +314,7 @@ impl PredictorBlock for TruncatedPowerDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -322,6 +327,7 @@ impl PredictorBlock for TruncatedPowerDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());

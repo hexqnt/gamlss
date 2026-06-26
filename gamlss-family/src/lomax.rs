@@ -47,6 +47,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: LomaxTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -56,6 +57,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: LomaxEta) -> (f64, LomaxEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -130,6 +132,7 @@ where
     type Params = (Shape, Scale);
     type Links = (ShapeLink, ScaleLink);
 
+    #[allow(clippy::suboptimal_flops)]
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -283,6 +286,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::suboptimal_flops, clippy::imprecise_flops)]
     fn lomax_cdf_matches_reference_points() {
         let family = LomaxShapeScale::new();
         let theta = LomaxTheta {

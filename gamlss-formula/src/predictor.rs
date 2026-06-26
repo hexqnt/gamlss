@@ -64,6 +64,8 @@ impl FormulaPredictorBlock {
         for (row, score) in scores.iter().copied().enumerate() {
             let score = multiplier.map_or(score, |multiplier| score * multiplier[row]);
             grad[0] += score;
+
+            #[allow(clippy::suboptimal_flops)]
             for (index, basis) in segment
                 .basis
                 .evaluate(segment.values[row])

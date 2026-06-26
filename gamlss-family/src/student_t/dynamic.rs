@@ -209,6 +209,7 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if !valid_dynamic_theta(theta) {
             return f64::NAN;

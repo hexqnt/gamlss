@@ -48,11 +48,13 @@ where
     }
 
     #[inline]
+    #[allow(clippy::float_cmp)]
     fn valid_binary(y: f64) -> bool {
         y == 0.0 || y == 1.0
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: BernoulliTheta) -> f64 {
         if !Self::valid_binary(y) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
             return f64::INFINITY;
@@ -130,12 +132,15 @@ where
     {
         let mut success_weight = 0.0;
         let mut total_weight = 0.0;
+
+        #[allow(clippy::suboptimal_flops)]
         for row in 0..obs.len() {
             let weight = obs.weight_at(row);
             let y = obs.observation_at(row);
             if weight <= 0.0 || !weight.is_finite() || !Self::valid_binary(y) {
                 continue;
             }
+
             success_weight += weight * y;
             total_weight += weight;
         }
@@ -275,6 +280,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_cdf_matches_reference_points() {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
@@ -287,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_quantile_matches_generalized_inverse_cdf() {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
@@ -328,6 +335,7 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_sampling_returns_binary_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 

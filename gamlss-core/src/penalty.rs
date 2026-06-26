@@ -93,6 +93,7 @@ impl Penalty for RidgePenalty {
 
 impl MatrixPenalty for RidgePenalty {
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
         debug_assert_matrix_shape(dim, gram);
 
@@ -341,6 +342,7 @@ impl LinearForm {
     /// Panics if a term index is out of bounds for `beta`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn value(&self, beta: &[f64]) -> f64 {
         self.terms.iter().fold(self.constant, |sum, term| {
             sum + term.weight * beta[term.index]
@@ -348,6 +350,7 @@ impl LinearForm {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_scaled_gradient(&self, scale: f64, grad: &mut [f64]) {
         for term in &self.terms {
             grad[term.index] += scale * term.weight;
@@ -1226,6 +1229,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn hinge_quadratic_penalty_try_new_validates_weight_and_dim() {
         assert!(
             HingeQuadraticPenalty::try_new(
@@ -1276,6 +1280,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn hinge_quadratic_penalty_ignores_nonpositive_side_and_invalid_weight() {
         let inactive =
             HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -2.0), 3.0);
@@ -1322,6 +1327,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn absolute_limit_penalty_try_new_validates_inputs_and_dim() {
         assert!(
             AbsoluteLimitPenalty::try_new(
@@ -1384,6 +1390,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn absolute_limit_penalty_ignores_inactive_and_invalid_inputs() {
         let inactive = AbsoluteLimitPenalty::new(
             LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
@@ -1470,6 +1477,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn ridge_penalty_try_new_validates_lambda() {
         let penalty = RidgePenalty::try_new(0.0).unwrap();
         assert_eq!(penalty.lambda(), 0.0);
@@ -1490,6 +1498,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn ridge_penalty_matrix_adds_curvature_to_diagonal() {
         let penalty = RidgePenalty::new_unchecked(3.0);
         // 3x3 Gram matrix: [[1,2,3], [4,5,6], [7,8,9]]

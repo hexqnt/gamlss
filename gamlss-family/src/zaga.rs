@@ -49,6 +49,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn gamma_nll(y: f64, shape: f64, rate: f64) -> f64 {
         ln_gamma(shape) - shape * rate.ln() - (shape - 1.0) * y.ln() + rate * y
     }
@@ -87,6 +88,8 @@ where
         let (shape, rate) = Self::gamma_shape_rate(theta);
         let d_shape = digamma(shape) - rate.ln() - y.ln();
         let d_rate = y - shape / rate;
+
+        #[allow(clippy::suboptimal_flops)]
         ZagaTheta {
             mu: d_rate * (-rate / theta.mu),
             sigma: d_shape * (-2.0 * shape / theta.sigma) + d_rate * (-2.0 * rate / theta.sigma),
@@ -94,6 +97,7 @@ where
         }
     }
 
+    #[allow(clippy::suboptimal_flops)]
     pub(super) fn cdf_theta(y: f64, theta: ZagaTheta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0

@@ -243,6 +243,7 @@ where
             return f64::NAN;
         }
 
+        #[allow(clippy::cast_precision_loss)]
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Zinb::<Log, Log, Logit>::cdf_theta(count as f64, theta)
         })

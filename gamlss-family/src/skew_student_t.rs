@@ -28,6 +28,7 @@ fn valid_location_scale(mu: f64, sigma: f64, nu: f64, tau: f64) -> bool {
 }
 
 #[inline]
+#[allow(clippy::suboptimal_flops)]
 fn skew_argument(z: f64, nu: f64, tau: f64) -> f64 {
     nu * z * ((tau + 1.0) / (tau + z * z)).sqrt()
 }
@@ -82,6 +83,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
     if p == 0.0 {
         return f64::NEG_INFINITY;
     }
+    #[allow(clippy::float_cmp)]
     if p == 1.0 {
         return f64::INFINITY;
     }
@@ -95,6 +97,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
 }
 
 #[inline]
+#[allow(clippy::suboptimal_flops)]
 fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option<(f64, f64)> {
     if !mean.is_finite()
         || sigma <= 0.0

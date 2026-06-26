@@ -30,6 +30,7 @@ impl BSplineBasis {
     }
 
     /// Builds an open uniform B-spline basis over a data range.
+    #[allow(clippy::cast_precision_loss)]
     pub fn open_uniform_from_data(
         x: &[f64],
         n_basis: usize,
@@ -126,6 +127,7 @@ impl BSplineBasis {
         }
     }
 
+    #[allow(clippy::float_cmp, clippy::suboptimal_flops)]
     fn basis_value(&self, index: usize, degree: usize, x: f64) -> f64 {
         if degree == 0 {
             let left = self.knots[index];

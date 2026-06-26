@@ -1,3 +1,8 @@
+#![allow(
+    clippy::float_cmp,
+    clippy::suboptimal_flops,
+    clippy::cast_precision_loss
+)]
 use approx::assert_relative_eq;
 use gamlss_special::{
     digamma, discrete_quantile, included_count, integrate_finite, invert_bounded_cdf,

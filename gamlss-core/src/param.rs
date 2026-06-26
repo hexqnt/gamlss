@@ -488,11 +488,6 @@ impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
     }
 }
 
-trait OffsetAssignable: Sized {
-    fn with_assigned_offset(self, offset: usize) -> Self;
-    fn assigned_len(&self) -> usize;
-}
-
 impl<P, L, X, Penalty> TryOffsetAssignable for ParameterBlock<P, L, X, Penalty>
 where
     P: ParameterName,
@@ -512,6 +507,11 @@ where
     fn assigned_name(&self) -> &'static str {
         P::NAME
     }
+}
+
+trait OffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_len(&self) -> usize;
 }
 
 trait TryOffsetAssignable: Sized {

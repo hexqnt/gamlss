@@ -42,6 +42,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::INFINITY;
@@ -76,6 +77,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn quantile_log_location_log_sd(p: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
@@ -85,6 +87,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn crps_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
@@ -358,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn log_normal_boundaries_and_crps_behave_like_kernel() {
         let family = LogNormalLogLocationLogSd::new();
         let theta = LogNormalLogLocationLogSdTheta {

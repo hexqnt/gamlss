@@ -199,6 +199,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn block_objective_reuses_working_buffers_on_repeated_calls() {
         let mut full = QuadraticObjective { dim: 3 };
         let mut objective = BlockObjective::try_new(

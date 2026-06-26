@@ -40,6 +40,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::INFINITY;
@@ -79,6 +80,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn crps_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::NAN;
@@ -298,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn gamma_boundaries_and_crps_behave_like_shape_rate_kernel() {
         let family = GammaShapeRate::new();
         let theta = GammaShapeRateTheta {

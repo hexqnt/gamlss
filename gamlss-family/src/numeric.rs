@@ -90,6 +90,7 @@ where
     )
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn parts_to_array<Eta, const K: usize>(eta: Eta) -> [f64; K]
 where
     Eta: ParameterParts<K>,

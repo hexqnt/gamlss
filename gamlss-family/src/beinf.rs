@@ -77,6 +77,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn beta_log_density(y: f64, alpha: f64, beta: f64) -> f64 {
         ln_gamma(alpha + beta) - ln_gamma(alpha) - ln_gamma(beta)
             + (alpha - 1.0) * y.ln()
@@ -84,6 +85,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::float_cmp)]
     fn nll_theta(y: f64, theta: BeinfTheta) -> f64 {
         if !(0.0..=1.0).contains(&y) || !y.is_finite() {
             return f64::INFINITY;
@@ -102,6 +104,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::float_cmp, clippy::suboptimal_flops)]
     fn gradient_theta(y: f64, theta: BeinfTheta, parts: BeinfParts) -> BeinfTheta {
         let denominator = 1.0 + theta.nu + theta.tau;
         let d_log_denominator = 1.0 / denominator;
@@ -152,6 +155,7 @@ where
             return parts.p0;
         }
         if y < 1.0 {
+            #[allow(clippy::suboptimal_flops)]
             return (parts.p0 + parts.p_beta * regularized_beta(parts.alpha, parts.beta, y))
                 .clamp(0.0, 1.0);
         }
@@ -245,11 +249,13 @@ where
         let values = weighted_values::<Self, _, _>(obs, |y| {
             (y.is_finite() && (0.0..=1.0).contains(&y)).then_some(y)
         });
+
         let interior = values
             .iter()
             .copied()
             .filter(|(y, _)| *y > 0.0 && *y < 1.0)
             .collect::<Vec<_>>();
+
         let summary = weighted_summary(&interior);
         let mu = probability_floor(summary.map_or(0.5, |s| s.mean));
         let max_variance = (mu * (1.0 - mu)).max(VARIANCE_FLOOR);
@@ -264,11 +270,14 @@ where
             .filter(|(y, _)| *y == 0.0)
             .map(|(_, w)| *w)
             .sum::<f64>();
+
+        #[allow(clippy::float_cmp)]
         let one_weight = values
             .iter()
             .filter(|(y, _)| *y == 1.0)
             .map(|(_, w)| *w)
             .sum::<f64>();
+
         let interior_weight = interior
             .iter()
             .map(|(_, w)| *w)

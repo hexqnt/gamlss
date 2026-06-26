@@ -61,6 +61,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewNormalMeanSdEta) -> (f64, SkewNormalMeanSdEta) {
         let theta = Self::theta_from_eta(eta);
         let Some(location_scale) = theta.location_scale() else {

@@ -533,6 +533,31 @@ where
     }
 }
 
+impl<X> ProductBlock<X>
+where
+    X: LinearPredictorGeometry,
+{
+    #[inline]
+    fn validate_geometry_outer_lengths(
+        &self,
+        row_weights: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier()?;
+        validate_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_weights, out)
+    }
+
+    #[inline]
+    fn validate_vector_geometry_outer_lengths(
+        &self,
+        row_scores: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier()?;
+        validate_vector_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_scores, out)
+    }
+}
+
 impl<X> PredictorBlock for ProductBlock<X>
 where
     X: PredictorBlock,
@@ -604,6 +629,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::float_cmp)]
     fn zero_beta_constant_contribution(&self) -> Option<f64> {
         let inner = self.inner.zero_beta_constant_contribution()?;
         if inner == 0.0 {
@@ -670,31 +696,6 @@ where
         };
         self.inner
             .add_t_mul_vec_by(row_scores, &product_multiplier, out)
-    }
-}
-
-impl<X> ProductBlock<X>
-where
-    X: LinearPredictorGeometry,
-{
-    #[inline]
-    fn validate_geometry_outer_lengths(
-        &self,
-        row_weights: &[f64],
-        out: &[f64],
-    ) -> Result<(), ModelError> {
-        self.validate_multiplier()?;
-        validate_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_weights, out)
-    }
-
-    #[inline]
-    fn validate_vector_geometry_outer_lengths(
-        &self,
-        row_scores: &[f64],
-        out: &[f64],
-    ) -> Result<(), ModelError> {
-        self.validate_multiplier()?;
-        validate_vector_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_scores, out)
     }
 }
 
@@ -1479,6 +1480,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_scalar_gradient_matches_finite_difference(
         block: impl PredictorBlock,
         scores: &[f64],
@@ -1659,6 +1661,7 @@ mod tests {
         assert!(scalar_gradient[0].is_finite());
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_multiplier_length_error(error: ModelError) {
         assert_eq!(
             error,
@@ -1670,6 +1673,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_invalid_multiplier_error(error: ModelError) {
         assert_eq!(error, ModelError::InvalidMultiplier { index: 1 });
     }

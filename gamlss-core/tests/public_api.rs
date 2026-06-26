@@ -1,3 +1,8 @@
+#![allow(
+    clippy::float_cmp,
+    clippy::suboptimal_flops,
+    clippy::cast_precision_loss
+)]
 use gamlss_core::{
     ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion, Family,
     FiniteScalarObservations, FloorSoftplusScalar, Gamlss, HasDensity, HasDeviance,

@@ -35,6 +35,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub(super) fn nll_theta(y: f64, theta: InverseGaussianTheta) -> f64 {
         if y <= 0.0
             || !y.is_finite()
@@ -154,6 +155,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn inverse_gaussian_cdf_returns_nan_for_invalid_domains() {
         let family = InverseGaussianMuShape::new();
 
@@ -217,6 +219,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn inverse_gaussian_quantile_inverts_cdf() {
         let family = InverseGaussianMuShape::new();
         let theta = InverseGaussianTheta {

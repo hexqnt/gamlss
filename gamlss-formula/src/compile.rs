@@ -229,6 +229,7 @@ fn validate_response_domain(
     Ok(())
 }
 
+#[allow(clippy::ref_option)]
 pub fn required_response<'a, D>(
     family: &'static str,
     domain: ResponseDomain,
@@ -545,7 +546,7 @@ where
     }
 
     Ok(ParameterBuild {
-        predictor: predictor_from_prepared(nrows, offset, prepared, offset_values, monotone)?,
+        predictor: predictor_from_prepared(nrows, offset, &prepared, offset_values, monotone)?,
         penalty,
         terms: ParameterTerms {
             parameter,
@@ -707,7 +708,7 @@ where
         return Err(FormulaError::DuplicateParameter(parameter));
     }
 
-    predictor_from_prepared(nrows, nparams, prepared, offset_values, monotone)
+    predictor_from_prepared(nrows, nparams, &prepared, offset_values, monotone)
 }
 
 fn numeric_col<'a, D>(data: &'a D, col: &Col<f64>) -> Result<NumericCol<'a>, FormulaError>
@@ -751,11 +752,11 @@ fn merge_offset(offset: &mut Option<Vec<f64>>, values: &[f64]) {
 fn predictor_from_prepared(
     nrows: usize,
     nparams: usize,
-    terms: Vec<PreparedDenseTerm<'_>>,
+    terms: &[PreparedDenseTerm<'_>],
     offset: Option<Vec<f64>>,
     monotone: Vec<MonotoneSegment>,
 ) -> Result<FormulaPredictorBlock, FormulaError> {
-    let dense = dense_from_prepared_terms(nrows, dense_ncols(&terms), &terms)?;
+    let dense = dense_from_prepared_terms(nrows, dense_ncols(terms), terms)?;
     Ok(FormulaPredictorBlock::new(dense, offset, monotone, nparams))
 }
 

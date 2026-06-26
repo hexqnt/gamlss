@@ -56,6 +56,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn transformed_z(y: f64, theta: ShashTheta) -> (f64, f64) {
         let x = (y - theta.mu) / theta.sigma;
         let h = theta.tau * x.asinh() - theta.nu.ln();
@@ -63,6 +64,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: ShashTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -202,6 +204,7 @@ where
     NuLink: PositiveLink<f64>,
     TauLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if theta.sigma <= 0.0
             || !theta.sigma.is_finite()

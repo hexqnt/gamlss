@@ -65,6 +65,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = self.nll_theta(y, theta);
@@ -180,6 +181,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
             return f64::NAN;
@@ -215,6 +217,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
             return f64::NAN;

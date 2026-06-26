@@ -50,6 +50,7 @@ pub struct LogNormalMeanLogSdTheta {
 
 impl LogNormalMeanLogSdTheta {
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
         LogNormalLogLocationLogSdTheta {
             log_location: self.mean.ln() - 0.5 * self.log_sd * self.log_sd,
@@ -136,6 +137,7 @@ where
     type Params = (Mean, LogSd);
     type Links = (MeanLink, LogSdLink);
 
+    #[allow(clippy::suboptimal_flops)]
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,

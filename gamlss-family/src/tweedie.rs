@@ -107,6 +107,7 @@ where
         }
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn positive_log_density(y: f64, params: CompoundParams) -> f64 {
         let mut log_sum = f64::NEG_INFINITY;
         let log_lambda = params.lambda.ln();
@@ -127,6 +128,7 @@ where
         log_sum
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn cdf_theta(y: f64, theta: TweedieTheta) -> f64 {
         if y < 0.0 {
             return 0.0;
@@ -169,6 +171,7 @@ where
         if p <= (-params.lambda).exp() {
             return 0.0;
         }
+        #[allow(clippy::float_cmp)]
         if p == 1.0 {
             return f64::INFINITY;
         }

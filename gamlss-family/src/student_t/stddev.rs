@@ -225,6 +225,7 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::NAN;

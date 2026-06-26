@@ -22,6 +22,7 @@ impl NaturalCubicSplineBasis {
     }
 
     /// Builds uniformly spaced knots over the finite range of `x`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn uniform_from_data(x: &[f64], n_basis: usize) -> Result<Self, SplineError> {
         if x.is_empty() {
             return Err(SplineError::EmptyInput);
@@ -137,6 +138,7 @@ impl NaturalCubicSplineBasis {
         }
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn evaluate_one(&self, basis: usize, x: f64) -> f64 {
         let (interval, left_extrapolate, right_extrapolate) = self.interval(x);
         if left_extrapolate || right_extrapolate {
@@ -163,6 +165,7 @@ impl NaturalCubicSplineBasis {
         a * y0 + b * y1 + ((a * a * a - a) * m0 + (b * b * b - b) * m1) * h * h / 6.0
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn evaluate_derivative_one(&self, basis: usize, x: f64) -> f64 {
         let (interval, left_extrapolate, right_extrapolate) = self.interval(x);
         let interval = if left_extrapolate {
@@ -246,6 +249,7 @@ impl NaturalCubicSplineDesign {
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -288,6 +292,7 @@ impl PredictorBlock for NaturalCubicSplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -300,6 +305,7 @@ impl PredictorBlock for NaturalCubicSplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
@@ -377,6 +383,7 @@ fn precompute_second_derivatives(knots: &[f64]) -> Vec<f64> {
     second_derivatives
 }
 
+#[allow(clippy::suboptimal_flops)]
 fn natural_basis_second_derivatives(x: &[f64], basis: usize) -> Vec<f64> {
     let n = x.len();
     debug_assert!(basis < n);

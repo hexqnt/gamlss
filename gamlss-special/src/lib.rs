@@ -92,6 +92,8 @@ pub fn ln_gamma(value: f64) -> f64 {
 
     let shifted = value - 1.0;
     let mut x = COEFFICIENTS[0];
+
+    #[allow(clippy::cast_precision_loss)]
     for (index, coefficient) in COEFFICIENTS.iter().copied().enumerate().skip(1) {
         x += coefficient / (shifted + index as f64);
     }
@@ -124,6 +126,11 @@ pub fn is_nonnegative_integer(value: f64) -> bool {
 /// discrete CDF implementations from doing unbounded work.
 #[must_use]
 #[inline]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn included_count(value: f64, max_terms: u64) -> Option<u64> {
     if !value.is_finite() {
         return None;
@@ -250,6 +257,7 @@ pub fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
     clamp_probability(regularized_beta_unchecked(a, b, x))
 }
 
+#[allow(clippy::suboptimal_flops)]
 fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
     if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
         return f64::NAN;
@@ -257,6 +265,7 @@ fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
     if x == 0.0 {
         return 0.0;
     }
+    #[allow(clippy::float_cmp)]
     if x == 1.0 {
         return 1.0;
     }
@@ -312,6 +321,7 @@ fn gamma_lower_series(a: f64, x: f64) -> f64 {
     sum * (a.mul_add(x.ln(), -x) - ln_gamma(a)).exp()
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
     const MAX_ITERATIONS: usize = 1_000;
     const EPSILON: f64 = 1.0e-14;
@@ -353,6 +363,7 @@ fn gamma_upper_continued_fraction(a: f64, x: f64) -> f64 {
 /// Returns `NaN` when `p` is outside `[0, 1]`, when the supplied CDF returns a
 /// non-finite value, or when `max_count` is reached before the CDF reaches `p`.
 #[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn discrete_quantile<F>(p: f64, max_count: u64, mut cdf: F) -> f64
 where
     F: FnMut(u64) -> f64,
@@ -413,6 +424,7 @@ where
 /// invalid probabilities, non-finite bounds, reversed bounds, non-finite CDF
 /// evaluations, or endpoints that do not bracket `p`.
 #[must_use]
+#[allow(clippy::float_cmp)]
 pub fn invert_bounded_cdf<F>(p: f64, lower: f64, upper: f64, mut cdf: F) -> f64
 where
     F: FnMut(f64) -> f64,
@@ -489,6 +501,7 @@ where
     if p == 0.0 {
         return 0.0;
     }
+    #[allow(clippy::float_cmp)]
     if p == 1.0 {
         return f64::INFINITY;
     }
@@ -527,6 +540,7 @@ where
     if p == 0.0 {
         return f64::NEG_INFINITY;
     }
+    #[allow(clippy::float_cmp)]
     if p == 1.0 {
         return f64::INFINITY;
     }
@@ -579,6 +593,8 @@ where
     if !lower.is_finite() || !upper.is_finite() || lower > upper {
         return f64::NAN;
     }
+
+    #[allow(clippy::float_cmp)]
     if lower == upper {
         return 0.0;
     }
@@ -659,6 +675,7 @@ fn simpson(lower: f64, upper: f64, f_lower: f64, f_mid: f64, f_upper: f64) -> f6
     (upper - lower) * (4.0f64.mul_add(f_mid, f_lower) + f_upper) / 6.0
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn beta_continued_fraction(a: f64, b: f64, x: f64) -> f64 {
     const MAX_ITERATIONS: usize = 200;
     const EPSILON: f64 = 3.0e-14;
@@ -905,6 +922,8 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
     }
 
     let h2 = h * h;
+
+    #[allow(clippy::suboptimal_flops)]
     let integral = integrate_finite(0.0, upper, |x| {
         (-0.5 * h2 * (1.0 + x * x)).exp() / (1.0 + x * x)
     });
@@ -914,17 +933,8 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
 /// Standard normal quantile using Wichura's AS241 rational approximation.
 #[must_use]
 #[inline]
+#[allow(clippy::float_cmp)]
 pub fn unit_normal_quantile(p: f64) -> f64 {
-    if p < 0.0 || !p.is_finite() || p > 1.0 {
-        return f64::NAN;
-    }
-    if p == 0.0 {
-        return f64::NEG_INFINITY;
-    }
-    if p == 1.0 {
-        return f64::INFINITY;
-    }
-
     const CENTER_NUMERATOR: [f64; 8] = [
         3.387_132_872_796_366_5,
         133.141_667_891_784_38,
@@ -982,6 +992,16 @@ pub fn unit_normal_quantile(p: f64) -> f64 {
         0.000_000_142_151_175_831_644_6,
         2.044_263_103_389_939_7e-15,
     ];
+
+    if p < 0.0 || !p.is_finite() || p > 1.0 {
+        return f64::NAN;
+    }
+    if p == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if p == 1.0 {
+        return f64::INFINITY;
+    }
 
     let centered = p - 0.5;
     if centered.abs() <= 0.425 {

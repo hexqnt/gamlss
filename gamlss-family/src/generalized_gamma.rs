@@ -50,6 +50,7 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: GeneralizedGammaTheta) -> f64 {
         if y <= 0.0
             || !y.is_finite()

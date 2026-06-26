@@ -39,7 +39,7 @@ impl<Param, Link> Exponential<Param, Link> {
             return f64::INFINITY;
         }
 
-        -theta.rate.ln() + theta.rate * y
+        theta.rate.mul_add(y, -theta.rate.ln())
     }
 
     #[inline]
@@ -187,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn exponential_rejects_invalid_domains_and_handles_boundaries() {
         let family = ExponentialMean::new();
         let theta = ExponentialMeanTheta { mean: 0.5 };

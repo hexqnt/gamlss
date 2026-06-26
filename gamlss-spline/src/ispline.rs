@@ -151,6 +151,7 @@ impl ISplineDesign {
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -165,6 +166,7 @@ impl ISplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.basis.for_each_basis(x, |index, weight| {
@@ -211,6 +213,7 @@ impl PredictorBlock for ISplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());

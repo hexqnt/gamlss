@@ -83,6 +83,7 @@ impl FourierDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops, clippy::useless_let_if_seq)]
     fn for_each_basis_at(&self, row: usize, mut f: impl FnMut(usize, f64)) {
         let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
         let mut harmonic_sin = base_sin;
@@ -109,6 +110,7 @@ impl FourierDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_row_gradient(&self, row: usize, score: f64, grad: &mut [f64]) {
         self.for_each_basis_at(row, |index, basis| {
             grad[index] += score * basis;
@@ -146,6 +148,7 @@ impl PredictorBlock for FourierDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.nparams);

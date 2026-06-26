@@ -68,6 +68,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn fits_extreme_even_length_samples_without_midpoint_overflow() {
         let state = AsinhScale::fit(&[f64::MAX, f64::MAX]).unwrap();
 

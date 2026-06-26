@@ -1,3 +1,4 @@
+#![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;

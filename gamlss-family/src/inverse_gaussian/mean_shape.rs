@@ -229,6 +229,7 @@ where
             cdf * cdf
         });
         let right = integrate_finite(0.0, 1.0, |u| {
+            #[allow(clippy::float_cmp)]
             if u == 1.0 {
                 return 0.0;
             }

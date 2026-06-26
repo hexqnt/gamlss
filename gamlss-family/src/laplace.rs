@@ -193,6 +193,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
         if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
@@ -211,6 +212,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
@@ -228,6 +230,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if !Self::valid_theta(theta) {
             return f64::NAN;

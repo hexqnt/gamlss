@@ -76,6 +76,7 @@ where
     /// Returns `INFINITY` for non-finite observation/location or non-positive
     /// sigma.
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -231,6 +232,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
@@ -523,6 +525,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn normal_quantile_inverts_cdf() {
         let family = NormalMuSigma::new();
         let theta = NormalTheta {
