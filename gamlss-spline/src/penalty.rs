@@ -7,9 +7,9 @@ const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DifferencePenalty {
     /// Penalty weight.
-    pub lambda: f64,
+    lambda: f64,
     /// Finite difference order.
-    pub order: usize,
+    order: usize,
 }
 
 impl DifferencePenalty {
@@ -51,6 +51,18 @@ impl DifferencePenalty {
         validate_difference_lambda(lambda)?;
         validate_difference_order(order)?;
         Ok(Self::new_unchecked(lambda, order))
+    }
+
+    /// Returns the penalty weight.
+    #[must_use]
+    pub const fn lambda(&self) -> f64 {
+        self.lambda
+    }
+
+    /// Returns the finite-difference order.
+    #[must_use]
+    pub const fn order(&self) -> usize {
+        self.order
     }
 
     fn coefficients(&self) -> Vec<f64> {
@@ -166,7 +178,7 @@ impl TryFrom<DifferencePenalty> for PreparedDifferencePenalty {
     type Error = ModelError;
 
     fn try_from(value: DifferencePenalty) -> Result<Self, Self::Error> {
-        Self::try_new(value.lambda, value.order)
+        Self::try_new(value.lambda(), value.order())
     }
 }
 
@@ -193,9 +205,9 @@ impl MatrixPenalty for PreparedDifferencePenalty {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CyclicDifferencePenalty {
     /// Penalty weight.
-    pub lambda: f64,
+    lambda: f64,
     /// Finite difference order.
-    pub order: usize,
+    order: usize,
 }
 
 impl CyclicDifferencePenalty {
@@ -243,23 +255,39 @@ impl CyclicDifferencePenalty {
         validate_difference_order(order)?;
         Ok(Self::new_unchecked(lambda, order))
     }
+
+    /// Returns the penalty weight.
+    #[must_use]
+    pub const fn lambda(&self) -> f64 {
+        self.lambda
+    }
+
+    /// Returns the finite-difference order.
+    #[must_use]
+    pub const fn order(&self) -> usize {
+        self.order
+    }
+
+    fn coefficients(&self) -> Vec<f64> {
+        difference_coefficients(self.order)
+    }
 }
 
 impl Penalty for CyclicDifferencePenalty {
     fn value(&self, beta: &[f64]) -> f64 {
-        let coefficients = difference_coefficients(self.order);
+        let coefficients = self.coefficients();
         cyclic_difference_penalty_value(self.lambda, &coefficients, beta)
     }
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        let coefficients = difference_coefficients(self.order);
+        let coefficients = self.coefficients();
         add_cyclic_difference_penalty_gradient(self.lambda, &coefficients, beta, grad);
     }
 }
 
 impl MatrixPenalty for CyclicDifferencePenalty {
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
-        let coefficients = difference_coefficients(self.order);
+        let coefficients = self.coefficients();
         add_cyclic_difference_penalty_matrix(self.lambda, &coefficients, dim, gram);
     }
 }
@@ -354,7 +382,7 @@ impl TryFrom<CyclicDifferencePenalty> for PreparedCyclicDifferencePenalty {
     type Error = ModelError;
 
     fn try_from(value: CyclicDifferencePenalty) -> Result<Self, Self::Error> {
-        Self::try_new(value.lambda, value.order)
+        Self::try_new(value.lambda(), value.order())
     }
 }
 

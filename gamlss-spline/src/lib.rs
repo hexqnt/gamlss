@@ -116,7 +116,10 @@ mod tests {
 
     #[test]
     fn difference_penalty_try_new_validates_inputs() {
-        assert_eq!(DifferencePenalty::try_new(0.0, 1).unwrap().lambda, 0.0);
+        let penalty = DifferencePenalty::try_new(0.0, 1).unwrap();
+        assert_eq!(penalty.lambda(), 0.0);
+        assert_eq!(penalty.order(), 1);
+
         let prepared = PreparedDifferencePenalty::try_new(0.5, 2).unwrap();
         assert_eq!(prepared.lambda(), 0.5);
         assert_eq!(prepared.order(), 2);
@@ -619,7 +622,10 @@ mod tests {
 
     #[test]
     fn cyclic_difference_penalty_try_new_validates_inputs() {
-        assert_eq!(CyclicDifferencePenalty::try_new(0.5, 2).unwrap().order, 2);
+        let penalty = CyclicDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(penalty.lambda(), 0.5);
+        assert_eq!(penalty.order(), 2);
+
         let prepared = PreparedCyclicDifferencePenalty::try_new(0.5, 2).unwrap();
         assert_eq!(prepared.lambda(), 0.5);
         assert_eq!(prepared.order(), 2);

@@ -5,19 +5,11 @@
 
 Type-driven Rust crates for GAMLSS-style modeling.
 
-> **Status:** This crate is an early MVP. It is published to make the project
-> available and reserve the crate names, but it is not intended for production
-> use yet. The public API, internals, numerical behavior, and crate structure
-> may change substantially while the library is being developed.
+> Public API and numerical behavior may still change before a stable 1.0 release.
 
 ## Структура crate-ов
 
 Основная точка входа для пользователей — crate `gamlss`:
-
-```toml
-[dependencies]
-gamlss = "*"
-```
 
 `gamlss` — batteries-included фасад. Основной и наиболее стабильный путь сейчас
 идет через низкоуровневое typed API: `gamlss-core`, `gamlss-family`,
