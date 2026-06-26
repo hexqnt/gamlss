@@ -485,7 +485,7 @@ mod tests {
             OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
                 .unwrap();
         let nparams = design.nparams();
-        let product = ProductBlock::new(vec![2.0, f64::NAN, -3.0], design.clone());
+        let product = ProductBlock::new(vec![2.0, 5.0, -3.0], design.clone()).unwrap();
         let mut gram = vec![0.0; nparams * nparams];
         let mut transpose = vec![0.0; nparams];
         let mut expected_gram = vec![0.0; nparams * nparams];
