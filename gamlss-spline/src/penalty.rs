@@ -13,22 +13,11 @@ pub struct DifferencePenalty {
 }
 
 impl DifferencePenalty {
-    /// Creates a difference penalty.
+    /// Creates a difference penalty without validating penalty parameters.
     ///
     /// The penalty value is `lambda * mean(diff^2)` over non-wrapping
     /// neighboring differences, so `lambda` is approximately scale-stable as
     /// the basis size changes.
-    ///
-    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
-    /// `order` comes from user input or dynamic configuration.
-    #[must_use]
-    pub const fn new(lambda: f64, order: usize) -> Self {
-        Self::new_unchecked(lambda, order)
-    }
-
-    /// Creates a difference penalty without validating penalty parameters.
-    ///
-    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -39,7 +28,7 @@ impl DifferencePenalty {
 
     /// Creates a difference penalty with validated parameters.
     ///
-    /// Uses the same normalized scale convention as [`Self::new`].
+    /// Uses the same normalized scale convention as [`Self::new_unchecked`].
     ///
     /// # Errors
     ///
@@ -98,28 +87,12 @@ pub struct PreparedDifferencePenalty {
 }
 
 impl PreparedDifferencePenalty {
-    /// Creates a prepared difference penalty.
+    /// Creates a prepared difference penalty without validating penalty
+    /// parameters.
     ///
     /// The penalty value is `lambda * mean(diff^2)` over non-wrapping
     /// neighboring differences, so `lambda` is approximately scale-stable as
     /// the basis size changes.
-    ///
-    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
-    /// `order` comes from user input or dynamic configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `order` is zero or its binomial coefficients do not fit in
-    /// `usize`.
-    #[must_use]
-    pub fn new(lambda: f64, order: usize) -> Self {
-        Self::new_unchecked(lambda, order)
-    }
-
-    /// Creates a prepared difference penalty without validating penalty
-    /// parameters.
-    ///
-    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -138,7 +111,7 @@ impl PreparedDifferencePenalty {
 
     /// Creates a prepared difference penalty with validated parameters.
     ///
-    /// Uses the same normalized scale convention as [`Self::new`].
+    /// Uses the same normalized scale convention as [`Self::new_unchecked`].
     ///
     /// # Errors
     ///
@@ -211,27 +184,13 @@ pub struct CyclicDifferencePenalty {
 }
 
 impl CyclicDifferencePenalty {
-    /// Creates a cyclic difference penalty.
-    ///
-    /// `lambda` sets the penalty strength, `order` sets the finite-difference
-    /// order.
+    /// Creates a cyclic difference penalty without validating penalty
+    /// parameters.
     ///
     /// The cyclic penalty is normalized by the number of coefficients, so its
     /// `lambda` is approximately scale-stable as the basis size changes. This
     /// matches [`DifferencePenalty`]'s normalized convention, except cyclic
     /// differences include the wrap-around rows.
-    ///
-    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
-    /// `order` comes from user input or dynamic configuration.
-    #[must_use]
-    pub const fn new(lambda: f64, order: usize) -> Self {
-        Self::new_unchecked(lambda, order)
-    }
-
-    /// Creates a cyclic difference penalty without validating penalty
-    /// parameters.
-    ///
-    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -242,7 +201,7 @@ impl CyclicDifferencePenalty {
 
     /// Creates a cyclic difference penalty with validated parameters.
     ///
-    /// Uses the same normalized scale convention as [`Self::new`].
+    /// Uses the same normalized scale convention as [`Self::new_unchecked`].
     ///
     /// # Errors
     ///
@@ -301,29 +260,13 @@ pub struct PreparedCyclicDifferencePenalty {
 }
 
 impl PreparedCyclicDifferencePenalty {
-    /// Creates a prepared cyclic difference penalty.
+    /// Creates a prepared cyclic difference penalty without validating penalty
+    /// parameters.
     ///
     /// The cyclic penalty is normalized by the number of coefficients, so its
     /// `lambda` is approximately scale-stable as the basis size changes. This
     /// matches [`PreparedDifferencePenalty`]'s normalized convention, except
     /// cyclic differences include the wrap-around rows.
-    ///
-    /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
-    /// `order` comes from user input or dynamic configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `order` is zero or its binomial coefficients do not fit in
-    /// `usize`.
-    #[must_use]
-    pub fn new(lambda: f64, order: usize) -> Self {
-        Self::new_unchecked(lambda, order)
-    }
-
-    /// Creates a prepared cyclic difference penalty without validating penalty
-    /// parameters.
-    ///
-    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -342,7 +285,7 @@ impl PreparedCyclicDifferencePenalty {
 
     /// Creates a prepared cyclic difference penalty with validated parameters.
     ///
-    /// Uses the same normalized scale convention as [`Self::new`].
+    /// Uses the same normalized scale convention as [`Self::new_unchecked`].
     ///
     /// # Errors
     ///

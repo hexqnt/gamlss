@@ -2658,7 +2658,8 @@ mod tests {
         let y = vec![1.0, 2.0];
         let weights = vec![0.5, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.25), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.25), 0);
         let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
         let beta = vec![0.75, 0.5];
         let mut separate_grad = vec![0.0; beta.len()];
@@ -2680,7 +2681,8 @@ mod tests {
     fn mean_objective_scales_likelihood_but_not_penalties() {
         let y = vec![0.0, 3.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
             .unwrap()
             .with_objective_scale(ObjectiveScale::Mean)
@@ -3245,7 +3247,8 @@ mod tests {
     fn training_diagnostics_report_train_nll_penalty_and_gradient_norm() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
         let parameters = vec![1.5];
         let mut grad = vec![f64::NAN; parameters.len()];

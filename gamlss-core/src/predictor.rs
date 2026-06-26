@@ -456,8 +456,8 @@ impl<X> ProductBlock<X> {
     /// Creates a product predictor block without validating dimensions or
     /// multiplier values.
     ///
-    /// Use [`Self::new`] or [`Self::try_new`] when the multiplier comes from
-    /// user input or dynamic model metadata.
+    /// Use [`Self::try_new`] when the multiplier comes from user input or
+    /// dynamic model metadata.
     #[must_use]
     #[inline]
     pub const fn new_unchecked(multiplier: Vec<f64>, inner: X) -> Self {
@@ -506,27 +506,11 @@ where
     /// not match `inner.nrows()`, or [`ModelError::InvalidMultiplier`] when a
     /// multiplier value is not finite.
     #[inline]
-    pub fn new(multiplier: Vec<f64>, inner: X) -> Result<Self, ModelError> {
+    pub fn try_new(multiplier: Vec<f64>, inner: X) -> Result<Self, ModelError> {
         let block = Self::new_unchecked(multiplier, inner);
         block.inner.validate()?;
         block.validate_multiplier()?;
         Ok(block)
-    }
-
-    /// Creates a product predictor block after validating multiplier shape and
-    /// values.
-    ///
-    /// This is an alias for [`Self::new`] kept for consistency with other
-    /// fallible constructors in the crate.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::DesignRowMismatch`] when `multiplier.len()` does
-    /// not match `inner.nrows()`, or [`ModelError::InvalidMultiplier`] when a
-    /// multiplier value is not finite.
-    #[inline]
-    pub fn try_new(multiplier: Vec<f64>, inner: X) -> Result<Self, ModelError> {
-        Self::new(multiplier, inner)
     }
 
     #[inline]
@@ -1584,13 +1568,6 @@ mod tests {
     }
 
     #[test]
-    fn product_block_new_validates_multiplier_length() {
-        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
-
-        assert_multiplier_length_error(ProductBlock::new(vec![1.0], inner).unwrap_err());
-    }
-
-    #[test]
     fn product_block_try_new_validates_multiplier_length() {
         let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
 
@@ -1603,15 +1580,6 @@ mod tests {
         let block = ProductBlock::new_unchecked(vec![1.0, f64::INFINITY], inner);
 
         assert_invalid_multiplier_error(block.validate().unwrap_err());
-    }
-
-    #[test]
-    fn product_block_new_validates_multiplier_finiteness() {
-        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
-
-        assert_invalid_multiplier_error(
-            ProductBlock::new(vec![1.0, f64::INFINITY], inner).unwrap_err(),
-        );
     }
 
     #[test]

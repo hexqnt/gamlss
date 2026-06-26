@@ -44,13 +44,13 @@ pub struct RidgePenalty {
 }
 
 impl RidgePenalty {
-    /// Creates a ridge penalty with the given `lambda`.
+    /// Creates a ridge penalty without validating penalty parameters.
     ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda`
     /// comes from user input or dynamic configuration.
     #[must_use]
     #[inline]
-    pub const fn new(lambda: f64) -> Self {
+    pub const fn new_unchecked(lambda: f64) -> Self {
         Self { lambda }
     }
 
@@ -63,7 +63,7 @@ impl RidgePenalty {
     #[inline]
     pub fn try_new(lambda: f64) -> Result<Self, ModelError> {
         validate_nonnegative_finite("ridge penalty lambda", lambda)?;
-        Ok(Self::new(lambda))
+        Ok(Self::new_unchecked(lambda))
     }
 
     /// Returns the regularization weight.
@@ -970,23 +970,27 @@ mod tests {
 
     #[test]
     fn segment_penalty_applies_value_to_selected_range() {
-        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new(2.0));
+        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new_unchecked(2.0));
         let beta = [10.0, 1.0, -2.0, 3.0, 20.0];
 
         assert_eq!(penalty.range(), 1..4);
-        assert_eq!(penalty.penalty(), &RidgePenalty::new(2.0));
+        assert_eq!(penalty.penalty(), &RidgePenalty::new_unchecked(2.0));
         assert_relative_eq!(
             penalty.value(&beta),
-            RidgePenalty::new(2.0).value(&beta[1..4])
+            RidgePenalty::new_unchecked(2.0).value(&beta[1..4])
         );
     }
 
     #[test]
     fn segment_penalty_try_new_validates_range() {
-        assert!(SegmentPenalty::try_new(1..3, RidgePenalty::new(2.0), 3).is_ok());
+        assert!(SegmentPenalty::try_new(1..3, RidgePenalty::new_unchecked(2.0), 3).is_ok());
         assert_eq!(
-            SegmentPenalty::try_new(Range { start: 3, end: 1 }, RidgePenalty::new(2.0), 4,)
-                .unwrap_err(),
+            SegmentPenalty::try_new(
+                Range { start: 3, end: 1 },
+                RidgePenalty::new_unchecked(2.0),
+                4,
+            )
+            .unwrap_err(),
             ModelError::PenaltyRangeOutOfBounds {
                 start: 3,
                 end: 1,
@@ -994,7 +998,7 @@ mod tests {
             }
         );
         assert_eq!(
-            SegmentPenalty::try_new(1..5, RidgePenalty::new(2.0), 4).unwrap_err(),
+            SegmentPenalty::try_new(1..5, RidgePenalty::new_unchecked(2.0), 4).unwrap_err(),
             ModelError::PenaltyRangeOutOfBounds {
                 start: 1,
                 end: 5,
@@ -1005,7 +1009,7 @@ mod tests {
 
     #[test]
     fn segment_penalty_adds_gradient_only_inside_selected_range() {
-        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new(2.0));
+        let penalty = SegmentPenalty::new(1..4, RidgePenalty::new_unchecked(2.0));
         let beta = [10.0, 1.0, -2.0, 3.0, 20.0];
         let mut grad = [100.0, 0.0, 0.0, 0.0, 200.0];
 
@@ -1021,7 +1025,7 @@ mod tests {
     #[test]
     fn segment_penalty_tuples_compose_disjoint_ranges() {
         let penalty = (
-            SegmentPenalty::new(0..2, RidgePenalty::new(1.0)),
+            SegmentPenalty::new(0..2, RidgePenalty::new_unchecked(1.0)),
             SegmentPenalty::new(2..4, LinearPenalty(3.0)),
         );
         let beta = [1.0, 2.0, 3.0, 4.0];
@@ -1452,14 +1456,14 @@ mod tests {
         let mut gram = Vec::new();
 
         NoPenalty.add_penalty_matrix(0, &mut gram);
-        RidgePenalty::new(3.0).add_penalty_matrix(0, &mut gram);
+        RidgePenalty::new_unchecked(3.0).add_penalty_matrix(0, &mut gram);
 
         assert!(gram.is_empty());
     }
 
     #[test]
     fn ridge_penalty_gradient_matches_finite_difference() {
-        let penalty = RidgePenalty::new(3.0);
+        let penalty = RidgePenalty::new_unchecked(3.0);
         let beta = [0.2, -0.4, 0.9];
 
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
@@ -1487,7 +1491,7 @@ mod tests {
 
     #[test]
     fn ridge_penalty_matrix_adds_curvature_to_diagonal() {
-        let penalty = RidgePenalty::new(3.0);
+        let penalty = RidgePenalty::new_unchecked(3.0);
         // 3x3 Gram matrix: [[1,2,3], [4,5,6], [7,8,9]]
         let mut gram = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
         penalty.add_penalty_matrix(3, &mut gram);
@@ -1506,7 +1510,7 @@ mod tests {
 
     #[test]
     fn ridge_penalty_matrix_matches_gradient_convention() {
-        let penalty = RidgePenalty::new(3.0);
+        let penalty = RidgePenalty::new_unchecked(3.0);
         let beta = [0.2, -0.4, 0.9];
         let mut grad = [0.0; 3];
         let mut matrix = vec![0.0; 9];

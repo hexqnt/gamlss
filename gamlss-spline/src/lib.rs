@@ -90,14 +90,14 @@ mod tests {
 
     #[test]
     fn difference_penalty_gradient_matches_finite_difference() {
-        let penalty = DifferencePenalty::new(0.7, 2);
+        let penalty = DifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
     }
 
     #[test]
     fn difference_penalty_matrix_matches_gradient_convention() {
-        let penalty = DifferencePenalty::new(0.7, 2);
+        let penalty = DifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_matrix_matches_gradient(&penalty, &beta);
     }
@@ -107,8 +107,8 @@ mod tests {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
         for order in 1..=2 {
-            let unprepared = DifferencePenalty::new(0.7, order);
-            let prepared = PreparedDifferencePenalty::new(0.7, order);
+            let unprepared = DifferencePenalty::new_unchecked(0.7, order);
+            let prepared = PreparedDifferencePenalty::new_unchecked(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
             assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
@@ -488,7 +488,7 @@ mod tests {
             OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
                 .unwrap();
         let nparams = design.nparams();
-        let product = ProductBlock::new(vec![2.0, 5.0, -3.0], design.clone()).unwrap();
+        let product = ProductBlock::try_new(vec![2.0, 5.0, -3.0], design.clone()).unwrap();
         let mut gram = vec![0.0; nparams * nparams];
         let mut transpose = vec![0.0; nparams];
         let mut expected_gram = vec![0.0; nparams * nparams];
@@ -586,14 +586,14 @@ mod tests {
 
     #[test]
     fn cyclic_difference_penalty_gradient_matches_finite_difference() {
-        let penalty = CyclicDifferencePenalty::new(0.7, 2);
+        let penalty = CyclicDifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
     }
 
     #[test]
     fn cyclic_difference_penalty_matrix_matches_gradient_convention() {
-        let penalty = CyclicDifferencePenalty::new(0.7, 2);
+        let penalty = CyclicDifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_matrix_matches_gradient(&penalty, &beta);
     }
@@ -603,8 +603,8 @@ mod tests {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
         for order in 1..=2 {
-            let unprepared = CyclicDifferencePenalty::new(0.7, order);
-            let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
+            let unprepared = CyclicDifferencePenalty::new_unchecked(0.7, order);
+            let prepared = PreparedCyclicDifferencePenalty::new_unchecked(0.7, order);
             assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
             assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
@@ -613,8 +613,8 @@ mod tests {
     #[test]
     fn difference_penalties_use_documented_scale_conventions() {
         let beta = [0.0, 1.0, 3.0, 6.0, 10.0];
-        let non_cyclic = DifferencePenalty::new(2.0, 1);
-        let cyclic = CyclicDifferencePenalty::new(2.0, 1);
+        let non_cyclic = DifferencePenalty::new_unchecked(2.0, 1);
+        let cyclic = CyclicDifferencePenalty::new_unchecked(2.0, 1);
 
         assert_relative_eq!(non_cyclic.value(&beta), 15.0, epsilon = 1.0e-12);
         assert_relative_eq!(cyclic.value(&beta), 52.0, epsilon = 1.0e-12);
