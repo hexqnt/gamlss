@@ -608,6 +608,16 @@ mod tests {
     }
 
     #[test]
+    fn difference_penalties_use_documented_scale_conventions() {
+        let beta = [0.0, 1.0, 3.0, 6.0, 10.0];
+        let non_cyclic = DifferencePenalty::new(2.0, 1);
+        let cyclic = CyclicDifferencePenalty::new(2.0, 1);
+
+        assert_relative_eq!(non_cyclic.value(&beta), 15.0, epsilon = 1.0e-12);
+        assert_relative_eq!(cyclic.value(&beta), 52.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
     fn cyclic_difference_penalty_try_new_validates_inputs() {
         assert_eq!(CyclicDifferencePenalty::try_new(0.5, 2).unwrap().order, 2);
         let prepared = PreparedCyclicDifferencePenalty::try_new(0.5, 2).unwrap();

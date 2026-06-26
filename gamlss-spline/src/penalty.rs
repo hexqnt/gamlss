@@ -15,23 +15,31 @@ pub struct DifferencePenalty {
 impl DifferencePenalty {
     /// Creates a difference penalty.
     ///
+    /// The penalty value is `lambda * mean(diff^2)` over non-wrapping
+    /// neighboring differences, so `lambda` is approximately scale-stable as
+    /// the basis size changes.
+    ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
     #[must_use]
-    pub fn new(lambda: f64, order: usize) -> Self {
+    pub const fn new(lambda: f64, order: usize) -> Self {
         Self::new_unchecked(lambda, order)
     }
 
     /// Creates a difference penalty without validating penalty parameters.
     ///
+    /// Uses the same normalized scale convention as [`Self::new`].
+    ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
     #[must_use]
-    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
+    pub const fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
     }
 
     /// Creates a difference penalty with validated parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// # Errors
     ///
@@ -80,6 +88,10 @@ pub struct PreparedDifferencePenalty {
 impl PreparedDifferencePenalty {
     /// Creates a prepared difference penalty.
     ///
+    /// The penalty value is `lambda * mean(diff^2)` over non-wrapping
+    /// neighboring differences, so `lambda` is approximately scale-stable as
+    /// the basis size changes.
+    ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
     ///
@@ -94,6 +106,8 @@ impl PreparedDifferencePenalty {
 
     /// Creates a prepared difference penalty without validating penalty
     /// parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -111,6 +125,8 @@ impl PreparedDifferencePenalty {
     }
 
     /// Creates a prepared difference penalty with validated parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// # Errors
     ///
@@ -188,24 +204,33 @@ impl CyclicDifferencePenalty {
     /// `lambda` sets the penalty strength, `order` sets the finite-difference
     /// order.
     ///
+    /// The cyclic penalty is normalized by the number of coefficients, so its
+    /// `lambda` is approximately scale-stable as the basis size changes. This
+    /// matches [`DifferencePenalty`]'s normalized convention, except cyclic
+    /// differences include the wrap-around rows.
+    ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
     #[must_use]
-    pub fn new(lambda: f64, order: usize) -> Self {
+    pub const fn new(lambda: f64, order: usize) -> Self {
         Self::new_unchecked(lambda, order)
     }
 
     /// Creates a cyclic difference penalty without validating penalty
     /// parameters.
     ///
+    /// Uses the same normalized scale convention as [`Self::new`].
+    ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
     #[must_use]
-    pub fn new_unchecked(lambda: f64, order: usize) -> Self {
+    pub const fn new_unchecked(lambda: f64, order: usize) -> Self {
         Self { lambda, order }
     }
 
     /// Creates a cyclic difference penalty with validated parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// # Errors
     ///
@@ -250,6 +275,11 @@ pub struct PreparedCyclicDifferencePenalty {
 impl PreparedCyclicDifferencePenalty {
     /// Creates a prepared cyclic difference penalty.
     ///
+    /// The cyclic penalty is normalized by the number of coefficients, so its
+    /// `lambda` is approximately scale-stable as the basis size changes. This
+    /// matches [`PreparedDifferencePenalty`]'s normalized convention, except
+    /// cyclic differences include the wrap-around rows.
+    ///
     /// This constructor is unchecked. Use [`Self::try_new`] when `lambda` or
     /// `order` comes from user input or dynamic configuration.
     ///
@@ -264,6 +294,8 @@ impl PreparedCyclicDifferencePenalty {
 
     /// Creates a prepared cyclic difference penalty without validating penalty
     /// parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// By contract, `lambda` should be finite and non-negative, `order` should
     /// be positive, and its binomial coefficients should fit in `usize`.
@@ -281,6 +313,8 @@ impl PreparedCyclicDifferencePenalty {
     }
 
     /// Creates a prepared cyclic difference penalty with validated parameters.
+    ///
+    /// Uses the same normalized scale convention as [`Self::new`].
     ///
     /// # Errors
     ///
@@ -520,8 +554,39 @@ impl Penalty for SlopeLimitPenalty {
     }
 }
 
-fn cyclic_value(values: &[f64], index: usize) -> f64 {
+const fn cyclic_value(values: &[f64], index: usize) -> f64 {
     values[index % values.len()]
+}
+
+#[allow(clippy::cast_precision_loss)]
+const fn usize_to_f64(value: usize) -> f64 {
+    value as f64
+}
+
+fn normalized_scale(lambda: f64, n_differences: usize) -> f64 {
+    lambda / usize_to_f64(n_differences)
+}
+
+fn non_cyclic_difference_count(dim: usize, coefficients: &[f64]) -> Option<usize> {
+    dim.checked_sub(coefficients.len())
+        .map(|last_start| last_start + 1)
+}
+
+fn cyclic_difference_at(coefficients: &[f64], beta: &[f64], start: usize) -> f64 {
+    coefficients
+        .iter()
+        .enumerate()
+        .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
+        .sum()
+}
+
+fn non_cyclic_difference_at(coefficients: &[f64], beta_window: &[f64]) -> f64 {
+    coefficients
+        .iter()
+        .copied()
+        .zip(beta_window.iter().copied())
+        .map(|(coefficient, beta)| coefficient * beta)
+        .sum()
 }
 
 fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
@@ -529,18 +594,14 @@ fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f6
         return 0.0;
     }
 
-    let n = beta.len();
+    let n_differences = beta.len();
     let mut sum = 0.0;
-    for start in 0..n {
-        let diff = coefficients
-            .iter()
-            .enumerate()
-            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-            .sum::<f64>();
-        sum += diff * diff;
+    for start in 0..n_differences {
+        let diff = cyclic_difference_at(coefficients, beta, start);
+        sum = diff.mul_add(diff, sum);
     }
 
-    lambda * sum / n as f64
+    normalized_scale(lambda, n_differences) * sum
 }
 
 fn add_cyclic_difference_penalty_gradient(
@@ -555,17 +616,14 @@ fn add_cyclic_difference_penalty_gradient(
         return;
     }
 
-    let n = beta.len();
-    let scale = lambda / n as f64;
-    for start in 0..n {
-        let diff = coefficients
-            .iter()
-            .enumerate()
-            .map(|(offset, coefficient)| coefficient * cyclic_value(beta, start + offset))
-            .sum::<f64>();
+    let n_differences = beta.len();
+    let scale = normalized_scale(lambda, n_differences);
+    for start in 0..n_differences {
+        let diff = cyclic_difference_at(coefficients, beta, start);
 
         for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-            grad[(start + offset) % n] += 2.0 * scale * diff * coefficient;
+            let index = (start + offset) % n_differences;
+            grad[index] = (2.0 * scale * diff).mul_add(coefficient, grad[index]);
         }
     }
 }
@@ -582,7 +640,7 @@ fn add_cyclic_difference_penalty_matrix(
         return;
     }
 
-    let scale = 2.0 * lambda / dim as f64;
+    let scale = 2.0 * normalized_scale(lambda, dim);
     for start in 0..dim {
         add_difference_outer_product(scale, coefficients, dim, gram, |offset| {
             (start + offset) % dim
@@ -595,18 +653,15 @@ fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> 
         return 0.0;
     }
 
+    let n_differences =
+        non_cyclic_difference_count(beta.len(), coefficients).expect("length already checked");
     let mut sum = 0.0;
     for window in beta.windows(coefficients.len()) {
-        let diff = coefficients
-            .iter()
-            .copied()
-            .zip(window.iter().copied())
-            .map(|(coefficient, beta)| coefficient * beta)
-            .sum::<f64>();
-        sum += diff * diff;
+        let diff = non_cyclic_difference_at(coefficients, window);
+        sum = diff.mul_add(diff, sum);
     }
 
-    lambda * sum
+    normalized_scale(lambda, n_differences) * sum
 }
 
 fn add_difference_penalty_gradient(
@@ -621,16 +676,15 @@ fn add_difference_penalty_gradient(
         return;
     }
 
+    let n_differences =
+        non_cyclic_difference_count(beta.len(), coefficients).expect("length already checked");
+    let scale = normalized_scale(lambda, n_differences);
     for (start, beta_window) in beta.windows(coefficients.len()).enumerate() {
-        let diff = coefficients
-            .iter()
-            .copied()
-            .zip(beta_window.iter().copied())
-            .map(|(coefficient, beta)| coefficient * beta)
-            .sum::<f64>();
+        let diff = non_cyclic_difference_at(coefficients, beta_window);
 
         for (offset, coefficient) in coefficients.iter().copied().enumerate() {
-            grad[start + offset] += 2.0 * lambda * diff * coefficient;
+            let index = start + offset;
+            grad[index] = (2.0 * scale * diff).mul_add(coefficient, grad[index]);
         }
     }
 }
@@ -638,12 +692,12 @@ fn add_difference_penalty_gradient(
 fn add_difference_penalty_matrix(lambda: f64, coefficients: &[f64], dim: usize, gram: &mut [f64]) {
     debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 
-    if dim < coefficients.len() {
+    let Some(n_differences) = non_cyclic_difference_count(dim, coefficients) else {
         return;
-    }
+    };
 
-    let scale = 2.0 * lambda;
-    for start in 0..=(dim - coefficients.len()) {
+    let scale = 2.0 * normalized_scale(lambda, n_differences);
+    for start in 0..n_differences {
         add_difference_outer_product(scale, coefficients, dim, gram, |offset| start + offset);
     }
 }
@@ -661,7 +715,8 @@ fn add_difference_outer_product<F>(
         let row = index(left_offset);
         for (right_offset, right) in coefficients.iter().copied().enumerate() {
             let col = index(right_offset);
-            gram[row * dim + col] += scale * left * right;
+            let index = row * dim + col;
+            gram[index] = (scale * left).mul_add(right, gram[index]);
         }
     }
 }
@@ -713,7 +768,7 @@ fn add_slope_limit_value(
 
     let denominator = limit.max(1.0e-12);
     let relative = (excess / denominator).min(1.0e6);
-    *value += penalty.weight * relative * relative;
+    *value = (penalty.weight * relative).mul_add(relative, *value);
 
     if let Some(grad) = grad {
         let sign = if diff >= 0.0 { 1.0 } else { -1.0 };
@@ -797,7 +852,7 @@ fn try_difference_coefficients(order: usize) -> Result<Vec<f64>, ModelError> {
             } else {
                 -1.0
             };
-            checked_binomial(order, index).map(|coefficient| sign * coefficient as f64)
+            checked_binomial(order, index).map(|coefficient| sign * usize_to_f64(coefficient))
         })
         .collect()
 }
