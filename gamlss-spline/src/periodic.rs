@@ -48,22 +48,22 @@ impl PeriodicSplineSpec {
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.cyclic.n_basis()
     }
 
     /// Period.
     #[must_use]
-    #[inline(always)]
-    pub fn period(&self) -> f64 {
+    #[inline]
+    pub const fn period(&self) -> f64 {
         self.period
     }
 
     /// Origin.
     #[must_use]
-    #[inline(always)]
-    pub fn origin(&self) -> f64 {
+    #[inline]
+    pub const fn origin(&self) -> f64 {
         self.origin
     }
 }
@@ -90,21 +90,21 @@ impl PeriodicSplineDesign {
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.spec.n_basis()
     }
 
     /// Metadata.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn spec(&self) -> PeriodicSplineSpec {
         self.spec
     }
@@ -121,33 +121,33 @@ impl PeriodicSplineDesign {
 }
 
 impl SplineRowBasis for PeriodicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         SplineRowBasis::nrows(&self.phase_design)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         SplineRowBasis::nparams(&self.phase_design)
     }
 
-    #[inline(always)]
+    #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
         self.phase_design.for_each_row_basis(row, f);
     }
 }
 impl PredictorBlock for PeriodicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         PredictorBlock::nrows(&self.phase_design)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         PredictorBlock::nparams(&self.phase_design)
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.phase_design.eta_row(row, beta)
     }

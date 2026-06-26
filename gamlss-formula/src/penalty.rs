@@ -96,7 +96,7 @@ impl Penalty for FormulaPenalty {
     }
 }
 
-pub(crate) fn prediction_penalty(terms: &[FittedTerm]) -> FormulaPenalty {
+pub fn prediction_penalty(terms: &[FittedTerm]) -> FormulaPenalty {
     let mut penalty = FormulaPenalty::default();
     for term in terms {
         match term {

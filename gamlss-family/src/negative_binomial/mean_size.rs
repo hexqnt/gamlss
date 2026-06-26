@@ -24,7 +24,7 @@ pub struct NegativeBinomialEta {
 }
 
 impl ParameterParts<2> for NegativeBinomialEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -32,7 +32,7 @@ impl ParameterParts<2> for NegativeBinomialEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -47,7 +47,7 @@ where
     MuLink: PositiveLink<f64>,
     ShapeLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: NegativeBinomialEta) -> NegativeBinomialTheta {
         NegativeBinomialTheta {
             mu: MuLink::inverse(eta.mu),
@@ -55,7 +55,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NegativeBinomialEta) -> (f64, NegativeBinomialEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -93,22 +93,22 @@ where
     type NllGradientEta = NegativeBinomialEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

@@ -21,18 +21,19 @@ pub struct Exponential<Param = RateParam, Link = Log> {
 impl<Param, Link> Exponential<Param, Link> {
     /// Creates a stateless exponential family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_rate(theta: ExponentialRateTheta) -> bool {
         is_positive_finite(theta.rate)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_rate(y: f64, theta: ExponentialRateTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_rate(theta) {
             return f64::INFINITY;
@@ -41,7 +42,7 @@ impl<Param, Link> Exponential<Param, Link> {
         -theta.rate.ln() + theta.rate * y
     }
 
-    #[inline(always)]
+    #[inline]
     fn cdf_rate(y: f64, theta: ExponentialRateTheta) -> f64 {
         if !y.is_finite() || !Self::valid_rate(theta) {
             return f64::NAN;
@@ -53,7 +54,7 @@ impl<Param, Link> Exponential<Param, Link> {
         -(-theta.rate * y).exp_m1()
     }
 
-    #[inline(always)]
+    #[inline]
     fn quantile_rate(p: f64, theta: ExponentialRateTheta) -> f64 {
         if !is_probability(p) || !Self::valid_rate(theta) {
             return f64::NAN;
@@ -62,7 +63,7 @@ impl<Param, Link> Exponential<Param, Link> {
         -(-p).ln_1p() / theta.rate
     }
 
-    #[inline(always)]
+    #[inline]
     fn crps_rate(y: f64, theta: ExponentialRateTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_rate(theta) {
             return f64::NAN;

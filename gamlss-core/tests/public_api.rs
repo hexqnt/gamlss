@@ -106,13 +106,13 @@ impl HasExpectedInformation<2> for DependentConstraintFamily {
 }
 
 impl HasDeviance for DependentConstraintFamily {
-    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         2.0 * self.nll(observation, theta)
     }
 }
 
 impl HasInitialEta for DependentConstraintFamily {
-    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta {
+    fn initial_eta(&self, observation: Self::Observation<'_>) -> Self::Eta {
         (Self::target(observation), 0.0)
     }
 }

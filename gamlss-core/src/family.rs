@@ -32,14 +32,14 @@ impl<const K: usize> DenseInformation<K> {
 
     /// Returns the matrix entry at `row`, `col`.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn get(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
 
     /// Returns the underlying dense matrix.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn as_array(&self) -> &[[f64; K]; K] {
         &self.values
     }
@@ -158,12 +158,12 @@ pub trait ParameterParts<const K: usize>: Sized {
 }
 
 impl ParameterParts<1> for f64 {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 1]) -> Self {
         values[0]
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => *self,
@@ -173,12 +173,12 @@ impl ParameterParts<1> for f64 {
 }
 
 impl ParameterParts<2> for (f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         (values[0], values[1])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -189,12 +189,12 @@ impl ParameterParts<2> for (f64, f64) {
 }
 
 impl ParameterParts<3> for (f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         (values[0], values[1], values[2])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -206,12 +206,12 @@ impl ParameterParts<3> for (f64, f64, f64) {
 }
 
 impl ParameterParts<4> for (f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 4]) -> Self {
         (values[0], values[1], values[2], values[3])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -224,12 +224,12 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
 }
 
 impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 5]) -> Self {
         (values[0], values[1], values[2], values[3], values[4])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -243,14 +243,14 @@ impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 6]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -265,14 +265,14 @@ impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 7]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5], values[6],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -288,14 +288,14 @@ impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 8]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,

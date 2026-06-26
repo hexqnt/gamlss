@@ -101,28 +101,28 @@ impl TruncatedPowerBasis {
 
     /// Truncated-power knots.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Spline order.
     #[must_use]
-    #[inline(always)]
-    pub fn order(&self) -> SplineOrder {
+    #[inline]
+    pub const fn order(&self) -> SplineOrder {
         self.order
     }
 
     /// Returns `true` if the first coefficient is an intercept.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
@@ -245,22 +245,22 @@ impl TruncatedPowerDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> &TruncatedPowerBasis {
+    #[inline]
+    pub const fn basis(&self) -> &TruncatedPowerBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
@@ -281,12 +281,12 @@ impl TruncatedPowerDesign {
 }
 
 impl SplineRowBasis for TruncatedPowerDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
@@ -299,12 +299,12 @@ impl SplineRowBasis for TruncatedPowerDesign {
 }
 
 impl PredictorBlock for TruncatedPowerDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }

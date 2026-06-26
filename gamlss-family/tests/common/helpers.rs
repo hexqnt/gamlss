@@ -293,6 +293,8 @@ where
     F: FnMut(u64) -> f64,
 {
     let mut high = 1_u64;
+
+    #[allow(clippy::while_float)]
     while cdf(high) < p {
         high = high.saturating_mul(2);
         assert!(high > 1, "discrete reference quantile search overflowed");

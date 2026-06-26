@@ -40,18 +40,19 @@ where
 {
     /// Creates a stateless zero-inflated Poisson family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn poisson_log_pmf(y: f64, mu: f64) -> f64 {
         y.mul_add(mu.ln(), -mu) - ln_gamma(y + 1.0)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZipTheta) -> f64 {
         if !is_nonnegative_integer(y)
             || theta.mu <= 0.0
@@ -69,7 +70,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn gradient_component_theta(y: f64, theta: ZipTheta) -> ZipTheta {
         if y == 0.0 {
             let q0 = (-theta.mu).exp();
@@ -128,7 +129,7 @@ pub struct ZipEta {
 }
 
 impl ParameterParts<2> for ZipEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -136,7 +137,7 @@ impl ParameterParts<2> for ZipEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

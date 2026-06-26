@@ -17,7 +17,7 @@ mod mu_sigma_nu_tau;
 
 const LOG_2: f64 = std::f64::consts::LN_2;
 
-#[inline(always)]
+#[inline]
 fn valid_location_scale(mu: f64, sigma: f64, nu: f64, tau: f64) -> bool {
     mu.is_finite()
         && sigma > 0.0
@@ -27,12 +27,12 @@ fn valid_location_scale(mu: f64, sigma: f64, nu: f64, tau: f64) -> bool {
         && tau.is_finite()
 }
 
-#[inline(always)]
+#[inline]
 fn skew_argument(z: f64, nu: f64, tau: f64) -> f64 {
     nu * z * ((tau + 1.0) / (tau + z * z)).sqrt()
 }
 
-#[inline(always)]
+#[inline]
 fn standard_density(z: f64, nu: f64, tau: f64) -> f64 {
     let skew = student_t_cdf_standardized(skew_argument(z, nu, tau), tau + 1.0);
     if skew <= 0.0 {
@@ -42,7 +42,7 @@ fn standard_density(z: f64, nu: f64, tau: f64) -> f64 {
     (LOG_2 + student_t_log_pdf_standardized(z, tau) + skew.ln()).exp()
 }
 
-#[inline(always)]
+#[inline]
 fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu, tau) {
         return f64::INFINITY;
@@ -57,7 +57,7 @@ fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
     sigma.ln() - LOG_2 - student_t_log_pdf_standardized(z, tau) - skew.ln()
 }
 
-#[inline(always)]
+#[inline]
 fn cdf_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu, tau) {
         return f64::NAN;
@@ -74,7 +74,7 @@ fn cdf_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
     integrate_finite(-100.0, z, |t| standard_density(t, nu, tau)).clamp(0.0, 1.0)
 }
 
-#[inline(always)]
+#[inline]
 fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
     if !(0.0..=1.0).contains(&p) || !valid_location_scale(mu, sigma, nu, tau) {
         return f64::NAN;
@@ -94,7 +94,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
     )
 }
 
-#[inline(always)]
+#[inline]
 fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option<(f64, f64)> {
     if !mean.is_finite()
         || sigma <= 0.0

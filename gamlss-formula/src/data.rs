@@ -16,7 +16,7 @@ pub enum NumericCol<'a> {
 impl<'a> NumericCol<'a> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[f64] {
         match self {
             Self::Borrowed(values) => values,
@@ -33,7 +33,7 @@ impl<'a> NumericCol<'a> {
 }
 
 /// Boolean column storage returned by [`DataView`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoolCol<'a> {
     /// Borrowed contiguous `bool` storage.
     Borrowed(&'a [bool]),
@@ -44,7 +44,7 @@ pub enum BoolCol<'a> {
 impl BoolCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[bool] {
         match self {
             Self::Borrowed(values) => values,
@@ -54,7 +54,7 @@ impl BoolCol<'_> {
 }
 
 /// Categorical column storage returned by [`DataView`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatCol<'a> {
     /// Borrowed string levels.
     Borrowed(&'a [String]),
@@ -65,7 +65,7 @@ pub enum CatCol<'a> {
 impl CatCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[String] {
         match self {
             Self::Borrowed(values) => values,
@@ -93,7 +93,7 @@ pub enum NumericResponse<'a> {
 impl NumericResponse<'_> {
     /// Returns response values as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[f64] {
         match self {
             Self::Borrowed(values) => values,
@@ -104,7 +104,7 @@ impl NumericResponse<'_> {
 
     /// Returns observation weights when present.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn weights(&self) -> Option<&[f64]> {
         match self {
             Self::Borrowed(_) | Self::Owned(_) => None,
@@ -116,18 +116,18 @@ impl NumericResponse<'_> {
 impl<'row> ObservationView<'row> for NumericResponse<'_> {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.as_slice().len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.as_slice()[row]
     }
 
-    fn weight_at(&self, _row: usize) -> f64 {
-        self.weights().map_or(1.0, |weights| weights[_row])
+    fn weight_at(&self, row: usize) -> f64 {
+        self.weights().map_or(1.0, |weights| weights[row])
     }
 
     fn validate(&self) -> Result<(), ModelError> {
@@ -160,7 +160,7 @@ pub struct Col<T> {
 impl<T> Col<T> {
     /// Returns the external column name.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }

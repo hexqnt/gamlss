@@ -37,13 +37,14 @@ where
 {
     /// Creates a stateless standard-deviation Student's t family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: StudentTMuSdTauEta) -> StudentTMuSdTauTheta {
         StudentTMuSdTauTheta {
             mu: MuLink::inverse(eta.mu),
@@ -52,7 +53,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: StudentTMuSdTauTheta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::INFINITY;
@@ -60,7 +61,7 @@ where
         student_t_nll_theta(theta.tau, y, location_scale)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: StudentTMuSdTauEta) -> (f64, StudentTMuSdTauEta) {
         let theta = Self::theta_from_eta(eta);
         let Some(location_scale) = theta.location_scale() else {
@@ -110,22 +111,22 @@ where
     type NllGradientEta = StudentTMuSdTauEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -203,7 +204,7 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::NAN;
         };
@@ -250,7 +251,7 @@ pub struct StudentTMuSdTauEta {
 }
 
 impl ParameterParts<3> for StudentTMuSdTauEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mu: values[0],
@@ -259,7 +260,7 @@ impl ParameterParts<3> for StudentTMuSdTauEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -282,7 +283,7 @@ pub struct StudentTMuSdTauTheta {
 }
 
 impl StudentTMuSdTauTheta {
-    #[inline(always)]
+    #[inline]
     fn location_scale(self) -> Option<StudentTTheta> {
         valid_stddev_theta(self).then(|| StudentTTheta {
             mu: self.mu,
@@ -291,7 +292,7 @@ impl StudentTMuSdTauTheta {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn valid_stddev_theta(theta: StudentTMuSdTauTheta) -> bool {
     theta.mu.is_finite()
         && theta.sigma > 0.0

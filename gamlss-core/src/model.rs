@@ -33,7 +33,7 @@ pub enum ObjectiveScale {
 }
 
 impl ObjectiveScale {
-    #[inline(always)]
+    #[inline]
     fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
         match self {
             Self::Mean if weight_sum > 0.0 => 1.0 / weight_sum,
@@ -362,7 +362,7 @@ where
     }
 
     /// Updates the likelihood scaling convention in place.
-    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+    pub const fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
         self.objective_scale = objective_scale;
     }
 
@@ -984,13 +984,13 @@ where
 
     /// Returns `self` with a different likelihood scaling convention.
     #[must_use]
-    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+    pub const fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
         self.model.set_objective_scale(objective_scale);
         self
     }
 
     /// Updates the likelihood scaling convention in place.
-    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+    pub const fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
         self.model.set_objective_scale(objective_scale);
     }
 
@@ -1114,7 +1114,7 @@ where
 /// Unlike [`Penalty`], which acts locally on a single block,
 /// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
 /// LASSO-like penalties).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithGlobalPenalties<O, GP> {
     objective: O,
     penalties: GP,
@@ -1812,7 +1812,7 @@ impl_gamlss_blocks!(
 );
 
 /// Validates that the predictor row count matches the response length.
-fn validate_block_rows(
+const fn validate_block_rows(
     parameter: &'static str,
     actual_rows: usize,
     expected_rows: usize,

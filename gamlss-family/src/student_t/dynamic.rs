@@ -32,13 +32,14 @@ where
 {
     /// Creates a stateless dynamic-DF Student's t family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: StudentTMuSigmaTauEta) -> StudentTMuSigmaTauTheta {
         StudentTMuSigmaTauTheta {
             mu: MuLink::inverse(eta.mu),
@@ -47,7 +48,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: StudentTMuSigmaTauTheta) -> f64 {
         if !valid_dynamic_theta(theta) {
             return f64::INFINITY;
@@ -55,7 +56,7 @@ where
         student_t_nll_theta(theta.tau, y, theta.location_scale())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: StudentTMuSigmaTauEta,
@@ -100,22 +101,22 @@ where
     type NllGradientEta = StudentTMuSigmaTauEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -234,7 +235,7 @@ pub struct StudentTMuSigmaTauEta {
 }
 
 impl ParameterParts<3> for StudentTMuSigmaTauEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mu: values[0],
@@ -243,7 +244,7 @@ impl ParameterParts<3> for StudentTMuSigmaTauEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -266,7 +267,7 @@ pub struct StudentTMuSigmaTauTheta {
 }
 
 impl StudentTMuSigmaTauTheta {
-    #[inline(always)]
+    #[inline]
     const fn location_scale(self) -> StudentTTheta {
         StudentTTheta {
             mu: self.mu,
@@ -275,7 +276,7 @@ impl StudentTMuSigmaTauTheta {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn valid_dynamic_theta(theta: StudentTMuSigmaTauTheta) -> bool {
     theta.mu.is_finite()
         && theta.sigma > 0.0

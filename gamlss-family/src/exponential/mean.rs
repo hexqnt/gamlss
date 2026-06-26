@@ -21,12 +21,12 @@ pub struct ExponentialMeanEta {
 }
 
 impl ParameterParts<1> for ExponentialMeanEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 1]) -> Self {
         Self { mean: values[0] }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -43,7 +43,7 @@ pub struct ExponentialMeanTheta {
 }
 
 impl ExponentialMeanTheta {
-    #[inline(always)]
+    #[inline]
     pub(super) fn rate(self) -> ExponentialRateTheta {
         ExponentialRateTheta {
             rate: 1.0 / self.mean,
@@ -55,14 +55,14 @@ impl<Link> Exponential<MeanParam, Link>
 where
     Link: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: ExponentialMeanEta) -> ExponentialMeanTheta {
         ExponentialMeanTheta {
             mean: Link::inverse(eta.mean),
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: ExponentialMeanEta) -> (f64, ExponentialMeanEta) {
         let theta = Self::theta_from_eta(eta);
         let rate = theta.rate();
@@ -91,22 +91,22 @@ where
     type NllGradientEta = ExponentialMeanEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_rate(y, theta.rate())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_rate(y, Self::theta_from_eta(eta).rate())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

@@ -38,13 +38,14 @@ where
 {
     /// Creates a stateless SHASH family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: ShashEta) -> ShashTheta {
         ShashTheta {
             mu: MuLink::inverse(eta.mu),
@@ -54,14 +55,14 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn transformed_z(y: f64, theta: ShashTheta) -> (f64, f64) {
         let x = (y - theta.mu) / theta.sigma;
         let h = theta.tau * x.asinh() - theta.nu.ln();
         (x, h.sinh())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: ShashTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -77,12 +78,12 @@ where
 
         let (x, z) = Self::transformed_z(y, theta);
         let h = theta.tau * x.asinh() - theta.nu.ln();
-        theta.sigma.ln() - theta.tau.ln() + 0.5 * (1.0 + x * x).ln()
+        theta.sigma.ln() - theta.tau.ln() + 0.5 * (x * x).ln_1p()
             - h.cosh().ln()
             - unit_normal_log_pdf(z)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: ShashEta) -> (f64, ShashEta) {
         let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
@@ -120,22 +121,22 @@ where
     type NllGradientEta = ShashEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -232,7 +233,7 @@ pub struct ShashEta {
 }
 
 impl ParameterParts<4> for ShashEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 4]) -> Self {
         Self {
             mu: values[0],
@@ -242,7 +243,7 @@ impl ParameterParts<4> for ShashEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

@@ -26,13 +26,14 @@ where
 {
     /// Creates a stateless Lomax family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: LomaxEta) -> LomaxTheta {
         LomaxTheta {
             shape: ShapeLink::inverse(eta.shape),
@@ -40,12 +41,12 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_theta(theta: LomaxTheta) -> bool {
         is_positive_finite(theta.shape) && is_positive_finite(theta.scale)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: LomaxTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -54,7 +55,7 @@ where
         -theta.shape.ln() + theta.scale.ln() + (theta.shape + 1.0) * (y / theta.scale).ln_1p()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: LomaxEta) -> (f64, LomaxEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -100,22 +101,22 @@ where
     type NllGradientEta = LomaxEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -214,7 +215,7 @@ pub struct LomaxEta {
 }
 
 impl ParameterParts<2> for LomaxEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             shape: values[0],
@@ -222,7 +223,7 @@ impl ParameterParts<2> for LomaxEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.shape,

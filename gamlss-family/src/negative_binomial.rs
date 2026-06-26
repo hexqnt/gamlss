@@ -30,13 +30,14 @@ where
 {
     /// Creates a stateless negative binomial family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
         if !is_nonnegative_integer(y)
             || theta.mu <= 0.0

@@ -27,7 +27,7 @@ pub struct ZagaTotalMeanCvZeroProbabilityEta {
 }
 
 impl ParameterParts<3> for ZagaTotalMeanCvZeroProbabilityEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             total_mean: values[0],
@@ -36,7 +36,7 @@ impl ParameterParts<3> for ZagaTotalMeanCvZeroProbabilityEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.total_mean,
@@ -59,7 +59,7 @@ pub struct ZagaTotalMeanCvZeroProbabilityTheta {
 }
 
 impl ZagaTotalMeanCvZeroProbabilityTheta {
-    #[inline(always)]
+    #[inline]
     fn component(self) -> ZagaTheta {
         ZagaTheta {
             mu: self.total_mean / (1.0 - self.zero_probability),
@@ -70,7 +70,7 @@ impl ZagaTotalMeanCvZeroProbabilityTheta {
 }
 
 /// ZAGA total-mean/CV/zero-probability implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZagaTotalMeanCv<MeanLink = Log, CvLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(MeanLink, CvLink, ZeroProbabilityLink)>,
 }
@@ -83,13 +83,13 @@ where
 {
     /// Creates a stateless ZAGA total-mean/CV family.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(
         eta: ZagaTotalMeanCvZeroProbabilityEta,
     ) -> ZagaTotalMeanCvZeroProbabilityTheta {

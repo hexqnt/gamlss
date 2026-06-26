@@ -85,7 +85,7 @@ where
     /// Number of prediction rows.
     #[must_use]
     #[inline]
-    pub fn nrows(&self) -> usize {
+    pub const fn nrows(&self) -> usize {
         self.prediction.nrows()
     }
 

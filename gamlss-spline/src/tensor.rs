@@ -46,28 +46,28 @@ where
 
     /// Left basis.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn left(&self) -> &A {
         &self.left
     }
 
     /// Right basis.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn right(&self) -> &B {
         &self.right
     }
 
     /// Number of parameters in the left basis.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn left_nparams(&self) -> usize {
         self.nparams / self.right_nparams
     }
 
     /// Number of parameters in the right basis.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn right_nparams(&self) -> usize {
         self.right_nparams
     }
@@ -78,12 +78,12 @@ where
     A: SplineRowBasis,
     B: SplineRowBasis,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.nparams
     }
@@ -105,12 +105,12 @@ where
     A: SplineRowBasis,
     B: SplineRowBasis,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.nparams
     }

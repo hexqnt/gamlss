@@ -63,15 +63,15 @@ impl NaturalCubicSplineBasis {
 
     /// Knot vector.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.knots.len()
     }
 
@@ -224,22 +224,22 @@ impl NaturalCubicSplineDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> &NaturalCubicSplineBasis {
+    #[inline]
+    pub const fn basis(&self) -> &NaturalCubicSplineBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
@@ -260,12 +260,12 @@ impl NaturalCubicSplineDesign {
 }
 
 impl SplineRowBasis for NaturalCubicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
@@ -277,12 +277,12 @@ impl SplineRowBasis for NaturalCubicSplineDesign {
 }
 
 impl PredictorBlock for NaturalCubicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }

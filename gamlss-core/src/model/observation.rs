@@ -26,7 +26,7 @@ impl<'a> FiniteScalarObservations<'a> {
 
     /// Returns the underlying response slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn values(&self) -> &'a [f64] {
         self.values
     }
@@ -35,17 +35,17 @@ impl<'a> FiniteScalarObservations<'a> {
 impl<'row> ObservationView<'row> for FiniteScalarObservations<'_> {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.values.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.values[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, _row: usize) -> f64 {
         1.0
     }
@@ -74,7 +74,7 @@ pub trait ObservationView<'row> {
     fn len(&self) -> usize;
 
     /// Returns `true` if there are no observations.
-    #[inline(always)]
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -98,22 +98,22 @@ pub trait ObservationView<'row> {
 impl<'row> ObservationView<'row> for &[f64] {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         <[f64]>::len(self)
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, _row: usize) -> f64 {
         1.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -122,17 +122,17 @@ impl<'row> ObservationView<'row> for &[f64] {
 impl<'row> ObservationView<'row> for (&[f64], &[f64]) {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.0.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.0[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, row: usize) -> f64 {
         self.1[row]
     }
@@ -155,22 +155,22 @@ impl<'row> ObservationView<'row> for (&[f64], &[f64]) {
 impl<'row, const N: usize> ObservationView<'row> for &[[f64; N]] {
     type Observation = [f64; N];
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         <[[f64; N]]>::len(self)
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, _row: usize) -> f64 {
         1.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -179,17 +179,17 @@ impl<'row, const N: usize> ObservationView<'row> for &[[f64; N]] {
 impl<'row, const N: usize> ObservationView<'row> for (&[[f64; N]], &[f64]) {
     type Observation = [f64; N];
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.0.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.0[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, row: usize) -> f64 {
         self.1[row]
     }

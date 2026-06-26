@@ -33,20 +33,21 @@ where
 {
     /// Creates a stateless Poisson family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: PoissonEta) -> PoissonTheta {
         PoissonTheta {
             mu: MuLink::inverse(eta.mu),
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: PoissonTheta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::INFINITY;
@@ -55,7 +56,7 @@ where
         theta.mu - y * theta.mu.ln() + ln_gamma(y + 1.0)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: PoissonEta) -> (f64, PoissonEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -197,22 +198,22 @@ where
     type NllGradientEta = PoissonEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -268,7 +269,7 @@ impl<MuLink> HasCrps for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -310,12 +311,12 @@ pub struct PoissonEta {
 }
 
 impl ParameterParts<1> for PoissonEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 1]) -> Self {
         Self { mu: values[0] }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

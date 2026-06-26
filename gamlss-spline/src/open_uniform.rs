@@ -117,33 +117,33 @@ impl OpenUniformSplineBasis {
 
     /// Lower boundary of the basis range.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn min(&self) -> f64 {
         self.min
     }
 
     /// Upper boundary of the basis range.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn max(&self) -> f64 {
         self.max
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 
     /// Spline order.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn order(&self) -> SplineOrder {
         self.order
     }
 
-    #[inline(always)]
+    #[inline]
     fn span(&self) -> f64 {
         self.max - self.min
     }
@@ -194,21 +194,21 @@ impl OpenUniformSplineDesign {
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Basis metadata suitable for building a design on new data.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> OpenUniformSplineBasis {
+    #[inline]
+    pub const fn basis(&self) -> OpenUniformSplineBasis {
         self.basis
     }
 
     /// Returns the original coordinates of the design.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
@@ -239,12 +239,12 @@ impl OpenUniformSplineDesign {
 }
 
 impl SplineRowBasis for OpenUniformSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis
     }
@@ -255,12 +255,12 @@ impl SplineRowBasis for OpenUniformSplineDesign {
     }
 }
 impl PredictorBlock for OpenUniformSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis
     }

@@ -14,7 +14,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ResponseDomain {
+pub enum ResponseDomain {
     Finite,
     Positive,
     Unit,
@@ -57,7 +57,7 @@ enum PreparedDenseTerm<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ParameterBuild {
+pub struct ParameterBuild {
     pub(crate) predictor: FormulaPredictorBlock,
     pub(crate) penalty: FormulaPenalty,
     pub(crate) terms: ParameterTerms,
@@ -149,16 +149,12 @@ impl RowMajorDesignBuilder {
         self.values[index] = value;
     }
 
-    fn row_offset(&self, row: usize) -> usize {
+    const fn row_offset(&self, row: usize) -> usize {
         row * self.ncols
     }
 }
 
-pub(crate) fn validate_col_len(
-    name: &str,
-    values: &[f64],
-    expected: usize,
-) -> Result<(), FormulaError> {
+pub fn validate_col_len(name: &str, values: &[f64], expected: usize) -> Result<(), FormulaError> {
     validate_len(name, values.len(), expected)
 }
 
@@ -233,7 +229,7 @@ fn validate_response_domain(
     Ok(())
 }
 
-pub(crate) fn required_response<'a, D>(
+pub fn required_response<'a, D>(
     family: &'static str,
     domain: ResponseDomain,
     data: &'a D,
@@ -264,7 +260,7 @@ where
     ))
 }
 
-pub(crate) fn fit_terms<D>(
+pub fn fit_terms<D>(
     parameter: &'static str,
     expr: Option<TermExpr>,
     data: &D,
@@ -488,8 +484,7 @@ where
                         let right_name = right_name.clone();
                         (0..right_basis.n_basis()).map(move |right_index| {
                             format!(
-                                "{parameter}.{}:{}:tensor[{left_index},{right_index}]",
-                                left_name, right_name
+                                "{parameter}.{left_name}:{right_name}:tensor[{left_index},{right_index}]"
                             )
                         })
                     })
@@ -559,7 +554,7 @@ where
     })
 }
 
-pub(crate) fn predictor_from_fitted_terms<D>(
+pub fn predictor_from_fitted_terms<D>(
     parameter: &'static str,
     terms: &[FittedTerm],
     data: &D,

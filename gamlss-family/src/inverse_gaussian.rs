@@ -27,13 +27,14 @@ where
 {
     /// Creates a stateless inverse Gaussian family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: InverseGaussianTheta) -> f64 {
         if y <= 0.0
             || !y.is_finite()

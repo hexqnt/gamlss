@@ -27,18 +27,19 @@ pub struct Gamma<Param = ShapeRate, FirstLink = Log, SecondLink = Log> {
 impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     /// Creates a stateless gamma family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_shape_rate(theta: GammaShapeRateTheta) -> bool {
         theta.shape > 0.0 && theta.shape.is_finite() && theta.rate > 0.0 && theta.rate.is_finite()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::INFINITY;
@@ -48,7 +49,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
             + theta.rate * y
     }
 
-    #[inline(always)]
+    #[inline]
     fn gradient_shape_rate(y: f64, theta: GammaShapeRateTheta) -> (f64, f64) {
         (
             digamma(theta.shape) - theta.rate.ln() - y.ln(),
@@ -56,7 +57,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn cdf_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::NAN;
@@ -68,7 +69,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
         regularized_gamma_lower(theta.shape, theta.rate * y)
     }
 
-    #[inline(always)]
+    #[inline]
     fn quantile_shape_rate(p: f64, theta: GammaShapeRateTheta) -> f64 {
         if !Self::valid_shape_rate(theta) {
             return f64::NAN;
@@ -77,7 +78,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
         invert_positive_cdf(p, |y| Self::cdf_shape_rate(y, theta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn crps_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::NAN;
@@ -91,7 +92,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
         y * (2.0 * f_shape - 1.0) - mean * (2.0 * f_next_shape - 1.0) - beta_term
     }
 
-    #[inline(always)]
+    #[inline]
     fn initial_mean_shape<'obs, Obs>(obs: &'obs Obs) -> Option<(f64, f64)>
     where
         Obs: ObservationView<'obs, Observation = f64> + 'obs,

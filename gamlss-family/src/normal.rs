@@ -50,14 +50,15 @@ where
 {
     /// Creates a stateless family value.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
     /// Converts link-scale predictors to natural-scale parameters.
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: NormalEta) -> NormalTheta {
         NormalTheta {
             mu: MuLink::inverse(eta.mu),
@@ -65,7 +66,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_theta(theta: NormalTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
@@ -74,7 +75,7 @@ where
     ///
     /// Returns `INFINITY` for non-finite observation/location or non-positive
     /// sigma.
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -89,7 +90,7 @@ where
     ///
     /// Uses analytic NLL derivatives w.r.t. `mu` and `sigma` and multiplies
     /// by the link function derivatives (chain rule).
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -137,22 +138,22 @@ where
     type NllGradientEta = NormalEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -281,7 +282,7 @@ pub struct NormalEta {
 }
 
 impl ParameterParts<2> for NormalEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -289,7 +290,7 @@ impl ParameterParts<2> for NormalEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -312,13 +313,13 @@ pub struct NormalTheta {
 /// penalties.
 ///
 /// The returned model borrows `y` and owns the design matrices and penalties.
-pub fn normal_gamlss<'a, XMu, XSigma, PMu, PSigma>(
-    y: &'a [f64],
+pub fn normal_gamlss<XMu, XSigma, PMu, PSigma>(
+    y: &[f64],
     mu_x: XMu,
     sigma_x: XSigma,
     mu_penalty: PMu,
     sigma_penalty: PSigma,
-) -> Result<NormalGamlss<'a, XMu, XSigma, PMu, PSigma>, ModelError>
+) -> Result<NormalGamlss<'_, XMu, XSigma, PMu, PSigma>, ModelError>
 where
     XMu: DesignMatrix,
     XSigma: DesignMatrix,

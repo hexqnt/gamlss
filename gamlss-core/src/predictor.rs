@@ -53,17 +53,17 @@ impl<X> PredictorBlock for LinearPredictorBlock<X>
 where
     X: DesignMatrix,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.nrows()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.x.ncols()
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.x.dot_row(row, beta)
     }
@@ -111,7 +111,7 @@ where
 impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     type Matrix = X;
 
-    #[inline(always)]
+    #[inline]
     fn design(&self) -> &Self::Matrix {
         &self.x
     }
@@ -169,12 +169,12 @@ impl<X: DesignMatrix> LinearPredictorGeometry for LinearPredictorBlock<X> {
 pub struct SoftplusTransform;
 
 impl CoefficientTransform for SoftplusTransform {
-    #[inline(always)]
+    #[inline]
     fn value(beta: f64) -> f64 {
         Softplus::inverse(beta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative(beta: f64) -> f64 {
         Softplus::derivative_inverse(beta)
     }
@@ -185,12 +185,12 @@ impl CoefficientTransform for SoftplusTransform {
 pub struct NegativeSoftplusTransform;
 
 impl CoefficientTransform for NegativeSoftplusTransform {
-    #[inline(always)]
+    #[inline]
     fn value(beta: f64) -> f64 {
         -Softplus::inverse(beta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative(beta: f64) -> f64 {
         -Softplus::derivative_inverse(beta)
     }
@@ -227,17 +227,17 @@ impl<T> PredictorBlock for TransformedScalar<T>
 where
     T: CoefficientTransform,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         1
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         T::value(beta[0])
     }
@@ -321,17 +321,17 @@ impl FloorSoftplusScalar {
 }
 
 impl PredictorBlock for FloorSoftplusScalar {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         1
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         self.floor + Softplus::inverse(beta[0])
     }
@@ -416,25 +416,25 @@ impl OffsetBlock {
 }
 
 impl PredictorBlock for OffsetBlock {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         0
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, _: &[f64]) -> f64 {
         self.value
     }
 
-    #[inline(always)]
+    #[inline]
     fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {}
 
-    #[inline(always)]
+    #[inline]
     fn add_weighted_gradient(&self, _: &[f64], _: &[f64], _: &[f64], _: &mut [f64]) {}
 
     #[inline]
@@ -537,17 +537,17 @@ impl<X> PredictorBlock for ProductBlock<X>
 where
     X: PredictorBlock,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.inner.nrows()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.inner.nparams()
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.multiplier[row] * self.inner.eta_row(row, beta)
     }
@@ -729,7 +729,7 @@ impl<M> RowMultiplier for ProductRowMultiplier<'_, M>
 where
     M: RowMultiplier + ?Sized,
 {
-    #[inline(always)]
+    #[inline]
     fn multiplier_at(&self, row: usize) -> f64 {
         self.left[row] * self.right.multiplier_at(row)
     }
@@ -963,7 +963,7 @@ fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
         .sum()
 }
 
-fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+const fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
     if value.is_finite() {
         Ok(())
     } else {
@@ -1011,7 +1011,7 @@ fn validate_vector_geometry_lengths(
     Ok(())
 }
 
-fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
+const fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
     if row_values.len() != nrows {
         return Err(ModelError::WeightLength {
             expected: nrows,
@@ -1032,12 +1032,12 @@ macro_rules! impl_sum_block {
         where
             $($term: PredictorBlock,)+
         {
-            #[inline(always)]
+            #[inline]
             fn nrows(&self) -> usize {
                 self.terms.0.nrows()
             }
 
-            #[inline(always)]
+            #[inline]
             fn nparams(&self) -> usize {
                 0 $(+ self.terms.$idx.nparams())+
             }

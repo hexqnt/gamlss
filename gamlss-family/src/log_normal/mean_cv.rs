@@ -21,7 +21,7 @@ pub struct LogNormalMeanCvEta {
 }
 
 impl ParameterParts<2> for LogNormalMeanCvEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mean: values[0],
@@ -29,7 +29,7 @@ impl ParameterParts<2> for LogNormalMeanCvEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -49,7 +49,7 @@ pub struct LogNormalMeanCvTheta {
 }
 
 impl LogNormalMeanCvTheta {
-    #[inline(always)]
+    #[inline]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
         let log_sd_squared = (self.cv * self.cv).ln_1p();
         LogNormalLogLocationLogSdTheta {
@@ -64,7 +64,7 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: LogNormalMeanCvEta) -> LogNormalMeanCvTheta {
         LogNormalMeanCvTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -72,7 +72,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: LogNormalMeanCvEta) -> (f64, LogNormalMeanCvEta) {
         let theta = Self::theta_from_eta(eta);
         let canonical = theta.log_location_log_sd();
@@ -107,22 +107,22 @@ where
     type NllGradientEta = LogNormalMeanCvEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

@@ -26,13 +26,14 @@ where
 {
     /// Creates a stateless Gumbel family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: GumbelEta) -> GumbelTheta {
         GumbelTheta {
             mu: MuLink::inverse(eta.mu),
@@ -40,12 +41,12 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_theta(theta: GumbelTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: GumbelTheta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -55,7 +56,7 @@ where
         theta.sigma.ln() + z + (-z).exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GumbelEta) -> (f64, GumbelEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -103,22 +104,22 @@ where
     type NllGradientEta = GumbelEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -214,7 +215,7 @@ pub struct GumbelEta {
 }
 
 impl ParameterParts<2> for GumbelEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -222,7 +223,7 @@ impl ParameterParts<2> for GumbelEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

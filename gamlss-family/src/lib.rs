@@ -194,7 +194,7 @@ pub(crate) mod test_support {
     const DEFAULT_EPSILON: f64 = 1.0e-6;
     const DEFAULT_TOLERANCE: f64 = 1.0e-6;
 
-    pub(crate) fn assert_gradient_matches_finite_difference<F, const K: usize>(
+    pub fn assert_gradient_matches_finite_difference<F, const K: usize>(
         family: &F,
         y: f64,
         eta: [f64; K],
@@ -212,7 +212,7 @@ pub(crate) mod test_support {
         );
     }
 
-    pub(crate) fn assert_gradient_matches_finite_difference_with_tolerance<F, const K: usize>(
+    pub fn assert_gradient_matches_finite_difference_with_tolerance<F, const K: usize>(
         family: &F,
         y: f64,
         eta: [f64; K],
@@ -248,7 +248,8 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) fn statrs_discrete_quantile<F>(p: f64, mut cdf: F) -> u64
+    #[allow(clippy::while_float)]
+    pub fn statrs_discrete_quantile<F>(p: f64, mut cdf: F) -> u64
     where
         F: FnMut(u64) -> f64,
     {

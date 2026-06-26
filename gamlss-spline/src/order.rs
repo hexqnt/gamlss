@@ -11,14 +11,16 @@ pub enum SplineOrder {
 
 impl SplineOrder {
     /// Polynomial degree.
-    #[inline(always)]
-    pub fn degree(self) -> usize {
+    #[inline]
+    #[must_use]
+    pub const fn degree(self) -> usize {
         self as usize
     }
 
     /// Minimum number of coefficients for the given order.
-    #[inline(always)]
-    pub fn min_basis(self) -> usize {
+    #[inline]
+    #[must_use]
+    pub const fn min_basis(self) -> usize {
         self.degree() + 1
     }
 }

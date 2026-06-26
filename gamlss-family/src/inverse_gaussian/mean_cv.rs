@@ -24,7 +24,7 @@ pub struct InverseGaussianMeanCvEta {
 }
 
 impl ParameterParts<2> for InverseGaussianMeanCvEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mean: values[0],
@@ -32,7 +32,7 @@ impl ParameterParts<2> for InverseGaussianMeanCvEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -52,7 +52,7 @@ pub struct InverseGaussianMeanCvTheta {
 }
 
 impl InverseGaussianMeanCvTheta {
-    #[inline(always)]
+    #[inline]
     fn mean_shape(self) -> InverseGaussianTheta {
         InverseGaussianTheta {
             mu: self.mean,
@@ -74,13 +74,14 @@ where
 {
     /// Creates a stateless inverse Gaussian mean/CV family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: InverseGaussianMeanCvEta) -> InverseGaussianMeanCvTheta {
         InverseGaussianMeanCvTheta {
             mean: MeanLink::inverse(eta.mean),

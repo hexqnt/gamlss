@@ -17,7 +17,7 @@ impl CyclicSplineSpec {
     /// # Errors
     ///
     /// Returns an error if `n_basis` is insufficient for `order`.
-    pub fn new(n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
+    pub const fn new(n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
         if n_basis < order.min_basis() {
             return Err(SplineError::NotEnoughBasis {
                 n_basis,
@@ -46,14 +46,14 @@ impl CyclicSplineSpec {
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 
     /// Spline order.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn order(&self) -> SplineOrder {
         self.order
     }
@@ -76,21 +76,21 @@ impl CyclicSplineDesign {
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.spec.n_basis()
     }
 
     /// Basis metadata suitable for building a design on new data.
     #[must_use]
-    #[inline(always)]
-    pub fn spec(&self) -> CyclicSplineSpec {
+    #[inline]
+    pub const fn spec(&self) -> CyclicSplineSpec {
         self.spec
     }
 
     /// Returns the original phases of the design.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn phi(&self) -> &[f64] {
         &self.phi
     }
@@ -113,12 +113,12 @@ impl CyclicSplineDesign {
 }
 
 impl SplineRowBasis for CyclicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.phi.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.spec.n_basis
     }
@@ -129,12 +129,12 @@ impl SplineRowBasis for CyclicSplineDesign {
     }
 }
 impl PredictorBlock for CyclicSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.phi.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.spec.n_basis
     }

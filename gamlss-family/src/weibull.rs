@@ -29,23 +29,24 @@ pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
 impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     /// Creates a stateless Weibull family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_scale_shape(theta: WeibullScaleShapeTheta) -> bool {
         is_positive_finite(theta.scale) && is_positive_finite(theta.shape)
     }
 
-    #[inline(always)]
+    #[inline]
     fn mean_factor(shape: f64) -> f64 {
         ln_gamma(1.0 + 1.0 / shape).exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::INFINITY;
@@ -57,7 +58,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
             + (theta.shape * log_ratio).exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn gradient_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> (f64, f64) {
         let log_ratio = y.ln() - theta.scale.ln();
         let power = (theta.shape * log_ratio).exp();
@@ -67,7 +68,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn cdf_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::NAN;
@@ -80,7 +81,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
         -(-(theta.shape * log_ratio).exp()).exp_m1()
     }
 
-    #[inline(always)]
+    #[inline]
     fn quantile_scale_shape(p: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if !is_probability(p) || !Self::valid_scale_shape(theta) {
             return f64::NAN;
@@ -89,7 +90,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
         theta.scale * (-(-p).ln_1p()).powf(1.0 / theta.shape)
     }
 
-    #[inline(always)]
+    #[inline]
     fn crps_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::NAN;
@@ -107,7 +108,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
             + mean * 2.0_f64.powf(-1.0 / theta.shape)
     }
 
-    #[inline(always)]
+    #[inline]
     fn initial_scale_shape<'obs, Obs>(obs: &'obs Obs) -> Option<(f64, f64)>
     where
         Obs: ObservationView<'obs, Observation = f64> + 'obs,

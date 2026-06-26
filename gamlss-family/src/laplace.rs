@@ -33,14 +33,15 @@ where
 {
     /// Creates a stateless Laplace family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
     /// Converts link-scale predictors to natural-scale parameters.
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: LaplaceEta) -> LaplaceTheta {
         LaplaceTheta {
             mu: MuLink::inverse(eta.mu),
@@ -48,7 +49,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_theta(theta: LaplaceTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
@@ -57,7 +58,7 @@ where
     ///
     /// Returns `INFINITY` for non-finite observation/location or non-positive
     /// sigma.
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
@@ -70,7 +71,7 @@ where
     ///
     /// The gradient with respect to `mu` uses the sign subgradient (0 when
     /// `residual == 0`).
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -123,22 +124,22 @@ where
     type NllGradientEta = LaplaceEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -210,7 +211,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
@@ -248,7 +249,7 @@ pub struct LaplaceEta {
 }
 
 impl ParameterParts<2> for LaplaceEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -256,7 +257,7 @@ impl ParameterParts<2> for LaplaceEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

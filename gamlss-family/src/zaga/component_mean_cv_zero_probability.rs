@@ -50,7 +50,7 @@ where
     SigmaLink: PositiveLink<f64>,
     NuLink: UnitIntervalLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: ZagaEta) -> ZagaTheta {
         ZagaTheta {
             mu: MuLink::inverse(eta.mu),
@@ -59,7 +59,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: ZagaEta) -> (f64, ZagaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);

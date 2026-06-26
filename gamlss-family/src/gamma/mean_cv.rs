@@ -23,7 +23,7 @@ pub struct GammaMeanCvEta {
 }
 
 impl ParameterParts<2> for GammaMeanCvEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mean: values[0],
@@ -31,7 +31,7 @@ impl ParameterParts<2> for GammaMeanCvEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -51,7 +51,7 @@ pub struct GammaMeanCvTheta {
 }
 
 impl GammaMeanCvTheta {
-    #[inline(always)]
+    #[inline]
     pub(super) fn shape_rate(self) -> GammaShapeRateTheta {
         let shape = 1.0 / (self.cv * self.cv);
         GammaShapeRateTheta {
@@ -66,7 +66,7 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: GammaMeanCvEta) -> GammaMeanCvTheta {
         GammaMeanCvTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -74,7 +74,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanCvEta) -> (f64, GammaMeanCvEta) {
         let theta = Self::theta_from_eta(eta);
         let shape_rate = theta.shape_rate();
@@ -99,7 +99,7 @@ where
 }
 
 impl From<GammaMeanCvTheta> for GammaShapeRateTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: GammaMeanCvTheta) -> Self {
         theta.shape_rate()
     }
@@ -115,22 +115,22 @@ where
     type NllGradientEta = GammaMeanCvEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_shape_rate(y, theta.shape_rate())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

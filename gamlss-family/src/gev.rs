@@ -25,13 +25,14 @@ where
 {
     /// Creates a stateless GEV family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: GevEta) -> GevTheta {
         GevTheta {
             mu: MuLink::inverse(eta.mu),
@@ -40,7 +41,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: GevTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -66,12 +67,12 @@ where
         theta.sigma.ln() + (1.0 / theta.nu + 1.0) * t.ln() + inv
     }
 
-    #[inline(always)]
+    #[inline]
     fn gumbel_limit_nu_score(z: f64, exp_neg_z: f64) -> f64 {
         z + 0.5 * z * z * (exp_neg_z - 1.0)
     }
 
-    #[inline(always)]
+    #[inline]
     fn gradient_theta(y: f64, theta: GevTheta) -> GevTheta {
         let z = (y - theta.mu) / theta.sigma;
         if theta.nu.abs() < XI_EPSILON {
@@ -98,7 +99,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GevEta) -> (f64, GevEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -140,22 +141,22 @@ where
     type NllGradientEta = GevEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -266,7 +267,7 @@ pub struct GevEta {
 }
 
 impl ParameterParts<3> for GevEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mu: values[0],
@@ -275,7 +276,7 @@ impl ParameterParts<3> for GevEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

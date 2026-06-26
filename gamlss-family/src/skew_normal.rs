@@ -23,8 +23,8 @@ struct SkewNormalGradient {
 }
 
 impl SkewNormalGradient {
-    #[inline(always)]
-    fn nan() -> Self {
+    #[inline]
+    const fn nan() -> Self {
         Self {
             mu: f64::NAN,
             sigma: f64::NAN,
@@ -32,12 +32,12 @@ impl SkewNormalGradient {
         }
     }
 }
-#[inline(always)]
+#[inline]
 fn valid_location_scale(mu: f64, sigma: f64, nu: f64) -> bool {
     mu.is_finite() && sigma > 0.0 && sigma.is_finite() && nu.is_finite()
 }
 
-#[inline(always)]
+#[inline]
 fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu) {
         return f64::INFINITY;
@@ -52,7 +52,7 @@ fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     sigma.ln() - LOG_2 - unit_normal_log_pdf(z) - log_skew_cdf
 }
 
-#[inline(always)]
+#[inline]
 fn nll_gradient_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> SkewNormalGradient {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu) {
         return SkewNormalGradient::nan();
@@ -71,12 +71,12 @@ fn nll_gradient_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> SkewNorm
     }
 }
 
-#[inline(always)]
+#[inline]
 fn standard_cdf(z: f64, nu: f64) -> f64 {
     (unit_normal_cdf(z) - 2.0 * owens_t(z, nu)).clamp(0.0, 1.0)
 }
 
-#[inline(always)]
+#[inline]
 fn cdf_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu) {
         return f64::NAN;
@@ -85,7 +85,7 @@ fn cdf_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     standard_cdf((y - mu) / sigma, nu)
 }
 
-#[inline(always)]
+#[inline]
 fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     if !(0.0..=1.0).contains(&p) || !valid_location_scale(mu, sigma, nu) {
         return f64::NAN;
@@ -100,7 +100,7 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     invert_real_cdf(p, |z| standard_cdf(z, nu)).mul_add(sigma, mu)
 }
 
-#[inline(always)]
+#[inline]
 fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64) -> Option<(f64, f64)> {
     if !mean.is_finite() || sigma <= 0.0 || !sigma.is_finite() || !nu.is_finite() {
         return None;

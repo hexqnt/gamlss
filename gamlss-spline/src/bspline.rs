@@ -70,21 +70,25 @@ impl BSplineBasis {
     }
 
     /// Spline degree.
+    #[must_use]
     pub const fn degree(&self) -> usize {
         self.degree
     }
 
     /// Knot vector.
+    #[must_use]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Number of basis functions.
+    #[must_use]
     pub const fn n_basis(&self) -> usize {
         self.knots.len() - self.degree - 1
     }
 
     /// Values of all basis functions at point `x`.
+    #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
         let mut values = vec![0.0; self.n_basis()];
         self.evaluate_into(x, &mut values);

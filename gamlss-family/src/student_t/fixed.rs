@@ -51,7 +51,7 @@ where
         self.degrees_of_freedom
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: StudentTEta) -> StudentTTheta {
         StudentTTheta {
             mu: MuLink::inverse(eta.mu),
@@ -59,12 +59,12 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
         student_t_nll_theta(self.degrees_of_freedom, y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = self.nll_theta(y, theta);
@@ -115,22 +115,22 @@ where
     type NllGradientEta = StudentTEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         self.nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         self.nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         self.nll_and_gradient_eta_values(y, eta)
     }
@@ -194,7 +194,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
@@ -239,7 +239,7 @@ pub struct StudentTEta {
 }
 
 impl ParameterParts<2> for StudentTEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -247,7 +247,7 @@ impl ParameterParts<2> for StudentTEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

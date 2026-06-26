@@ -38,20 +38,21 @@ where
 {
     /// Creates a stateless ZINB family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nb_log_pmf(y: f64, mu: f64, shape: f64) -> f64 {
         ln_gamma(y + shape) - ln_gamma(shape) - ln_gamma(y + 1.0)
             + shape * (shape / (shape + mu)).ln()
             + y * (mu / (shape + mu)).ln()
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZinbTheta) -> f64 {
         if !is_nonnegative_integer(y)
             || theta.mu <= 0.0
@@ -72,7 +73,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn negative_binomial_gradient_theta(y: f64, mu: f64, shape: f64) -> (f64, f64) {
         let total = shape + mu;
         let d_mu = (y + shape) / total - y / mu;
@@ -82,7 +83,7 @@ where
         (d_mu, d_shape)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn gradient_component_theta(y: f64, theta: ZinbTheta) -> ZinbTheta {
         let (d_mu, d_shape) = Self::negative_binomial_gradient_theta(y, theta.mu, theta.shape);
         if y == 0.0 {

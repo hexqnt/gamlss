@@ -266,7 +266,7 @@ mod tests {
             assert_relative_eq!(design.eta_row(row, &beta), 1.0, epsilon = 1.0e-12);
         }
 
-        let ramp = (0..8).map(|value| value as f64).collect::<Vec<_>>();
+        let ramp = (0..8).map(f64::from).collect::<Vec<_>>();
         assert_relative_eq!(design.eta_row(0, &ramp), design.eta_row(2, &ramp));
     }
 
@@ -874,7 +874,7 @@ mod tests {
                 OpenUniformSplineDesign::with_range(points, 0.0, 1.0, 6, SplineOrder::Cubic)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::open_uniform::OpenUniformSplineDesign::eta_derivative_row,
             &x,
             &beta,
         );
@@ -882,7 +882,7 @@ mod tests {
         let cyclic = CyclicSplineDesign::new(&x, 6, SplineOrder::Cubic).unwrap();
         assert_eta_derivative_matches_coordinate_difference(
             |points| CyclicSplineDesign::new(points, 6, SplineOrder::Cubic).unwrap(),
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::cyclic::CyclicSplineDesign::eta_derivative_row,
             &x,
             &beta,
         );
@@ -899,7 +899,7 @@ mod tests {
                     .design(points)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::natural::NaturalCubicSplineDesign::eta_derivative_row,
             &x,
             &natural_beta,
         );
@@ -916,7 +916,7 @@ mod tests {
                     .design(points)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::truncated_power::TruncatedPowerDesign::eta_derivative_row,
             &x,
             &truncated_beta,
         );

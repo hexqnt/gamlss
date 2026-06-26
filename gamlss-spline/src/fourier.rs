@@ -55,25 +55,29 @@ impl FourierDesign {
     }
 
     /// Number of harmonics.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub const fn order(&self) -> usize {
         self.order
     }
 
     /// Period of the Fourier basis.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub fn period(&self) -> f64 {
         std::f64::consts::TAU / self.omega
     }
 
     /// Returns `true` if the predictor contains an intercept.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Returns the original coordinates.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
@@ -113,12 +117,12 @@ impl FourierDesign {
 }
 
 impl SplineRowBasis for FourierDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.nparams
     }
@@ -131,12 +135,12 @@ impl SplineRowBasis for FourierDesign {
 }
 
 impl PredictorBlock for FourierDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.nparams
     }

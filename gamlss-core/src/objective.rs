@@ -154,7 +154,7 @@ fn validate_block_len(
     }
 }
 
-fn validate_block_range(block: &ParameterSlice, dim: usize) -> Result<(), ModelError> {
+const fn validate_block_range(block: &ParameterSlice, dim: usize) -> Result<(), ModelError> {
     if block.range.start <= block.range.end && block.range.end <= dim {
         Ok(())
     } else {

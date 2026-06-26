@@ -33,14 +33,14 @@ impl ParameterLayout {
 
     /// Number of parameter blocks represented by this layout.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn len(&self) -> usize {
         self.slices.len()
     }
 
     /// `true` if this layout has no parameter blocks.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn is_empty(&self) -> bool {
         self.slices.is_empty()
     }
@@ -62,7 +62,7 @@ impl ParameterLayout {
 
     /// Returns all parameter slices in model order.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn slices(&self) -> &[ParameterSlice] {
         &self.slices
     }

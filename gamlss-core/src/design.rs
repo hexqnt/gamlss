@@ -170,12 +170,12 @@ impl DenseDesign {
 }
 
 impl DesignMatrix for DenseDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn ncols(&self) -> usize {
         self.ncols
     }
@@ -410,7 +410,7 @@ pub trait RowMultiplier {
 }
 
 impl RowMultiplier for [f64] {
-    #[inline(always)]
+    #[inline]
     fn multiplier_at(&self, row: usize) -> f64 {
         self[row]
     }

@@ -60,7 +60,7 @@ impl MonotoneISplineDesign {
 
     /// Number of positive increments.
     #[must_use]
-    pub fn n_increments(&self) -> usize {
+    pub const fn n_increments(&self) -> usize {
         self.basis.n_basis()
     }
 

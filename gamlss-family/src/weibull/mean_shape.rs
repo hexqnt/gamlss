@@ -23,7 +23,7 @@ pub struct WeibullMeanShapeEta {
 }
 
 impl ParameterParts<2> for WeibullMeanShapeEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mean: values[0],
@@ -31,7 +31,7 @@ impl ParameterParts<2> for WeibullMeanShapeEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -51,7 +51,7 @@ pub struct WeibullMeanShapeTheta {
 }
 
 impl WeibullMeanShapeTheta {
-    #[inline(always)]
+    #[inline]
     pub(super) fn scale_shape(self) -> WeibullScaleShapeTheta {
         WeibullScaleShapeTheta {
             scale: self.mean / ln_gamma(1.0 + 1.0 / self.shape).exp(),
@@ -65,7 +65,7 @@ where
     MeanLink: PositiveLink<f64>,
     ShapeLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: WeibullMeanShapeEta) -> WeibullMeanShapeTheta {
         WeibullMeanShapeTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -73,7 +73,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: WeibullMeanShapeEta) -> (f64, WeibullMeanShapeEta) {
         let theta = Self::theta_from_eta(eta);
         let scale_shape = theta.scale_shape();
@@ -99,7 +99,7 @@ where
 }
 
 impl From<WeibullMeanShapeTheta> for WeibullScaleShapeTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: WeibullMeanShapeTheta) -> Self {
         theta.scale_shape()
     }
@@ -115,22 +115,22 @@ where
     type NllGradientEta = WeibullMeanShapeEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_scale_shape(y, theta.scale_shape())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_scale_shape(y, Self::theta_from_eta(eta).scale_shape())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

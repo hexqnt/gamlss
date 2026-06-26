@@ -345,7 +345,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// offset may come from unchecked external input.
     #[must_use]
     #[inline]
-    pub fn range(&self) -> Range<usize> {
+    pub const fn range(&self) -> Range<usize> {
         self.offset..self.end()
     }
 
@@ -357,7 +357,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     /// recoverable validation.
     #[must_use]
     #[inline]
-    pub fn end(&self) -> usize {
+    pub const fn end(&self) -> usize {
         self.offset
             .checked_add(self.len)
             .expect("parameter block range end must fit in usize")

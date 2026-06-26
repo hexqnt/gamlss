@@ -34,13 +34,14 @@ where
 {
     /// Creates a stateless skew Student-t family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: SkewStudentTEta) -> SkewStudentTTheta {
         SkewStudentTTheta {
             mu: MuLink::inverse(eta.mu),
@@ -50,12 +51,12 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: SkewStudentTTheta) -> f64 {
         nll_location_scale(y, theta.mu, theta.sigma, theta.nu, theta.tau)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewStudentTEta) -> (f64, SkewStudentTEta) {
         let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
@@ -94,22 +95,22 @@ where
     type NllGradientEta = SkewStudentTEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -183,7 +184,7 @@ pub struct SkewStudentTEta {
 }
 
 impl ParameterParts<4> for SkewStudentTEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 4]) -> Self {
         Self {
             mu: values[0],
@@ -193,7 +194,7 @@ impl ParameterParts<4> for SkewStudentTEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

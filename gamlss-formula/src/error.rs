@@ -3,7 +3,7 @@ use gamlss_spline::{FourierError, SplineError};
 use thiserror::Error;
 
 /// Errors returned by the typed formula/builder layer.
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FormulaError {
     /// Requested column is not available in the data view.
     #[error("unknown column `{0}`")]

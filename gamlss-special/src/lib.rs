@@ -10,17 +10,17 @@
 //! scale values where that convention is already part of the surrounding
 //! distribution code.
 
-#[inline(always)]
+#[inline]
 fn is_probability(value: f64) -> bool {
     (0.0..=1.0).contains(&value) && value.is_finite()
 }
 
-#[inline(always)]
+#[inline]
 const fn clamp_probability(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
-#[inline(always)]
+#[inline]
 fn polynomial_ascending(value: f64, coefficients: &[f64]) -> f64 {
     // AS241 coefficients below are stored from constant term to highest degree.
     coefficients
@@ -31,12 +31,12 @@ fn polynomial_ascending(value: f64, coefficients: &[f64]) -> f64 {
         })
 }
 
-#[inline(always)]
+#[inline]
 fn polynomial_ascending_with_constant_one(value: f64, coefficients: &[f64]) -> f64 {
     value.mul_add(polynomial_ascending(value, coefficients), 1.0)
 }
 
-#[inline(always)]
+#[inline]
 fn polynomial_descending(value: f64, coefficients: &[f64]) -> f64 {
     // Cody/Cephes coefficients below are stored from highest degree to constant term.
     coefficients.iter().fold(0.0, |accumulator, coefficient| {
@@ -44,7 +44,7 @@ fn polynomial_descending(value: f64, coefficients: &[f64]) -> f64 {
     })
 }
 
-#[inline(always)]
+#[inline]
 fn polynomial_descending_with_implicit_leading_one(value: f64, coefficients: &[f64]) -> f64 {
     let Some((&first, rest)) = coefficients.split_first() else {
         return value;
@@ -173,7 +173,8 @@ pub fn unit_normal_log_pdf(z: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_nll_constant(nu: f64) -> f64 {
-    0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
+    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu)
+        - ln_gamma(f64::midpoint(nu, 1.0))
 }
 
 /// Standard Student-t log-density.
@@ -190,7 +191,7 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
         return f64::NEG_INFINITY;
     }
 
-    -student_t_nll_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()
+    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()
 }
 
 /// Standard Student-t CDF.
@@ -228,6 +229,8 @@ pub fn digamma(value: f64) -> f64 {
 
     let mut x = value;
     let mut result = 0.0;
+
+    #[allow(clippy::while_float)]
     while x < 8.0 {
         result -= 1.0 / x;
         x += 1.0;
@@ -651,7 +654,7 @@ where
     left_integral + right_integral
 }
 
-#[inline(always)]
+#[inline]
 fn simpson(lower: f64, upper: f64, f_lower: f64, f_mid: f64, f_upper: f64) -> f64 {
     (upper - lower) * (4.0f64.mul_add(f_mid, f_lower) + f_upper) / 6.0
 }

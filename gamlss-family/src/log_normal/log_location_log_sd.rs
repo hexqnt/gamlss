@@ -21,7 +21,7 @@ pub struct LogNormalLogLocationLogSdEta {
 }
 
 impl ParameterParts<2> for LogNormalLogLocationLogSdEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             log_location: values[0],
@@ -29,7 +29,7 @@ impl ParameterParts<2> for LogNormalLogLocationLogSdEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.log_location,
@@ -49,21 +49,21 @@ pub struct LogNormalLogLocationLogSdTheta {
 }
 
 impl From<LogNormalMeanLogSdTheta> for LogNormalLogLocationLogSdTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: LogNormalMeanLogSdTheta) -> Self {
         theta.log_location_log_sd()
     }
 }
 
 impl From<LogNormalMeanCvTheta> for LogNormalLogLocationLogSdTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: LogNormalMeanCvTheta) -> Self {
         theta.log_location_log_sd()
     }
 }
 
 impl From<LogNormalMedianLogSdTheta> for LogNormalLogLocationLogSdTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: LogNormalMedianLogSdTheta) -> Self {
         theta.log_location_log_sd()
     }
@@ -73,7 +73,7 @@ where
     LocationLink: Link<f64>,
     LogSdLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: LogNormalLogLocationLogSdEta) -> LogNormalLogLocationLogSdTheta {
         LogNormalLogLocationLogSdTheta {
             log_location: LocationLink::inverse(eta.log_location),
@@ -81,7 +81,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: LogNormalLogLocationLogSdEta,
@@ -113,22 +113,22 @@ where
     type NllGradientEta = LogNormalLogLocationLogSdEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_log_location_log_sd(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

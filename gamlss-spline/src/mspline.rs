@@ -84,21 +84,21 @@ impl MSplineBasis {
 
     /// Knot vector.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Degree.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn degree(&self) -> usize {
         self.degree
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
@@ -157,22 +157,22 @@ pub struct MSplineDesign {
 impl MSplineDesign {
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn basis(&self) -> &MSplineBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
@@ -201,12 +201,12 @@ impl MSplineDesign {
 }
 
 impl SplineRowBasis for MSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
@@ -218,12 +218,12 @@ impl SplineRowBasis for MSplineDesign {
 }
 
 impl PredictorBlock for MSplineDesign {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }

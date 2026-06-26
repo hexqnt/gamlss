@@ -11,27 +11,27 @@ const EXPECTED_FINITE: &str = "finite";
 pub struct NoPenalty;
 
 impl Penalty for NoPenalty {
-    #[inline(always)]
+    #[inline]
     fn value(&self, _: &[f64]) -> f64 {
         0.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn add_gradient(&self, _: &[f64], _: &mut [f64]) {}
 }
 
 impl GlobalPenalty for NoPenalty {
-    #[inline(always)]
+    #[inline]
     fn value(&self, _: &[f64]) -> f64 {
         0.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn add_gradient(&self, _: &[f64], _: &mut [f64]) {}
 }
 
 impl MatrixPenalty for NoPenalty {
-    #[inline(always)]
+    #[inline]
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
         debug_assert_matrix_shape(dim, gram);
     }
@@ -279,7 +279,7 @@ impl LinearForm {
     /// Creates a builder for a linear form over the full beta vector.
     #[must_use]
     #[inline]
-    pub fn builder() -> LinearFormBuilder {
+    pub const fn builder() -> LinearFormBuilder {
         LinearFormBuilder::new()
     }
 
@@ -802,7 +802,7 @@ fn debug_assert_matrix_shape(dim: usize, gram: &[f64]) {
     debug_assert_eq!(dim.checked_mul(dim), Some(gram.len()));
 }
 
-fn validate_penalty_range(range: &Range<usize>, dim: usize) -> Result<(), ModelError> {
+const fn validate_penalty_range(range: &Range<usize>, dim: usize) -> Result<(), ModelError> {
     if range.start > range.end || range.end > dim {
         Err(ModelError::PenaltyRangeOutOfBounds {
             start: range.start,
@@ -836,7 +836,7 @@ fn validate_nonnegative_finite(parameter: &'static str, value: f64) -> Result<()
     }
 }
 
-fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+const fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
     if value.is_finite() {
         Ok(())
     } else {

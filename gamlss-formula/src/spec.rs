@@ -80,7 +80,7 @@ macro_rules! define_spec {
         impl $spec {
             /// Creates an empty model specification.
             #[must_use]
-            pub fn new() -> Self {
+            pub const fn new() -> Self {
                 Self {
                     response: None,
                     weights: None,
@@ -313,73 +313,73 @@ pub struct ModelSpec;
 impl ModelSpec {
     /// Creates a normal model spec.
     #[must_use]
-    pub fn normal() -> NormalSpec {
+    pub const fn normal() -> NormalSpec {
         NormalSpec::new()
     }
 
     /// Creates a gamma model spec.
     #[must_use]
-    pub fn gamma() -> GammaSpec {
+    pub const fn gamma() -> GammaSpec {
         GammaSpec::new()
     }
 
     /// Creates a log-normal model spec.
     #[must_use]
-    pub fn log_normal() -> LogNormalSpec {
+    pub const fn log_normal() -> LogNormalSpec {
         LogNormalSpec::new()
     }
 
     /// Creates a Weibull model spec.
     #[must_use]
-    pub fn weibull() -> WeibullSpec {
+    pub const fn weibull() -> WeibullSpec {
         WeibullSpec::new()
     }
 
     /// Creates an inverse Gaussian model spec.
     #[must_use]
-    pub fn inverse_gaussian() -> InverseGaussianSpec {
+    pub const fn inverse_gaussian() -> InverseGaussianSpec {
         InverseGaussianSpec::new()
     }
 
     /// Creates a beta model spec.
     #[must_use]
-    pub fn beta() -> BetaSpec {
+    pub const fn beta() -> BetaSpec {
         BetaSpec::new()
     }
 }
 
 /// Creates a normal model spec.
 #[must_use]
-pub fn normal() -> NormalSpec {
+pub const fn normal() -> NormalSpec {
     ModelSpec::normal()
 }
 
 /// Creates a gamma model spec.
 #[must_use]
-pub fn gamma() -> GammaSpec {
+pub const fn gamma() -> GammaSpec {
     ModelSpec::gamma()
 }
 
 /// Creates a log-normal model spec.
 #[must_use]
-pub fn log_normal() -> LogNormalSpec {
+pub const fn log_normal() -> LogNormalSpec {
     ModelSpec::log_normal()
 }
 
 /// Creates a Weibull model spec.
 #[must_use]
-pub fn weibull() -> WeibullSpec {
+pub const fn weibull() -> WeibullSpec {
     ModelSpec::weibull()
 }
 
 /// Creates an inverse Gaussian model spec.
 #[must_use]
-pub fn inverse_gaussian() -> InverseGaussianSpec {
+pub const fn inverse_gaussian() -> InverseGaussianSpec {
     ModelSpec::inverse_gaussian()
 }
 
 /// Creates a beta model spec.
 #[must_use]
-pub fn beta() -> BetaSpec {
+pub const fn beta() -> BetaSpec {
     ModelSpec::beta()
 }

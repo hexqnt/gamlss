@@ -69,7 +69,7 @@ impl TermExpr {
 
     /// Creates an explicit empty expression with no implicit intercept.
     #[must_use]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             terms: Vec::new(),
             default_intercept_if_empty: false,
@@ -113,7 +113,7 @@ pub fn intercept() -> TermExpr {
 
 /// Creates an explicit empty term expression without an intercept.
 #[must_use]
-pub fn no_intercept() -> TermExpr {
+pub const fn no_intercept() -> TermExpr {
     TermExpr::empty()
 }
 
@@ -149,7 +149,7 @@ pub fn interaction(left: Col<f64>, right: Col<f64>) -> TermExpr {
 
 /// Creates an open-uniform P-spline term expression with default options.
 #[must_use]
-pub fn pspline(col: Col<f64>) -> PSplineTerm {
+pub const fn pspline(col: Col<f64>) -> PSplineTerm {
     PSplineTerm {
         col,
         k: 20,
@@ -161,7 +161,7 @@ pub fn pspline(col: Col<f64>) -> PSplineTerm {
 
 /// Creates a cyclic P-spline term expression with default options.
 #[must_use]
-pub fn cyclic_pspline(col: Col<f64>) -> CyclicPSplineTerm {
+pub const fn cyclic_pspline(col: Col<f64>) -> CyclicPSplineTerm {
     CyclicPSplineTerm {
         col,
         k: 20,
@@ -173,7 +173,7 @@ pub fn cyclic_pspline(col: Col<f64>) -> CyclicPSplineTerm {
 
 /// Creates a Fourier term expression with default options.
 #[must_use]
-pub fn fourier(col: Col<f64>) -> FourierTerm {
+pub const fn fourier(col: Col<f64>) -> FourierTerm {
     FourierTerm {
         col,
         period: 1.0,
@@ -184,7 +184,7 @@ pub fn fourier(col: Col<f64>) -> FourierTerm {
 
 /// Creates a tensor-product P-spline term expression with default options.
 #[must_use]
-pub fn tensor_pspline(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
+pub const fn tensor_pspline(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
     TensorPSplineTerm {
         left,
         right,
@@ -197,7 +197,7 @@ pub fn tensor_pspline(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
 
 /// Creates a hard-monotone I-spline term expression with default options.
 #[must_use]
-pub fn monotone(col: Col<f64>) -> MonotoneTerm {
+pub const fn monotone(col: Col<f64>) -> MonotoneTerm {
     MonotoneTerm {
         col,
         k: 20,
@@ -248,58 +248,58 @@ pub struct PSplineTerm {
 impl PSplineTerm {
     /// Returns the source column.
     #[must_use]
-    pub fn col(&self) -> &Col<f64> {
+    pub const fn col(&self) -> &Col<f64> {
         &self.col
     }
 
     /// Returns the number of spline basis functions.
     #[must_use]
-    pub fn n_basis(&self) -> usize {
+    pub const fn n_basis(&self) -> usize {
         self.k
     }
 
     /// Returns the spline order.
     #[must_use]
-    pub fn spline_order(&self) -> SplineOrder {
+    pub const fn spline_order(&self) -> SplineOrder {
         self.order
     }
 
     /// Returns the difference penalty weight.
     #[must_use]
-    pub fn penalty_lambda(&self) -> f64 {
+    pub const fn penalty_lambda(&self) -> f64 {
         self.lambda
     }
 
     /// Returns the finite-difference penalty order.
     #[must_use]
-    pub fn difference_order(&self) -> usize {
+    pub const fn difference_order(&self) -> usize {
         self.penalty_order
     }
 
     /// Sets the number of spline basis functions.
     #[must_use]
-    pub fn k(mut self, k: usize) -> Self {
+    pub const fn k(mut self, k: usize) -> Self {
         self.k = k;
         self
     }
 
     /// Sets the spline order.
     #[must_use]
-    pub fn order(mut self, order: SplineOrder) -> Self {
+    pub const fn order(mut self, order: SplineOrder) -> Self {
         self.order = order;
         self
     }
 
     /// Sets the difference penalty weight.
     #[must_use]
-    pub fn lambda(mut self, lambda: f64) -> Self {
+    pub const fn lambda(mut self, lambda: f64) -> Self {
         self.lambda = lambda;
         self
     }
 
     /// Sets the finite-difference penalty order.
     #[must_use]
-    pub fn penalty_order(mut self, order: usize) -> Self {
+    pub const fn penalty_order(mut self, order: usize) -> Self {
         self.penalty_order = order;
         self
     }
@@ -318,28 +318,28 @@ pub struct CyclicPSplineTerm {
 impl CyclicPSplineTerm {
     /// Sets the number of spline basis functions.
     #[must_use]
-    pub fn k(mut self, k: usize) -> Self {
+    pub const fn k(mut self, k: usize) -> Self {
         self.k = k;
         self
     }
 
     /// Sets the spline order.
     #[must_use]
-    pub fn order(mut self, order: SplineOrder) -> Self {
+    pub const fn order(mut self, order: SplineOrder) -> Self {
         self.order = order;
         self
     }
 
     /// Sets the cyclic difference penalty weight.
     #[must_use]
-    pub fn lambda(mut self, lambda: f64) -> Self {
+    pub const fn lambda(mut self, lambda: f64) -> Self {
         self.lambda = lambda;
         self
     }
 
     /// Sets the finite-difference penalty order.
     #[must_use]
-    pub fn penalty_order(mut self, order: usize) -> Self {
+    pub const fn penalty_order(mut self, order: usize) -> Self {
         self.penalty_order = order;
         self
     }
@@ -357,21 +357,21 @@ pub struct FourierTerm {
 impl FourierTerm {
     /// Sets the Fourier period.
     #[must_use]
-    pub fn period(mut self, period: f64) -> Self {
+    pub const fn period(mut self, period: f64) -> Self {
         self.period = period;
         self
     }
 
     /// Sets the Fourier order.
     #[must_use]
-    pub fn order(mut self, order: usize) -> Self {
+    pub const fn order(mut self, order: usize) -> Self {
         self.order = order;
         self
     }
 
     /// Includes an intercept column in this term.
     #[must_use]
-    pub fn include_intercept(mut self, include: bool) -> Self {
+    pub const fn include_intercept(mut self, include: bool) -> Self {
         self.include_intercept = include;
         self
     }
@@ -391,7 +391,7 @@ pub struct TensorPSplineTerm {
 impl TensorPSplineTerm {
     /// Sets basis counts for the left and right axes.
     #[must_use]
-    pub fn k(mut self, left: usize, right: usize) -> Self {
+    pub const fn k(mut self, left: usize, right: usize) -> Self {
         self.left_k = left;
         self.right_k = right;
         self
@@ -399,7 +399,7 @@ impl TensorPSplineTerm {
 
     /// Sets spline orders for the left and right axes.
     #[must_use]
-    pub fn order(mut self, left: SplineOrder, right: SplineOrder) -> Self {
+    pub const fn order(mut self, left: SplineOrder, right: SplineOrder) -> Self {
         self.left_order = left;
         self.right_order = right;
         self
@@ -418,21 +418,21 @@ pub struct MonotoneTerm {
 impl MonotoneTerm {
     /// Sets the number of I-spline basis functions.
     #[must_use]
-    pub fn k(mut self, k: usize) -> Self {
+    pub const fn k(mut self, k: usize) -> Self {
         self.k = k;
         self
     }
 
     /// Sets the I-spline degree.
     #[must_use]
-    pub fn degree(mut self, degree: usize) -> Self {
+    pub const fn degree(mut self, degree: usize) -> Self {
         self.degree = degree;
         self
     }
 
     /// Sets the monotonicity direction.
     #[must_use]
-    pub fn direction(mut self, direction: MonotoneDirection) -> Self {
+    pub const fn direction(mut self, direction: MonotoneDirection) -> Self {
         self.direction = direction;
         self
     }

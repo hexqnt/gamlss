@@ -29,7 +29,7 @@ pub struct ZinbTotalMeanSizeZeroProbabilityEta {
 }
 
 impl ParameterParts<3> for ZinbTotalMeanSizeZeroProbabilityEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             total_mean: values[0],
@@ -38,7 +38,7 @@ impl ParameterParts<3> for ZinbTotalMeanSizeZeroProbabilityEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.total_mean,
@@ -61,7 +61,7 @@ pub struct ZinbTotalMeanSizeZeroProbabilityTheta {
 }
 
 impl ZinbTotalMeanSizeZeroProbabilityTheta {
-    #[inline(always)]
+    #[inline]
     fn component(self) -> ZinbTheta {
         ZinbTheta {
             mu: self.total_mean / (1.0 - self.zero_probability),
@@ -72,7 +72,7 @@ impl ZinbTotalMeanSizeZeroProbabilityTheta {
 }
 
 /// ZINB total-mean/size/zero-probability implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZinbTotalMeanSize<MeanLink = Log, SizeLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(MeanLink, SizeLink, ZeroProbabilityLink)>,
 }
@@ -86,13 +86,13 @@ where
 {
     /// Creates a stateless ZINB total-mean/size family.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(
         eta: ZinbTotalMeanSizeZeroProbabilityEta,
     ) -> ZinbTotalMeanSizeZeroProbabilityTheta {

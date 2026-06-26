@@ -6,19 +6,19 @@ const INITIAL_PROBABILITY_FLOOR: f64 = 1.0e-12;
 pub struct Identity;
 
 impl Link<f64> for Identity {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         eta
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(_: f64) -> f64 {
         1.0
     }
 }
 
 impl InitialEtaFromTheta<f64> for Identity {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         theta
     }
@@ -29,12 +29,12 @@ impl InitialEtaFromTheta<f64> for Identity {
 pub struct Log;
 
 impl Link<f64> for Log {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         eta.exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(eta: f64) -> f64 {
         eta.exp()
     }
@@ -43,7 +43,7 @@ impl Link<f64> for Log {
 impl PositiveLink<f64> for Log {}
 
 impl InitialEtaFromTheta<f64> for Log {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         theta.max(INITIAL_POSITIVE_FLOOR).ln()
     }
@@ -54,7 +54,7 @@ impl InitialEtaFromTheta<f64> for Log {
 pub struct Softplus;
 
 impl Link<f64> for Softplus {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         if eta > 30.0 {
             eta
@@ -65,7 +65,7 @@ impl Link<f64> for Softplus {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(eta: f64) -> f64 {
         if eta >= 0.0 {
             1.0 / (1.0 + (-eta).exp())
@@ -79,7 +79,7 @@ impl Link<f64> for Softplus {
 impl PositiveLink<f64> for Softplus {}
 
 impl InitialEtaFromTheta<f64> for Softplus {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         let theta = theta.max(INITIAL_POSITIVE_FLOOR);
         if theta > 30.0 {
@@ -95,7 +95,7 @@ impl InitialEtaFromTheta<f64> for Softplus {
 pub struct Logit;
 
 impl Link<f64> for Logit {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         if eta >= 0.0 {
             let z = (-eta).exp();
@@ -106,7 +106,7 @@ impl Link<f64> for Logit {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(eta: f64) -> f64 {
         let p = Self::inverse(eta);
         p * (1.0 - p)
@@ -116,7 +116,7 @@ impl Link<f64> for Logit {
 impl UnitIntervalLink<f64> for Logit {}
 
 impl InitialEtaFromTheta<f64> for Logit {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         let probability = theta.clamp(INITIAL_PROBABILITY_FLOOR, 1.0 - INITIAL_PROBABILITY_FLOOR);
         probability.ln() - (1.0 - probability).ln()
@@ -128,19 +128,19 @@ impl InitialEtaFromTheta<f64> for Logit {
 pub struct LogPlus<const OFFSET: i64>;
 
 impl<const OFFSET: i64> Link<f64> for LogPlus<OFFSET> {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         OFFSET as f64 + eta.exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(eta: f64) -> f64 {
         eta.exp()
     }
 }
 
 impl<const OFFSET: i64> InitialEtaFromTheta<f64> for LogPlus<OFFSET> {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         (theta - OFFSET as f64).max(INITIAL_POSITIVE_FLOOR).ln()
     }
@@ -154,7 +154,7 @@ impl<const OFFSET: i64> InitialEtaFromTheta<f64> for LogPlus<OFFSET> {
 pub struct ClampedLog<const MIN: i64, const MAX: i64>;
 
 impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
-    #[inline(always)]
+    #[inline]
     fn inverse(eta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;
@@ -169,7 +169,7 @@ impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative_inverse(eta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;
@@ -186,7 +186,7 @@ impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
 impl<const MIN: i64, const MAX: i64> PositiveLink<f64> for ClampedLog<MIN, MAX> {}
 
 impl<const MIN: i64, const MAX: i64> InitialEtaFromTheta<f64> for ClampedLog<MIN, MAX> {
-    #[inline(always)]
+    #[inline]
     fn initial_eta_from_theta(theta: f64) -> f64 {
         let min = MIN as f64;
         let max = MAX as f64;

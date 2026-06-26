@@ -27,7 +27,7 @@ pub struct NegativeBinomialMeanDispersionEta {
 }
 
 impl ParameterParts<2> for NegativeBinomialMeanDispersionEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mean: values[0],
@@ -35,7 +35,7 @@ impl ParameterParts<2> for NegativeBinomialMeanDispersionEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -55,7 +55,7 @@ pub struct NegativeBinomialMeanDispersionTheta {
 }
 
 impl NegativeBinomialMeanDispersionTheta {
-    #[inline(always)]
+    #[inline]
     fn mean_size(self) -> NegativeBinomialTheta {
         NegativeBinomialTheta {
             mu: self.mean,
@@ -65,7 +65,7 @@ impl NegativeBinomialMeanDispersionTheta {
 }
 
 /// Negative-binomial mean/dispersion implementation carrier.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomialDispersion<MeanLink = Log, DispersionLink = Log> {
     marker: PhantomData<(MeanLink, DispersionLink)>,
 }
@@ -77,13 +77,13 @@ where
 {
     /// Creates a stateless negative-binomial mean/dispersion family.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(
         eta: NegativeBinomialMeanDispersionEta,
     ) -> NegativeBinomialMeanDispersionTheta {

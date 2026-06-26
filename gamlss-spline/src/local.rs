@@ -5,7 +5,7 @@ use crate::SplineOrder;
 /// Stores up to 4 non-zero indices and weights, sufficient for a cubic spline.
 /// Used in the `eta_row` and `add_gradient` methods of predictors.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(crate) struct LocalBasis {
+pub struct LocalBasis {
     indices: [usize; 4],
     weights: [f64; 4],
     len: usize,
@@ -63,7 +63,7 @@ impl LocalBasis {
 /// coordinate `u` in the data range.
 ///
 /// For `u <= 0` or `u >= 1` returns a linear extrapolation.
-pub(crate) fn open_uniform_local_basis(
+pub fn open_uniform_local_basis(
     u: f64,
     order: SplineOrder,
     n_basis: usize,
@@ -95,7 +95,7 @@ pub(crate) fn open_uniform_local_basis(
 /// Computes the local basis of a cyclic spline for phase `phi`.
 ///
 /// `phi` is reduced to `[0, 1)` via `rem_euclid`.
-pub(crate) fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
+pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
     let x = phi.rem_euclid(1.0) * n_basis as f64;
     let cell = x.floor() as usize;
     let u = x - cell as f64;

@@ -28,7 +28,7 @@ pub struct GammaShapeRateEta {
 }
 
 impl ParameterParts<2> for GammaShapeRateEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             shape: values[0],
@@ -36,7 +36,7 @@ impl ParameterParts<2> for GammaShapeRateEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.shape,
@@ -60,7 +60,7 @@ where
     ShapeLink: PositiveLink<f64>,
     RateLink: PositiveLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: GammaShapeRateEta) -> GammaShapeRateTheta {
         GammaShapeRateTheta {
             shape: ShapeLink::inverse(eta.shape),
@@ -68,7 +68,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GammaShapeRateEta) -> (f64, GammaShapeRateEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_shape_rate(y, theta);
@@ -97,22 +97,22 @@ where
     type NllGradientEta = GammaShapeRateEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_shape_rate(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_shape_rate(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }

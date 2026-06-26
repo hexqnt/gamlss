@@ -33,13 +33,14 @@ where
 {
     /// Creates a stateless generalized gamma family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: GeneralizedGammaEta) -> GeneralizedGammaTheta {
         GeneralizedGammaTheta {
             mu: ScaleLink::inverse(eta.mu),
@@ -48,7 +49,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: GeneralizedGammaTheta) -> f64 {
         if y <= 0.0
             || !y.is_finite()
@@ -73,12 +74,12 @@ where
         -(k * k.ln() + k * z.ln() + abs_nu.ln() - k * z - ln_gamma(k) - y.ln())
     }
 
-    #[inline(always)]
+    #[inline]
     fn log_normal_limit_nu_score(log_ratio: f64, sigma: f64) -> f64 {
         log_ratio * log_ratio * log_ratio / (6.0 * sigma * sigma) + sigma * sigma / 12.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn gradient_theta(y: f64, theta: GeneralizedGammaTheta) -> GeneralizedGammaTheta {
         let log_ratio = (y / theta.mu).ln();
         if theta.nu.abs() < NU_EPSILON {
@@ -103,7 +104,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GeneralizedGammaEta) -> (f64, GeneralizedGammaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -145,22 +146,22 @@ where
     type NllGradientEta = GeneralizedGammaEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -264,7 +265,7 @@ pub struct GeneralizedGammaEta {
 }
 
 impl ParameterParts<3> for GeneralizedGammaEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mu: values[0],
@@ -273,7 +274,7 @@ impl ParameterParts<3> for GeneralizedGammaEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

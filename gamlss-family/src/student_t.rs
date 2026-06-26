@@ -47,7 +47,7 @@ pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 
     }
 
     let z = (y - theta.mu) / theta.sigma;
-    student_t_constant(nu) + theta.sigma.ln() + 0.5 * (nu + 1.0) * (z * z / nu).ln_1p()
+    student_t_constant(nu) + theta.sigma.ln() + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
 }
 
 pub(super) fn student_t_nll_gradient_theta(
@@ -74,9 +74,9 @@ pub(super) fn student_t_nll_gradient_theta(
     let denominator = nu + z2;
     let mu = -(nu + 1.0) * z / (theta.sigma * denominator);
     let sigma = (1.0 - (nu + 1.0) * z2 / denominator) / theta.sigma;
-    let tau = 0.5 / nu + 0.5 * digamma(0.5 * nu) - 0.5 * digamma(0.5 * (nu + 1.0))
+    let tau = 0.5 / nu + 0.5 * digamma(0.5 * nu) - 0.5 * digamma(f64::midpoint(nu, 1.0))
         + 0.5 * (z2 / nu).ln_1p()
-        - 0.5 * (nu + 1.0) * z2 / (nu * denominator);
+        - f64::midpoint(nu, 1.0) * z2 / (nu * denominator);
 
     StudentTGradientTheta { mu, sigma, tau }
 }
@@ -119,7 +119,7 @@ fn student_t_standard_density(nu: f64, t: f64) -> f64 {
         return 0.0;
     }
 
-    (-student_t_constant(nu) - 0.5 * (nu + 1.0) * (t * t / nu).ln_1p()).exp()
+    (-student_t_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()).exp()
 }
 
 fn student_t_standard_crps_constant(nu: f64) -> f64 {
@@ -140,7 +140,8 @@ pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64
 
 /// Normalization constant for the logarithm of the Student's t density.
 fn student_t_constant(nu: f64) -> f64 {
-    0.5 * (nu.ln() + std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu) - ln_gamma(0.5 * (nu + 1.0))
+    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu)
+        - ln_gamma(f64::midpoint(nu, 1.0))
 }
 
 #[cfg(test)]

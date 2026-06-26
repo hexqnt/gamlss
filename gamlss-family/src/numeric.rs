@@ -11,10 +11,7 @@ const STEP_SHRINK_FACTOR: f64 = 0.5;
 /// infinite series in the current implementation. It tries central differences
 /// with progressively smaller steps first, then falls back to one-sided
 /// differences when nearby probes still cross a distribution boundary.
-pub(crate) fn finite_difference_gradient_eta<F, Eta, const K: usize>(
-    eta: Eta,
-    mut nll_at: F,
-) -> [f64; K]
+pub fn finite_difference_gradient_eta<F, Eta, const K: usize>(eta: Eta, mut nll_at: F) -> [f64; K]
 where
     Eta: Copy + ParameterParts<K>,
     F: FnMut(Eta) -> f64,

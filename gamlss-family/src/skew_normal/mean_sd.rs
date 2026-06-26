@@ -30,13 +30,14 @@ where
 {
     /// Creates a stateless mean/SD skew-normal family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: SkewNormalMeanSdEta) -> SkewNormalMeanSdTheta {
         SkewNormalMeanSdTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -45,7 +46,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: SkewNormalMeanSdTheta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::INFINITY;
@@ -59,7 +60,7 @@ where
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewNormalMeanSdEta) -> (f64, SkewNormalMeanSdEta) {
         let theta = Self::theta_from_eta(eta);
         let Some(location_scale) = theta.location_scale() else {
@@ -129,22 +130,22 @@ where
     type NllGradientEta = SkewNormalMeanSdEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -229,7 +230,7 @@ pub struct SkewNormalMeanSdEta {
 }
 
 impl ParameterParts<3> for SkewNormalMeanSdEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mean: values[0],
@@ -238,7 +239,7 @@ impl ParameterParts<3> for SkewNormalMeanSdEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -261,7 +262,7 @@ pub struct SkewNormalMeanSdTheta {
 }
 
 impl SkewNormalMeanSdTheta {
-    #[inline(always)]
+    #[inline]
     fn location_scale(self) -> Option<SkewNormalTheta> {
         let (mu, sigma) = mean_sd_to_location_scale(self.mean, self.sigma, self.nu)?;
         Some(SkewNormalTheta {

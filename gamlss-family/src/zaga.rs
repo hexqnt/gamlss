@@ -21,7 +21,7 @@ mod total_mean_cv;
 /// coefficient of variation, and zero-mass probability. Use
 /// [`ZagaTotalMeanCvZeroProbability`] for the derived unconditional-mean
 /// parameterization.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
 }
@@ -34,25 +34,26 @@ where
 {
     /// Creates a stateless ZAGA family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn gamma_shape_rate(theta: ZagaTheta) -> (f64, f64) {
         let shape = 1.0 / (theta.sigma * theta.sigma);
         let rate = 1.0 / (theta.sigma * theta.sigma * theta.mu);
         (shape, rate)
     }
 
-    #[inline(always)]
+    #[inline]
     fn gamma_nll(y: f64, shape: f64, rate: f64) -> f64 {
         ln_gamma(shape) - shape * rate.ln() - (shape - 1.0) * y.ln() + rate * y
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZagaTheta) -> f64 {
         if y < 0.0
             || !y.is_finite()
@@ -73,7 +74,7 @@ where
         -(1.0 - theta.nu).ln() + Self::gamma_nll(y, shape, rate)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn gradient_component_theta(y: f64, theta: ZagaTheta) -> ZagaTheta {
         if y == 0.0 {
             return ZagaTheta {

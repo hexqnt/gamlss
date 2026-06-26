@@ -27,7 +27,7 @@ pub struct ZipTotalMeanZeroProbabilityTheta {
 }
 
 impl ZipTotalMeanZeroProbabilityTheta {
-    #[inline(always)]
+    #[inline]
     fn component(self) -> ZipTheta {
         ZipTheta {
             mu: self.total_mean / (1.0 - self.zero_probability),
@@ -41,7 +41,7 @@ where
     MeanLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: ZipEta) -> ZipTotalMeanZeroProbabilityTheta {
         ZipTotalMeanZeroProbabilityTheta {
             total_mean: MeanLink::inverse(eta.mu),

@@ -29,18 +29,19 @@ pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink 
 impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     /// Creates a stateless log-normal family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn valid_log_location_log_sd(theta: LogNormalLogLocationLogSdTheta) -> bool {
         theta.log_location.is_finite() && theta.log_sd > 0.0 && theta.log_sd.is_finite()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::INFINITY;
@@ -52,7 +53,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
         log_y + HALF_LOG_2_PI + theta.log_sd.ln() + 0.5 * z * z
     }
 
-    #[inline(always)]
+    #[inline]
     fn gradient_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> (f64, f64) {
         let residual = y.ln() - theta.log_location;
         let sigma2 = theta.log_sd * theta.log_sd;
@@ -62,7 +63,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn cdf_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
@@ -74,7 +75,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
         unit_normal_cdf((y.ln() - theta.log_location) / theta.log_sd)
     }
 
-    #[inline(always)]
+    #[inline]
     fn quantile_log_location_log_sd(p: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
@@ -83,7 +84,7 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
         (theta.log_location + theta.log_sd * unit_normal_quantile(p)).exp()
     }
 
-    #[inline(always)]
+    #[inline]
     fn crps_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;

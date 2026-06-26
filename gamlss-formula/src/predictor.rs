@@ -16,7 +16,7 @@ pub struct FormulaPredictorBlock {
 impl FormulaPredictorBlock {
     /// Creates a formula predictor block.
     #[must_use]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         dense: DenseDesign,
         offset: Option<Vec<f64>>,
         monotone: Vec<MonotoneSegment>,
@@ -32,7 +32,7 @@ impl FormulaPredictorBlock {
 
     /// Returns the dense linear part.
     #[must_use]
-    pub fn dense(&self) -> &DenseDesign {
+    pub const fn dense(&self) -> &DenseDesign {
         &self.dense
     }
 
@@ -192,14 +192,14 @@ impl PredictorBlock for FormulaPredictorBlock {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MonotoneSegment {
+pub struct MonotoneSegment {
     pub(crate) range: Range<usize>,
     pub(crate) values: Vec<f64>,
     pub(crate) basis: ISplineBasis,
     pub(crate) direction: MonotoneDirection,
 }
 
-fn monotone_sign(direction: MonotoneDirection) -> f64 {
+const fn monotone_sign(direction: MonotoneDirection) -> f64 {
     match direction {
         MonotoneDirection::Increasing => 1.0,
         MonotoneDirection::Decreasing => -1.0,

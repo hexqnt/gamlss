@@ -33,13 +33,14 @@ where
 {
     /// Creates a stateless Johnson SU family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: JohnsonSuEta) -> JohnsonSuTheta {
         JohnsonSuTheta {
             mu: MuLink::inverse(eta.mu),
@@ -49,7 +50,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: JohnsonSuTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -64,10 +65,10 @@ where
 
         let s = (y - theta.mu) / theta.sigma;
         let z = theta.tau.mul_add(s.asinh(), theta.nu);
-        theta.sigma.ln() - theta.tau.ln() + 0.5 * (1.0 + s * s).ln() - unit_normal_log_pdf(z)
+        theta.sigma.ln() - theta.tau.ln() + 0.5 * (s * s).ln_1p() - unit_normal_log_pdf(z)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: JohnsonSuEta) -> (f64, JohnsonSuEta) {
         let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
@@ -105,22 +106,22 @@ where
     type NllGradientEta = JohnsonSuEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -215,7 +216,7 @@ pub struct JohnsonSuEta {
 }
 
 impl ParameterParts<4> for JohnsonSuEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 4]) -> Self {
         Self {
             mu: values[0],
@@ -225,7 +226,7 @@ impl ParameterParts<4> for JohnsonSuEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,

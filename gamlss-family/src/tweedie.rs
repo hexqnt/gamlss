@@ -40,13 +40,14 @@ where
 {
     /// Creates a stateless Tweedie family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: TweedieEta) -> TweedieTheta {
         TweedieTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -55,7 +56,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn compound(theta: TweedieTheta) -> Option<CompoundParams> {
         if theta.mean <= 0.0
             || !theta.mean.is_finite()
@@ -86,7 +87,7 @@ where
         })
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_theta(y: f64, theta: TweedieTheta) -> f64 {
         if y < 0.0 || !y.is_finite() {
             return f64::INFINITY;
@@ -157,7 +158,7 @@ where
         cdf.clamp(0.0, 1.0)
     }
 
-    #[inline(always)]
+    #[inline]
     fn quantile_theta(p: f64, theta: TweedieTheta) -> f64 {
         let Some(params) = Self::compound(theta) else {
             return f64::NAN;
@@ -175,7 +176,7 @@ where
         invert_positive_cdf(p, |y| Self::cdf_theta(y, theta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
         let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
@@ -211,22 +212,22 @@ where
     type NllGradientEta = TweedieEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -304,7 +305,7 @@ pub struct TweedieEta {
 }
 
 impl ParameterParts<3> for TweedieEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mean: values[0],
@@ -313,7 +314,7 @@ impl ParameterParts<3> for TweedieEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -336,9 +337,9 @@ pub struct TweedieTheta {
 }
 
 impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
-    #[inline(always)]
+    #[inline]
     fn from(theta: TweedieMeanCvPowerTheta) -> Self {
-        TweedieTheta {
+        Self {
             mean: theta.mean,
             dispersion: theta.dispersion(),
             power: theta.power,
@@ -350,7 +351,7 @@ impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, CvLink, PowerLink)>,
 }
@@ -363,13 +364,14 @@ where
 {
     /// Creates a stateless Tweedie mean/CV/power family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: TweedieMeanCvPowerEta) -> TweedieMeanCvPowerTheta {
         TweedieMeanCvPowerTheta {
             mean: MeanLink::inverse(eta.mean),
@@ -378,7 +380,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: TweedieMeanCvPowerEta,
@@ -418,22 +420,22 @@ where
     type NllGradientEta = TweedieMeanCvPowerEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Tweedie::<Log, Log, Logit>::nll_theta(y, theta.into())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(eta).into())
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -502,7 +504,7 @@ pub struct TweedieMeanCvPowerEta {
 }
 
 impl ParameterParts<3> for TweedieMeanCvPowerEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
             mean: values[0],
@@ -511,7 +513,7 @@ impl ParameterParts<3> for TweedieMeanCvPowerEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mean,
@@ -534,7 +536,7 @@ pub struct TweedieMeanCvPowerTheta {
 }
 
 impl TweedieMeanCvPowerTheta {
-    #[inline(always)]
+    #[inline]
     fn dispersion(self) -> f64 {
         self.cv * self.cv * self.mean.powf(2.0 - self.power)
     }
