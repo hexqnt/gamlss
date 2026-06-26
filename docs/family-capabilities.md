@@ -45,6 +45,8 @@ evaluations for `K` parameters.
 
 ## Analytic gradient replacement queue
 
-The finite-difference families are MVP implementations, not the intended
-training hot path. Prefer replacing them in this order as usage justifies it:
-`Tweedie`, `SkewStudentT`, `JohnsonSu`, `Shash`, then `PowerExponential`.
+Finite-difference families are supported but slower training paths. They use
+numerical eta-gradient approximations and should be replaced with analytic
+gradients as usage and benchmark results justify it. Prefer replacing them in
+this order: `Tweedie`, `SkewStudentT`, `JohnsonSu`, `Shash`, then
+`PowerExponential`.
