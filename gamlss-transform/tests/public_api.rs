@@ -68,10 +68,11 @@ fn public_error_variants_remain_matchable() {
         }
     );
 
-    assert_eq!(
-        TransformError::AboveUpperBound,
-        TransformError::AboveUpperBound
-    );
+    let negative_lambda_state = BoxCoxFixed::<-1>::fit(&[1.0, 2.0]).unwrap();
+    match BoxCoxFixed::<-1>::checked_inverse(&negative_lambda_state, 1.0).unwrap_err() {
+        TransformError::AboveUpperBound => {}
+        other => panic!("expected AboveUpperBound, got {other:?}"),
+    }
 }
 
 #[test]

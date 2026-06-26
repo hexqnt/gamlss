@@ -5,7 +5,7 @@ use crate::transforms::{
     validate_non_empty_finite,
 };
 
-use super::box_cox::{fit_lambda, profile_log_likelihood};
+use super::power::{ProfileAccumulator, fit_lambda};
 
 const LAMBDA_EPSILON: f64 = 1.0e-12;
 
@@ -56,9 +56,7 @@ impl<const NUMERATOR: i32, const DENOMINATOR: i32> TargetTransform
 
     fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
         validate_non_empty_finite(y)?;
-        Ok(YeoJohnsonState {
-            lambda: lambda_from_ratio(NUMERATOR, DENOMINATOR)?,
-        })
+        YeoJohnsonState::new(lambda_from_ratio(NUMERATOR, DENOMINATOR)?)
     }
 
     #[inline]
@@ -152,17 +150,19 @@ fn validate_yeo_johnson_inverse_value(lambda: f64, value: f64) -> Result<(), Tra
 }
 
 fn yeo_johnson_profile_log_likelihood(y: &[f64], lambda: f64) -> Option<f64> {
-    let mut transformed = Vec::with_capacity(y.len());
+    let mut accumulator = ProfileAccumulator::default();
     let mut log_jacobian = 0.0;
     for value in y.iter().copied() {
-        transformed.push(transform_value(lambda, value));
+        accumulator.push(transform_value(lambda, value))?;
         log_jacobian += if value >= 0.0 {
             (lambda - 1.0) * value.ln_1p()
         } else {
             (1.0 - lambda) * (-value).ln_1p()
         };
     }
-    profile_log_likelihood(&transformed).map(|profile| profile + log_jacobian)
+    accumulator
+        .log_likelihood()
+        .map(|profile| profile + log_jacobian)
 }
 
 #[cfg(test)]

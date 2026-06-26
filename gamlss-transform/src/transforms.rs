@@ -23,6 +23,7 @@ pub mod log;
 pub mod log1p_shift;
 pub mod max_abs_scale;
 pub mod min_max_scale;
+mod power;
 pub mod quantile;
 pub mod robust_standardize;
 pub mod standardize;

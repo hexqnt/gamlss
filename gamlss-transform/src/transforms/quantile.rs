@@ -2,6 +2,7 @@ use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
 use crate::transforms::{
     TargetTransform, TransformError, validate_finite_value, validate_non_empty_finite,
+    validate_output_len,
 };
 
 /// Empirical quantile transform to approximately uniform values.
@@ -41,6 +42,24 @@ impl TargetTransform for QuantileUniform {
         validate_finite_value(value)?;
         state.validate()
     }
+
+    #[inline]
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, y, out, QuantileState::probability_at)
+    }
+
+    #[inline]
+    fn inverse_into(
+        state: &Self::State,
+        values: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, values, out, QuantileState::value_at_probability)
+    }
 }
 
 /// Empirical quantile transform to approximately standard-normal values.
@@ -79,6 +98,28 @@ impl TargetTransform for QuantileNormal {
     fn validate_inverse_value(state: &Self::State, value: f64) -> Result<(), TransformError> {
         validate_finite_value(value)?;
         state.validate()
+    }
+
+    #[inline]
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, y, out, |state, value| {
+            unit_normal_quantile(state.probability_at(value))
+        })
+    }
+
+    #[inline]
+    fn inverse_into(
+        state: &Self::State,
+        values: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, values, out, |state, value| {
+            state.value_at_probability(unit_normal_cdf(value))
+        })
     }
 }
 
@@ -232,11 +273,39 @@ fn interpolate(x: f64, left_x: f64, right_x: f64, left_y: f64, right_y: f64) -> 
     weight.mul_add(right_y - left_y, left_y)
 }
 
+fn map_quantile_slice_into(
+    state: &QuantileState,
+    values: &[f64],
+    out: &mut [f64],
+    map: impl Fn(&QuantileState, f64) -> f64,
+) -> Result<(), TransformError> {
+    validate_output_len(values.len(), out.len())?;
+    state.validate()?;
+    for (out, value) in out.iter_mut().zip(values.iter().copied()) {
+        validate_finite_value(value)?;
+        *out = map(state, value);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
 
     use crate::{QuantileNormal, QuantileUniform, TargetTransform, TransformError};
+
+    fn invalid_quantile_state() -> super::QuantileState {
+        super::QuantileState {
+            values: Vec::new(),
+            probabilities: Vec::new(),
+        }
+    }
+
+    fn invalid_quantile_state_error() -> TransformError {
+        TransformError::InvalidParameter {
+            name: "quantile_state",
+        }
+    }
 
     #[test]
     fn uniform_transform_is_monotone_and_round_trips_fitted_values() {
@@ -294,16 +363,35 @@ mod tests {
 
     #[test]
     fn checked_api_rejects_invalid_manual_state() {
-        let state = super::QuantileState {
-            values: Vec::new(),
-            probabilities: Vec::new(),
-        };
+        let state = invalid_quantile_state();
 
         assert_eq!(
             QuantileUniform::checked_transform(&state, 1.0).unwrap_err(),
-            TransformError::InvalidParameter {
-                name: "quantile_state"
-            }
+            invalid_quantile_state_error()
+        );
+    }
+
+    #[test]
+    fn slice_api_validates_manual_state_once_before_values() {
+        let state = invalid_quantile_state();
+        let mut out = [0.0];
+        let expected = invalid_quantile_state_error();
+
+        assert_eq!(
+            QuantileUniform::transform_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileUniform::inverse_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileNormal::transform_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileNormal::inverse_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
         );
     }
 
