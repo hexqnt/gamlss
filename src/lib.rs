@@ -1,28 +1,31 @@
 #![forbid(unsafe_code)]
-//! Высокоуровневый crate для Rust-native GAMLSS.
+//! High-level crate for Rust-native GAMLSS.
 //!
-//! `gamlss` реэкспортирует typed core, готовые distribution families,
-//! spline/predictor building blocks и target transforms. Основной подход сейчас
-//! — низкоуровневое typed API через [`core`], [`family`], [`spline`] и
-//! [`transform`].
+//! `gamlss` re-exports the typed core, ready-made distribution families,
+//! spline/predictor building blocks, special functions and target transforms.
+//! The primary approach is a low-level typed API through [`core`], [`family`],
+//! [`spline`] and [`transform`].
 //!
-//! При включённой feature `formula` также доступен [`formula`] namespace. Этот
-//! слой является экспериментальным optional convenience API: он компилирует
-//! curated high-level builder specifications в typed core models, но не является
-//! основным API и не обещает покрывать все distributions, links и
-//! parameterizations из низкоуровневых crate-ов.
+//! When the `formula` feature is enabled, the [`formula`] namespace is also
+//! available. This layer is an experimental optional convenience API: it compiles
+//! curated high-level builder specifications into typed core models, but is not
+//! the primary API and does not promise to cover all distributions, links and
+//! parameterizations from the low-level crates.
 //!
-//! # Основные возможности
+//! The `rand` feature enables the sampling API in [`family`] and corresponds to
+//! the `gamlss-family/rand` feature.
 //!
-//! - typed [`core::ParameterBlock`] для каждого параметра распределения;
-//! - [`core::ParameterBlocks`] для автоматического layout offsets в общем
-//!   beta-векторе;
-//! - unweighted и weighted модели через [`core::Gamlss::try_new`] и
+//! # Key features
+//!
+//! - typed [`core::ParameterBlock`] for each distribution parameter;
+//! - [`core::ParameterBlocks`] for automatic layout offsets in the common
+//!   beta vector;
+//! - unweighted and weighted models via [`core::Gamlss::try_new`] and
 //!   [`core::Gamlss::try_new_weighted`];
-//! - prediction API для training rows и совместимых prediction blocks;
-//! - post-fit diagnostics namespace через [`diagnostics`];
-//! - experimental formula builders через [`formula::ModelSpec`] при включённой
-//!   feature `formula`.
+//! - prediction API for training rows and compatible prediction blocks;
+//! - post-fit diagnostics namespace via [`diagnostics`];
+//! - experimental formula builders via [`formula::ModelSpec`] when the
+//!   `formula` feature is enabled.
 //!
 //! # Example
 //!
@@ -32,7 +35,7 @@
 //! let y = [0.0, 1.0, 2.0];
 //! let weights = [1.0, 0.5, 1.0];
 //!
-//! let blocks = ParameterBlocks::new((
+//! let blocks = ParameterBlocks::try_new((
 //!     ParameterBlock::<Mu, Identity, _, _>::linear(
 //!         DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]]),
 //!         NoPenalty,
@@ -43,39 +46,41 @@
 //!         NoPenalty,
 //!         0,
 //!     ),
-//! ));
+//! ))?;
 //!
 //! let model = Gamlss::try_new_weighted(
-//!     gamlss::family::DefaultNormal::new(),
+//!     gamlss::family::NormalMuSigma::new(),
 //!     blocks,
 //!     &y,
 //!     &weights,
 //! )?;
 //!
-//! let theta = vec![0.0, 0.5, -0.2];
-//! let fitted = model.predict_theta(&theta)?;
-//! assert_eq!(fitted.len(), y.len());
+//! let parameters = model.initial_parameters()?;
+//! let fitted_theta = model.predict_theta(&parameters)?;
+//! assert_eq!(fitted_theta.len(), y.len());
 //! # Ok::<_, gamlss::core::ModelError>(())
 //! ```
 //!
 #![doc = include_str!("../docs/project-structure.md")]
 
-/// Типизированные базовые абстракции.
+/// Typed core abstractions.
 pub use gamlss_core as core;
 /// Post-fit diagnostics utilities.
 pub use gamlss_diagnostics as diagnostics;
-/// Распределения и реализации likelihood.
+/// Distributions and likelihood implementations.
 pub use gamlss_family as family;
-/// Spline-базисы и штрафы.
+/// Special functions and numerical helpers.
+pub use gamlss_special as special;
+/// Spline bases and penalties.
 pub use gamlss_spline as spline;
-/// Transform-слой для response/target preprocessing.
+/// Transform layer for response/target preprocessing.
 pub use gamlss_transform as transform;
 
 #[cfg(feature = "formula")]
-/// Экспериментальный optional formula/builder слой.
+/// Experimental optional formula/builder layer.
 pub use gamlss_formula as formula;
 
-/// Наиболее часто используемые импорты.
+/// Most commonly used imports.
 pub mod prelude {
     pub use gamlss_core::prelude::*;
     pub use gamlss_diagnostics::prelude::*;

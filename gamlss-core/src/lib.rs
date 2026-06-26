@@ -1,70 +1,58 @@
 #![forbid(unsafe_code)]
-//! Типизированное ядро GAMLSS: link-функции, parameter blocks, objectives и compiled models.
+//! Typed GAMLSS core: link functions, parameter blocks, objectives and compiled models.
 //!
-//! `gamlss-core` содержит минимальные abstractions, которые нужны
-//! distributional-regression моделям, но не зависит от optimizers,
-//! dataframe-библиотек и тяжёлых matrix backends.
+//! `gamlss-core` contains the minimal abstractions needed by
+//! distributional-regression models, but does not depend on optimizers,
+//! dataframe libraries or heavy matrix backends.
 //!
 //! # Parameter blocks
 //!
-//! Модель собирается из typed [`ParameterBlock`] values. Тип `P` задаёт
-//! parameter marker (`Mu`, `Sigma`, `Shape`, пользовательский marker и т.д.),
-//! `L` задаёт link, predictor block `X` считает link-scale predictor, а
-//! `Penalty` добавляет локальную регуляризацию.
+//! The model is assembled from typed [`ParameterBlock`] values. The `P` type
+//! specifies the parameter marker (`Mu`, `Sigma`, `Shape`, custom marker, etc.),
+//! `L` specifies the link, predictor block `X` computes the link-scale predictor,
+//! and `Penalty` adds local regularization.
 //!
-//! Используйте [`ParameterBlocks::new`] для обычной сборки tuple blocks: она
-//! последовательно назначает offsets и убирает ручной расчёт диапазонов в
-//! общем beta-векторе.
+//! Use [`ParameterBlocks::new`] for ordinary tuple block assembly: it
+//! sequentially assigns offsets and removes the need for manual range calculation
+//! in the common beta vector.
 //!
 //! # Observations and prediction
 //!
-//! [`Gamlss::try_new`] строит unweighted модель над borrowed response slice.
-//! [`Gamlss::try_new_weighted`] дополнительно принимает finite non-negative
-//! observation weights; нулевой вес исключает наблюдение из likelihood и
-//! gradient.
+//! [`Gamlss::try_new`] builds an unweighted model over a borrowed response slice.
+//! [`Gamlss::try_new_weighted`] additionally accepts finite non-negative
+//! observation weights; a zero weight excludes the observation from the
+//! likelihood and gradient. Scalar responses are otherwise validated by the
+//! family/domain layer; use [`Gamlss::try_new_strict`] or
+//! [`FiniteScalarObservations`] to reject non-finite scalar responses at model
+//! construction.
 //!
-//! Prediction methods возвращают link-scale `Eta` или natural-scale `Theta`:
-//! `predict_eta`, `predict_theta` используют training blocks, а методы
-//! `*_with_blocks` принимают совместимый tuple prediction blocks для новых
-//! строк.
+//! Prediction methods return link-scale `Eta` or natural-scale `Theta`:
+//! `predict_eta`, `predict_theta` use training blocks, while the
+//! `*_with_blocks` methods accept a compatible tuple of prediction blocks for new
+//! rows.
 
-/// Абстракции design matrix.
-pub mod design;
-/// Ошибки модели и валидации.
-pub mod error;
-/// Контракты distribution families.
-pub mod family;
-/// Link-функции.
-pub mod link;
-/// Скомпилированные модели.
-pub mod model;
-/// Абстракции objective.
-pub mod objective;
-/// Типизированные параметры и parameter blocks.
-pub mod param;
-/// Penalty traits и реализации.
-pub mod penalty;
-/// Predictor block traits и композиция predictor-а.
-pub mod predictor;
-
-pub use design::{DenseDesign, DesignMatrix};
+pub use design::{DenseDesign, DesignMatrix, RowMultiplier};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDeviance, HasDiagonalFisherInfo,
-    HasExpectedInformation, HasInitialEta, HasQuantile, ParameterParts, ParameterizedFamily,
+    CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDensity, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
+    ParameterParts, ParameterizedFamily,
 };
 pub use link::{
-    ClampedLog, Identity, Link, Log, LogPlus, Logit, PositiveLink, Softplus, UnitIntervalLink,
+    ClampedLog, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink, Softplus,
+    UnitIntervalLink,
 };
 pub use model::{
-    Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale, ObservationView,
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
-    WithGlobalPenalties, WorkspaceGamlss,
+    FiniteScalarObservations, Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale,
+    ObservationView, ParameterCoefficients, ParameterLayout, ParameterSlice, PredictionView,
+    TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
-    AssignParameterOffsets, Mu, Nu, ParameterBlock, ParameterBlocks, ParameterName, Precision,
-    Rate, Scale, Shape, Sigma, Tau,
+    AssignParameterOffsets, ComponentMean, Cv, Dispersion, LogLocation, LogSd, Mean, Median, Mu,
+    Nu, OneProbability, ParameterBlock, ParameterBlocks, ParameterName, Power, Precision,
+    Probability, Rate, Scale, Shape, Sigma, Size, Tau, TotalMean, TryAssignParameterOffsets,
+    ZeroProbability,
 };
 pub use penalty::{
     AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
@@ -72,24 +60,47 @@ pub use penalty::{
 };
 pub use predictor::{
     CoefficientTransform, FloorSoftplusScalar, HasDesignMatrix, LinearPredictorBlock,
-    NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock, PredictorBlock, ProductBlock,
-    SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
+    LinearPredictorGeometry, NegativeSoftplusScalar, NegativeSoftplusTransform, OffsetBlock,
+    PredictorBlock, ProductBlock, SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
 
-/// Наиболее часто используемые импорты из `gamlss-core`.
+/// Design matrix abstractions.
+pub mod design;
+/// Model and validation errors.
+pub mod error;
+/// Distribution family contracts.
+pub mod family;
+/// Link functions.
+pub mod link;
+/// Compiled models.
+pub mod model;
+/// Objective abstractions.
+pub mod objective;
+/// Typed parameters and parameter blocks.
+pub mod param;
+/// Penalty traits and implementations.
+pub mod penalty;
+/// Predictor block traits and predictor composition.
+pub mod predictor;
+
+/// Most commonly used imports from `gamlss-core`.
 pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
-        CoefficientTransform, DenseDesign, DenseInformation, DesignMatrix, Family, Gamlss,
-        GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasCrps, HasDesignMatrix,
-        HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasQuantile,
-        HingeQuadraticPenalty, Identity, LinearForm, LinearFormBuilder, LinearPredictorBlock,
-        LinearTerm, Link, Log, LogPlus, Logit, MatrixPenalty, ModelError, Mu, NoPenalty, Nu,
-        Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Precision, PredictorBlock, ProductBlock, Rate,
-        RidgePenalty, Scale, SegmentPenalty, Shape, Sigma, Softplus, SumBlock, Tau,
-        TrainingDiagnostics, TransformedScalar, UnitIntervalLink, UnpackedTheta,
-        WithGlobalPenalties, WorkspaceGamlss,
+        CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation, DesignMatrix,
+        Dispersion, Family, FiniteScalarObservations, Gamlss, GamlssBlocks, GlobalPenalty,
+        GradientWorkspace, HasCdf, HasCrps, HasDensity, HasDesignMatrix, HasDeviance,
+        HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
+        HingeQuadraticPenalty, Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder,
+        LinearPredictorBlock, LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus,
+        LogSd, Logit, MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective,
+        ObjectiveScale, ObservationView, OffsetBlock, OneProbability, ParameterBlock,
+        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
+        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Power, Precision,
+        PredictionView, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty,
+        RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau,
+        TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets,
+        UnitIntervalLink, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+        ZeroProbability,
     };
 }

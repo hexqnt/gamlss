@@ -1,4 +1,4 @@
-use gamlss_core::{Link, PredictorBlock, Softplus};
+use gamlss_core::{Link, PredictorBlock, RowMultiplier, Softplus};
 
 use crate::SplineError;
 use crate::ispline::ISplineBasis;
@@ -13,7 +13,7 @@ pub enum MonotoneDirection {
 }
 
 impl MonotoneDirection {
-    fn sign(self) -> f64 {
+    const fn sign(self) -> f64 {
         match self {
             Self::Increasing => 1.0,
             Self::Decreasing => -1.0,
@@ -48,7 +48,7 @@ impl MonotoneISplineDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    pub fn basis(&self) -> &ISplineBasis {
+    pub const fn basis(&self) -> &ISplineBasis {
         &self.basis
     }
 
@@ -60,13 +60,13 @@ impl MonotoneISplineDesign {
 
     /// Number of positive increments.
     #[must_use]
-    pub fn n_increments(&self) -> usize {
+    pub const fn n_increments(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Monotonicity direction.
     #[must_use]
-    pub fn direction(&self) -> MonotoneDirection {
+    pub const fn direction(&self) -> MonotoneDirection {
         self.direction
     }
 
@@ -85,6 +85,7 @@ impl MonotoneISplineDesign {
             .sum()
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;
@@ -124,6 +125,9 @@ impl PredictorBlock for MonotoneISplineDesign {
         debug_assert_eq!(grad.len(), self.nparams());
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.add_row_gradient(row, score, beta, grad);
         }
     }
@@ -135,13 +139,33 @@ impl PredictorBlock for MonotoneISplineDesign {
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(multiplier.len(), self.x.len());
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
-            self.add_row_gradient(row, score * multiplier, beta, grad);
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier.multiplier_at(row);
+            if scaled_score == 0.0 {
+                continue;
+            }
+            self.add_row_gradient(row, scaled_score, beta, grad);
         }
     }
 }

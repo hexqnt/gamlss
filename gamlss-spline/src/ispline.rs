@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::SplineError;
 use crate::mspline::MSplineBasis;
@@ -42,22 +42,22 @@ impl ISplineBasis {
 
     /// Underlying knot vector.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         self.mspline.knots()
     }
 
     /// Degree.
     #[must_use]
-    #[inline(always)]
-    pub fn degree(&self) -> usize {
+    #[inline]
+    pub const fn degree(&self) -> usize {
         self.mspline.degree()
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.mspline.n_basis()
     }
 
@@ -129,28 +129,29 @@ pub struct ISplineDesign {
 impl ISplineDesign {
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> &ISplineBasis {
+    #[inline]
+    pub const fn basis(&self) -> &ISplineBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -165,6 +166,7 @@ impl ISplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.basis.for_each_basis(x, |index, weight| {
@@ -174,13 +176,30 @@ impl ISplineDesign {
     }
 }
 
-impl PredictorBlock for ISplineDesign {
-    #[inline(always)]
+impl SplineRowBasis for ISplineDesign {
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
+        self.basis.for_each_basis(self.x[row], &mut f);
+    }
+}
+
+impl PredictorBlock for ISplineDesign {
+    #[inline]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
@@ -194,11 +213,15 @@ impl PredictorBlock for ISplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.for_each_row_basis(row, |index, weight| {
                 grad[index] += score * weight;
             });
@@ -210,35 +233,38 @@ impl PredictorBlock for ISplineDesign {
         &self,
         scores: &[f64],
         multiplier: &[f64],
-        _: &[f64],
+        beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(multiplier.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * multiplier * weight;
-            });
-        }
-    }
-}
-
-impl SplineRowBasis for ISplineDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
     }
 
     #[inline]
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        self.basis.for_each_basis(self.x[row], &mut f);
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.basis.n_basis());
+
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier.multiplier_at(row);
+            if scaled_score == 0.0 {
+                continue;
+            }
+            self.for_each_row_basis(row, |index, weight| {
+                grad[index] = scaled_score.mul_add(weight, grad[index]);
+            });
+        }
     }
 }
 
@@ -259,10 +285,6 @@ fn integrate_piecewise(knots: &[f64], start: f64, end: f64, f: impl Fn(f64) -> f
 }
 
 fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
-    if right <= left {
-        return 0.0;
-    }
-
     const NODES: [f64; 5] = [
         -0.906_179_845_938_664,
         -0.538_469_310_105_683_1,
@@ -278,7 +300,10 @@ fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
         0.236_926_885_056_189_1,
     ];
 
-    let midpoint = 0.5 * (left + right);
+    if right <= left {
+        return 0.0;
+    }
+    let midpoint = f64::midpoint(left, right);
     let half = 0.5 * (right - left);
     half * NODES
         .iter()

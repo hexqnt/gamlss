@@ -1,57 +1,4 @@
-/// Контракт распределения для скомпилированного GAMLSS-objective.
-///
-/// Пользовательские распределения реализуют этот trait. Арность параметров,
-/// роли параметров и совместимость link-функций задаются через
-/// [`ParameterizedFamily`], поэтому hot path остаётся типизированным без
-/// dynamic lookup.
-///
-/// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
-/// contributions for one observation. Invalid observation or parameter domains
-/// should be represented by `f64::INFINITY` rather than panicking, so
-/// optimizers can reject the candidate point. `NaN` inputs may propagate as
-/// `NaN`; callers can inspect diagnostics for non-finite values.
-pub trait Family {
-    /// Observation representation consumed by this family.
-    ///
-    /// Univariate families usually use `f64`. Multivariate, censored,
-    /// interval, or mixture families can use small arrays, tuples, or custom
-    /// row-view structs without changing the compiled model machinery. The
-    /// lifetime parameter allows families to consume borrowed observations,
-    /// such as `&'obs [f64]`, without forcing row copies.
-    type Observation<'obs>;
-    /// Аддитивные предикторы на link-шкале.
-    type Eta;
-    /// Параметры распределения на естественной шкале.
-    type Theta;
-    /// Градиент negative log-likelihood по `Eta`.
-    type NllGradientEta;
-
-    /// Преобразует предикторы с link-шкалы в параметры распределения.
-    ///
-    /// Per-parameter links are a convenient way to express independent scalar
-    /// constraints, such as positive scales. Dependent constraints between
-    /// parameters — for example correlations, covariance factors, ordered
-    /// cutpoints, or simplex weights — should be handled here by transforming
-    /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
-    fn theta(&self, eta: Self::Eta) -> Self::Theta;
-    /// Negative log-likelihood для одного наблюдения на естественной шкале.
-    fn nll<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
-    /// Negative log-likelihood для одного наблюдения на link-шкале.
-    fn nll_eta<'obs>(&self, observation: Self::Observation<'obs>, eta: Self::Eta) -> f64 {
-        self.nll(observation, self.theta(eta))
-    }
-    /// Negative log-likelihood и NLL-gradient по `Eta` для одного наблюдения.
-    ///
-    /// `NllGradientEta` is the gradient of the negative log-likelihood with
-    /// respect to the link-scale predictors `Eta`, after applying the chain
-    /// rule for the family links. It must have the same arity and ordering as
-    /// `Eta`.
-    fn nll_and_gradient_eta(
-        &self,
-        observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta);
-}
+use crate::model::ObservationView;
 
 /// Dense expected information matrix for a fixed-arity family.
 ///
@@ -73,7 +20,7 @@ impl<const K: usize> DenseInformation<K> {
     /// Creates a diagonal information matrix.
     #[must_use]
     #[inline]
-    pub fn diagonal(diagonal: [f64; K]) -> Self {
+    pub const fn diagonal(diagonal: [f64; K]) -> Self {
         let mut values = [[0.0; K]; K];
         let mut index = 0;
         while index < K {
@@ -85,17 +32,72 @@ impl<const K: usize> DenseInformation<K> {
 
     /// Returns the matrix entry at `row`, `col`.
     #[must_use]
-    #[inline(always)]
-    pub fn get(&self, row: usize, col: usize) -> f64 {
+    #[inline]
+    pub const fn get(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
 
     /// Returns the underlying dense matrix.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub const fn as_array(&self) -> &[[f64; K]; K] {
         &self.values
     }
+}
+
+/// Distribution contract for the compiled GAMLSS objective.
+///
+/// Custom distributions implement this trait. Parameter arity, parameter roles
+/// and link-function compatibility are specified through
+/// [`ParameterizedFamily`], so the hot path stays typed without dynamic
+/// lookup.
+///
+/// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
+/// contributions for one observation. Invalid observation or parameter domains
+/// should be represented by `f64::INFINITY` rather than panicking, so
+/// optimizers can reject the candidate point. `NaN` inputs may propagate as
+/// `NaN`; callers can inspect diagnostics for non-finite values.
+pub trait Family {
+    /// Observation representation consumed by this family.
+    ///
+    /// Univariate families usually use `f64`. Multivariate, censored,
+    /// interval, or mixture families can use small arrays, tuples, or custom
+    /// row-view structs without changing the compiled model machinery. The
+    /// lifetime parameter allows families to consume borrowed observations,
+    /// such as `&'obs [f64]`, without forcing row copies.
+    type Observation<'obs>;
+    /// Additive predictors on the link scale.
+    type Eta;
+    /// Distribution parameters on the natural scale.
+    type Theta;
+    /// Gradient of the negative log-likelihood with respect to `Eta`.
+    type NllGradientEta;
+
+    /// Converts link-scale predictors to distribution parameters.
+    ///
+    /// Per-parameter links are a convenient way to express independent scalar
+    /// constraints, such as positive scales. Dependent constraints between
+    /// parameters — for example correlations, covariance factors, ordered
+    /// cutpoints, or simplex weights — should be handled here by transforming
+    /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
+    fn theta(&self, eta: Self::Eta) -> Self::Theta;
+    /// Negative log-likelihood for one observation on the natural scale.
+    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    /// Negative log-likelihood for one observation on the link scale.
+    fn nll_eta(&self, observation: Self::Observation<'_>, eta: Self::Eta) -> f64 {
+        self.nll(observation, self.theta(eta))
+    }
+    /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
+    ///
+    /// `NllGradientEta` is the gradient of the negative log-likelihood with
+    /// respect to the link-scale predictors `Eta`, after applying the chain
+    /// rule for the family links. It must have the same arity and ordering as
+    /// `Eta`.
+    fn nll_and_gradient_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta);
 }
 
 /// Extension trait for families that provide diagonal Fisher information.
@@ -141,27 +143,27 @@ where
     ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
 }
 
-/// Контейнер для eta или NLL-gradient у family с фиксированной арностью `K`.
+/// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///
 /// `part(index)` is used in the model hot path after compile-time arity
 /// selection. Callers pass `index < K`; implementations may use `unreachable!`
 /// for out-of-range indices instead of returning a recoverable error.
 pub trait ParameterParts<const K: usize>: Sized {
-    /// Собирает контейнер из `K` scalar-частей.
+    /// Assembles a container from `K` scalar parts.
     fn from_array(values: [f64; K]) -> Self;
-    /// Возвращает scalar-часть по индексу.
+    /// Returns a scalar part by index.
     ///
-    /// Реализации могут считать, что вызывающий код передаёт индекс меньше `K`.
+    /// Implementations may assume that the caller passes an index less than `K`.
     fn part(&self, index: usize) -> f64;
 }
 
 impl ParameterParts<1> for f64 {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 1]) -> Self {
         values[0]
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => *self,
@@ -171,12 +173,12 @@ impl ParameterParts<1> for f64 {
 }
 
 impl ParameterParts<2> for (f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         (values[0], values[1])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -187,12 +189,12 @@ impl ParameterParts<2> for (f64, f64) {
 }
 
 impl ParameterParts<3> for (f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         (values[0], values[1], values[2])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -204,12 +206,12 @@ impl ParameterParts<3> for (f64, f64, f64) {
 }
 
 impl ParameterParts<4> for (f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 4]) -> Self {
         (values[0], values[1], values[2], values[3])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -222,12 +224,12 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
 }
 
 impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 5]) -> Self {
         (values[0], values[1], values[2], values[3], values[4])
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -241,14 +243,14 @@ impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 6]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -263,14 +265,14 @@ impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 7]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5], values[6],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -286,14 +288,14 @@ impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
 }
 
 impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 8]) -> Self {
         (
             values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.0,
@@ -309,9 +311,10 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     }
 }
 
-/// Family с фиксированным числом параметров, ролями параметров и link-функциями.
+/// Family with a fixed number of parameters, parameter roles and link functions.
 ///
-/// `Params` и `Links` задаются tuple-ами той же длины, что и арность family.
+/// `Params` and `Links` are specified as tuples of the same length as the
+/// family arity.
 /// Their order defines the order of predictor blocks, gradient parts and flat
 /// coefficient ranges in compiled models.
 ///
@@ -323,15 +326,27 @@ where
     Self::Eta: ParameterParts<K>,
     Self::NllGradientEta: ParameterParts<K>,
 {
-    /// Роли параметров family.
+    /// Parameter roles of the family.
     type Params;
-    /// Link-функции параметров family.
+    /// Link functions of the family parameters.
     type Links;
+
+    /// Sample-aware initial predictors on the link scale.
+    ///
+    /// Built-in families override this with robust distribution-specific
+    /// heuristics. The default keeps custom families source-compatible and
+    /// starts all optimizer parameters at zero.
+    fn initial_eta_from_observations<'obs, Obs>(&self, _obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        Self::Eta::from_array([0.0; K])
+    }
 }
 
-/// Distribution helper для CDF.
+/// Distribution helper for the CDF.
 pub trait HasCdf: Family {
-    /// CDF в точке `y` для параметров на естественной шкале.
+    /// CDF at point `y` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid query
     /// points or parameter domains rather than panicking, matching the base
@@ -341,14 +356,42 @@ pub trait HasCdf: Family {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для quantile function.
+/// Distribution helper for the quantile function.
 pub trait HasQuantile: Family {
-    /// Квантиль уровня `p` для параметров на естественной шкале.
+    /// Quantile at probability level `p` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid
     /// probabilities or parameter domains rather than panicking.
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
 }
+
+/// Distribution helper for log-density or log-mass evaluation.
+///
+/// The default implementation reuses the family likelihood contract:
+/// `log_density = -nll`. Continuous families expose a log-PDF through this
+/// trait, while discrete families expose a log-PMF.
+pub trait HasLogDensity: Family {
+    /// Log-density or log-mass at `observation` for natural-scale parameters.
+    fn log_density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        -self.nll(observation, theta)
+    }
+}
+
+impl<T> HasLogDensity for T where T: Family {}
+
+/// Distribution helper for density or mass evaluation.
+///
+/// The default implementation exponentiates [`HasLogDensity::log_density`].
+/// This may underflow to zero in far tails; fitting code should continue to use
+/// [`Family::nll`] and [`Family::nll_and_gradient_eta`].
+pub trait HasDensity: HasLogDensity {
+    /// Density or mass at `observation` for natural-scale parameters.
+    fn density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        self.log_density(observation, theta).exp()
+    }
+}
+
+impl<T> HasDensity for T where T: HasLogDensity {}
 
 /// Distribution helper for continuous ranked probability score.
 pub trait HasCrps: Family {
@@ -356,16 +399,16 @@ pub trait HasCrps: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// observation or parameter domains rather than panicking.
-    fn crps<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+    fn crps(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для simulation.
+/// Distribution helper for simulation.
 pub trait CanSimulate<Rng>: Family {
-    /// Генерирует одно значение для параметров на естественной шкале.
+    /// Generates one value for natural-scale parameters.
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для per-observation deviance.
+/// Distribution helper for per-observation deviance.
 ///
 /// This is intentionally separate from [`Family`] so compiled likelihood
 /// evaluation remains minimal. Diagnostics and residual tooling can opt into
@@ -376,10 +419,10 @@ pub trait HasDeviance: Family {
     /// Implementations should return a non-finite value for invalid observation
     /// or parameter domains rather than panicking, matching the rest of the
     /// family helper contracts.
-    fn deviance<'obs>(&self, observation: Self::Observation<'obs>, theta: Self::Theta) -> f64;
+    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
 }
 
-/// Distribution helper для family-specific link-scale initialization.
+/// Distribution helper for family-specific link-scale initialization.
 ///
 /// This gives future fit layers a typed place to ask the family for starting
 /// predictors without hard-coding distribution heuristics outside the family
@@ -390,5 +433,5 @@ pub trait HasInitialEta: Family {
     /// Implementations should return finite values when the observation is
     /// inside the supported domain. Unsupported or invalid observations may
     /// produce non-finite components instead of panicking.
-    fn initial_eta<'obs>(&self, observation: Self::Observation<'obs>) -> Self::Eta;
+    fn initial_eta(&self, observation: Self::Observation<'_>) -> Self::Eta;
 }

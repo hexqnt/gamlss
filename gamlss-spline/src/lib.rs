@@ -1,22 +1,5 @@
 #![forbid(unsafe_code)]
-//! Spline-базисы, spline design matrices и штрафы.
-
-pub mod bspline;
-pub mod cyclic;
-pub mod error;
-pub mod fourier;
-pub mod ispline;
-mod local;
-pub mod monotone;
-pub mod mspline;
-pub mod natural;
-pub mod open_uniform;
-pub mod order;
-pub mod penalty;
-pub mod periodic;
-pub mod row_basis;
-pub mod tensor;
-pub mod truncated_power;
+//! Spline bases, spline design matrices and penalties.
 
 pub use bspline::{BSplineBasis, pspline_design};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
@@ -37,7 +20,24 @@ pub use row_basis::SplineRowBasis;
 pub use tensor::TensorSplineDesign;
 pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
 
-/// Наиболее часто используемые импорты из `gamlss-spline`.
+pub mod bspline;
+pub mod cyclic;
+pub mod error;
+pub mod fourier;
+pub mod ispline;
+mod local;
+pub mod monotone;
+pub mod mspline;
+pub mod natural;
+pub mod open_uniform;
+pub mod order;
+pub mod penalty;
+pub mod periodic;
+pub mod row_basis;
+pub mod tensor;
+pub mod truncated_power;
+
+/// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
@@ -54,7 +54,9 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Penalty, PredictorBlock};
+    use gamlss_core::{
+        LinearPredictorGeometry, MatrixPenalty, ModelError, Penalty, PredictorBlock, ProductBlock,
+    };
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
@@ -71,53 +73,110 @@ mod tests {
         let basis = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
 
         for value in x {
-            let sum = basis.evaluate(value).iter().sum::<f64>();
-            assert_relative_eq!(sum, 1.0, epsilon = 1.0e-12);
+            assert_nonnegative_partition_of_unity(&basis.evaluate(value));
         }
     }
 
     #[test]
+    fn open_uniform_bspline_has_expected_endpoint_rows() {
+        let x = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let basis = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let left = basis.evaluate(0.0);
+        let right = basis.evaluate(1.0);
+
+        assert_single_active_endpoint_basis(&left, 0);
+        assert_single_active_endpoint_basis(&right, basis.n_basis() - 1);
+    }
+
+    #[test]
     fn difference_penalty_gradient_matches_finite_difference() {
-        let penalty = DifferencePenalty::new(0.7, 2);
+        let penalty = DifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
-        let eps = 1.0e-6;
-        let mut grad = vec![0.0; beta.len()];
+        assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
 
-        penalty.add_gradient(&beta, &mut grad);
-
-        for index in 0..beta.len() {
-            let mut plus = beta.clone();
-            plus[index] += eps;
-            let mut minus = beta.clone();
-            minus[index] -= eps;
-            let finite_difference = (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * eps);
-
-            assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
-        }
+    #[test]
+    fn difference_penalty_matrix_matches_gradient_convention() {
+        let penalty = DifferencePenalty::new_unchecked(0.7, 2);
+        let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
+        assert_penalty_matrix_matches_gradient(&penalty, &beta);
     }
 
     #[test]
     fn prepared_difference_penalty_matches_unprepared() {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
-        for order in 0..=2 {
-            let unprepared = DifferencePenalty::new(0.7, order);
-            let prepared = PreparedDifferencePenalty::new(0.7, order);
-            let mut unprepared_grad = vec![0.0; beta.len()];
-            let mut prepared_grad = vec![0.0; beta.len()];
-
-            unprepared.add_gradient(&beta, &mut unprepared_grad);
-            prepared.add_gradient(&beta, &mut prepared_grad);
-
-            assert_relative_eq!(
-                prepared.value(&beta),
-                unprepared.value(&beta),
-                epsilon = 1.0e-12
-            );
-            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
-                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
-            }
+        for order in 1..=2 {
+            let unprepared = DifferencePenalty::new_unchecked(0.7, order);
+            let prepared = PreparedDifferencePenalty::new_unchecked(0.7, order);
+            assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
+            assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn difference_penalty_try_new_validates_inputs() {
+        let penalty = DifferencePenalty::try_new(0.0, 1).unwrap();
+        assert_eq!(penalty.lambda(), 0.0);
+        assert_eq!(penalty.order(), 1);
+
+        let prepared = PreparedDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+        assert_eq!(
+            DifferencePenalty::try_new(f64::NAN, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(-1.0, 1).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(1.0, 0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
+        assert_eq!(
+            DifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+        assert_eq!(
+            PreparedDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn preparing_difference_penalty_revalidates_source() {
+        let prepared =
+            PreparedDifferencePenalty::try_from(DifferencePenalty::new_unchecked(0.5, 2)).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+
+        assert_eq!(
+            PreparedDifferencePenalty::try_from(DifferencePenalty::new_unchecked(1.0, 0))
+                .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
     }
 
     #[test]
@@ -209,11 +268,38 @@ mod tests {
             assert_relative_eq!(design.eta_row(row, &beta), 1.0, epsilon = 1.0e-12);
         }
 
-        let ramp = (0..8).map(|value| value as f64).collect::<Vec<_>>();
+        let ramp = (0..8).map(f64::from).collect::<Vec<_>>();
         assert_relative_eq!(design.eta_row(0, &ramp), design.eta_row(2, &ramp));
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn periodic_spline_design_is_equal_at_periodic_coordinates() {
+        let spec = PeriodicSplineSpec::new(8, SplineOrder::Cubic, 1.0, 0.0).unwrap();
+        let design = spec.design(&[-0.25, 0.0, 0.75, 1.0, 1.75]).unwrap();
+        let beta = (0..design.nparams())
+            .map(|index| (index as f64).mul_add(0.25, -0.5))
+            .collect::<Vec<_>>();
+
+        assert_relative_eq!(
+            design.eta_row(0, &beta),
+            design.eta_row(2, &beta),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            design.eta_row(1, &beta),
+            design.eta_row(3, &beta),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            design.eta_row(2, &beta),
+            design.eta_row(4, &beta),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    #[allow(clippy::suboptimal_flops)]
     fn fourier_design_evaluates_harmonics_without_materialized_matrix() {
         let design = FourierDesign::new(&[0.0, 0.25, 0.5, 1.25], 1.0, 2, true).unwrap();
         let beta = [0.5, 1.0, 2.0, -0.25, 0.75];
@@ -245,6 +331,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::suboptimal_flops)]
     fn fourier_design_without_intercept_uses_two_coefficients_per_harmonic() {
         let design = FourierDesign::new(&[1.0], 4.0, 1, false).unwrap();
         let beta = [2.0, 3.0];
@@ -341,6 +428,135 @@ mod tests {
     }
 
     #[test]
+    fn spline_gradient_skips_multiplier_for_zero_score_rows() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
+                .unwrap();
+        let scores = [1.0, 0.0, 2.0];
+        let mut expected = vec![0.0; design.nparams()];
+        let mut weighted = vec![0.0; design.nparams()];
+
+        design.add_gradient(&scores, &[], &mut expected);
+        design.add_weighted_gradient(&scores, &[1.0, f64::NAN, 1.0], &[], &mut weighted);
+
+        assert_eq!(weighted, expected);
+        assert!(weighted.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn open_uniform_spline_geometry_matches_dense_products() {
+        let design = OpenUniformSplineDesign::with_range(
+            &[0.0, 0.2, 0.6, 1.0],
+            0.0,
+            1.0,
+            6,
+            SplineOrder::Cubic,
+        )
+        .unwrap();
+        let weights: [f64; 4] = [0.5, -0.25, 0.0, 2.0];
+        let scores: [f64; 4] = [0.3, -0.7, 0.0, 1.2];
+        let nparams = design.nparams();
+        let mut expected_gram = vec![1.0; nparams * nparams];
+        let mut expected_transpose = vec![1.0; nparams];
+
+        for row in 0..design.nrows() {
+            let mut basis = vec![0.0; nparams];
+            crate::SplineRowBasis::for_each_row_basis(&design, row, |index, value| {
+                basis[index] = value;
+            });
+            for j in 0..nparams {
+                expected_transpose[j] = scores[row].mul_add(basis[j], expected_transpose[j]);
+                for k in 0..nparams {
+                    let index = j * nparams + k;
+                    expected_gram[index] =
+                        (weights[row] * basis[j]).mul_add(basis[k], expected_gram[index]);
+                }
+            }
+        }
+
+        let mut gram = vec![1.0; nparams * nparams];
+        let mut transpose = vec![1.0; nparams];
+        design.add_weighted_gram(&weights, &mut gram).unwrap();
+        design.add_t_mul_vec(&scores, &mut transpose).unwrap();
+
+        for (actual, expected) in gram.iter().zip(expected_gram) {
+            assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+        }
+        for (actual, expected) in transpose.iter().zip(expected_transpose) {
+            assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn product_open_uniform_spline_geometry_scales_rows_lazily() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 6, SplineOrder::Cubic)
+                .unwrap();
+        let nparams = design.nparams();
+        let product = ProductBlock::try_new(vec![2.0, 5.0, -3.0], design.clone()).unwrap();
+        let mut gram = vec![0.0; nparams * nparams];
+        let mut transpose = vec![0.0; nparams];
+        let mut expected_gram = vec![0.0; nparams * nparams];
+        let mut expected_transpose = vec![0.0; nparams];
+
+        product
+            .add_weighted_gram(&[0.5, 0.0, 2.0], &mut gram)
+            .unwrap();
+        product
+            .add_t_mul_vec(&[0.25, 0.0, -1.0], &mut transpose)
+            .unwrap();
+        design
+            .add_weighted_gram(
+                &[0.5 * 2.0_f64.powi(2), 0.0, 2.0 * (-3.0_f64).powi(2)],
+                &mut expected_gram,
+            )
+            .unwrap();
+        design
+            .add_t_mul_vec(&[0.5, 0.0, 3.0], &mut expected_transpose)
+            .unwrap();
+
+        assert_eq!(gram, expected_gram);
+        assert_eq!(transpose, expected_transpose);
+        assert!(gram.iter().all(|value| value.is_finite()));
+        assert!(transpose.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn open_uniform_spline_geometry_validates_lengths() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5], 0.0, 1.0, 4, SplineOrder::Cubic)
+                .unwrap();
+
+        assert_eq!(
+            design
+                .add_weighted_gram(&[1.0], &mut [0.0; 16])
+                .unwrap_err(),
+            ModelError::WeightLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
+        assert_eq!(
+            design
+                .add_weighted_gram(&[1.0, 1.0], &mut [0.0; 15])
+                .unwrap_err(),
+            ModelError::DesignSize {
+                expected_values: 16,
+                actual_values: 15,
+            }
+        );
+        assert_eq!(
+            design
+                .add_t_mul_vec(&[1.0, 1.0], &mut [0.0; 3])
+                .unwrap_err(),
+            ModelError::GradientLength {
+                expected: 4,
+                actual: 3,
+            }
+        );
+    }
+
+    #[test]
     fn open_uniform_spline_basis_reuses_training_range_for_new_data() {
         let train = [0.0, 0.5, 1.0];
         let basis = OpenUniformSplineBasis::from_data(&train, 6, SplineOrder::Cubic).unwrap();
@@ -375,33 +591,100 @@ mod tests {
 
     #[test]
     fn cyclic_difference_penalty_gradient_matches_finite_difference() {
-        let penalty = CyclicDifferencePenalty::new(0.7, 2);
+        let penalty = CyclicDifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
+    }
+
+    #[test]
+    fn cyclic_difference_penalty_matrix_matches_gradient_convention() {
+        let penalty = CyclicDifferencePenalty::new_unchecked(0.7, 2);
+        let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
+        assert_penalty_matrix_matches_gradient(&penalty, &beta);
     }
 
     #[test]
     fn prepared_cyclic_difference_penalty_matches_unprepared() {
         let beta = [0.2, -0.4, 0.9, 1.1, -0.3];
 
-        for order in 0..=2 {
-            let unprepared = CyclicDifferencePenalty::new(0.7, order);
-            let prepared = PreparedCyclicDifferencePenalty::new(0.7, order);
-            let mut unprepared_grad = vec![0.0; beta.len()];
-            let mut prepared_grad = vec![0.0; beta.len()];
-
-            unprepared.add_gradient(&beta, &mut unprepared_grad);
-            prepared.add_gradient(&beta, &mut prepared_grad);
-
-            assert_relative_eq!(
-                prepared.value(&beta),
-                unprepared.value(&beta),
-                epsilon = 1.0e-12
-            );
-            for (prepared, unprepared) in prepared_grad.iter().zip(&unprepared_grad) {
-                assert_relative_eq!(prepared, unprepared, epsilon = 1.0e-12);
-            }
+        for order in 1..=2 {
+            let unprepared = CyclicDifferencePenalty::new_unchecked(0.7, order);
+            let prepared = PreparedCyclicDifferencePenalty::new_unchecked(0.7, order);
+            assert_matrix_penalty_matches(&prepared, &unprepared, &beta);
+            assert_penalty_gradient_matches_finite_difference(&prepared, &beta);
         }
+    }
+
+    #[test]
+    fn difference_penalties_use_documented_scale_conventions() {
+        let beta = [0.0, 1.0, 3.0, 6.0, 10.0];
+        let non_cyclic = DifferencePenalty::new_unchecked(2.0, 1);
+        let cyclic = CyclicDifferencePenalty::new_unchecked(2.0, 1);
+
+        assert_relative_eq!(non_cyclic.value(&beta), 15.0, epsilon = 1.0e-12);
+        assert_relative_eq!(cyclic.value(&beta), 52.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn cyclic_difference_penalty_try_new_validates_inputs() {
+        let penalty = CyclicDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(penalty.lambda(), 0.5);
+        assert_eq!(penalty.order(), 2);
+
+        let prepared = PreparedCyclicDifferencePenalty::try_new(0.5, 2).unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(f64::INFINITY, 2).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(1.0, 0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
+        assert_eq!(
+            CyclicDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+        assert_eq!(
+            PreparedCyclicDifferencePenalty::try_new(1.0, usize::MAX).unwrap_err(),
+            ModelError::ArithmeticOverflow {
+                context: "difference penalty coefficients",
+            }
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn preparing_cyclic_difference_penalty_revalidates_source() {
+        let prepared = PreparedCyclicDifferencePenalty::try_from(
+            CyclicDifferencePenalty::new_unchecked(0.5, 2),
+        )
+        .unwrap();
+        assert_eq!(prepared.lambda(), 0.5);
+        assert_eq!(prepared.order(), 2);
+        assert_eq!(prepared.coefficients(), &[1.0, -2.0, 1.0]);
+
+        assert_eq!(
+            PreparedCyclicDifferencePenalty::try_from(CyclicDifferencePenalty::new_unchecked(
+                1.0, 0
+            ))
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "difference penalty order",
+                expected: "> 0",
+            }
+        );
     }
 
     #[test]
@@ -412,6 +695,19 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
+    fn edge_monotonic_penalty_try_new_validates_weight() {
+        assert_eq!(EdgeMonotonicPenalty::try_new(2.0).unwrap().weight(), 2.0);
+        assert_eq!(
+            EdgeMonotonicPenalty::try_new(f64::NAN).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
+    }
+
+    #[test]
     fn slope_limit_penalty_gradient_matches_finite_difference() {
         let penalty = SlopeLimitPenalty::new(5.0, 2.0, Some(0.4), Some(0.3));
         let beta = vec![0.6, 0.1, -0.1, 0.4];
@@ -419,6 +715,38 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
+    fn slope_limit_penalty_try_new_validates_inputs() {
+        let penalty = SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), None).unwrap();
+        assert_eq!(penalty.weight(), 5.0);
+        assert_eq!(penalty.scale(), 2.0);
+        assert_eq!(penalty.cold_limit(), Some(0.4));
+        assert_eq!(penalty.warm_limit(), None);
+        assert_eq!(
+            SlopeLimitPenalty::try_new(0.0, 2.0, Some(0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            SlopeLimitPenalty::try_new(5.0, f64::NAN, Some(0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty scale",
+                expected: "finite and > 0",
+            }
+        );
+        assert_eq!(
+            SlopeLimitPenalty::try_new(5.0, 2.0, Some(-0.4), None).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "cold penalty limit",
+                expected: "finite and >= 0",
+            }
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
     fn slope_limit_penalty_ignores_invalid_inputs() {
         let cases = [
             SlopeLimitPenalty::new(f64::NAN, 2.0, Some(0.4), Some(0.3)),
@@ -556,7 +884,7 @@ mod tests {
                 OpenUniformSplineDesign::with_range(points, 0.0, 1.0, 6, SplineOrder::Cubic)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::open_uniform::OpenUniformSplineDesign::eta_derivative_row,
             &x,
             &beta,
         );
@@ -564,7 +892,7 @@ mod tests {
         let cyclic = CyclicSplineDesign::new(&x, 6, SplineOrder::Cubic).unwrap();
         assert_eta_derivative_matches_coordinate_difference(
             |points| CyclicSplineDesign::new(points, 6, SplineOrder::Cubic).unwrap(),
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::cyclic::CyclicSplineDesign::eta_derivative_row,
             &x,
             &beta,
         );
@@ -581,7 +909,7 @@ mod tests {
                     .design(points)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::natural::NaturalCubicSplineDesign::eta_derivative_row,
             &x,
             &natural_beta,
         );
@@ -598,7 +926,7 @@ mod tests {
                     .design(points)
                     .unwrap()
             },
-            |design, row, beta| design.eta_derivative_row(row, beta),
+            super::truncated_power::TruncatedPowerDesign::eta_derivative_row,
             &x,
             &truncated_beta,
         );
@@ -634,6 +962,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn tensor_spline_matches_rowwise_kronecker_and_gradient() {
         let x = [0.0, 0.3, 0.8];
         let left =
@@ -749,6 +1078,74 @@ mod tests {
             let finite_difference = (penalty.value(&plus) - penalty.value(&minus)) / (2.0 * eps);
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
+        }
+    }
+
+    fn assert_nonnegative_partition_of_unity(values: &[f64]) {
+        let sum = values.iter().sum::<f64>();
+        assert_relative_eq!(sum, 1.0, epsilon = 1.0e-12);
+        for &basis_value in values {
+            assert!(
+                basis_value >= -1.0e-14,
+                "basis value {basis_value} is negative"
+            );
+        }
+    }
+
+    fn assert_single_active_endpoint_basis(values: &[f64], active_index: usize) {
+        for (index, &value) in values.iter().enumerate() {
+            let expected = if index == active_index { 1.0 } else { 0.0 };
+            assert_relative_eq!(value, expected, epsilon = 1.0e-12);
+        }
+    }
+
+    fn assert_penalty_matrix_matches_gradient<P>(penalty: &P, beta: &[f64])
+    where
+        P: MatrixPenalty,
+    {
+        let dim = beta.len();
+        let mut grad = vec![0.0; dim];
+        let mut matrix = vec![0.0; dim * dim];
+
+        penalty.add_gradient(beta, &mut grad);
+        penalty.add_penalty_matrix(dim, &mut matrix);
+
+        for (row, row_values) in matrix.chunks_exact(dim).enumerate() {
+            let actual = row_values
+                .iter()
+                .copied()
+                .zip(beta.iter().copied())
+                .map(|(matrix_value, beta_value)| matrix_value * beta_value)
+                .sum::<f64>();
+            assert_relative_eq!(actual, grad[row], epsilon = 1.0e-12);
+        }
+    }
+
+    fn assert_matrix_penalty_matches<Actual, Expected>(
+        actual: &Actual,
+        expected: &Expected,
+        beta: &[f64],
+    ) where
+        Actual: MatrixPenalty,
+        Expected: MatrixPenalty,
+    {
+        let dim = beta.len();
+        let mut actual_grad = vec![0.0; dim];
+        let mut expected_grad = vec![0.0; dim];
+        let mut actual_matrix = vec![0.0; dim * dim];
+        let mut expected_matrix = vec![0.0; dim * dim];
+
+        actual.add_gradient(beta, &mut actual_grad);
+        expected.add_gradient(beta, &mut expected_grad);
+        actual.add_penalty_matrix(dim, &mut actual_matrix);
+        expected.add_penalty_matrix(dim, &mut expected_matrix);
+
+        assert_relative_eq!(actual.value(beta), expected.value(beta), epsilon = 1.0e-12);
+        for (actual, expected) in actual_grad.iter().zip(&expected_grad) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+        }
+        for (actual, expected) in actual_matrix.iter().zip(&expected_matrix) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
         }
     }
 

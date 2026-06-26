@@ -3,12 +3,18 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily,
-    PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu,
+    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 
+use crate::domain::{is_finite_location_scale, is_probability};
+use crate::initial::{robust_location_scale, weighted_values};
+
+/// Logistic distribution with identity link for location and log link for scale.
+pub type LogisticMuSigma = Logistic<Identity, Log>;
+
 /// Logistic family parameterized by location and positive scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Logistic<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -20,13 +26,14 @@ where
 {
     /// Creates a stateless logistic family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: LogisticEta) -> LogisticTheta {
         LogisticTheta {
             mu: MuLink::inverse(eta.mu),
@@ -34,7 +41,12 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
+    fn valid_theta(theta: LogisticTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma)
+    }
+
+    #[inline]
     fn log_one_plus_exp(value: f64) -> f64 {
         if value > 0.0 {
             value + (-value).exp().ln_1p()
@@ -43,7 +55,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn logistic(value: f64) -> f64 {
         if value >= 0.0 {
             let z = (-value).exp();
@@ -54,10 +66,10 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: LogisticTheta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -65,7 +77,8 @@ where
         theta.sigma.ln() + z + 2.0 * Self::log_one_plus_exp(-z)
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: LogisticEta) -> (f64, LogisticEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -82,7 +95,7 @@ where
         let z = (y - theta.mu) / theta.sigma;
         let d_z = 2.0 * Self::logistic(z) - 1.0;
         let d_mu = -d_z / theta.sigma;
-        let d_sigma = (1.0 - z * d_z) / theta.sigma;
+        let d_sigma = z.mul_add(-d_z, 1.0) / theta.sigma;
         let gradient_eta = LogisticEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
@@ -102,6 +115,125 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> Family for Logistic<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    type Eta = LogisticEta;
+    type Theta = LogisticTheta;
+    type NllGradientEta = LogisticEta;
+    type Observation<'obs> = f64;
+
+    #[inline]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_theta(y, theta)
+    }
+
+    #[inline]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MuLink, SigmaLink> ParameterizedFamily<2> for Logistic<MuLink, SigmaLink>
+where
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mu, Sigma);
+    type Links = (MuLink, SigmaLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return LogisticEta::from_array([0.0, 0.0]);
+        };
+
+        LogisticEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+        }
+    }
+}
+
+impl<MuLink, SigmaLink> HasCdf for Logistic<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+
+        Self::logistic((y - theta.mu) / theta.sigma)
+    }
+}
+
+impl<MuLink, SigmaLink> HasQuantile for Logistic<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !is_probability(p) || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+
+        theta.mu + theta.sigma * (p.ln() - (-p).ln_1p())
+    }
+}
+
+impl<MuLink, SigmaLink> HasCrps for Logistic<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+
+        let z = (y - theta.mu) / theta.sigma;
+        let log_cdf = -Self::log_one_plus_exp(-z);
+        theta.sigma * (z - 2.0 * log_cdf - 1.0)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Logistic<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+
+        let uniform: f64 = rand_distr::Distribution::sample(&rand_distr::Open01, rng);
+        theta.mu + theta.sigma * (uniform / (1.0_f64 - uniform)).ln()
+    }
+}
+
 /// Predictors for the logistic family on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LogisticEta {
@@ -112,7 +244,7 @@ pub struct LogisticEta {
 }
 
 impl ParameterParts<2> for LogisticEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -120,7 +252,7 @@ impl ParameterParts<2> for LogisticEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -139,118 +271,25 @@ pub struct LogisticTheta {
     pub sigma: f64,
 }
 
-impl<MuLink, SigmaLink> Family for Logistic<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Eta = LogisticEta;
-    type Theta = LogisticTheta;
-    type NllGradientEta = LogisticEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for Logistic<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-}
-
-impl<MuLink, SigmaLink> HasCdf for Logistic<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
-            return f64::NAN;
-        }
-
-        Self::logistic((y - theta.mu) / theta.sigma)
-    }
-}
-
-impl<MuLink, SigmaLink> HasQuantile for Logistic<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-        {
-            return f64::NAN;
-        }
-
-        theta.mu + theta.sigma * (p.ln() - (-p).ln_1p())
-    }
-}
-
-#[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Logistic<MuLink, SigmaLink>
-where
-    Rng: rand::Rng,
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite() {
-            return f64::NAN;
-        }
-
-        let uniform: f64 = rand_distr::Distribution::sample(&rand_distr::Open01, rng);
-        theta.mu + theta.sigma * (uniform / (1.0_f64 - uniform)).ln()
-    }
-}
-
-/// Logistic distribution with identity link for location and log link for scale.
-pub type DefaultLogistic = Logistic<Identity, Log>;
-
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultLogistic, LogisticTheta};
+    use super::{LogisticMuSigma, LogisticTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn logistic_gradient_matches_finite_difference() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn logistic_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -272,7 +311,7 @@ mod tests {
 
     #[test]
     fn logistic_cdf_matches_reference_points() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -284,7 +323,7 @@ mod tests {
 
     #[test]
     fn logistic_quantile_inverts_cdf() {
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let theta = LogisticTheta {
             mu: 0.4,
             sigma: 1.5,
@@ -311,12 +350,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn logistic_crps_matches_fixed_values() {
+        let family = LogisticMuSigma::new();
+
+        assert_relative_eq!(
+            family.crps(
+                1.0,
+                LogisticTheta {
+                    mu: 0.0,
+                    sigma: 2.0,
+                },
+            ),
+            0.896_307_936_720_426_7,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn logistic_crps_returns_nan_for_invalid_domains() {
+        let family = LogisticMuSigma::new();
+
+        assert!(
+            family
+                .crps(
+                    f64::NAN,
+                    LogisticTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    LogisticTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn logistic_crps_is_nonnegative_for_valid_domains() {
+        let family = LogisticMuSigma::new();
+
+        assert!(
+            family.crps(
+                1.0,
+                LogisticTheta {
+                    mu: 0.0,
+                    sigma: 2.0,
+                },
+            ) >= 0.0
+        );
+    }
+
     #[cfg(feature = "rand")]
     #[test]
     fn logistic_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLogistic::new();
+        let family = LogisticMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

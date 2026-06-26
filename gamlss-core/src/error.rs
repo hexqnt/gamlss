@@ -2,143 +2,199 @@ use thiserror::Error;
 
 use crate::model::ParameterLayout;
 
-/// Ошибки построения и проверки GAMLSS-моделей.
+/// Errors for GAMLSS model construction and validation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ModelError {
-    /// Response vector пуст.
+    /// Response vector is empty.
     #[error("response vector must contain at least one observation")]
     EmptyResponse,
 
-    /// Скалярный параметр модели имеет недопустимое значение.
+    /// A scalar model parameter has an invalid value.
     #[error("{parameter} must be {expected}")]
     InvalidParameter {
-        /// Имя параметра.
+        /// Parameter name.
         parameter: &'static str,
-        /// Ожидаемый инвариант.
+        /// Expected invariant.
         expected: &'static str,
     },
 
-    /// Dense matrix получила неверное число row-major значений.
+    /// Dense matrix received an incorrect number of row-major values.
     ///
-    /// Число переданных значений `actual_values` не совпадает с `nrows * ncols`.
+    /// The provided `actual_values` count does not match `nrows * ncols`.
     #[error("design matrix has {actual_values} values, expected {expected_values}")]
     DesignSize {
-        /// Ожидаемое число значений.
+        /// Expected number of values.
         expected_values: usize,
-        /// Фактическое число значений.
+        /// Actual number of values.
         actual_values: usize,
     },
 
-    /// Размеры design matrix не помещаются в `usize`.
+    /// Design matrix dimensions do not fit in `usize`.
     #[error("arithmetic overflow while computing {context}")]
     ArithmeticOverflow {
-        /// Описание вычисляемого размера.
+        /// Description of the computed size.
         context: &'static str,
     },
 
-    /// Число строк design matrix не совпадает с длиной response.
+    /// Design matrix row count does not match the response length.
     #[error(
         "{parameter} design has {actual_rows} rows, expected {expected_rows} rows from response"
     )]
     DesignRowMismatch {
-        /// Имя или роль проверяемого параметра.
+        /// Name or role of the parameter being checked.
         parameter: &'static str,
-        /// Ожидаемое число строк.
+        /// Expected number of rows.
         expected_rows: usize,
-        /// Фактическое число строк.
+        /// Actual number of rows.
         actual_rows: usize,
     },
 
-    /// Длина response не совпадает с ожидаемой.
+    /// Response length does not match the expected length.
     #[error("response length is {actual}, expected {expected}")]
     ResponseLength {
-        /// Ожидаемая длина.
+        /// Expected length.
         expected: usize,
-        /// Фактическая длина.
+        /// Actual length.
         actual: usize,
     },
 
-    /// Длина observation weights не совпадает с длиной response.
+    /// Observation weights length does not match the response length.
     #[error("weights length is {actual}, expected {expected}")]
     WeightLength {
-        /// Ожидаемая длина.
+        /// Expected length.
         expected: usize,
-        /// Фактическая длина.
+        /// Actual length.
         actual: usize,
     },
 
-    /// Observation weight имеет недопустимое значение.
+    /// An observation weight has an invalid value.
     #[error("weight at index {index} must be finite and >= 0")]
     InvalidWeight {
-        /// Индекс недопустимого веса.
+        /// Index of the invalid weight.
         index: usize,
     },
 
-    /// Длина beta-вектора не совпадает с числом коэффициентов модели.
+    /// A scalar observation has a non-finite value.
+    #[error("scalar observation at index {index} must be finite")]
+    InvalidObservation {
+        /// Index of the invalid observation.
+        index: usize,
+    },
+
+    /// A dense design matrix entry has a non-finite value.
+    #[error("design matrix value at row-major index {index} must be finite")]
+    InvalidDesignValue {
+        /// Row-major index of the invalid value.
+        index: usize,
+    },
+
+    /// A product-block multiplier has a non-finite value.
+    #[error("product multiplier at index {index} must be finite")]
+    InvalidMultiplier {
+        /// Index of the invalid multiplier.
+        index: usize,
+    },
+
+    /// Beta vector length does not match the model coefficient count.
     #[error("beta length is {actual}, expected {expected}")]
     BetaLength {
-        /// Ожидаемая длина.
+        /// Expected length.
         expected: usize,
-        /// Фактическая длина.
+        /// Actual length.
         actual: usize,
     },
 
-    /// Длина gradient-вектора не совпадает с числом коэффициентов модели.
+    /// Gradient vector length does not match the model coefficient count.
     #[error("gradient length is {actual}, expected {expected}")]
     GradientLength {
-        /// Ожидаемая длина.
+        /// Expected length.
         expected: usize,
-        /// Фактическая длина.
+        /// Actual length.
         actual: usize,
     },
 
-    /// Индекс строки predictor-а вне диапазона наблюдений модели.
+    /// Predictor row index is outside the model's observation range.
     #[error("row index {row} is out of bounds for {nrows} rows")]
     RowOutOfBounds {
-        /// Запрошенный индекс строки.
+        /// Requested row index.
         row: usize,
-        /// Число строк в модели.
+        /// Number of rows in the model.
         nrows: usize,
     },
 
-    /// Prediction blocks имеют другой coefficient layout.
+    /// Prediction blocks have a different coefficient layout.
     #[error(
         "prediction blocks have incompatible parameter layout: expected {expected:?}, got {got:?}"
     )]
     PredictionLayoutMismatch {
-        /// Layout training-модели.
+        /// Layout of the training model.
         expected: ParameterLayout,
-        /// Layout переданных prediction blocks.
+        /// Layout of the provided prediction blocks.
         got: ParameterLayout,
     },
 
-    /// Два parameter block используют пересекающиеся диапазоны beta.
+    /// Two parameter blocks use overlapping beta ranges.
     #[error("{first} parameter block overlaps with {second} parameter block")]
     BlockOverlap {
-        /// Первый пересекающийся блок.
+        /// First overlapping block.
         first: &'static str,
-        /// Второй пересекающийся блок.
+        /// Second overlapping block.
         second: &'static str,
     },
 
-    /// Диапазон коэффициентов parameter block не помещается в `usize`.
+    /// Parameter block coefficient range does not fit in `usize`.
     #[error("{parameter} parameter block range overflows: offset {offset}, len {len}")]
     BlockRangeOverflow {
-        /// Имя параметра.
+        /// Parameter name.
         parameter: &'static str,
-        /// Начальная позиция блока.
+        /// Block start position.
         offset: usize,
-        /// Длина блока.
+        /// Block length.
         len: usize,
     },
 
-    /// Модель не содержит parameter block с указанным именем.
+    /// Parameter block coefficient range is outside the model vector.
+    #[error(
+        "{parameter} parameter block range {start}..{end} is out of bounds for dimension {dim}"
+    )]
+    BlockRangeOutOfBounds {
+        /// Parameter name.
+        parameter: &'static str,
+        /// Start of the requested range.
+        start: usize,
+        /// End of the requested range.
+        end: usize,
+        /// Full coefficient dimension.
+        dim: usize,
+    },
+
+    /// Model does not contain a parameter block with the given name.
     ///
-    /// Возникает при попытке создать `BlockObjective` для параметра,
-    /// отсутствующего в модели.
+    /// Raised when attempting to create a `BlockObjective` for a parameter
+    /// that is not present in the model.
     #[error("model has no parameter block named {name:?}")]
     UnknownParameter {
-        /// Имя запрошенного параметра.
+        /// Name of the requested parameter.
         name: &'static str,
+    },
+
+    /// A penalty references a coefficient index outside the model vector.
+    #[error("penalty coefficient index {index} is out of bounds for dimension {dim}")]
+    PenaltyIndexOutOfBounds {
+        /// Referenced coefficient index.
+        index: usize,
+        /// Full coefficient dimension.
+        dim: usize,
+    },
+
+    /// A segment penalty range is outside the coefficient vector.
+    #[error("penalty range {start}..{end} is out of bounds for dimension {dim}")]
+    PenaltyRangeOutOfBounds {
+        /// Start of the requested range.
+        start: usize,
+        /// End of the requested range.
+        end: usize,
+        /// Full coefficient dimension.
+        dim: usize,
     },
 }

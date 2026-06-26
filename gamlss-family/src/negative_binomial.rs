@@ -1,19 +1,24 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
-use gamlss_core::{
-    Family, HasCdf, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Shape,
-};
+use gamlss_core::{Log, PositiveLink};
 
-use crate::special::{digamma, included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use gamlss_special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+
+pub use mean_dispersion::{
+    NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
+    NegativeBinomialMeanDispersionTheta,
+};
+pub use mean_size::{NegativeBinomialEta, NegativeBinomialMeanSize};
+
+mod mean_dispersion;
+mod mean_size;
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
 /// Negative binomial family parameterized by positive mean and shape.
 ///
 /// The variance is `mu + mu^2 / shape`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomial<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,
 }
@@ -25,22 +30,16 @@ where
 {
     /// Creates a stateless negative binomial family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
-    fn theta_from_eta(eta: NegativeBinomialEta) -> NegativeBinomialTheta {
-        NegativeBinomialTheta {
-            mu: MuLink::inverse(eta.mu),
-            shape: ShapeLink::inverse(eta.shape),
-        }
-    }
-
-    #[inline(always)]
-    fn nll_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    pub(super) fn nll_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
         if !is_nonnegative_integer(y)
             || theta.mu <= 0.0
             || !theta.mu.is_finite()
@@ -57,35 +56,8 @@ where
             + (y + theta.shape) * total.ln()
     }
 
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: NegativeBinomialEta) -> (f64, NegativeBinomialEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
-        if !nll.is_finite() {
-            return (
-                nll,
-                NegativeBinomialEta {
-                    mu: f64::NAN,
-                    shape: f64::NAN,
-                },
-            );
-        }
-
-        let total = theta.shape + theta.mu;
-        let d_mu = (y + theta.shape) / total - y / theta.mu;
-        let d_shape = -digamma(y + theta.shape) + digamma(theta.shape) - theta.shape.ln() - 1.0
-            + total.ln()
-            + (y + theta.shape) / total;
-        let gradient_eta = NegativeBinomialEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-        };
-
-        (nll, gradient_eta)
-    }
-
     #[inline]
-    fn cdf_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
+    pub(crate) fn cdf_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
             || !theta.mu.is_finite()
@@ -116,6 +88,7 @@ where
         )
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn cdf_by_recurrence(
         shape: f64,
         failure_probability: f64,
@@ -135,6 +108,7 @@ where
         sum.clamp(0.0, 1.0)
     }
 
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn cdf_by_log_sum(
         shape: f64,
         success_probability: f64,
@@ -168,34 +142,6 @@ where
     }
 }
 
-/// Predictors for the negative binomial family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NegativeBinomialEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for NegativeBinomialEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            _ => unreachable!("negative binomial eta only has indices 0 and 1"),
-        }
-    }
-}
-
 /// Natural-scale negative binomial parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NegativeBinomialTheta {
@@ -205,105 +151,65 @@ pub struct NegativeBinomialTheta {
     pub shape: f64,
 }
 
-impl<MuLink, ShapeLink> Family for NegativeBinomial<MuLink, ShapeLink>
-where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    type Eta = NegativeBinomialEta;
-    type Theta = NegativeBinomialTheta;
-    type NllGradientEta = NegativeBinomialEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MuLink, ShapeLink> ParameterizedFamily<2> for NegativeBinomial<MuLink, ShapeLink>
-where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    type Params = (Mu, Shape);
-    type Links = (MuLink, ShapeLink);
-}
-
-impl<MuLink, ShapeLink> HasCdf for NegativeBinomial<MuLink, ShapeLink>
-where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta)
-    }
-}
-
-#[cfg(feature = "rand")]
-impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for NegativeBinomial<MuLink, ShapeLink>
-where
-    Rng: rand::Rng,
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return f64::NAN;
-        }
-
-        let lambda = rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape)
-                .expect("validated gamma-poisson parameters must construct"),
-            rng,
-        );
-        rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(lambda).expect("validated poisson mean must construct"),
-            rng,
-        )
-    }
-}
-
-/// Negative binomial distribution with log links for mean and shape.
-pub type DefaultNegativeBinomial = NegativeBinomial<Log, Log>;
-
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use statrs::distribution::{DiscreteCDF, NegativeBinomial as StatrsNegativeBinomial};
 
-    use super::{DefaultNegativeBinomial, NegativeBinomialTheta};
-    use crate::test_support::assert_gradient_matches_finite_difference;
+    use super::{
+        NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
+        NegativeBinomialMeanSize, NegativeBinomialTheta,
+    };
+    use crate::test_support::{
+        assert_gradient_matches_finite_difference, statrs_discrete_quantile,
+    };
 
     #[test]
     fn negative_binomial_gradient_matches_finite_difference() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 3.0, [0.4, -0.2]);
+
+        let mean_dispersion = NegativeBinomialMeanDispersion::new();
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &mean_dispersion,
+            3.0,
+            [2.0_f64.ln(), 0.4_f64.ln()],
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn negative_binomial_mean_dispersion_matches_mean_size_equivalent() {
+        let mean_size = NegativeBinomialMeanSize::new();
+        let mean_dispersion = NegativeBinomialMeanDispersion::new();
+        let mean_size_theta = NegativeBinomialTheta {
+            mu: 2.0,
+            shape: 4.0,
+        };
+        let mean_dispersion_theta = NegativeBinomialMeanDispersionTheta {
+            mean: mean_size_theta.mu,
+            dispersion: 1.0 / mean_size_theta.shape,
+        };
+
+        assert_eq!(
+            mean_dispersion.nll(3.0, mean_dispersion_theta),
+            mean_size.nll(3.0, mean_size_theta)
+        );
+        assert_eq!(
+            mean_dispersion.cdf(3.0, mean_dispersion_theta),
+            mean_size.cdf(3.0, mean_size_theta)
+        );
+        assert_eq!(
+            mean_dispersion.quantile(0.5, mean_dispersion_theta),
+            mean_size.quantile(0.5, mean_size_theta)
+        );
     }
 
     #[test]
     fn negative_binomial_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 2.0,
             shape: 1.5,
@@ -326,8 +232,9 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     fn negative_binomial_cdf_matches_reference_points() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let theta = NegativeBinomialTheta {
             mu: 2.0,
             shape: 1.5,
@@ -360,7 +267,7 @@ mod tests {
 
     #[test]
     fn negative_binomial_cdf_is_stable_for_large_parameters() {
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let cdf = family.cdf(
             1000.0,
             NegativeBinomialTheta {
@@ -373,12 +280,62 @@ mod tests {
         assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
     }
 
+    #[test]
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    fn negative_binomial_quantile_matches_statrs_reference() {
+        let family = NegativeBinomialMeanSize::new();
+        let theta = NegativeBinomialTheta {
+            mu: 2.0,
+            shape: 1.5,
+        };
+        let success_probability = theta.shape / (theta.shape + theta.mu);
+        let reference = StatrsNegativeBinomial::new(theta.shape, success_probability).unwrap();
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_eq!(
+                family.quantile(p, theta),
+                statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
+            );
+        }
+
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .quantile(
+                    0.5,
+                    NegativeBinomialTheta {
+                        mu: 0.0,
+                        shape: 1.5,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn negative_binomial_quantile_is_generalized_inverse_cdf() {
+        let family = NegativeBinomialMeanSize::new();
+        let theta = NegativeBinomialTheta {
+            mu: 6.0,
+            shape: 2.5,
+        };
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            let q = family.quantile(p, theta);
+            assert!(family.cdf(q, theta) >= p);
+            if q > 0.0 {
+                assert!(family.cdf(q - 1.0, theta) < p);
+            }
+        }
+    }
+
     #[cfg(feature = "rand")]
     #[test]
     fn negative_binomial_sampling_returns_counts_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultNegativeBinomial::new();
+        let family = NegativeBinomialMeanSize::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,

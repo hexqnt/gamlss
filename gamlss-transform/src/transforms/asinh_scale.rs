@@ -8,13 +8,6 @@ use crate::{TargetTransform, TransformError, median_sorted, validate_non_empty_f
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AsinhScale;
 
-/// State for [`AsinhScale`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AsinhScaleState {
-    /// Positive scale used before `asinh`.
-    pub scale: f64,
-}
-
 impl TargetTransform for AsinhScale {
     type State = AsinhScaleState;
 
@@ -30,15 +23,22 @@ impl TargetTransform for AsinhScale {
         Ok(AsinhScaleState { scale })
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y / state.scale).asinh()
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.sinh() * state.scale
     }
+}
+
+/// State for [`AsinhScale`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AsinhScaleState {
+    /// Positive scale used before `asinh`.
+    pub scale: f64,
 }
 
 #[cfg(test)]
@@ -65,5 +65,14 @@ mod tests {
 
         assert_relative_eq!(state.scale, 1.0);
         assert_relative_eq!(AsinhScale::transform(&state, 0.0), 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn fits_extreme_even_length_samples_without_midpoint_overflow() {
+        let state = AsinhScale::fit(&[f64::MAX, f64::MAX]).unwrap();
+
+        assert_eq!(state.scale, f64::MAX);
+        assert!(AsinhScale::transform(&state, f64::MAX).is_finite());
     }
 }

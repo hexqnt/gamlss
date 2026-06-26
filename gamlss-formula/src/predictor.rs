@@ -13,18 +13,10 @@ pub struct FormulaPredictorBlock {
     nparams: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MonotoneSegment {
-    pub(crate) range: Range<usize>,
-    pub(crate) values: Vec<f64>,
-    pub(crate) basis: ISplineBasis,
-    pub(crate) direction: MonotoneDirection,
-}
-
 impl FormulaPredictorBlock {
     /// Creates a formula predictor block.
     #[must_use]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         dense: DenseDesign,
         offset: Option<Vec<f64>>,
         monotone: Vec<MonotoneSegment>,
@@ -40,7 +32,7 @@ impl FormulaPredictorBlock {
 
     /// Returns the dense linear part.
     #[must_use]
-    pub fn dense(&self) -> &DenseDesign {
+    pub const fn dense(&self) -> &DenseDesign {
         &self.dense
     }
 
@@ -72,6 +64,8 @@ impl FormulaPredictorBlock {
         for (row, score) in scores.iter().copied().enumerate() {
             let score = multiplier.map_or(score, |multiplier| score * multiplier[row]);
             grad[0] += score;
+
+            #[allow(clippy::suboptimal_flops)]
             for (index, basis) in segment
                 .basis
                 .evaluate(segment.values[row])
@@ -199,7 +193,15 @@ impl PredictorBlock for FormulaPredictorBlock {
     }
 }
 
-fn monotone_sign(direction: MonotoneDirection) -> f64 {
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonotoneSegment {
+    pub(crate) range: Range<usize>,
+    pub(crate) values: Vec<f64>,
+    pub(crate) basis: ISplineBasis,
+    pub(crate) direction: MonotoneDirection,
+}
+
+const fn monotone_sign(direction: MonotoneDirection) -> f64 {
     match direction {
         MonotoneDirection::Increasing => 1.0,
         MonotoneDirection::Decreasing => -1.0,

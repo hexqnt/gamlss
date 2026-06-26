@@ -2,248 +2,315 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{
-    Family, HasCdf, Identity, Link, Log, Mu, ParameterParts, ParameterizedFamily, PositiveLink,
-    Sigma,
-};
+use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Identity, Log};
 
-use crate::special::unit_normal_cdf;
+use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
+
+pub use log_location_log_sd::{
+    LogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
+};
+pub use mean_cv::{LogNormalMeanCvEta, LogNormalMeanCvTheta, MeanCv};
+pub use mean_log_sd::{LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, MeanLogSd};
+pub use median_log_sd::{LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, MedianLogSd};
+
+mod log_location_log_sd;
+mod mean_cv;
+mod mean_log_sd;
+mod median_log_sd;
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
-/// Log-normal location-scale family.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormal<MuLink = Identity, SigmaLink = Log> {
-    marker: PhantomData<(MuLink, SigmaLink)>,
+/// Log-normal family implementation carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink = Log> {
+    marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
-impl<MuLink, SigmaLink> LogNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
+impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     /// Creates a stateless log-normal family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
-    fn theta_from_eta(eta: LogNormalEta) -> LogNormalTheta {
-        LogNormalTheta {
-            mu: MuLink::inverse(eta.mu),
-            sigma: SigmaLink::inverse(eta.sigma),
-        }
+    #[inline]
+    fn valid_log_location_log_sd(theta: LogNormalLogLocationLogSdTheta) -> bool {
+        theta.log_location.is_finite() && theta.log_sd > 0.0 && theta.log_sd.is_finite()
     }
 
-    #[inline(always)]
-    fn nll_theta(y: f64, theta: LogNormalTheta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-        {
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
+        if y <= 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::INFINITY;
         }
 
         let log_y = y.ln();
-        let residual = log_y - theta.mu;
-        let z = residual / theta.sigma;
-        log_y + HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
+        let residual = log_y - theta.log_location;
+        let z = residual / theta.log_sd;
+        log_y + HALF_LOG_2_PI + theta.log_sd.ln() + 0.5 * z * z
     }
 
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: LogNormalEta) -> (f64, LogNormalEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
-        if !nll.is_finite() {
-            return (
-                nll,
-                LogNormalEta {
-                    mu: f64::NAN,
-                    sigma: f64::NAN,
-                },
-            );
-        }
-
-        let residual = y.ln() - theta.mu;
-        let sigma2 = theta.sigma * theta.sigma;
-        let d_mu = (theta.mu - y.ln()) / sigma2;
-        let d_sigma = 1.0 / theta.sigma - residual * residual / (sigma2 * theta.sigma);
-        let gradient_eta = LogNormalEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
-        };
-
-        (nll, gradient_eta)
-    }
-}
-
-impl<MuLink, SigmaLink> Default for LogNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Predictors for the log-normal family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalEta {
-    /// Location predictor for `log(Y)`.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for LogNormalEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
+    #[inline]
+    fn gradient_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> (f64, f64) {
+        let residual = y.ln() - theta.log_location;
+        let sigma2 = theta.log_sd * theta.log_sd;
+        (
+            (theta.log_location - y.ln()) / sigma2,
+            1.0 / theta.log_sd - residual * residual / (sigma2 * theta.log_sd),
+        )
     }
 
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("log-normal eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale log-normal parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalTheta {
-    /// Location parameter for `log(Y)`.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-}
-
-impl<MuLink, SigmaLink> Family for LogNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Eta = LogNormalEta;
-    type Theta = LogNormalTheta;
-    type NllGradientEta = LogNormalEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for LogNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-}
-
-impl<MuLink, SigmaLink> HasCdf for LogNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+    #[inline]
+    fn cdf_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
+        if !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
         }
         if y <= 0.0 {
             return 0.0;
         }
 
-        unit_normal_cdf((y.ln() - theta.mu) / theta.sigma)
+        unit_normal_cdf((y.ln() - theta.log_location) / theta.log_sd)
     }
-}
 
-#[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for LogNormal<MuLink, SigmaLink>
-where
-    Rng: rand::Rng,
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn quantile_log_location_log_sd(p: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
+        if !Self::valid_log_location_log_sd(theta) {
             return f64::NAN;
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::LogNormal::new(theta.mu, theta.sigma)
-                .expect("validated log-normal parameters must construct"),
-            rng,
-        )
+        (theta.log_location + theta.log_sd * unit_normal_quantile(p)).exp()
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn crps_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
+            return f64::NAN;
+        }
+
+        let mean = (theta.log_location + 0.5 * theta.log_sd * theta.log_sd).exp();
+        let gini_cdf = unit_normal_cdf(theta.log_sd / std::f64::consts::SQRT_2);
+        let half_gini = mean * (2.0 * gini_cdf - 1.0);
+        if y == 0.0 {
+            return mean - half_gini;
+        }
+
+        let z = (y.ln() - theta.log_location) / theta.log_sd;
+        y * (2.0 * unit_normal_cdf(z) - 1.0)
+            - 2.0 * mean * (unit_normal_cdf(z - theta.log_sd) + gini_cdf - 1.0)
     }
 }
 
-/// Log-normal distribution with identity link for `mu` and log link for `sigma`.
-pub type DefaultLogNormal = LogNormal<Identity, Log>;
+impl<Param, FirstLink, SecondLink> Default for LogNormal<Param, FirstLink, SecondLink> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+macro_rules! impl_log_normal_helpers {
+    ($param:ty, $first:ident, $second:ident) => {
+        impl<$first, $second> HasCdf for LogNormal<$param, $first, $second>
+        where
+            LogNormal<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <LogNormal<$param, $first, $second> as Family>::Theta:
+                Copy + Into<LogNormalLogLocationLogSdTheta>,
+        {
+            fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+                Self::cdf_log_location_log_sd(y, theta.into())
+            }
+        }
+
+        impl<$first, $second> HasQuantile for LogNormal<$param, $first, $second>
+        where
+            LogNormal<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <LogNormal<$param, $first, $second> as Family>::Theta:
+                Copy + Into<LogNormalLogLocationLogSdTheta>,
+        {
+            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+                Self::quantile_log_location_log_sd(p, theta.into())
+            }
+        }
+
+        impl<$first, $second> HasCrps for LogNormal<$param, $first, $second>
+        where
+            LogNormal<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <LogNormal<$param, $first, $second> as Family>::Theta:
+                Copy + Into<LogNormalLogLocationLogSdTheta>,
+        {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+                Self::crps_log_location_log_sd(y, theta.into())
+            }
+        }
+
+        #[cfg(feature = "rand")]
+        impl<Rng, $first, $second> CanSimulate<Rng> for LogNormal<$param, $first, $second>
+        where
+            Rng: rand::Rng,
+            LogNormal<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <LogNormal<$param, $first, $second> as Family>::Theta:
+                Copy + Into<LogNormalLogLocationLogSdTheta>,
+        {
+            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+                let theta = theta.into();
+                if !Self::valid_log_location_log_sd(theta) {
+                    return f64::NAN;
+                }
+
+                rand_distr::Distribution::sample(
+                    &rand_distr::LogNormal::new(theta.log_location, theta.log_sd)
+                        .expect("validated log-normal parameters must construct"),
+                    rng,
+                )
+            }
+        }
+    };
+}
+
+impl_log_normal_helpers!(MeanLogSd, MeanLink, LogSdLink);
+impl_log_normal_helpers!(MeanCv, MeanLink, CvLink);
+impl_log_normal_helpers!(MedianLogSd, MedianLink, LogSdLink);
+impl_log_normal_helpers!(LogLocationLogSd, LocationLink, LogSdLink);
+
+/// Log-normal distribution parameterized by mean and log standard deviation.
+pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
+/// Log-normal distribution parameterized by mean and coefficient of variation.
+pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
+/// Log-normal distribution parameterized by median and log standard deviation.
+pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
+/// Log-normal distribution parameterized by log-location and log standard deviation.
+pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;
+
+/// Backward-compatible eta alias for log-location/log-SD log-normal.
+pub type LogNormalEta = LogNormalLogLocationLogSdEta;
+/// Backward-compatible theta alias for log-location/log-SD log-normal.
+pub type LogNormalTheta = LogNormalLogLocationLogSdTheta;
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
+    use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
-    use super::{DefaultLogNormal, LogNormalTheta};
+    use super::{
+        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
+        LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+    };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn log_normal_gradient_matches_finite_difference() {
-        let family = DefaultLogNormal::new();
-        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    fn log_normal_parameterization_gradients_match_finite_difference() {
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &LogNormalLogLocationLogSd::new(),
+            1.7,
+            [0.4, -0.2],
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &LogNormalMeanLogSd::new(),
+            1.7,
+            [1.5_f64.ln(), 0.8_f64.ln()],
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &LogNormalMeanCv::new(),
+            1.7,
+            [1.5_f64.ln(), 0.9_f64.ln()],
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &LogNormalMedianLogSd::new(),
+            1.7,
+            [1.2_f64.ln(), 0.8_f64.ln()],
+        );
     }
 
     #[test]
-    fn log_normal_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultLogNormal::new();
-        let theta = LogNormalTheta {
-            mu: 0.4,
-            sigma: 0.8,
+    fn log_normal_mean_matches_log_location_equivalent() {
+        let mean = LogNormalMeanLogSd::new();
+        let canonical = LogNormalLogLocationLogSd::new();
+        let theta = LogNormalMeanLogSdTheta {
+            mean: 1.5,
+            log_sd: 0.8,
         };
+        let kernel = theta.log_location_log_sd();
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(0.0, theta).is_infinite());
+        assert_relative_eq!(
+            mean.nll(1.7, theta),
+            canonical.nll(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.cdf(1.7, theta),
+            canonical.cdf(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.quantile(0.4, theta),
+            canonical.quantile(0.4, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.crps(1.7, theta),
+            canonical.crps(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn log_normal_mean_cv_matches_log_location_equivalent() {
+        let mean_cv = LogNormalMeanCv::new();
+        let canonical = LogNormalLogLocationLogSd::new();
+        let theta = LogNormalMeanCvTheta { mean: 1.5, cv: 0.9 };
+        let kernel = theta.log_location_log_sd();
+
+        assert_relative_eq!(
+            mean_cv.nll(1.7, theta),
+            canonical.nll(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.cdf(1.7, theta),
+            canonical.cdf(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.quantile(0.4, theta),
+            canonical.quantile(0.4, kernel),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean_cv.crps(1.7, theta),
+            canonical.crps(1.7, kernel),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn log_normal_rejects_invalid_domains() {
+        let family = LogNormalMeanLogSd::new();
         assert!(
             family
                 .nll(
                     1.7,
-                    LogNormalTheta {
-                        mu: f64::INFINITY,
-                        sigma: theta.sigma,
-                    },
+                    LogNormalMeanLogSdTheta {
+                        mean: 1.0,
+                        log_sd: 0.8
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .nll(
+                    0.0,
+                    LogNormalMeanLogSdTheta {
+                        mean: 1.0,
+                        log_sd: 0.8
+                    }
                 )
                 .is_infinite()
         );
@@ -251,82 +318,64 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    LogNormalTheta {
-                        mu: theta.mu,
-                        sigma: 0.0,
-                    },
+                    LogNormalMeanLogSdTheta {
+                        mean: 0.0,
+                        log_sd: 0.8
+                    }
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    LogNormalMeanLogSdTheta {
+                        mean: 1.0,
+                        log_sd: 0.0
+                    }
                 )
                 .is_infinite()
         );
     }
 
     #[test]
-    fn log_normal_cdf_matches_reference_points() {
-        let family = DefaultLogNormal::new();
-        let theta = LogNormalTheta {
-            mu: 0.0,
-            sigma: 1.0,
+    fn log_normal_cdf_and_quantile_match_statrs_reference() {
+        let family = LogNormalLogLocationLogSd::new();
+        let theta = LogNormalLogLocationLogSdTheta {
+            log_location: 0.4,
+            log_sd: 0.8,
         };
+        let reference = StatrsLogNormal::new(theta.log_location, theta.log_sd).unwrap();
 
-        assert_relative_eq!(family.cdf(1.0, theta), 0.5, epsilon = 1.0e-7);
-        assert_relative_eq!(
-            family.cdf(std::f64::consts::E, theta),
-            0.841_344_746,
-            epsilon = 1.0e-7
-        );
-        assert_relative_eq!(
-            family.cdf(1.0 / std::f64::consts::E, theta),
-            0.158_655_254,
-            epsilon = 1.0e-7
-        );
+        for y in [0.05, 0.25, 1.0, 2.0, 8.0] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-7);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-6
+            );
+        }
     }
 
     #[test]
-    fn log_normal_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultLogNormal::new();
+    #[allow(clippy::float_cmp)]
+    fn log_normal_boundaries_and_crps_behave_like_kernel() {
+        let family = LogNormalLogLocationLogSd::new();
+        let theta = LogNormalLogLocationLogSdTheta {
+            log_location: 0.0,
+            log_sd: 1.0,
+        };
 
-        assert_eq!(
-            family.cdf(
-                0.0,
-                LogNormalTheta {
-                    mu: 0.0,
-                    sigma: 1.0
-                }
-            ),
-            0.0
-        );
-        assert_eq!(
-            family.cdf(
-                -1.0,
-                LogNormalTheta {
-                    mu: 0.0,
-                    sigma: 1.0
-                }
-            ),
-            0.0
-        );
-        assert!(
-            family
-                .cdf(
-                    f64::NAN,
-                    LogNormalTheta {
-                        mu: 0.0,
-                        sigma: 1.0
-                    }
-                )
-                .is_nan()
-        );
-        assert!(
-            family
-                .cdf(
-                    1.0,
-                    LogNormalTheta {
-                        mu: 0.0,
-                        sigma: 0.0
-                    }
-                )
-                .is_nan()
-        );
+        assert_eq!(family.cdf(0.0, theta), 0.0);
+        assert_eq!(family.cdf(-1.0, theta), 0.0);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(family.crps(1.0, theta).is_finite());
+        assert!(family.crps(-1.0, theta).is_nan());
     }
 
     #[cfg(feature = "rand")]
@@ -334,29 +383,15 @@ mod tests {
     fn log_normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLogNormal::new();
+        let family = LogNormalMeanLogSd::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        assert!(
-            family
-                .sample(
-                    &mut rng,
-                    LogNormalTheta {
-                        mu: 0.0,
-                        sigma: 1.0
-                    }
-                )
-                .is_finite()
+        let sample = family.sample(
+            &mut rng,
+            LogNormalMeanLogSdTheta {
+                mean: 1.5,
+                log_sd: 0.8,
+            },
         );
-        assert!(
-            family
-                .sample(
-                    &mut rng,
-                    LogNormalTheta {
-                        mu: 0.0,
-                        sigma: 0.0
-                    }
-                )
-                .is_nan()
-        );
+        assert!(sample > 0.0 && sample.is_finite());
     }
 }

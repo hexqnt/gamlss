@@ -1,0 +1,22 @@
+[package]
+name = "gamlss-special"
+version.workspace = true
+edition.workspace = true
+description = "Special functions and numerical helpers for GAMLSS modeling"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-special"
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "tests/**/*", "Cargo.toml", "README.md"]
+readme = "README.md"
+
+[dependencies]
+
+[dev-dependencies]
+approx.workspace = true
+statrs = "0.18"
+
+[lints]
+workspace = true

@@ -3,8 +3,14 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Logit, Mu, ParameterParts, ParameterizedFamily, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Logit, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, UnitIntervalLink,
 };
+
+use crate::initial::probability_floor;
+
+/// Bernoulli distribution with logit link for success probability.
+pub type BernoulliProbability = Bernoulli<Logit>;
 
 /// Bernoulli family parameterized by success probability.
 ///
@@ -16,7 +22,7 @@ use gamlss_core::{
 ///
 /// let _ = Bernoulli::<Identity>::new();
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bernoulli<MuLink = Logit> {
     marker: PhantomData<MuLink>,
 }
@@ -27,25 +33,28 @@ where
 {
     /// Creates a stateless Bernoulli family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: BernoulliEta) -> BernoulliTheta {
         BernoulliTheta {
             mu: MuLink::inverse(eta.mu),
         }
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::float_cmp)]
     fn valid_binary(y: f64) -> bool {
         y == 0.0 || y == 1.0
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: BernoulliTheta) -> f64 {
         if !Self::valid_binary(y) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
             return f64::INFINITY;
@@ -54,7 +63,7 @@ where
         -y * theta.mu.ln() - (1.0 - y) * (1.0 - theta.mu).ln()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: BernoulliEta) -> (f64, BernoulliEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -80,35 +89,6 @@ where
     }
 }
 
-/// Predictor for the Bernoulli family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BernoulliEta {
-    /// Success-probability predictor.
-    pub mu: f64,
-}
-
-impl ParameterParts<1> for BernoulliEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mu: values[0] }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            _ => unreachable!("bernoulli eta only has index 0"),
-        }
-    }
-}
-
-/// Natural-scale Bernoulli parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BernoulliTheta {
-    /// Success probability in `(0, 1)`.
-    pub mu: f64,
-}
-
 impl<MuLink> Family for Bernoulli<MuLink>
 where
     MuLink: UnitIntervalLink<f64>,
@@ -118,22 +98,22 @@ where
     type NllGradientEta = BernoulliEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -141,10 +121,39 @@ where
 
 impl<MuLink> ParameterizedFamily<1> for Bernoulli<MuLink>
 where
-    MuLink: UnitIntervalLink<f64>,
+    MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
     type Params = (Mu,);
     type Links = (MuLink,);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let mut success_weight = 0.0;
+        let mut total_weight = 0.0;
+
+        #[allow(clippy::suboptimal_flops)]
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let y = obs.observation_at(row);
+            if weight <= 0.0 || !weight.is_finite() || !Self::valid_binary(y) {
+                continue;
+            }
+
+            success_weight += weight * y;
+            total_weight += weight;
+        }
+
+        if total_weight <= 0.0 {
+            return BernoulliEta::from_array([0.0]);
+        }
+
+        let mu = probability_floor((success_weight + 0.5) / (total_weight + 1.0));
+        BernoulliEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+        }
+    }
 }
 
 impl<MuLink> HasCdf for Bernoulli<MuLink>
@@ -180,6 +189,20 @@ where
     }
 }
 
+impl<MuLink> HasCrps for Bernoulli<MuLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !Self::valid_binary(y) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
+            return f64::NAN;
+        }
+
+        let residual = theta.mu - y;
+        residual * residual
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink> CanSimulate<Rng> for Bernoulli<MuLink>
 where
@@ -199,28 +222,55 @@ where
     }
 }
 
-/// Bernoulli distribution with logit link for success probability.
-pub type DefaultBernoulli = Bernoulli<Logit>;
+/// Predictor for the Bernoulli family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BernoulliEta {
+    /// Success-probability predictor.
+    pub mu: f64,
+}
+
+impl ParameterParts<1> for BernoulliEta {
+    #[inline]
+    fn from_array(values: [f64; 1]) -> Self {
+        Self { mu: values[0] }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            _ => unreachable!("bernoulli eta only has index 0"),
+        }
+    }
+}
+
+/// Natural-scale Bernoulli parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BernoulliTheta {
+    /// Success probability in `(0, 1)`.
+    pub mu: f64,
+}
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{BernoulliTheta, DefaultBernoulli};
+    use super::{BernoulliProbability, BernoulliTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn bernoulli_gradient_matches_finite_difference() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         assert_gradient_matches_finite_difference::<_, 1>(&family, 1.0, [0.4]);
         assert_gradient_matches_finite_difference::<_, 1>(&family, 0.0, [0.4]);
     }
 
     #[test]
     fn bernoulli_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert!(family.nll(1.0, theta).is_finite());
@@ -230,8 +280,9 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_cdf_matches_reference_points() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert_eq!(family.cdf(-1.0, theta), 0.0);
@@ -242,8 +293,9 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_quantile_matches_generalized_inverse_cdf() {
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
         assert_eq!(family.quantile(0.0, theta), 0.0);
@@ -254,12 +306,40 @@ mod tests {
         assert!(family.quantile(0.5, BernoulliTheta { mu: 1.0 }).is_nan());
     }
 
+    #[test]
+    fn bernoulli_crps_matches_squared_binary_error() {
+        let family = BernoulliProbability::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert_relative_eq!(family.crps(1.0, theta), 0.36, epsilon = 1.0e-12);
+        assert_relative_eq!(family.crps(0.0, theta), 0.16, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn bernoulli_crps_returns_nan_for_invalid_domains() {
+        let family = BernoulliProbability::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert!(family.crps(0.5, theta).is_nan());
+        assert!(family.crps(1.0, BernoulliTheta { mu: 1.0 }).is_nan());
+    }
+
+    #[test]
+    fn bernoulli_crps_is_nonnegative_for_valid_domains() {
+        let family = BernoulliProbability::new();
+        let theta = BernoulliTheta { mu: 0.4 };
+
+        assert!(family.crps(1.0, theta) >= 0.0);
+        assert!(family.crps(0.0, theta) >= 0.0);
+    }
+
     #[cfg(feature = "rand")]
     #[test]
+    #[allow(clippy::float_cmp)]
     fn bernoulli_sampling_returns_binary_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultBernoulli::new();
+        let family = BernoulliProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(&mut rng, BernoulliTheta { mu: 0.4 });
         assert!(sample == 0.0 || sample == 1.0);

@@ -2,9 +2,8 @@
 
 Target transform layer for GAMLSS modeling.
 
-> **Status:** This crate is an early MVP. It is not intended for production use
-> yet. The public API, internals, numerical behavior, and crate structure may
-> change substantially while the library is being developed.
+> **Status:** Actively developed. Public API, internals, numerical behavior, and
+> crate structure may still change before a stable 1.0 release.
 
 This crate contains target preprocessing transforms with persisted state and
 domain-aware inverse transforms.

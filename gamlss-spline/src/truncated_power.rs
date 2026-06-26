@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::{SplineError, SplineOrder, SplineRowBasis};
 
@@ -49,6 +49,7 @@ impl TruncatedPowerBasis {
     ///
     /// Returns an error if `x` is empty, contains non-finite values, has a
     /// degenerate range, or if the coefficient count overflows `usize`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn uniform_from_data(
         x: &[f64],
         n_knots: usize,
@@ -101,29 +102,29 @@ impl TruncatedPowerBasis {
 
     /// Truncated-power knots.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Spline order.
     #[must_use]
-    #[inline(always)]
-    pub fn order(&self) -> SplineOrder {
+    #[inline]
+    pub const fn order(&self) -> SplineOrder {
         self.order
     }
 
     /// Returns `true` if the first coefficient is an intercept.
     #[must_use]
-    #[inline(always)]
-    pub fn include_intercept(&self) -> bool {
+    #[inline]
+    pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.n_basis
     }
 
@@ -149,6 +150,7 @@ impl TruncatedPowerBasis {
 
     /// Visits non-zero basis-function values at `x` without allocating.
     #[inline]
+    #[allow(clippy::useless_let_if_seq)]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -195,6 +197,7 @@ impl TruncatedPowerBasis {
 
     /// Visits non-zero first derivatives at `x` without allocating.
     #[inline]
+    #[allow(clippy::cast_precision_loss, clippy::useless_let_if_seq)]
     pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         let degree = self.order.degree();
         let mut offset = 0;
@@ -245,28 +248,29 @@ impl TruncatedPowerDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> &TruncatedPowerBasis {
+    #[inline]
+    pub const fn basis(&self) -> &TruncatedPowerBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -280,18 +284,37 @@ impl TruncatedPowerDesign {
     }
 }
 
-impl PredictorBlock for TruncatedPowerDesign {
-    #[inline(always)]
+impl SplineRowBasis for TruncatedPowerDesign {
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
     #[inline]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        debug_assert!(row < self.x.len());
+        self.basis.for_each_basis(self.x[row], f);
+    }
+}
+
+impl PredictorBlock for TruncatedPowerDesign {
+    #[inline]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -304,11 +327,15 @@ impl PredictorBlock for TruncatedPowerDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.for_each_row_basis(row, |index, weight| {
                 grad[index] += score * weight;
             });
@@ -320,36 +347,38 @@ impl PredictorBlock for TruncatedPowerDesign {
         &self,
         scores: &[f64],
         multiplier: &[f64],
-        _: &[f64],
+        beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(multiplier.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * multiplier * weight;
-            });
-        }
-    }
-}
-
-impl SplineRowBasis for TruncatedPowerDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
     }
 
     #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        debug_assert!(row < self.x.len());
-        self.basis.for_each_basis(self.x[row], f);
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.basis.n_basis());
+
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier.multiplier_at(row);
+            if scaled_score == 0.0 {
+                continue;
+            }
+            self.for_each_row_basis(row, |index, weight| {
+                grad[index] = scaled_score.mul_add(weight, grad[index]);
+            });
+        }
     }
 }
 

@@ -3,19 +3,25 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Identity, Link, Log, Mu, ParameterParts,
-    ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu,
+    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use rand::RngExt;
 
+use crate::domain::{is_finite_location_scale, is_probability};
+use crate::initial::{robust_location_scale, weighted_values};
+
 const LOG_2: f64 = std::f64::consts::LN_2;
+
+/// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
+pub type LaplaceMuSigma = Laplace<Identity, Log>;
 
 /// Laplace location-scale family.
 ///
-/// `MuLink` и `SigmaLink` управляют link-функциями. По умолчанию
-/// `Identity` для `mu` и `Log` для `sigma` (positive link).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `MuLink` and `SigmaLink` control the link functions. Defaults to
+/// `Identity` for `mu` and `Log` for `sigma` (positive link).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Laplace<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -27,14 +33,15 @@ where
 {
     /// Creates a stateless Laplace family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    /// Преобразует предикторы с link-шкалы в параметры на естественной шкале.
-    #[inline(always)]
+    /// Converts link-scale predictors to natural-scale parameters.
+    #[inline]
     fn theta_from_eta(eta: LaplaceEta) -> LaplaceTheta {
         LaplaceTheta {
             mu: MuLink::inverse(eta.mu),
@@ -42,24 +49,29 @@ where
         }
     }
 
-    /// Negative log-likelihood одного наблюдения на естественной шкале.
+    #[inline]
+    fn valid_theta(theta: LaplaceTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma)
+    }
+
+    /// Negative log-likelihood for a single observation on the natural scale.
     ///
-    /// Возвращает `INFINITY` при non-finite observation/location или
-    /// неположительном sigma.
-    #[inline(always)]
+    /// Returns `INFINITY` for non-finite observation/location or non-positive
+    /// sigma.
+    #[inline]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
         LOG_2 + theta.sigma.ln() + (y - theta.mu).abs() / theta.sigma
     }
 
-    /// Вычисляет NLL и gradient по eta для одного наблюдения.
+    /// Computes NLL and gradient with respect to eta for one observation.
     ///
-    /// Градиент по `mu` использует субградиент sign (0 при `residual == 0`).
-    #[inline(always)]
+    /// The gradient with respect to `mu` uses the sign subgradient (0 when
+    /// `residual == 0`).
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -102,43 +114,6 @@ where
     }
 }
 
-/// Predictors для распределения Лапласа на link-шкале.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LaplaceEta {
-    /// Location predictor.
-    pub mu: f64,
-    /// Scale predictor.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for LaplaceEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("laplace eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Параметры распределения Лапласа на естественной шкале.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LaplaceTheta {
-    /// Location parameter.
-    pub mu: f64,
-    /// Positive scale parameter.
-    pub sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for Laplace<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -149,22 +124,22 @@ where
     type NllGradientEta = LaplaceEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -172,11 +147,26 @@ where
 
 impl<MuLink, SigmaLink> ParameterizedFamily<2> for Laplace<MuLink, SigmaLink>
 where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Sigma);
     type Links = (MuLink, SigmaLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return LaplaceEta::from_array([0.0, 0.0]);
+        };
+
+        LaplaceEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+        }
+    }
 }
 
 impl<MuLink, SigmaLink> HasCdf for Laplace<MuLink, SigmaLink>
@@ -185,8 +175,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -194,7 +183,7 @@ where
         if standardized < 0.0 {
             0.5 * standardized.exp()
         } else {
-            1.0 - 0.5 * (-standardized).exp()
+            0.5f64.mul_add(-(-standardized).exp(), 1.0)
         }
     }
 }
@@ -204,12 +193,9 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-        {
+        if !is_probability(p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -226,9 +212,9 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -244,8 +230,9 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -255,8 +242,42 @@ where
     }
 }
 
-/// Распределение Лапласа с `Identity` link для `mu` и `Log` link для `sigma`.
-pub type DefaultLaplace = Laplace<Identity, Log>;
+/// Predictors for the Laplace distribution on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaplaceEta {
+    /// Location predictor.
+    pub mu: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+}
+
+impl ParameterParts<2> for LaplaceEta {
+    #[inline]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("laplace eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Laplace distribution parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaplaceTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -265,18 +286,18 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultLaplace, LaplaceEta, LaplaceTheta};
+    use super::{LaplaceEta, LaplaceMuSigma, LaplaceTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn laplace_gradient_matches_finite_difference() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn laplace_rejects_non_finite_domain_and_returns_nan_gradient() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -321,7 +342,7 @@ mod tests {
 
     #[test]
     fn laplace_cdf_matches_reference_points() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -342,7 +363,7 @@ mod tests {
 
     #[test]
     fn laplace_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert!(
             family
@@ -370,7 +391,7 @@ mod tests {
 
     #[test]
     fn laplace_quantile_inverts_cdf() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let theta = LaplaceTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -400,7 +421,7 @@ mod tests {
 
     #[test]
     fn laplace_crps_matches_fixed_values() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert_relative_eq!(
             family.crps(
@@ -417,7 +438,7 @@ mod tests {
 
     #[test]
     fn laplace_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
 
         assert!(
             family
@@ -448,7 +469,7 @@ mod tests {
     fn laplace_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultLaplace::new();
+        let family = LaplaceMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

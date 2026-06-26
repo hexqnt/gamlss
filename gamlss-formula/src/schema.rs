@@ -39,34 +39,8 @@ pub struct BuiltModel<M> {
     layout: ParameterLayout,
 }
 
-/// Reusable prediction design compiled from fitted term metadata.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PredictionDesign<Blocks> {
-    blocks: Blocks,
-}
-
-impl<Blocks> PredictionDesign<Blocks> {
-    pub(crate) fn new(blocks: Blocks) -> Self {
-        Self { blocks }
-    }
-
-    /// Returns typed prediction parameter blocks.
-    #[must_use]
-    #[inline(always)]
-    pub fn blocks(&self) -> &Blocks {
-        &self.blocks
-    }
-
-    /// Consumes the design and returns typed prediction parameter blocks.
-    #[must_use]
-    #[inline]
-    pub fn into_blocks(self) -> Blocks {
-        self.blocks
-    }
-}
-
 impl<M> BuiltModel<M> {
-    pub(crate) fn new(model: M, schema: ModelSchema, layout: ParameterLayout) -> Self {
+    pub(crate) const fn new(model: M, schema: ModelSchema, layout: ParameterLayout) -> Self {
         Self {
             model,
             schema,
@@ -76,15 +50,15 @@ impl<M> BuiltModel<M> {
 
     /// Returns the compiled core model.
     #[must_use]
-    #[inline(always)]
-    pub fn model(&self) -> &M {
+    #[inline]
+    pub const fn model(&self) -> &M {
         &self.model
     }
 
     /// Returns the compiled core model mutably.
     #[must_use]
-    #[inline(always)]
-    pub fn model_mut(&mut self) -> &mut M {
+    #[inline]
+    pub const fn model_mut(&mut self) -> &mut M {
         &mut self.model
     }
 
@@ -97,14 +71,14 @@ impl<M> BuiltModel<M> {
 
     /// Returns formula schema metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn schema(&self) -> &ModelSchema {
+    #[inline]
+    pub const fn schema(&self) -> &ModelSchema {
         &self.schema
     }
 
     /// Returns fitted terms grouped by distribution parameter.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn terms(&self) -> &[ParameterTerms] {
         &self.schema.parameters
     }
@@ -134,17 +108,42 @@ impl<M> BuiltModel<M> {
 
     /// Returns core parameter layout.
     #[must_use]
-    #[inline(always)]
-    pub fn layout(&self) -> &ParameterLayout {
+    #[inline]
+    pub const fn layout(&self) -> &ParameterLayout {
         &self.layout
     }
 }
 
-pub(crate) fn terms_for<'a>(schema: &'a ModelSchema, parameter: &'static str) -> &'a [FittedTerm] {
+/// Reusable prediction design compiled from fitted term metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredictionDesign<Blocks> {
+    blocks: Blocks,
+}
+
+impl<Blocks> PredictionDesign<Blocks> {
+    pub(crate) const fn new(blocks: Blocks) -> Self {
+        Self { blocks }
+    }
+
+    /// Returns typed prediction parameter blocks.
+    #[must_use]
+    #[inline]
+    pub const fn blocks(&self) -> &Blocks {
+        &self.blocks
+    }
+
+    /// Consumes the design and returns typed prediction parameter blocks.
+    #[must_use]
+    #[inline]
+    pub fn into_blocks(self) -> Blocks {
+        self.blocks
+    }
+}
+
+pub fn terms_for<'a>(schema: &'a ModelSchema, parameter: &'static str) -> &'a [FittedTerm] {
     schema
         .parameters
         .iter()
         .find(|terms| terms.parameter == parameter)
-        .map(|terms| terms.terms.as_slice())
-        .unwrap_or(&[])
+        .map_or(&[], |terms| terms.terms.as_slice())
 }

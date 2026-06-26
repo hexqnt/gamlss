@@ -2,10 +2,10 @@ use std::ops::Range;
 
 use crate::ParameterName;
 
-/// Именованный блок коэффициентов внутри плоского вектора параметров.
+/// Named coefficient block inside the flat parameter vector.
 ///
-/// Связывает стабильное имя параметра распределения (например, `"mu"`)
-/// с диапазоном позиций в общем beta-векторе.
+/// Associates a stable distribution parameter name (e.g. `"mu"`) with a range
+/// of positions in the common beta vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterSlice {
     /// Stable distribution parameter name, e.g. `"mu"` or `"sigma"`.
@@ -14,10 +14,10 @@ pub struct ParameterSlice {
     pub range: Range<usize>,
 }
 
-/// Отображение параметров распределения на диапазоны в плоском beta-векторе.
+/// Mapping from distribution parameters to ranges in the flat beta vector.
 ///
-/// Используется для introspection модели: распаковки коэффициентов,
-/// построения diagnostics и передачи информации внешним оптимизаторам.
+/// Used for model introspection: unpacking coefficients, building diagnostics,
+/// and conveying information to external optimizers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterLayout {
     slices: Vec<ParameterSlice>,
@@ -27,21 +27,21 @@ impl ParameterLayout {
     /// Creates a layout from named slices.
     #[must_use]
     #[inline]
-    pub fn new(slices: Vec<ParameterSlice>) -> Self {
+    pub const fn new(slices: Vec<ParameterSlice>) -> Self {
         Self { slices }
     }
 
     /// Number of parameter blocks represented by this layout.
     #[must_use]
-    #[inline(always)]
-    pub fn len(&self) -> usize {
+    #[inline]
+    pub const fn len(&self) -> usize {
         self.slices.len()
     }
 
     /// `true` if this layout has no parameter blocks.
     #[must_use]
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
         self.slices.is_empty()
     }
 
@@ -62,7 +62,7 @@ impl ParameterLayout {
 
     /// Returns all parameter slices in model order.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn slices(&self) -> &[ParameterSlice] {
         &self.slices
     }
@@ -96,10 +96,10 @@ impl ParameterLayout {
     }
 }
 
-/// Коэффициенты одного распакованного параметрического блока.
+/// Coefficients of a single unpacked parameter block.
 ///
-/// Возвращается методом [`crate::Gamlss::unpack_theta`] для human-readable
-/// представления плоского beta-вектора.
+/// Returned by [`crate::Gamlss::unpack_parameters`] for a human-readable
+/// representation of the flat beta vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterCoefficients {
     /// Stable distribution parameter name.
@@ -108,17 +108,17 @@ pub struct ParameterCoefficients {
     pub coefficients: Vec<f64>,
 }
 
-/// Человекочитаемое представление плоского beta-вектора.
+/// Human-readable representation of the flat optimizer parameter vector.
 ///
-/// Содержит по одному [`ParameterCoefficients`] для каждого параметра
-/// распределения в порядке модели.
+/// Contains one [`ParameterCoefficients`] for each distribution parameter in
+/// model order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnpackedTheta {
+pub struct UnpackedParameters {
     /// Parameter blocks in model order.
     pub blocks: Vec<ParameterCoefficients>,
 }
 
-impl UnpackedTheta {
+impl UnpackedParameters {
     /// Returns an unpacked coefficient block by parameter name.
     #[must_use]
     #[inline]
@@ -154,11 +154,11 @@ impl UnpackedTheta {
     }
 }
 
-/// Training diagnostics for a candidate theta vector.
+/// Training diagnostics for a candidate optimizer parameter vector.
 ///
-/// Содержит значения objective, scaled training negative log-likelihood (без
-/// штрафов), суммарный штраф, норму градиента и число не-finite компонент
-/// градиента.
+/// Contains the objective value, scaled training negative log-likelihood
+/// (without penalties), total penalty, gradient norm and the number of
+/// non-finite gradient entries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrainingDiagnostics {
     /// Full objective value: weighted training negative log-likelihood plus penalties.

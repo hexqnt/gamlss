@@ -2,7 +2,7 @@ use gamlss_core::DenseDesign;
 
 use crate::SplineError;
 
-/// B-spline basis с заданной степенью и knot vector.
+/// B-spline basis with a given degree and knot vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BSplineBasis {
     degree: usize,
@@ -10,10 +10,10 @@ pub struct BSplineBasis {
 }
 
 impl BSplineBasis {
-    /// Создаёт basis из готового knot vector.
+    /// Creates a basis from a ready-made knot vector.
     ///
-    /// Knot vector должен быть конечным, неубывающим и достаточно длинным для
-    /// выбранной степени.
+    /// The knot vector must be finite, non-decreasing and long enough for the
+    /// chosen degree.
     pub fn new(degree: usize, knots: Vec<f64>) -> Result<Self, SplineError> {
         if knots.len() <= degree + 1 {
             return Err(SplineError::NotEnoughBasis { n_basis: 0, degree });
@@ -29,7 +29,8 @@ impl BSplineBasis {
         Ok(Self { degree, knots })
     }
 
-    /// Строит open uniform B-spline basis по диапазону данных.
+    /// Builds an open uniform B-spline basis over a data range.
+    #[allow(clippy::cast_precision_loss)]
     pub fn open_uniform_from_data(
         x: &[f64],
         n_basis: usize,
@@ -69,22 +70,26 @@ impl BSplineBasis {
         Self::new(degree, knots)
     }
 
-    /// Степень spline.
-    pub fn degree(&self) -> usize {
+    /// Spline degree.
+    #[must_use]
+    pub const fn degree(&self) -> usize {
         self.degree
     }
 
     /// Knot vector.
+    #[must_use]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
-    /// Число basis-функций.
-    pub fn n_basis(&self) -> usize {
+    /// Number of basis functions.
+    #[must_use]
+    pub const fn n_basis(&self) -> usize {
         self.knots.len() - self.degree - 1
     }
 
-    /// Значения всех basis-функций в точке `x`.
+    /// Values of all basis functions at point `x`.
+    #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
         let mut values = vec![0.0; self.n_basis()];
         self.evaluate_into(x, &mut values);
@@ -98,7 +103,7 @@ impl BSplineBasis {
         self.fill_values(x, out);
     }
 
-    /// Dense design matrix, где каждая строка содержит `evaluate(x_i)`.
+    /// Dense design matrix where each row contains `evaluate(x_i)`.
     pub fn design_matrix(&self, x: &[f64]) -> Result<DenseDesign, SplineError> {
         if x.iter().any(|value| !value.is_finite()) {
             return Err(SplineError::NonFiniteValue);
@@ -122,6 +127,7 @@ impl BSplineBasis {
         }
     }
 
+    #[allow(clippy::float_cmp, clippy::suboptimal_flops)]
     fn basis_value(&self, index: usize, degree: usize, x: f64) -> f64 {
         if degree == 0 {
             let left = self.knots[index];
@@ -151,7 +157,7 @@ impl BSplineBasis {
     }
 }
 
-/// Вспомогательная функция для open uniform P-spline design matrix.
+/// Helper function for open uniform P-spline design matrix.
 pub fn pspline_design(
     x: &[f64],
     n_basis: usize,

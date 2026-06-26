@@ -5,17 +5,1186 @@ use crate::{
     ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
 };
 
+pub use layout::{
+    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedParameters,
+};
+pub use observation::{FiniteScalarObservations, ObservationView};
+pub use workspace::GradientWorkspace;
+
 mod layout;
 mod observation;
 mod workspace;
 
-pub use layout::{
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedTheta,
-};
-pub use observation::ObservationView;
-pub use workspace::GradientWorkspace;
+/// Scaling convention for the likelihood part of a compiled objective.
+///
+/// Local and global penalties are not scaled. This keeps penalty weights on a
+/// stable scale when switching between summed and mean likelihood objectives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ObjectiveScale {
+    /// Use the weighted likelihood sum.
+    #[default]
+    Sum,
+    /// Use the weighted likelihood mean.
+    ///
+    /// For weighted observations the denominator is the sum of observation
+    /// weights. If all weights are zero, the likelihood contribution is left
+    /// unscaled at zero.
+    Mean,
+}
 
-/// Tuple-контракт для набора parameter blocks, совместимого с family `F`.
+impl ObjectiveScale {
+    #[inline]
+    fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
+        match self {
+            Self::Mean if weight_sum > 0.0 => 1.0 / weight_sum,
+            Self::Sum | Self::Mean => 1.0,
+        }
+    }
+}
+
+/// Compiled typed GAMLSS model.
+///
+/// `F` specifies the response distribution, and `Blocks` provides one
+/// predictor block for each family parameter.
+///
+/// The model owns the family and parameter blocks, and stores an observation
+/// view supplied by the caller. This keeps `gamlss-core` independent of the
+/// caller's storage backend while static dispatch preserves zero-cost hot-path
+/// evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gamlss<F, Blocks, Obs> {
+    family: F,
+    blocks: Blocks,
+    obs: Obs,
+    objective_scale: ObjectiveScale,
+    weight_sum: f64,
+}
+
+impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
+    /// Response distribution family.
+    #[must_use]
+    #[inline]
+    pub const fn family(&self) -> &F {
+        &self.family
+    }
+
+    /// Typed parameter blocks.
+    #[must_use]
+    #[inline]
+    pub const fn blocks(&self) -> &Blocks {
+        &self.blocks
+    }
+
+    /// Observation view used for training objective evaluation.
+    #[must_use]
+    #[inline]
+    pub const fn obs(&self) -> &Obs {
+        &self.obs
+    }
+
+    /// Consumes the model and returns its family, blocks and observation view.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (F, Blocks, Obs) {
+        (self.family, self.blocks, self.obs)
+    }
+
+    /// Wraps the model with unchecked penalties evaluated on the full beta vector.
+    ///
+    /// Use [`Self::try_with_global_penalties`] when penalties are assembled
+    /// from dynamic indices or ranges.
+    #[must_use]
+    #[inline]
+    pub const fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
+        WithGlobalPenalties {
+            objective: self,
+            penalties,
+        }
+    }
+
+    /// Wraps the model with dimension-validated full-vector penalties.
+    ///
+    /// This is the checked counterpart of [`Self::with_global_penalties`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::PenaltyIndexOutOfBounds`] or
+    /// [`ModelError::PenaltyRangeOutOfBounds`] when a penalty implementation
+    /// reports references outside the model parameter vector.
+    #[inline]
+    pub fn try_with_global_penalties<GP>(
+        self,
+        penalties: GP,
+    ) -> Result<WithGlobalPenalties<Self, GP>, ModelError>
+    where
+        F: Family,
+        Blocks: GamlssBlocks<F>,
+        for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+        GP: GlobalPenalty,
+    {
+        let dim = self.nparams();
+        with_validated_global_penalties(self, penalties, dim)
+    }
+}
+
+impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+{
+    /// Creates a model after validating the observation view and blocks.
+    ///
+    /// This is the extension point for custom storage backends. The observation
+    /// view is stored by value, so callers can pass lightweight borrowed views,
+    /// owned adapters, or newtypes around external dataframe/columnar storage.
+    pub fn try_new_with_observations(
+        family: F,
+        blocks: Blocks,
+        obs: Obs,
+    ) -> Result<Self, ModelError> {
+        if obs.is_empty() {
+            return Err(ModelError::EmptyResponse);
+        }
+
+        let nobs = obs.len();
+        obs.validate()?;
+        let weight_sum = observation_weight_sum(&obs);
+        blocks.validate(nobs)?;
+        blocks.try_len()?;
+        Ok(Self {
+            family,
+            blocks,
+            obs,
+            objective_scale: ObjectiveScale::Sum,
+            weight_sum,
+        })
+    }
+
+    /// Number of observations.
+    #[must_use]
+    #[inline]
+    pub fn nobs(&self) -> usize {
+        self.obs.len()
+    }
+
+    /// Sum of observation weights used as the denominator for mean likelihood objectives.
+    ///
+    /// For unweighted observation views this is equal to [`Gamlss::nobs`] as `f64`.
+    #[must_use]
+    #[inline]
+    pub const fn weight_sum(&self) -> f64 {
+        self.weight_sum
+    }
+
+    /// Effective number of observations represented by the observation weights.
+    ///
+    /// This is currently the same value as [`Gamlss::weight_sum`].
+    #[must_use]
+    #[inline]
+    pub const fn effective_nobs(&self) -> f64 {
+        self.weight_sum()
+    }
+
+    /// Number of coefficients in the common beta vector.
+    pub fn nparams(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Returns the likelihood scaling convention used by this objective.
+    pub const fn objective_scale(&self) -> ObjectiveScale {
+        self.objective_scale
+    }
+
+    /// Returns `self` with a different likelihood scaling convention.
+    #[must_use]
+    pub const fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+        self.objective_scale = objective_scale;
+        self
+    }
+
+    /// Updates the likelihood scaling convention in place.
+    pub const fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+        self.objective_scale = objective_scale;
+    }
+
+    fn likelihood_multiplier(&self) -> f64 {
+        self.objective_scale.likelihood_multiplier(self.weight_sum)
+    }
+
+    /// Zero-valued initial optimizer parameter vector of the right length.
+    pub fn initial_zeros(&self) -> Vec<f64> {
+        vec![0.0; self.nparams()]
+    }
+
+    /// Initial optimizer parameter vector for external optimizers.
+    ///
+    /// The returned vector is the flat predictor-coefficient vector, commonly
+    /// denoted `beta`, laid out according to this model's parameter blocks. It
+    /// is not the natural-scale distribution parameter `theta`.
+    ///
+    /// Currently this falls back to zero components for unsupported predictor
+    /// blocks or non-finite family starts. Future projection-based
+    /// initializers may return recoverable errors.
+    pub fn initial_parameters(&self) -> Result<Vec<f64>, ModelError> {
+        self.blocks.try_initial_parameters(&self.family, &self.obs)
+    }
+
+    /// Creates reusable gradient buffers sized for this model.
+    pub fn gradient_workspace(&self) -> GradientWorkspace {
+        self.blocks.gradient_workspace(self.obs.len())
+    }
+
+    /// Wraps the model as an objective with reusable gradient buffers.
+    pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
+        let workspace = self.gradient_workspace();
+        WorkspaceGamlss {
+            model: self,
+            workspace,
+        }
+    }
+
+    /// Coefficient block ranges within beta.
+    pub fn block_ranges(&self) -> Vec<Range<usize>> {
+        self.blocks.block_ranges()
+    }
+
+    /// Visits coefficient ranges for each parameter block in model order without allocating.
+    pub fn visit_block_ranges<V>(&self, visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        self.blocks.visit_block_ranges(visit);
+    }
+
+    /// Layout of named parameter blocks inside the flat optimizer-parameter vector.
+    pub fn parameter_layout(&self) -> ParameterLayout {
+        self.blocks.parameter_layout()
+    }
+
+    /// Visits named parameter slices in model order without allocating.
+    pub fn visit_parameter_slices<V>(&self, visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        self.blocks.visit_parameter_slices(visit);
+    }
+
+    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
+    ///
+    /// This is the zero-cost building block for staged/block-wise fitting:
+    /// optimise one distribution parameter (e.g. `Mu`) while keeping the
+    /// remaining coefficients fixed at the values in `full_beta`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
+    /// contain a parameter named `P::NAME`. When blocks are constructed through
+    /// the typed [`ParameterBlock`] API this cannot happen in practice — the
+    /// compiler guarantees that `ParameterBlock<Mu, …>` registers itself as
+    /// `"mu"`.
+    pub fn block_objective_for<P>(
+        &mut self,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError>
+    where
+        P: ParameterName,
+    {
+        validate_len("parameters", full_beta.len(), self.nparams())?;
+        let range = self
+            .blocks
+            .parameter_slice_of::<P>()
+            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
+        BlockObjective::try_new(
+            self,
+            full_beta,
+            ParameterSlice {
+                name: P::NAME,
+                range,
+            },
+        )
+    }
+
+    /// Unpacks a flat optimizer-parameter vector into named coefficient blocks.
+    pub fn unpack_parameters(&self, parameters: &[f64]) -> Result<UnpackedParameters, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+
+        let blocks = self
+            .parameter_layout()
+            .slices()
+            .iter()
+            .map(|slice| ParameterCoefficients {
+                name: slice.name,
+                coefficients: parameters[slice.range.clone()].to_vec(),
+            })
+            .collect();
+
+        Ok(UnpackedParameters { blocks })
+    }
+
+    /// Computes training diagnostics for a candidate optimizer-parameter vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension.
+    pub fn training_diagnostics(
+        &self,
+        parameters: &[f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        let mut grad = vec![0.0; self.nparams()];
+        self.training_diagnostics_into(parameters, &mut grad)
+    }
+
+    /// Computes training diagnostics using a caller-provided gradient buffer.
+    ///
+    /// The buffer is overwritten with the objective gradient and then reused to
+    /// compute the reported gradient norm. This avoids allocating a temporary
+    /// gradient vector when diagnostics are evaluated repeatedly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
+    pub fn training_diagnostics_into(
+        &self,
+        parameters: &[f64],
+        grad: &mut [f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.training_diagnostics_into_workspace(parameters, grad, &mut workspace)
+    }
+
+    /// Computes training diagnostics using caller-provided gradient and workspace buffers.
+    ///
+    /// The reusable [`GradientWorkspace`] is used for internal per-parameter
+    /// buffers, while `grad` receives the full objective gradient and is reused
+    /// to compute the reported gradient norm. Prefer
+    /// [`Gamlss::into_workspace_objective`] in training loops:
+    ///
+    /// ```ignore
+    /// let mut objective = model.into_workspace_objective();
+    /// objective.training_diagnostics_into(parameters, &mut grad)?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
+    pub fn training_diagnostics_into_workspace(
+        &self,
+        parameters: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), parameters, grad)?;
+
+        let likelihood_multiplier = self.likelihood_multiplier();
+        let train_nll =
+            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, parameters);
+        let penalty = self.blocks.penalty_value(parameters);
+        self.try_gradient_into_workspace(parameters, grad, workspace)?;
+        Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
+    }
+
+    /// Predicts link-scale distribution predictors for one training row.
+    pub fn predict_eta_row(&self, parameters: &[f64], row: usize) -> Result<F::Eta, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        validate_row(row, self.nobs())?;
+        Ok(self.blocks.eta_row(parameters, row))
+    }
+
+    /// Predicts natural-scale distribution parameters for one training row.
+    pub fn predict_theta_row(&self, parameters: &[f64], row: usize) -> Result<F::Theta, ModelError>
+    where
+        F: Family,
+    {
+        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
+    }
+
+    /// Predicts link-scale distribution predictors for all training rows.
+    pub fn predict_eta(&self, parameters: &[f64]) -> Result<Vec<F::Eta>, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        Ok((0..self.nobs())
+            .map(|row| self.blocks.eta_row(parameters, row))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters for all training rows.
+    pub fn predict_theta(&self, parameters: &[f64]) -> Result<Vec<F::Theta>, ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        Ok((0..self.nobs())
+            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters into an existing slice.
+    ///
+    /// `out` must have one slot per training row.
+    pub fn predict_theta_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        validate_output_len(self.nobs(), out.len())?;
+        for (row, out) in out.iter_mut().enumerate() {
+            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+        }
+        Ok(())
+    }
+
+    /// Streams natural-scale distribution parameters for each training row.
+    pub fn for_each_theta(
+        &self,
+        parameters: &[f64],
+        mut visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+    {
+        validate_len("parameters", parameters.len(), self.nparams())?;
+        for row in 0..self.nobs() {
+            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+        }
+        Ok(())
+    }
+
+    /// Predicts link-scale distribution predictors for one row from compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `parameters` has the wrong length, if `blocks` do not
+    /// match this model's parameter layout, or if `row` is out of bounds for
+    /// the supplied prediction blocks.
+    pub fn predict_eta_row_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        row: usize,
+    ) -> Result<F::Eta, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?
+            .predict_eta_row(parameters, row)
+    }
+
+    /// Predicts natural-scale distribution parameters for one row from compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `parameters` has the wrong length, if `blocks` do not
+    /// match this model's parameter layout, or if `row` is out of bounds for
+    /// the supplied prediction blocks.
+    pub fn predict_theta_row_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        row: usize,
+    ) -> Result<F::Theta, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?
+            .predict_theta_row(parameters, row)
+    }
+
+    /// Predicts link-scale distribution predictors for all rows in compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `parameters` has the wrong length or if `blocks` do not
+    /// match this model's parameter layout.
+    pub fn predict_eta_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+    ) -> Result<Vec<F::Eta>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?.predict_eta(parameters)
+    }
+
+    /// Predicts natural-scale distribution parameters for all rows in compatible prediction blocks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `parameters` has the wrong length or if `blocks` do not
+    /// match this model's parameter layout.
+    pub fn predict_theta_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+    ) -> Result<Vec<F::Theta>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?.predict_theta(parameters)
+    }
+
+    /// Predicts natural-scale distribution parameters from prediction blocks into `out`.
+    ///
+    /// `out` must have one slot per row in `blocks`.
+    pub fn predict_theta_with_blocks_into<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?
+            .predict_theta_into(parameters, out)
+    }
+
+    /// Streams natural-scale parameters for each row in compatible prediction blocks.
+    pub fn for_each_theta_with_blocks<PBlocks>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        self.prediction_view(blocks)?
+            .for_each_theta(parameters, visit)
+    }
+
+    /// Creates a validated reusable prediction view over compatible blocks.
+    ///
+    /// The returned view caches the prediction row count and validated
+    /// parameter layout compatibility, so repeated `predict_*` calls only check
+    /// parameter and output slice lengths.
+    pub fn prediction_view<'a, PBlocks>(
+        &'a self,
+        blocks: &'a PBlocks,
+    ) -> Result<PredictionView<'a, F, PBlocks>, ModelError>
+    where
+        F: Family,
+        PBlocks: GamlssBlocks<F>,
+    {
+        PredictionView::new(self, blocks)
+    }
+
+    /// Validates beta length and computes the objective.
+    #[allow(clippy::suboptimal_flops)]
+    pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+
+        let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
+        let penalty = self.blocks.penalty_value(beta);
+        Ok(self.likelihood_multiplier() * train_nll + penalty)
+    }
+
+    /// Validates beta/grad sizes and writes the gradient.
+    pub fn try_gradient_into(&self, beta: &[f64], grad: &mut [f64]) -> Result<(), ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.try_gradient_into_workspace(beta, grad, &mut workspace)
+    }
+
+    /// Validates beta/grad sizes and writes the gradient, reusing a workspace.
+    pub fn try_gradient_into_workspace(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> Result<(), ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
+
+        grad.fill(0.0);
+        let value = self.blocks.value_gradient_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            grad,
+            workspace,
+        );
+        self.scale_value_gradient(beta, grad, workspace, value);
+        Ok(())
+    }
+
+    /// Validates beta/grad sizes and computes value + gradient in one pass.
+    pub fn try_value_gradient_into(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) -> Result<f64, ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.try_value_gradient_into_workspace(beta, grad, &mut workspace)
+    }
+
+    /// Validates beta/grad sizes and computes fused value + gradient with a
+    /// workspace.
+    pub fn try_value_gradient_into_workspace(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> Result<f64, ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
+
+        grad.fill(0.0);
+        let value = self.blocks.value_gradient_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            grad,
+            workspace,
+        );
+        Ok(self.scale_value_gradient(beta, grad, workspace, value))
+    }
+
+    #[allow(clippy::float_cmp)]
+    fn scale_value_gradient(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+        unscaled_value: f64,
+    ) -> f64 {
+        let likelihood_multiplier = self.likelihood_multiplier();
+        if likelihood_multiplier == 1.0 {
+            return unscaled_value;
+        }
+
+        let penalty = self.blocks.penalty_value(beta);
+        let penalty_grad = workspace.penalty_gradient_mut(self.nparams());
+        self.blocks.add_penalty_gradient(beta, penalty_grad);
+
+        for (grad_value, penalty_grad_value) in grad.iter_mut().zip(penalty_grad.iter().copied()) {
+            *grad_value = (*grad_value - penalty_grad_value)
+                .mul_add(likelihood_multiplier, penalty_grad_value);
+        }
+
+        (unscaled_value - penalty).mul_add(likelihood_multiplier, penalty)
+    }
+}
+
+impl<'a, F, Blocks> Gamlss<F, Blocks, &'a [f64]>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
+    /// Creates an unweighted model after validating the response and blocks.
+    pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, y)
+    }
+}
+
+impl<'a, F, Blocks> Gamlss<F, Blocks, FiniteScalarObservations<'a>>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
+    /// Creates an unweighted model that rejects non-finite scalar responses.
+    ///
+    /// The ordinary [`Gamlss::try_new`] constructor intentionally leaves scalar
+    /// response domain checks to the family and to weights-aware workflows. This
+    /// strict constructor rejects `NaN`, `inf` and `-inf` before model
+    /// construction.
+    pub fn try_new_strict(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, FiniteScalarObservations::new(y)?)
+    }
+}
+
+impl<'a, F, Blocks> Gamlss<F, Blocks, (&'a [f64], &'a [f64])>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    Blocks: GamlssBlocks<F>,
+{
+    /// Creates a model with observation weights after validating the response,
+    /// weights and blocks.
+    ///
+    /// Weights must have the same length as `y`; each weight must be finite and
+    /// non-negative. Zero weights are accepted and exclude the corresponding
+    /// observation from likelihood and gradient contributions.
+    pub fn try_new_weighted(
+        family: F,
+        blocks: Blocks,
+        y: &'a [f64],
+        weights: &'a [f64],
+    ) -> Result<Self, ModelError> {
+        Self::try_new_with_observations(family, blocks, (y, weights))
+    }
+}
+
+impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+{
+    type Error = ModelError;
+
+    fn dim(&self) -> usize {
+        self.nparams()
+    }
+
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        self.try_value(parameters)
+    }
+
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.try_value_gradient_into(parameters, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.try_value_gradient_into(parameters, grad)
+    }
+}
+
+/// Validated prediction view over compatible parameter blocks.
+///
+/// The view borrows the fitted family and prediction blocks after validating
+/// that the prediction block layout matches the fitted model. Reusing it avoids
+/// repeating prediction-block validation across batch inference calls.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PredictionView<'a, F, PBlocks> {
+    family: &'a F,
+    blocks: &'a PBlocks,
+    nrows: usize,
+    nparams: usize,
+}
+
+impl<'a, F, PBlocks> PredictionView<'a, F, PBlocks>
+where
+    F: Family,
+    PBlocks: GamlssBlocks<F>,
+{
+    fn new<Blocks, Obs>(
+        model: &'a Gamlss<F, Blocks, Obs>,
+        blocks: &'a PBlocks,
+    ) -> Result<Self, ModelError>
+    where
+        Blocks: GamlssBlocks<F>,
+    {
+        validate_prediction_blocks(&model.blocks, blocks)?;
+        Ok(Self {
+            family: &model.family,
+            blocks,
+            nrows: blocks.nrows(),
+            nparams: model.blocks.len(),
+        })
+    }
+
+    /// Response distribution family.
+    #[must_use]
+    #[inline]
+    pub const fn family(&self) -> &'a F {
+        self.family
+    }
+
+    /// Typed prediction parameter blocks.
+    #[must_use]
+    #[inline]
+    pub const fn blocks(&self) -> &'a PBlocks {
+        self.blocks
+    }
+
+    /// Number of prediction rows.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Number of coefficients expected in the flat parameter vector.
+    #[must_use]
+    #[inline]
+    pub const fn nparams(&self) -> usize {
+        self.nparams
+    }
+
+    /// Predicts link-scale distribution predictors for one prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length or `row` is
+    /// out of bounds for the validated prediction blocks.
+    pub fn predict_eta_row(&self, parameters: &[f64], row: usize) -> Result<F::Eta, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        validate_row(row, self.nrows)?;
+        Ok(self.blocks.eta_row(parameters, row))
+    }
+
+    /// Predicts natural-scale distribution parameters for one prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length or `row` is
+    /// out of bounds for the validated prediction blocks.
+    pub fn predict_theta_row(
+        &self,
+        parameters: &[f64],
+        row: usize,
+    ) -> Result<F::Theta, ModelError> {
+        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
+    }
+
+    /// Predicts link-scale distribution predictors for all prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn predict_eta(&self, parameters: &[f64]) -> Result<Vec<F::Eta>, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        Ok((0..self.nrows)
+            .map(|row| self.blocks.eta_row(parameters, row))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters for all prediction rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn predict_theta(&self, parameters: &[f64]) -> Result<Vec<F::Theta>, ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        Ok((0..self.nrows)
+            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
+            .collect())
+    }
+
+    /// Predicts natural-scale distribution parameters into an existing slice.
+    ///
+    /// `out` must have one slot per prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` or `out` have the wrong length.
+    pub fn predict_theta_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [F::Theta],
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        validate_output_len(self.nrows, out.len())?;
+        for (row, out) in out.iter_mut().enumerate() {
+            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+        }
+        Ok(())
+    }
+
+    /// Streams natural-scale parameters for each prediction row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if `parameters` has the wrong length.
+    pub fn for_each_theta(
+        &self,
+        parameters: &[f64],
+        mut visit: impl FnMut(usize, F::Theta),
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", parameters.len(), self.nparams)?;
+        for row in 0..self.nrows {
+            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+        }
+        Ok(())
+    }
+}
+
+impl<F, PBlocks> Clone for PredictionView<'_, F, PBlocks> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F, PBlocks> Copy for PredictionView<'_, F, PBlocks> {}
+
+/// GAMLSS objective with reusable gradient buffers.
+///
+/// This wrapper is intended for optimizers that call `gradient` repeatedly.
+/// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
+/// avoiding per-call allocation of row-gradient and local-gradient vectors.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceGamlss<F, Blocks, Obs> {
+    model: Gamlss<F, Blocks, Obs>,
+    workspace: GradientWorkspace,
+}
+
+impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+{
+    /// Creates a workspace-backed objective from a compiled model.
+    #[must_use]
+    #[inline]
+    pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
+        model.into_workspace_objective()
+    }
+
+    /// Returns the wrapped model.
+    #[must_use]
+    #[inline]
+    pub const fn model(&self) -> &Gamlss<F, Blocks, Obs> {
+        &self.model
+    }
+
+    /// Returns the wrapped model mutably.
+    #[inline]
+    pub const fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
+        &mut self.model
+    }
+
+    /// Returns the reusable gradient workspace.
+    #[must_use]
+    #[inline]
+    pub const fn workspace(&self) -> &GradientWorkspace {
+        &self.workspace
+    }
+
+    /// Returns the reusable gradient workspace mutably.
+    #[inline]
+    pub const fn workspace_mut(&mut self) -> &mut GradientWorkspace {
+        &mut self.workspace
+    }
+
+    /// Consumes the objective and returns the wrapped model and workspace.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (Gamlss<F, Blocks, Obs>, GradientWorkspace) {
+        (self.model, self.workspace)
+    }
+
+    /// Consumes the workspace-backed objective and returns the wrapped model.
+    #[must_use]
+    #[inline]
+    pub fn into_model(self) -> Gamlss<F, Blocks, Obs> {
+        self.model
+    }
+
+    /// Returns the likelihood scaling convention used by this objective.
+    pub const fn objective_scale(&self) -> ObjectiveScale {
+        self.model.objective_scale()
+    }
+
+    /// Returns `self` with a different likelihood scaling convention.
+    #[must_use]
+    pub const fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
+        self.model.set_objective_scale(objective_scale);
+        self
+    }
+
+    /// Updates the likelihood scaling convention in place.
+    pub const fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
+        self.model.set_objective_scale(objective_scale);
+    }
+
+    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
+    ///
+    /// Delegates to the inner model's [`Gamlss::block_objective_for`] through
+    /// [`model_mut`](Self::model_mut), so the returned objective borrows the
+    /// workspace-backed model and reuses its gradient buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
+    /// contain a parameter named `P::NAME`.
+    pub fn block_objective_for<P>(
+        &mut self,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError>
+    where
+        P: ParameterName,
+    {
+        validate_len("parameters", full_beta.len(), self.dim())?;
+        let range = self
+            .model
+            .blocks
+            .parameter_slice_of::<P>()
+            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
+        BlockObjective::try_new(
+            self,
+            full_beta,
+            ParameterSlice {
+                name: P::NAME,
+                range,
+            },
+        )
+    }
+
+    /// Computes training diagnostics using caller-provided objective-gradient storage.
+    ///
+    /// The reusable [`GradientWorkspace`] is used for internal per-parameter
+    /// buffers, while `grad` receives the full objective gradient and is reused
+    /// to compute the reported gradient norm.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] if `parameters` does not match the
+    /// model parameter dimension, or [`ModelError::GradientLength`] if `grad`
+    /// has the wrong length.
+    pub fn training_diagnostics_into(
+        &mut self,
+        parameters: &[f64],
+        grad: &mut [f64],
+    ) -> Result<TrainingDiagnostics, ModelError> {
+        self.model
+            .training_diagnostics_into_workspace(parameters, grad, &mut self.workspace)
+    }
+
+    /// Wraps the workspace-backed objective with unchecked penalties evaluated on the full beta vector.
+    ///
+    /// Use [`Self::try_with_global_penalties`] when penalties are assembled
+    /// from dynamic indices or ranges.
+    #[must_use]
+    #[inline]
+    pub const fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
+        WithGlobalPenalties {
+            objective: self,
+            penalties,
+        }
+    }
+
+    /// Wraps the workspace-backed objective with dimension-validated full-vector penalties.
+    ///
+    /// This is the checked counterpart of [`Self::with_global_penalties`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the invariant or dimension validation error reported by
+    /// [`GlobalPenalty::validate`].
+    #[inline]
+    pub fn try_with_global_penalties<GP>(
+        self,
+        penalties: GP,
+    ) -> Result<WithGlobalPenalties<Self, GP>, ModelError>
+    where
+        GP: GlobalPenalty,
+    {
+        let dim = self.model.nparams();
+        with_validated_global_penalties(self, penalties, dim)
+    }
+}
+
+impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
+{
+    type Error = ModelError;
+
+    fn dim(&self) -> usize {
+        self.model.nparams()
+    }
+
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        self.model.try_value(parameters)
+    }
+
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.model
+            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)
+            .map(|_| ())
+    }
+
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        self.model
+            .try_value_gradient_into_workspace(parameters, grad, &mut self.workspace)
+    }
+}
+
+/// Objective wrapper that adds penalties depending on the full beta vector.
+///
+/// Unlike [`Penalty`], which acts locally on a single block,
+/// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
+/// LASSO-like penalties).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithGlobalPenalties<O, GP> {
+    objective: O,
+    penalties: GP,
+}
+
+impl<O, GP> WithGlobalPenalties<O, GP> {
+    /// Wrapped objective.
+    #[must_use]
+    #[inline]
+    pub const fn objective(&self) -> &O {
+        &self.objective
+    }
+
+    /// Wrapped objective, mutably.
+    #[inline]
+    pub const fn objective_mut(&mut self) -> &mut O {
+        &mut self.objective
+    }
+
+    /// Global penalties evaluated on the full parameter vector.
+    #[must_use]
+    #[inline]
+    pub const fn penalties(&self) -> &GP {
+        &self.penalties
+    }
+
+    /// Global penalties evaluated on the full parameter vector, mutably.
+    #[inline]
+    pub const fn penalties_mut(&mut self) -> &mut GP {
+        &mut self.penalties
+    }
+
+    /// Consumes the wrapper and returns the wrapped objective and penalties.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (O, GP) {
+        (self.objective, self.penalties)
+    }
+}
+
+impl<O, GP> Objective for WithGlobalPenalties<O, GP>
+where
+    O: Objective,
+    GP: GlobalPenalty,
+{
+    type Error = O::Error;
+
+    fn dim(&self) -> usize {
+        self.objective.dim()
+    }
+
+    fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
+        Ok(self.objective.value(parameters)? + self.penalties.value(parameters))
+    }
+
+    fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
+        self.value_gradient(parameters, grad).map(|_| ())
+    }
+
+    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
+        let mut value = self.objective.value_gradient(parameters, grad)?;
+        value += self.penalties.value(parameters);
+        self.penalties.add_gradient(parameters, grad);
+        Ok(value)
+    }
+}
+
+/// Tuple contract for a set of parameter blocks compatible with family `F`.
 ///
 /// Implementations are generated for typed tuples of [`ParameterBlock`]. The
 /// model validates observation count, predictor row counts and coefficient
@@ -26,17 +1195,27 @@ pub trait GamlssBlocks<F>
 where
     F: Family,
 {
-    /// Число наблюдений в blocks.
+    /// Number of observations in the blocks.
     fn nrows(&self) -> usize;
-    /// Длина общего beta-вектора, покрывающего все blocks.
+    /// Length of the common beta vector covering all blocks.
     fn len(&self) -> usize;
+    /// Validates and returns the common beta-vector length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if any block end index does
+    /// not fit in `usize`.
+    fn try_len(&self) -> Result<usize, ModelError> {
+        Ok(self.len())
+    }
 
-    /// `true`, если blocks не требуют коэффициентов.
+    /// `true` if the blocks require no coefficients.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Проверяет, что blocks совместимы с observation count `nobs`.
+    /// Validates that the blocks are compatible with the observation count
+    /// `nobs`.
     fn validate(&self, nobs: usize) -> Result<(), ModelError>;
     /// Weighted negative log-likelihood without penalties.
     ///
@@ -46,12 +1225,29 @@ where
     fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Аддитивные предикторы на link-шкале для одной строки.
+    /// Additive predictors on the link scale for one row.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
         F: Family;
     /// Penalty value depending on coefficient blocks.
     fn penalty_value(&self, beta: &[f64]) -> f64;
+    /// Creates a flat optimizer-parameter start vector from family-level
+    /// link-scale initial predictors.
+    fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Fallible variant of [`Self::initial_parameters`] for layouts whose
+    /// total coefficient length must be checked first.
+    fn try_initial_parameters<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        Ok(self.initial_parameters(family, obs))
+    }
     /// Adds the local penalty gradient into an existing full gradient vector.
     ///
     /// Implementations with local penalties should override this method. It is
@@ -60,7 +1256,7 @@ where
     /// correct only for block collections whose [`penalty_value`](Self::penalty_value)
     /// has zero gradient.
     fn add_penalty_gradient(&self, _beta: &[f64], _grad: &mut [f64]) {}
-    /// Значение weighted negative log-likelihood плюс penalties.
+    /// Value of the weighted negative log-likelihood plus penalties.
     fn value<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
@@ -78,7 +1274,7 @@ where
         }
         workspace
     }
-    /// Добавляет weighted gradient, переиспользуя временные буферы из `workspace`.
+    /// Adds the weighted gradient, reusing temporary buffers from `workspace`.
     ///
     /// The default implementation uses the fused value-gradient path and
     /// discards the value.
@@ -106,9 +1302,9 @@ where
     ) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
-    /// Диапазоны коэффициентов каждого block в общем beta-векторе.
+    /// Coefficient ranges for each block in the common beta vector.
     fn block_ranges(&self) -> Vec<Range<usize>>;
-    /// Возвращает размещение coefficient blocks внутри плоского beta-вектора.
+    /// Returns the layout of the coefficient blocks within the flat beta vector.
     fn parameter_layout(&self) -> ParameterLayout;
 
     /// Visits coefficient ranges for each parameter block in model order without allocating.
@@ -179,692 +1375,29 @@ where
     }
 }
 
-/// Scaling convention for the likelihood part of a compiled objective.
-///
-/// Local and global penalties are not scaled. This keeps penalty weights on a
-/// stable scale when switching between summed and mean likelihood objectives.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ObjectiveScale {
-    /// Use the weighted likelihood sum.
-    #[default]
-    Sum,
-    /// Use the weighted likelihood mean.
-    ///
-    /// For weighted observations the denominator is the sum of observation
-    /// weights. If all weights are zero, the likelihood contribution is left
-    /// unscaled at zero.
-    Mean,
-}
-
-impl ObjectiveScale {
-    #[inline(always)]
-    fn likelihood_multiplier(self, weight_sum: f64) -> f64 {
-        match self {
-            Self::Sum => 1.0,
-            Self::Mean if weight_sum > 0.0 => 1.0 / weight_sum,
-            Self::Mean => 1.0,
-        }
-    }
-}
-
-/// Скомпилированная типизированная GAMLSS-модель.
-///
-/// `F` задаёт распределение response, а `Blocks` задаёт по одному predictor
-/// block для каждого параметра family.
-///
-/// The model owns the family and parameter blocks, and stores an observation
-/// view supplied by the caller. This keeps `gamlss-core` independent of the
-/// caller's storage backend while static dispatch preserves zero-cost hot-path
-/// evaluation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Gamlss<F, Blocks, Obs> {
-    /// Family распределения response.
-    pub family: F,
-    /// Типизированные parameter blocks.
-    pub blocks: Blocks,
-    /// Observation view used for training objective evaluation.
-    pub obs: Obs,
-    /// Scaling applied to the likelihood part of the objective.
-    pub objective_scale: ObjectiveScale,
-}
-
-/// GAMLSS objective with reusable gradient buffers.
-///
-/// This wrapper is intended for optimizers that call `gradient` repeatedly.
-/// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
-/// avoiding per-call allocation of row-gradient and local-gradient vectors.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkspaceGamlss<F, Blocks, Obs> {
-    /// Wrapped compiled model.
-    pub model: Gamlss<F, Blocks, Obs>,
-    /// Reusable gradient workspace.
-    pub workspace: GradientWorkspace,
-}
-
-/// Обёртка objective, добавляющая штрафы, зависящие от полного beta-вектора.
-///
-/// В отличие от [`Penalty`], который действует локально на один блок,
-/// [`GlobalPenalty`] позволяет coupling нескольких блоков (например,
-/// центрирующие или LASSO-подобные штрафы).
-#[derive(Debug, Clone, PartialEq)]
-pub struct WithGlobalPenalties<O, GP> {
-    /// Wrapped objective.
-    pub objective: O,
-    /// Global penalties evaluated on the full parameter vector.
-    pub penalties: GP,
-}
-
-impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs> {
-    /// Wraps the model with penalties evaluated on the full beta vector.
-    pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
-        WithGlobalPenalties {
-            objective: self,
-            penalties,
-        }
-    }
-}
-
-impl<F, Blocks, Obs> Gamlss<F, Blocks, Obs>
+#[inline]
+fn with_validated_global_penalties<O, GP>(
+    objective: O,
+    penalties: GP,
+    dim: usize,
+) -> Result<WithGlobalPenalties<O, GP>, ModelError>
 where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
-{
-    /// Создаёт модель после проверки observation view и blocks.
-    ///
-    /// This is the extension point for custom storage backends. The observation
-    /// view is stored by value, so callers can pass lightweight borrowed views,
-    /// owned adapters, or newtypes around external dataframe/columnar storage.
-    pub fn try_new_with_observations(
-        family: F,
-        blocks: Blocks,
-        obs: Obs,
-    ) -> Result<Self, ModelError> {
-        if obs.is_empty() {
-            return Err(ModelError::EmptyResponse);
-        }
-
-        obs.validate()?;
-        blocks.validate(obs.len())?;
-        Ok(Self {
-            family,
-            blocks,
-            obs,
-            objective_scale: ObjectiveScale::Sum,
-        })
-    }
-
-    /// Число наблюдений.
-    pub fn nobs(&self) -> usize {
-        self.obs.len()
-    }
-
-    /// Число коэффициентов в общем beta-векторе.
-    pub fn nparams(&self) -> usize {
-        self.blocks.len()
-    }
-
-    /// Returns the likelihood scaling convention used by this objective.
-    pub fn objective_scale(&self) -> ObjectiveScale {
-        self.objective_scale
-    }
-
-    /// Returns `self` with a different likelihood scaling convention.
-    #[must_use]
-    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
-        self.objective_scale = objective_scale;
-        self
-    }
-
-    /// Updates the likelihood scaling convention in place.
-    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
-        self.objective_scale = objective_scale;
-    }
-
-    fn likelihood_multiplier(&self) -> f64 {
-        self.objective_scale
-            .likelihood_multiplier(observation_weight_sum(&self.obs))
-    }
-
-    /// Нулевой initial beta-вектор нужной длины.
-    pub fn initial_zeros(&self) -> Vec<f64> {
-        vec![0.0; self.nparams()]
-    }
-
-    /// Initial theta vector for external optimizers.
-    pub fn initial_theta(&self) -> Result<Vec<f64>, ModelError> {
-        Ok(self.initial_zeros())
-    }
-
-    /// Creates reusable gradient buffers sized for this model.
-    pub fn gradient_workspace(&self) -> GradientWorkspace {
-        self.blocks.gradient_workspace(self.obs.len())
-    }
-
-    /// Wraps the model as an objective with reusable gradient buffers.
-    pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
-        let workspace = self.gradient_workspace();
-        WorkspaceGamlss {
-            model: self,
-            workspace,
-        }
-    }
-
-    /// Диапазоны coefficient blocks внутри beta.
-    pub fn block_ranges(&self) -> Vec<Range<usize>> {
-        self.blocks.block_ranges()
-    }
-
-    /// Visits coefficient ranges for each parameter block in model order without allocating.
-    pub fn visit_block_ranges<V>(&self, visit: V)
-    where
-        V: FnMut(usize, Range<usize>),
-    {
-        self.blocks.visit_block_ranges(visit);
-    }
-
-    /// Layout of named parameter blocks inside theta.
-    pub fn parameter_layout(&self) -> ParameterLayout {
-        self.blocks.parameter_layout()
-    }
-
-    /// Visits named parameter slices in model order without allocating.
-    pub fn visit_parameter_slices<V>(&self, visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        self.blocks.visit_parameter_slices(visit);
-    }
-
-    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
-    ///
-    /// This is the zero-cost building block for staged/block-wise fitting:
-    /// optimise one distribution parameter (e.g. `Mu`) while keeping the
-    /// remaining coefficients fixed at the values in `full_beta`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
-    /// contain a parameter named `P::NAME`. When blocks are constructed through
-    /// the typed [`ParameterBlock`] API this cannot happen in practice — the
-    /// compiler guarantees that `ParameterBlock<Mu, …>` registers itself as
-    /// `"mu"`.
-    pub fn block_objective_for<P>(
-        &mut self,
-        full_beta: Vec<f64>,
-    ) -> Result<BlockObjective<'_, Self>, ModelError>
-    where
-        P: ParameterName,
-    {
-        validate_len("theta", full_beta.len(), self.nparams())?;
-        let range = self
-            .blocks
-            .parameter_slice_of::<P>()
-            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
-        Ok(BlockObjective::new(self, full_beta, range))
-    }
-
-    /// Unpacks a flat theta vector into named coefficient blocks.
-    pub fn unpack_theta(&self, theta: &[f64]) -> Result<UnpackedTheta, ModelError> {
-        validate_len("theta", theta.len(), self.nparams())?;
-
-        let blocks = self
-            .parameter_layout()
-            .slices()
-            .iter()
-            .map(|slice| ParameterCoefficients {
-                name: slice.name,
-                coefficients: theta[slice.range.clone()].to_vec(),
-            })
-            .collect();
-
-        Ok(UnpackedTheta { blocks })
-    }
-
-    /// Computes training diagnostics for a candidate theta vector.
-    pub fn training_diagnostics(&self, theta: &[f64]) -> Result<TrainingDiagnostics, ModelError> {
-        validate_len("theta", theta.len(), self.nparams())?;
-
-        let likelihood_multiplier = self.likelihood_multiplier();
-        let train_nll =
-            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, theta);
-        let penalty = self.blocks.penalty_value(theta);
-        let mut grad = vec![0.0; self.nparams()];
-        self.try_gradient_into(theta, &mut grad)?;
-        let (finite_gradient_sum_squares, nonfinite_gradient_count) =
-            grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
-                if value.is_finite() {
-                    (sum_squares + value * value, count)
-                } else {
-                    (sum_squares, count + 1)
-                }
-            });
-        let gradient_norm = finite_gradient_sum_squares.sqrt();
-
-        Ok(TrainingDiagnostics {
-            objective: train_nll + penalty,
-            train_nll,
-            penalty,
-            gradient_norm,
-            nonfinite_gradient_count,
-        })
-    }
-
-    /// Predicts link-scale distribution predictors for one training row.
-    pub fn predict_eta_row(&self, theta: &[f64], row: usize) -> Result<F::Eta, ModelError>
-    where
-        F: Family,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        validate_row(row, self.nobs())?;
-        Ok(self.blocks.eta_row(theta, row))
-    }
-
-    /// Predicts natural-scale distribution parameters for one training row.
-    pub fn predict_theta_row(&self, theta: &[f64], row: usize) -> Result<F::Theta, ModelError>
-    where
-        F: Family,
-    {
-        Ok(self.family.theta(self.predict_eta_row(theta, row)?))
-    }
-
-    /// Predicts link-scale distribution predictors for all training rows.
-    pub fn predict_eta(&self, theta: &[f64]) -> Result<Vec<F::Eta>, ModelError>
-    where
-        F: Family,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        Ok((0..self.nobs())
-            .map(|row| self.blocks.eta_row(theta, row))
-            .collect())
-    }
-
-    /// Predicts natural-scale distribution parameters for all training rows.
-    pub fn predict_theta(&self, theta: &[f64]) -> Result<Vec<F::Theta>, ModelError>
-    where
-        F: Family,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        Ok((0..self.nobs())
-            .map(|row| self.family.theta(self.blocks.eta_row(theta, row)))
-            .collect())
-    }
-
-    /// Predicts link-scale distribution predictors for one row from compatible prediction blocks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `theta` has the wrong length, if `blocks` do not
-    /// match this model's parameter layout, or if `row` is out of bounds for
-    /// the supplied prediction blocks.
-    pub fn predict_eta_row_with_blocks<PBlocks>(
-        &self,
-        theta: &[f64],
-        blocks: &PBlocks,
-        row: usize,
-    ) -> Result<F::Eta, ModelError>
-    where
-        F: Family,
-        PBlocks: GamlssBlocks<F>,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        validate_row(row, blocks.nrows())?;
-        Ok(blocks.eta_row(theta, row))
-    }
-
-    /// Predicts natural-scale distribution parameters for one row from compatible prediction blocks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `theta` has the wrong length, if `blocks` do not
-    /// match this model's parameter layout, or if `row` is out of bounds for
-    /// the supplied prediction blocks.
-    pub fn predict_theta_row_with_blocks<PBlocks>(
-        &self,
-        theta: &[f64],
-        blocks: &PBlocks,
-        row: usize,
-    ) -> Result<F::Theta, ModelError>
-    where
-        F: Family,
-        PBlocks: GamlssBlocks<F>,
-    {
-        Ok(self
-            .family
-            .theta(self.predict_eta_row_with_blocks(theta, blocks, row)?))
-    }
-
-    /// Predicts link-scale distribution predictors for all rows in compatible prediction blocks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `theta` has the wrong length or if `blocks` do not
-    /// match this model's parameter layout.
-    pub fn predict_eta_with_blocks<PBlocks>(
-        &self,
-        theta: &[f64],
-        blocks: &PBlocks,
-    ) -> Result<Vec<F::Eta>, ModelError>
-    where
-        F: Family,
-        PBlocks: GamlssBlocks<F>,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        Ok((0..blocks.nrows())
-            .map(|row| blocks.eta_row(theta, row))
-            .collect())
-    }
-
-    /// Predicts natural-scale distribution parameters for all rows in compatible prediction blocks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `theta` has the wrong length or if `blocks` do not
-    /// match this model's parameter layout.
-    pub fn predict_theta_with_blocks<PBlocks>(
-        &self,
-        theta: &[f64],
-        blocks: &PBlocks,
-    ) -> Result<Vec<F::Theta>, ModelError>
-    where
-        F: Family,
-        PBlocks: GamlssBlocks<F>,
-    {
-        validate_len("theta", theta.len(), self.nparams())?;
-        validate_prediction_blocks(&self.blocks, blocks)?;
-        Ok((0..blocks.nrows())
-            .map(|row| self.family.theta(blocks.eta_row(theta, row)))
-            .collect())
-    }
-
-    /// Проверяет длину beta и вычисляет objective.
-    pub fn try_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
-        validate_len("theta", beta.len(), self.nparams())?;
-
-        let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
-        let penalty = self.blocks.penalty_value(beta);
-        Ok(self.likelihood_multiplier() * train_nll + penalty)
-    }
-
-    /// Проверяет размеры beta/grad и записывает gradient.
-    pub fn try_gradient_into(&self, beta: &[f64], grad: &mut [f64]) -> Result<(), ModelError> {
-        let mut workspace = self.gradient_workspace();
-        self.try_gradient_into_workspace(beta, grad, &mut workspace)
-    }
-
-    /// Проверяет размеры beta/grad и записывает gradient, переиспользуя workspace.
-    pub fn try_gradient_into_workspace(
-        &self,
-        beta: &[f64],
-        grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
-    ) -> Result<(), ModelError> {
-        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
-
-        grad.fill(0.0);
-        let value = self.blocks.value_gradient_into_workspace(
-            &self.family,
-            &self.obs,
-            beta,
-            grad,
-            workspace,
-        );
-        self.scale_value_gradient(beta, grad, workspace, value);
-        Ok(())
-    }
-
-    /// Проверяет размеры beta/grad и вычисляет value + gradient за один проход.
-    pub fn try_value_gradient_into(
-        &self,
-        beta: &[f64],
-        grad: &mut [f64],
-    ) -> Result<f64, ModelError> {
-        let mut workspace = self.gradient_workspace();
-        self.try_value_gradient_into_workspace(beta, grad, &mut workspace)
-    }
-
-    /// Проверяет размеры beta/grad и вычисляет fused value + gradient с workspace.
-    pub fn try_value_gradient_into_workspace(
-        &self,
-        beta: &[f64],
-        grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
-    ) -> Result<f64, ModelError> {
-        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
-
-        grad.fill(0.0);
-        let value = self.blocks.value_gradient_into_workspace(
-            &self.family,
-            &self.obs,
-            beta,
-            grad,
-            workspace,
-        );
-        Ok(self.scale_value_gradient(beta, grad, workspace, value))
-    }
-
-    fn scale_value_gradient(
-        &self,
-        beta: &[f64],
-        grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
-        unscaled_value: f64,
-    ) -> f64 {
-        let likelihood_multiplier = self.likelihood_multiplier();
-        if likelihood_multiplier == 1.0 {
-            return unscaled_value;
-        }
-
-        let penalty = self.blocks.penalty_value(beta);
-        let penalty_grad = workspace.penalty_gradient_mut(self.nparams());
-        self.blocks.add_penalty_gradient(beta, penalty_grad);
-
-        for (grad_value, penalty_grad_value) in grad.iter_mut().zip(penalty_grad.iter().copied()) {
-            *grad_value = (*grad_value - penalty_grad_value)
-                .mul_add(likelihood_multiplier, penalty_grad_value);
-        }
-
-        (unscaled_value - penalty).mul_add(likelihood_multiplier, penalty)
-    }
-}
-
-impl<'a, F, Blocks> Gamlss<F, Blocks, &'a [f64]>
-where
-    F: for<'obs> Family<Observation<'obs> = f64>,
-    Blocks: GamlssBlocks<F>,
-{
-    /// Создаёт unweighted модель после проверки response и blocks.
-    pub fn try_new(family: F, blocks: Blocks, y: &'a [f64]) -> Result<Self, ModelError> {
-        Self::try_new_with_observations(family, blocks, y)
-    }
-}
-
-impl<'a, F, Blocks> Gamlss<F, Blocks, (&'a [f64], &'a [f64])>
-where
-    F: for<'obs> Family<Observation<'obs> = f64>,
-    Blocks: GamlssBlocks<F>,
-{
-    /// Создаёт модель с observation weights после проверки response, weights и blocks.
-    ///
-    /// Weights must have the same length as `y`; each weight must be finite and
-    /// non-negative. Zero weights are accepted and exclude the corresponding
-    /// observation from likelihood and gradient contributions.
-    pub fn try_new_weighted(
-        family: F,
-        blocks: Blocks,
-        y: &'a [f64],
-        weights: &'a [f64],
-    ) -> Result<Self, ModelError> {
-        Self::try_new_with_observations(family, blocks, (y, weights))
-    }
-}
-
-impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
-where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
-{
-    /// Creates a workspace-backed objective from a compiled model.
-    pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
-        model.into_workspace_objective()
-    }
-
-    /// Returns the wrapped model.
-    pub fn model(&self) -> &Gamlss<F, Blocks, Obs> {
-        &self.model
-    }
-
-    /// Returns the wrapped model mutably.
-    pub fn model_mut(&mut self) -> &mut Gamlss<F, Blocks, Obs> {
-        &mut self.model
-    }
-
-    /// Consumes the workspace-backed objective and returns the wrapped model.
-    pub fn into_model(self) -> Gamlss<F, Blocks, Obs> {
-        self.model
-    }
-
-    /// Returns the likelihood scaling convention used by this objective.
-    pub fn objective_scale(&self) -> ObjectiveScale {
-        self.model.objective_scale()
-    }
-
-    /// Returns `self` with a different likelihood scaling convention.
-    #[must_use]
-    pub fn with_objective_scale(mut self, objective_scale: ObjectiveScale) -> Self {
-        self.model.set_objective_scale(objective_scale);
-        self
-    }
-
-    /// Updates the likelihood scaling convention in place.
-    pub fn set_objective_scale(&mut self, objective_scale: ObjectiveScale) {
-        self.model.set_objective_scale(objective_scale);
-    }
-
-    /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
-    ///
-    /// Delegates to the inner model's [`Gamlss::block_objective_for`] through
-    /// [`model_mut`](Self::model_mut), so the returned objective borrows the
-    /// workspace-backed model and reuses its gradient buffers.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
-    /// contain a parameter named `P::NAME`.
-    pub fn block_objective_for<P>(
-        &mut self,
-        full_beta: Vec<f64>,
-    ) -> Result<BlockObjective<'_, Self>, ModelError>
-    where
-        P: ParameterName,
-    {
-        validate_len("theta", full_beta.len(), self.dim())?;
-        let range = self
-            .model
-            .blocks
-            .parameter_slice_of::<P>()
-            .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
-        Ok(BlockObjective::new(self, full_beta, range))
-    }
-
-    /// Wraps the workspace-backed objective with penalties evaluated on the full beta vector.
-    pub fn with_global_penalties<GP>(self, penalties: GP) -> WithGlobalPenalties<Self, GP> {
-        WithGlobalPenalties {
-            objective: self,
-            penalties,
-        }
-    }
-}
-
-impl<F, Blocks, Obs> Objective for Gamlss<F, Blocks, Obs>
-where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
-{
-    type Error = ModelError;
-
-    fn dim(&self) -> usize {
-        self.nparams()
-    }
-
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        self.try_value(theta)
-    }
-
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.try_value_gradient_into(theta, grad).map(|_| ())
-    }
-
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        self.try_value_gradient_into(theta, grad)
-    }
-}
-
-impl<F, Blocks, Obs> Objective for WorkspaceGamlss<F, Blocks, Obs>
-where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
-{
-    type Error = ModelError;
-
-    fn dim(&self) -> usize {
-        self.model.nparams()
-    }
-
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        self.model.try_value(theta)
-    }
-
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.model
-            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
-            .map(|_| ())
-    }
-
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        self.model
-            .try_value_gradient_into_workspace(theta, grad, &mut self.workspace)
-    }
-}
-
-impl<O, GP> Objective for WithGlobalPenalties<O, GP>
-where
-    O: Objective,
     GP: GlobalPenalty,
 {
-    type Error = O::Error;
-
-    fn dim(&self) -> usize {
-        self.objective.dim()
-    }
-
-    fn value(&mut self, theta: &[f64]) -> Result<f64, Self::Error> {
-        Ok(self.objective.value(theta)? + self.penalties.value(theta))
-    }
-
-    fn gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
-        self.value_gradient(theta, grad).map(|_| ())
-    }
-
-    fn value_gradient(&mut self, theta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        let mut value = self.objective.value_gradient(theta, grad)?;
-        value += self.penalties.value(theta);
-        self.penalties.add_gradient(theta, grad);
-        Ok(value)
-    }
+    penalties.validate(dim)?;
+    Ok(WithGlobalPenalties {
+        objective,
+        penalties,
+    })
 }
 
-/// Макрос, генерирующий реализацию [`GamlssBlocks`] для tuple parameter blocks.
+/// Macro that generates a [`GamlssBlocks`] implementation for tuple parameter
+/// blocks.
 ///
-/// Принимает арность `K`, списки parameter-типов, link-типов, design-типов и
-/// penalty-типов, а также имена внутренних переменных. На выходе даёт
-/// zero-cost реализацию `train_nll`, `value_gradient_into_workspace`, `penalty_value` и
-/// вспомогательных методов без dynamic dispatch.
+/// Takes the arity `K`, lists of parameter types, link types, design types and
+/// penalty types, plus internal variable names. Produces a zero-cost
+/// implementation of `train_nll`, `value_gradient_into_workspace`,
+/// `penalty_value` and helper methods without dynamic dispatch.
 macro_rules! impl_gamlss_blocks {
     (
         $k:literal;
@@ -890,21 +1423,38 @@ macro_rules! impl_gamlss_blocks {
             $($penalty: Penalty,)+
         {
             fn nrows(&self) -> usize {
-                PredictorBlock::nrows(&self.0.x)
+                PredictorBlock::nrows(self.0.x())
             }
 
             fn len(&self) -> usize {
-                0$(.max(self.$idx.offset.saturating_add(self.$idx.len)))+
+                <Self as GamlssBlocks<F>>::try_len(self)
+                    .expect("validated parameter block layout must fit in usize")
+            }
+
+            fn try_len(&self) -> Result<usize, ModelError> {
+                let mut len = 0;
+                $(
+                    let end = self.$idx.offset().checked_add(self.$idx.len()).ok_or(
+                        ModelError::BlockRangeOverflow {
+                            parameter: <$param as ParameterName>::NAME,
+                            offset: self.$idx.offset(),
+                            len: self.$idx.len(),
+                        },
+                    )?;
+                    len = len.max(end);
+                )+
+                Ok(len)
             }
 
             fn validate(&self, y_len: usize) -> Result<(), ModelError> {
                 $(
-                    self.$idx.x.validate()?;
+                    self.$idx.x().validate()?;
                     validate_block_rows(
                         <$param as ParameterName>::NAME,
-                        PredictorBlock::nrows(&self.$idx.x),
+                        PredictorBlock::nrows(self.$idx.x()),
                         y_len,
                     )?;
+                    self.$idx.penalty().validate_dim(self.$idx.len())?;
                 )+
 
                 let ranges = [$((
@@ -925,6 +1475,7 @@ macro_rules! impl_gamlss_blocks {
                 Ok(())
             }
 
+            #[allow(clippy::suboptimal_flops)]
             fn train_nll<'obs, Obs>(
                 &self,
                 family: &F,
@@ -944,7 +1495,7 @@ macro_rules! impl_gamlss_blocks {
                         continue;
                     }
                     let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
+                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
                     loss += weight * family.nll_eta(observation, eta);
                 }
 
@@ -957,14 +1508,44 @@ macro_rules! impl_gamlss_blocks {
             {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
-                F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+])
+                F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+])
             }
 
             fn penalty_value(&self, beta: &[f64]) -> f64 {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
 
-                0.0 $(+ $block.penalty.value($beta_block))+
+                0.0 $(+ $block.penalty().value($beta_block))+
+            }
+
+            fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+            where
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+            {
+                <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
+                    .expect("validated parameter block layout must fit in usize")
+            }
+
+            fn try_initial_parameters<'obs, Obs>(
+                &self,
+                family: &F,
+                obs: &'obs Obs,
+            ) -> Result<Vec<f64>, ModelError>
+            where
+                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+            {
+                let eta = family.initial_eta_from_observations(obs);
+                let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
+                $(
+                    let $block = &self.$idx;
+                    let value = eta.part($idx);
+                    if value.is_finite() {
+                        $block
+                            .x()
+                            .set_constant_start(value, &mut beta[$block.range()]);
+                    }
+                )+
+                Ok(beta)
             }
 
             fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
@@ -972,9 +1553,9 @@ macro_rules! impl_gamlss_blocks {
                 $(let $beta_block = &beta[$block.range()];)+
 
                 $(
-                    $block.penalty.add_gradient(
+                    $block.penalty().add_gradient(
                         $beta_block,
-                        &mut grad[$block.offset..$block.offset + $block.len],
+                        &mut grad[$block.offset()..$block.offset() + $block.len()],
                     );
                 )+
             }
@@ -989,6 +1570,7 @@ macro_rules! impl_gamlss_blocks {
                 workspace
             }
 
+            #[allow(clippy::suboptimal_flops)]
             fn value_gradient_into_workspace<'obs, Obs>(
                 &self,
                 family: &F,
@@ -1013,19 +1595,19 @@ macro_rules! impl_gamlss_blocks {
                         continue;
                     }
                     let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x.eta_row(row, $beta_block),)+]);
+                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
                     let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
                     loss += weight * nll;
                     $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
 
                 $(
-                    loss += $block.penalty.value($beta_block);
+                    loss += $block.penalty().value($beta_block);
                     let ($row_gradient, $local_grad) =
                         workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
-                    $block.x.add_gradient($row_gradient, $beta_block, $local_grad);
-                    $block.penalty.add_gradient($beta_block, $local_grad);
-                    add_into(&mut grad[$block.offset..$block.offset + $block.len], $local_grad);
+                    $block.x().add_gradient($row_gradient, $beta_block, $local_grad);
+                    $block.penalty().add_gradient($beta_block, $local_grad);
+                    add_into(&mut grad[$block.offset()..$block.offset() + $block.len()], $local_grad);
                 )+
 
                 loss
@@ -1234,8 +1816,8 @@ impl_gamlss_blocks!(
     indices = (0, 1, 2, 3, 4, 5, 6, 7)
 );
 
-/// Проверяет, что число строк predictor-а совпадает с длиной response.
-fn validate_block_rows(
+/// Validates that the predictor row count matches the response length.
+const fn validate_block_rows(
     parameter: &'static str,
     actual_rows: usize,
     expected_rows: usize,
@@ -1251,14 +1833,14 @@ fn validate_block_rows(
     }
 }
 
-/// Проверяет пересечение двух диапазонов (непустое пересечение).
-fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
+/// Checks whether two ranges overlap (non-empty intersection).
+const fn ranges_overlap(first: Range<usize>, second: Range<usize>) -> bool {
     first.start < second.end && second.start < first.end
 }
 
-/// Поэлементно добавляет `values` к `out`.
+/// Element-wise adds `values` to `out`.
 ///
-/// Вызывающий код должен гарантировать `out.len() == values.len()`.
+/// The caller must guarantee `out.len() == values.len()`.
 fn add_into(out: &mut [f64], values: &[f64]) {
     debug_assert_eq!(out.len(), values.len());
 
@@ -1274,7 +1856,7 @@ where
     (0..obs.len()).map(|row| obs.weight_at(row)).sum()
 }
 
-/// Проверяет длину вектора (beta или gradient) и возвращает typed error.
+/// Validates the vector length (beta or gradient) and returns a typed error.
 fn validate_len(name: &'static str, actual: usize, expected: usize) -> Result<(), ModelError> {
     if actual == expected {
         Ok(())
@@ -1290,15 +1872,46 @@ fn validate_beta_and_gradient_len(
     beta: &[f64],
     grad: &[f64],
 ) -> Result<(), ModelError> {
-    validate_len("theta", beta.len(), expected)?;
+    validate_len("parameters", beta.len(), expected)?;
     validate_len("gradient", grad.len(), expected)
 }
 
-fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
+const fn validate_row(row: usize, nrows: usize) -> Result<(), ModelError> {
     if row < nrows {
         Ok(())
     } else {
         Err(ModelError::RowOutOfBounds { row, nrows })
+    }
+}
+
+const fn validate_output_len(expected: usize, actual: usize) -> Result<(), ModelError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ModelError::ResponseLength { expected, actual })
+    }
+}
+
+fn training_diagnostics_from_gradient(
+    train_nll: f64,
+    penalty: f64,
+    grad: &[f64],
+) -> TrainingDiagnostics {
+    let (finite_gradient_sum_squares, nonfinite_gradient_count) =
+        grad.iter().fold((0.0, 0), |(sum_squares, count), value| {
+            if value.is_finite() {
+                (sum_squares + value * value, count)
+            } else {
+                (sum_squares, count + 1)
+            }
+        });
+
+    TrainingDiagnostics {
+        objective: train_nll + penalty,
+        train_nll,
+        penalty,
+        gradient_norm: finite_gradient_sum_squares.sqrt(),
+        nonfinite_gradient_count,
     }
 }
 
@@ -1327,8 +1940,9 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GlobalPenalty, Identity, LinearPredictorBlock, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, ParameterBlock, ParameterBlocks,
+        DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty, HingeQuadraticPenalty, Identity,
+        LinearFormBuilder, LinearPredictorBlock, ModelError, Mu, NoPenalty, Nu, Objective,
+        ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
         ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
         RidgePenalty, Sigma, SumBlock, Tau,
     };
@@ -1377,7 +1991,7 @@ mod tests {
         fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
             let first = theta.0 - y;
             let second = theta.1 - 1.0;
-            0.5 * (first * first + second * second)
+            f64::midpoint(first * first, second * second)
         }
 
         fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
@@ -1389,6 +2003,74 @@ mod tests {
     impl ParameterizedFamily<2> for TwoParameterMock {
         type Params = (Mu, Sigma);
         type Links = (Identity, Identity);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct InitializingLocation;
+
+    impl Family for InitializingLocation {
+        type Eta = f64;
+        type Theta = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            0.5 * (theta - y) * (theta - y)
+        }
+
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            (self.nll(y, eta), eta - y)
+        }
+    }
+
+    impl ParameterizedFamily<1> for InitializingLocation {
+        type Params = (Mu,);
+        type Links = (Identity,);
+
+        fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            2.0
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct NonFiniteInitializingLocation;
+
+    impl Family for NonFiniteInitializingLocation {
+        type Eta = f64;
+        type Theta = f64;
+        type NllGradientEta = f64;
+        type Observation<'obs> = f64;
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            0.5 * (theta - y) * (theta - y)
+        }
+
+        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            (self.nll(y, eta), eta - y)
+        }
+    }
+
+    impl ParameterizedFamily<1> for NonFiniteInitializingLocation {
+        type Params = (Mu,);
+        type Links = (Identity,);
+
+        fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            f64::NAN
+        }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1431,6 +2113,75 @@ mod tests {
     }
 
     #[test]
+    fn initial_parameters_default_to_zero_for_custom_family() {
+        let y = vec![1.0, 2.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
+    }
+
+    #[test]
+    fn initial_parameters_write_intercept_like_constant() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let beta = model.initial_parameters().unwrap();
+
+        assert_eq!(beta.len(), model.nparams());
+        assert_eq!(beta, vec![2.0]);
+        assert!(model.value(&beta).unwrap().is_finite());
+    }
+
+    #[test]
+    fn initial_parameters_leave_no_intercept_design_zero() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
+    }
+
+    #[test]
+    fn initial_parameters_write_first_compatible_sum_term() {
+        let y = vec![1.0, 2.0, 3.0];
+        let first = LinearPredictorBlock::new(DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]));
+        let second = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
+        let predictor = SumBlock::new((first, second));
+        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn initial_parameters_account_for_sum_block_constant_baselines() {
+        let y = vec![1.0, 2.0, 3.0];
+        let offset = OffsetBlock::new(y.len(), 10.0);
+        let intercept = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
+        let predictor = SumBlock::new((offset, intercept));
+        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let beta = model.initial_parameters().unwrap();
+
+        assert_eq!(beta, vec![-8.0]);
+        assert_eq!(model.predict_eta(&beta).unwrap(), vec![2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn initial_parameters_ignore_nonfinite_family_starts() {
+        let y = vec![1.0, 2.0, 3.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(NonFiniteInitializingLocation, (mu,), &y).unwrap();
+
+        assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
+    }
+
+    #[test]
     fn model_accepts_user_defined_observation_view() {
         let y = vec![1.0, 2.0];
         let obs = ShiftedObservations {
@@ -1469,6 +2220,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn model_borrows_response_without_copying() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
@@ -1508,6 +2260,39 @@ mod tests {
     }
 
     #[test]
+    fn model_exposes_weight_sum_and_effective_nobs() {
+        let y = vec![1.0, 2.0, 3.0];
+        let weights = vec![0.5, 0.0, 2.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x.clone(), NoPenalty, 0);
+        let weighted_mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let weighted =
+            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), &y, &weights).unwrap();
+
+        assert_relative_eq!(model.weight_sum(), 3.0);
+        assert_relative_eq!(model.effective_nobs(), 3.0);
+        assert_relative_eq!(weighted.weight_sum(), 2.5);
+        assert_relative_eq!(weighted.effective_nobs(), 2.5);
+
+        let mean_weighted = weighted.with_objective_scale(ObjectiveScale::Mean);
+        let row0_nll = 0.5 * (1.0_f64 - 2.0).powi(2);
+        let row1_nll = 0.5 * (2.0_f64 - 2.0).powi(2);
+        let row2_nll = 0.5 * (3.0_f64 - 2.0).powi(2);
+        let weighted_nll_sum = weights
+            .iter()
+            .copied()
+            .zip([row0_nll, row1_nll, row2_nll])
+            .map(|(weight, nll)| weight * nll)
+            .sum::<f64>();
+
+        assert_relative_eq!(
+            mean_weighted.try_value(&[2.0]).unwrap(),
+            weighted_nll_sum / mean_weighted.weight_sum()
+        );
+    }
+
+    #[test]
     fn zero_weight_excludes_observation_from_value_and_gradient() {
         let y = vec![1.0, 10.0];
         let weights = vec![1.0, 0.0];
@@ -1542,6 +2327,26 @@ mod tests {
     }
 
     #[test]
+    fn zero_weight_excludes_invalid_observation_and_design_row_from_value_and_gradient() {
+        let y = vec![1.0, f64::NAN, 2.0];
+        let weights = vec![1.0, 0.0, 1.0];
+        let x = DenseDesign::from_row_major(3, 2, vec![1.0, 0.0, f64::NAN, f64::NAN, 1.0, 1.0])
+            .unwrap();
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let beta = vec![1.0, 1.0];
+        let mut grad = vec![f64::NAN, f64::NAN];
+
+        assert_relative_eq!(model.try_value(&beta).unwrap(), 0.0);
+
+        model.try_gradient_into(&beta, &mut grad).unwrap();
+
+        assert!(grad.iter().all(|value| value.is_finite()));
+        assert_relative_eq!(grad[0], 0.0);
+        assert_relative_eq!(grad[1], 0.0);
+    }
+
+    #[test]
     fn weighted_model_rejects_invalid_weights() {
         let y = vec![1.0, 2.0];
         let short_weights = vec![1.0];
@@ -1570,6 +2375,30 @@ mod tests {
     }
 
     #[test]
+    fn scalar_response_is_permissive_but_strict_constructor_rejects_non_finite() {
+        let y = vec![1.0, f64::NAN];
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+
+        Gamlss::try_new(FixedSigmaNormal, (mu.clone(),), &y).unwrap();
+
+        assert_eq!(
+            Gamlss::try_new_strict(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            ModelError::InvalidObservation { index: 1 }
+        );
+    }
+
+    #[test]
+    fn finite_scalar_observation_adapter_rejects_non_finite() {
+        let y = vec![1.0, f64::NEG_INFINITY];
+
+        assert_eq!(
+            crate::FiniteScalarObservations::new(&y).unwrap_err(),
+            ModelError::InvalidObservation { index: 1 }
+        );
+    }
+
+    #[test]
     fn prediction_api_returns_eta_and_theta_for_one_parameter_model() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 2.0]]);
@@ -1581,10 +2410,27 @@ mod tests {
         assert_relative_eq!(model.predict_theta_row(&beta, 1).unwrap(), 1.0);
         assert_eq!(model.predict_eta(&beta).unwrap(), vec![0.5, 1.0]);
         assert_eq!(model.predict_theta(&beta).unwrap(), vec![0.5, 1.0]);
+
+        let mut theta = vec![f64::NAN; model.nobs()];
+        model.predict_theta_into(&beta, &mut theta).unwrap();
+        assert_eq!(theta, model.predict_theta(&beta).unwrap());
+
+        let mut streamed = Vec::new();
+        model
+            .for_each_theta(&beta, |row, theta| streamed.push((row, theta)))
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 0.5), (1, 1.0)]);
+        assert_eq!(
+            model.predict_theta_into(&beta, &mut [0.0]).unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
     }
 
     #[test]
-    fn prediction_api_rejects_invalid_theta_length_and_row() {
+    fn prediction_api_rejects_invalid_parameter_length_and_row() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
         let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
@@ -1614,6 +2460,7 @@ mod tests {
             ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
         let prediction_blocks = (prediction_mu,);
         let beta = vec![0.5, 0.25];
+        let prediction = model.prediction_view(&prediction_blocks).unwrap();
 
         assert_relative_eq!(
             model
@@ -1621,18 +2468,49 @@ mod tests {
                 .unwrap(),
             1.25
         );
+        assert_eq!(prediction.nrows(), 3);
+        assert_eq!(prediction.nparams(), 2);
+        assert_relative_eq!(prediction.predict_eta_row(&beta, 1).unwrap(), 1.25);
+        assert_relative_eq!(prediction.predict_theta_row(&beta, 1).unwrap(), 1.25);
         assert_eq!(
             model
                 .predict_eta_with_blocks(&beta, &prediction_blocks)
                 .unwrap(),
             vec![1.0, 1.25, 1.5]
         );
+        assert_eq!(prediction.predict_eta(&beta).unwrap(), vec![1.0, 1.25, 1.5]);
         assert_eq!(
             model
                 .predict_theta_with_blocks(&beta, &prediction_blocks)
                 .unwrap(),
             vec![1.0, 1.25, 1.5]
         );
+        assert_eq!(
+            prediction.predict_theta(&beta).unwrap(),
+            vec![1.0, 1.25, 1.5]
+        );
+
+        let mut theta = vec![f64::NAN; 3];
+        model
+            .predict_theta_with_blocks_into(&beta, &prediction_blocks, &mut theta)
+            .unwrap();
+        assert_eq!(theta, vec![1.0, 1.25, 1.5]);
+        theta.fill(f64::NAN);
+        prediction.predict_theta_into(&beta, &mut theta).unwrap();
+        assert_eq!(theta, vec![1.0, 1.25, 1.5]);
+
+        let mut streamed = Vec::new();
+        model
+            .for_each_theta_with_blocks(&beta, &prediction_blocks, |row, theta| {
+                streamed.push((row, theta));
+            })
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 1.0), (1, 1.25), (2, 1.5)]);
+        streamed.clear();
+        prediction
+            .for_each_theta(&beta, |row, theta| streamed.push((row, theta)))
+            .unwrap();
+        assert_eq!(streamed, vec![(0, 1.0), (1, 1.25), (2, 1.5)]);
     }
 
     #[test]
@@ -1650,6 +2528,19 @@ mod tests {
             model
                 .predict_eta_with_blocks(&[0.5, 0.25], &prediction_blocks)
                 .unwrap_err(),
+            ModelError::PredictionLayoutMismatch {
+                expected: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..2,
+                }]),
+                got: ParameterLayout::new(vec![ParameterSlice {
+                    name: "mu",
+                    range: 0..3,
+                }]),
+            }
+        );
+        assert_eq!(
+            model.prediction_view(&prediction_blocks).unwrap_err(),
             ModelError::PredictionLayoutMismatch {
                 expected: ParameterLayout::new(vec![ParameterSlice {
                     name: "mu",
@@ -1727,6 +2618,42 @@ mod tests {
     }
 
     #[test]
+    fn blocks_try_len_reports_overflowing_total_length() {
+        let y = [1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
+        let blocks = (mu,);
+
+        assert_eq!(
+            GamlssBlocks::<FixedSigmaNormal>::try_len(&blocks).unwrap_err(),
+            ModelError::BlockRangeOverflow {
+                parameter: "mu",
+                offset: usize::MAX,
+                len: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn blocks_validate_rejects_invalid_local_penalty() {
+        let y = vec![1.0];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+            x,
+            RidgePenalty::new_unchecked(f64::NAN),
+            0,
+        );
+
+        assert_eq!(
+            Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "ridge penalty lambda",
+                expected: "finite and >= 0",
+            }
+        );
+    }
+
+    #[test]
     fn workspace_objective_matches_model_gradient_on_repeated_calls() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
@@ -1755,7 +2682,8 @@ mod tests {
         let y = vec![1.0, 2.0];
         let weights = vec![0.5, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.25), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.25), 0);
         let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
         let beta = vec![0.75, 0.5];
         let mut separate_grad = vec![0.0; beta.len()];
@@ -1777,7 +2705,8 @@ mod tests {
     fn mean_objective_scales_likelihood_but_not_penalties() {
         let y = vec![0.0, 3.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
             .unwrap()
             .with_objective_scale(ObjectiveScale::Mean)
@@ -1836,6 +2765,7 @@ mod tests {
             softplus(beta[0])
         }
 
+        #[allow(clippy::suboptimal_flops)]
         fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
             debug_assert_eq!(grad.len(), 1);
             grad[0] += scores.iter().sum::<f64>() * sigmoid(beta[0]);
@@ -1931,7 +2861,7 @@ mod tests {
         fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
             let first = theta - observation[0];
             let second = theta - observation[1];
-            0.5 * (first * first + second * second)
+            f64::midpoint(first * first, second * second)
         }
 
         fn nll_and_gradient_eta(
@@ -2000,12 +2930,14 @@ mod tests {
             eta
         }
 
+        #[allow(clippy::cast_precision_loss)]
         fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
             let mean = observation.iter().sum::<f64>() / observation.len() as f64;
             let residual = theta - mean;
             0.5 * residual * residual
         }
 
+        #[allow(clippy::cast_precision_loss)]
         fn nll_and_gradient_eta(
             &self,
             observation: Self::Observation<'_>,
@@ -2052,6 +2984,7 @@ mod tests {
             eta
         }
 
+        #[allow(clippy::suboptimal_flops)]
         fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
             let first = theta.0 - y;
             let second = theta.1 - 1.0;
@@ -2267,13 +3200,13 @@ mod tests {
             2,
         );
         let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
-        let theta = vec![1.5, 0.5, -0.5];
+        let parameters = vec![1.5, 0.5, -0.5];
         let layout = model.parameter_layout();
-        let unpacked = model.unpack_theta(&theta).unwrap();
+        let unpacked = model.unpack_parameters(&parameters).unwrap();
 
         assert_eq!(layout.len(), 3);
         assert!(!layout.is_empty());
-        assert_eq!(layout.ncoefficients(), theta.len());
+        assert_eq!(layout.ncoefficients(), parameters.len());
         assert_eq!(layout.slice("mu").unwrap(), 0..1);
         assert_eq!(layout.slice_of::<Mu>().unwrap(), 0..1);
         assert_eq!(layout.slice("sigma").unwrap(), 1..2);
@@ -2342,16 +3275,43 @@ mod tests {
     fn training_diagnostics_report_train_nll_penalty_and_gradient_norm() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new(0.5), 0);
+        let mu =
+            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
         let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
-        let theta = vec![1.5];
-        let diagnostics = model.training_diagnostics(&theta).unwrap();
+        let parameters = vec![1.5];
+        let mut grad = vec![f64::NAN; parameters.len()];
+        let diagnostics = model.training_diagnostics(&parameters).unwrap();
+        let diagnostics_into = model
+            .training_diagnostics_into(&parameters, &mut grad)
+            .unwrap();
 
         assert_relative_eq!(diagnostics.train_nll, 0.25);
         assert_relative_eq!(diagnostics.penalty, 1.125);
         assert_relative_eq!(diagnostics.objective, 1.375);
         assert_relative_eq!(diagnostics.gradient_norm, 1.5);
         assert_eq!(diagnostics.nonfinite_gradient_count, 0);
+        assert_eq!(diagnostics_into, diagnostics);
+        assert_relative_eq!(grad[0], 1.5);
+
+        let mut workspace = model.gradient_workspace();
+        grad.fill(f64::NAN);
+        assert_eq!(
+            model
+                .training_diagnostics_into_workspace(&parameters, &mut grad, &mut workspace)
+                .unwrap(),
+            diagnostics
+        );
+        assert_relative_eq!(grad[0], 1.5);
+
+        let mut workspace_model = model.into_workspace_objective();
+        grad.fill(f64::NAN);
+        assert_eq!(
+            workspace_model
+                .training_diagnostics_into(&parameters, &mut grad)
+                .unwrap(),
+            diagnostics
+        );
+        assert_relative_eq!(grad[0], 1.5);
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -2383,6 +3343,7 @@ mod tests {
             self.lambda * beta[0] * beta[0]
         }
 
+        #[allow(clippy::suboptimal_flops)]
         fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
             grad[0] += 2.0 * self.lambda * beta[0];
         }
@@ -2408,6 +3369,56 @@ mod tests {
     }
 
     #[test]
+    fn try_with_global_penalties_validates_full_parameter_dimension() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
+    }
+
+    #[test]
+    fn try_with_global_penalties_validates_penalty_invariants() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(0, f64::NAN).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "linear term weight",
+                expected: "finite",
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_try_with_global_penalties_validates_full_parameter_dimension() {
+        let y = vec![0.0, 0.0];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
+            .unwrap()
+            .into_workspace_objective();
+        let penalty =
+            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+
+        assert_eq!(
+            model.try_with_global_penalties(penalty).unwrap_err(),
+            ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
+        );
+    }
+
+    #[test]
     fn block_objective_for_projects_mu_coefficients() {
         // Simple 2-param mock: identity link for both, NLL = 0.5 * sum of squares.
         #[derive(Debug, Clone, Copy)]
@@ -2426,7 +3437,7 @@ mod tests {
             fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
                 let first = theta.0 - y;
                 let second = theta.1 - 1.0;
-                0.5 * (first * first + second * second)
+                f64::midpoint(first * first, second * second)
             }
 
             fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {

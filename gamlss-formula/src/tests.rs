@@ -1,3 +1,4 @@
+#![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
@@ -135,8 +136,8 @@ fn supports_owned_response_columns() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.model().obs.as_slice(), &[0.0, 1.0, 2.0]);
-    assert!(matches!(built.model().obs, NumericResponse::Owned(_)));
+    assert_eq!(built.model().obs().as_slice(), &[0.0, 1.0, 2.0]);
+    assert!(matches!(built.model().obs(), NumericResponse::Owned(_)));
 }
 
 #[test]
@@ -187,8 +188,8 @@ fn numeric_inputs_response_domains_and_weights_are_validated() {
     let invalid_gamma = TestData::borrowed(&[("y", &[0.0, 1.0])]);
     let err = gamma()
         .response(col("y"))
-        .shape(intercept())
-        .rate(intercept())
+        .mean(intercept())
+        .cv(intercept())
         .build(&invalid_gamma)
         .unwrap_err();
     assert_eq!(
@@ -283,30 +284,30 @@ fn builds_supported_default_families() {
 
     let gamma = gamma()
         .response(y_pos.clone())
-        .shape(intercept() + linear(x.clone()))
-        .rate(intercept())
+        .mean(intercept() + linear(x.clone()))
+        .cv(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(gamma.layout().slice("shape").unwrap(), 0..2);
-    assert_eq!(gamma.layout().slice("rate").unwrap(), 2..3);
+    assert_eq!(gamma.layout().slice("mean").unwrap(), 0..2);
+    assert_eq!(gamma.layout().slice("cv").unwrap(), 2..3);
 
     let log_normal = log_normal()
         .response(y_pos.clone())
-        .mu(intercept())
-        .sigma(intercept() + linear(x.clone()))
+        .mean(intercept())
+        .log_sd(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(log_normal.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(log_normal.layout().slice("sigma").unwrap(), 1..3);
+    assert_eq!(log_normal.layout().slice("mean").unwrap(), 0..1);
+    assert_eq!(log_normal.layout().slice("log_sd").unwrap(), 1..3);
 
     let weibull = weibull()
         .response(y_pos.clone())
+        .mean(intercept() + linear(x.clone()))
         .shape(intercept())
-        .scale(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(weibull.layout().slice("shape").unwrap(), 0..1);
-    assert_eq!(weibull.layout().slice("scale").unwrap(), 1..3);
+    assert_eq!(weibull.layout().slice("mean").unwrap(), 0..2);
+    assert_eq!(weibull.layout().slice("shape").unwrap(), 2..3);
 
     let inverse_gaussian = inverse_gaussian()
         .response(y_pos)
@@ -394,9 +395,9 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
 
     for (row, values) in built
         .model()
-        .blocks
+        .blocks()
         .0
-        .x
+        .x()
         .dense()
         .values()
         .chunks_exact(8)
@@ -654,11 +655,11 @@ fn cyclic_pspline_prediction_blocks_preserve_penalty_metadata() {
     let theta = [0.0, 1.0, -1.0, 0.5, 0.25, -0.25];
     let mut grad = [0.0; 6];
 
-    let value = blocks.0.penalty.value(&theta);
-    blocks.0.penalty.add_gradient(&theta, &mut grad);
+    let value = blocks.0.penalty().value(&theta);
+    blocks.0.penalty().add_gradient(&theta, &mut grad);
 
     assert!(value > 0.0);
-    assert!(grad.iter().any(|value| value.abs() > 1.0e-8));
+    assert!(grad.iter().any(|value| f64::abs(*value) > 1.0e-8));
 }
 
 #[test]

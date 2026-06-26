@@ -1,5 +1,61 @@
 use crate::ModelError;
 
+/// Borrowed scalar observations that reject `NaN` and infinities at validation.
+///
+/// The plain `&[f64]` observation view intentionally stays permissive so
+/// weighted workflows can keep rows whose response is missing or outside a
+/// family's domain when their weight is zero. Use this adapter, or
+/// [`Gamlss::try_new_strict`](crate::Gamlss::try_new_strict), when every scalar
+/// response value must be finite before objective evaluation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FiniteScalarObservations<'a> {
+    values: &'a [f64],
+}
+
+impl<'a> FiniteScalarObservations<'a> {
+    /// Creates a finite scalar observation view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidObservation`] when any response value is
+    /// `NaN`, `inf` or `-inf`.
+    pub fn new(values: &'a [f64]) -> Result<Self, ModelError> {
+        validate_scalar_observations(values)?;
+        Ok(Self { values })
+    }
+
+    /// Returns the underlying response slice.
+    #[must_use]
+    #[inline]
+    pub const fn values(&self) -> &'a [f64] {
+        self.values
+    }
+}
+
+impl<'row> ObservationView<'row> for FiniteScalarObservations<'_> {
+    type Observation = f64;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[inline]
+    fn observation_at(&'row self, row: usize) -> Self::Observation {
+        self.values[row]
+    }
+
+    #[inline]
+    fn weight_at(&self, _row: usize) -> f64 {
+        1.0
+    }
+
+    #[inline]
+    fn validate(&self) -> Result<(), ModelError> {
+        validate_scalar_observations(self.values)
+    }
+}
+
 /// Read-only row-wise observation access for training objective evaluation.
 ///
 /// This trait is intentionally small: it describes the row-wise data needed by
@@ -18,7 +74,7 @@ pub trait ObservationView<'row> {
     fn len(&self) -> usize;
 
     /// Returns `true` if there are no observations.
-    #[inline(always)]
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -42,22 +98,22 @@ pub trait ObservationView<'row> {
 impl<'row> ObservationView<'row> for &[f64] {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         <[f64]>::len(self)
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, _row: usize) -> f64 {
         1.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -66,17 +122,17 @@ impl<'row> ObservationView<'row> for &[f64] {
 impl<'row> ObservationView<'row> for (&[f64], &[f64]) {
     type Observation = f64;
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.0.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.0[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, row: usize) -> f64 {
         self.1[row]
     }
@@ -99,22 +155,22 @@ impl<'row> ObservationView<'row> for (&[f64], &[f64]) {
 impl<'row, const N: usize> ObservationView<'row> for &[[f64; N]] {
     type Observation = [f64; N];
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         <[[f64; N]]>::len(self)
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, _row: usize) -> f64 {
         1.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         Ok(())
     }
@@ -123,17 +179,17 @@ impl<'row, const N: usize> ObservationView<'row> for &[[f64; N]] {
 impl<'row, const N: usize> ObservationView<'row> for (&[[f64; N]], &[f64]) {
     type Observation = [f64; N];
 
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.0.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn observation_at(&'row self, row: usize) -> Self::Observation {
         self.0[row]
     }
 
-    #[inline(always)]
+    #[inline]
     fn weight_at(&self, row: usize) -> f64 {
         self.1[row]
     }
@@ -159,4 +215,13 @@ fn validate_observation_weight(index: usize, weight: f64) -> Result<(), ModelErr
     } else {
         Err(ModelError::InvalidWeight { index })
     }
+}
+
+fn validate_scalar_observations(values: &[f64]) -> Result<(), ModelError> {
+    for (index, value) in values.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(ModelError::InvalidObservation { index });
+        }
+    }
+    Ok(())
 }

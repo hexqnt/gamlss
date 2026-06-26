@@ -1,4 +1,4 @@
-use gamlss_core::PredictorBlock;
+use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
@@ -22,6 +22,7 @@ impl NaturalCubicSplineBasis {
     }
 
     /// Builds uniformly spaced knots over the finite range of `x`.
+    #[allow(clippy::cast_precision_loss)]
     pub fn uniform_from_data(x: &[f64], n_basis: usize) -> Result<Self, SplineError> {
         if x.is_empty() {
             return Err(SplineError::EmptyInput);
@@ -63,15 +64,15 @@ impl NaturalCubicSplineBasis {
 
     /// Knot vector.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn knots(&self) -> &[f64] {
         &self.knots
     }
 
     /// Number of basis functions.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.knots.len()
     }
 
@@ -137,6 +138,7 @@ impl NaturalCubicSplineBasis {
         }
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn evaluate_one(&self, basis: usize, x: f64) -> f64 {
         let (interval, left_extrapolate, right_extrapolate) = self.interval(x);
         if left_extrapolate || right_extrapolate {
@@ -163,6 +165,7 @@ impl NaturalCubicSplineBasis {
         a * y0 + b * y1 + ((a * a * a - a) * m0 + (b * b * b - b) * m1) * h * h / 6.0
     }
 
+    #[allow(clippy::suboptimal_flops)]
     fn evaluate_derivative_one(&self, basis: usize, x: f64) -> f64 {
         let (interval, left_extrapolate, right_extrapolate) = self.interval(x);
         let interval = if left_extrapolate {
@@ -224,28 +227,29 @@ impl NaturalCubicSplineDesign {
 
     /// Returns the basis metadata.
     #[must_use]
-    #[inline(always)]
-    pub fn basis(&self) -> &NaturalCubicSplineBasis {
+    #[inline]
+    pub const fn basis(&self) -> &NaturalCubicSplineBasis {
         &self.basis
     }
 
     /// Input coordinates.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn x(&self) -> &[f64] {
         &self.x
     }
 
     /// Number of spline coefficients.
     #[must_use]
-    #[inline(always)]
-    pub fn n_basis(&self) -> usize {
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
         self.basis.n_basis()
     }
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -259,18 +263,36 @@ impl NaturalCubicSplineDesign {
     }
 }
 
-impl PredictorBlock for NaturalCubicSplineDesign {
-    #[inline(always)]
+impl SplineRowBasis for NaturalCubicSplineDesign {
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.basis.n_basis()
     }
 
     #[inline]
+    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
+        self.basis.for_each_basis(self.x[row], &mut f);
+    }
+}
+
+impl PredictorBlock for NaturalCubicSplineDesign {
+    #[inline]
+    fn nrows(&self) -> usize {
+        self.x.len()
+    }
+
+    #[inline]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
@@ -283,11 +305,15 @@ impl PredictorBlock for NaturalCubicSplineDesign {
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
 
         for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
             self.for_each_row_basis(row, |index, weight| {
                 grad[index] += score * weight;
             });
@@ -299,35 +325,38 @@ impl PredictorBlock for NaturalCubicSplineDesign {
         &self,
         scores: &[f64],
         multiplier: &[f64],
-        _: &[f64],
+        beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(multiplier.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (row, (&score, &multiplier)) in scores.iter().zip(multiplier).enumerate() {
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * multiplier * weight;
-            });
-        }
-    }
-}
-
-impl SplineRowBasis for NaturalCubicSplineDesign {
-    #[inline(always)]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline(always)]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
     }
 
     #[inline]
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        self.basis.for_each_basis(self.x[row], &mut f);
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert_eq!(grad.len(), self.basis.n_basis());
+
+        for (row, score) in scores.iter().copied().enumerate() {
+            if score == 0.0 {
+                continue;
+            }
+            let scaled_score = score * multiplier.multiplier_at(row);
+            if scaled_score == 0.0 {
+                continue;
+            }
+            self.for_each_row_basis(row, |index, weight| {
+                grad[index] = scaled_score.mul_add(weight, grad[index]);
+            });
+        }
     }
 }
 
@@ -354,6 +383,7 @@ fn precompute_second_derivatives(knots: &[f64]) -> Vec<f64> {
     second_derivatives
 }
 
+#[allow(clippy::suboptimal_flops)]
 fn natural_basis_second_derivatives(x: &[f64], basis: usize) -> Vec<f64> {
     let n = x.len();
     debug_assert!(basis < n);

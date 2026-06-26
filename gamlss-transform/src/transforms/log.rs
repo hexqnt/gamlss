@@ -4,10 +4,6 @@ use crate::{TargetTransform, TransformError, map_slice_into, validate_positive};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Log;
 
-/// State for [`Log`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LogState;
-
 impl TargetTransform for Log {
     type State = LogState;
 
@@ -16,12 +12,12 @@ impl TargetTransform for Log {
         Ok(LogState)
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(_: &Self::State, y: f64) -> f64 {
         y.ln()
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(_: &Self::State, value: f64) -> f64 {
         value.exp()
     }
@@ -44,6 +40,10 @@ impl TargetTransform for Log {
         })
     }
 }
+
+/// State for [`Log`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LogState;
 
 #[cfg(test)]
 mod tests {

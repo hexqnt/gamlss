@@ -10,6 +10,7 @@
 
 - `gamlss-core` задает базовые абстракции: link functions, parameter markers, `ParameterBlock`, `ParameterBlocks`, objective/model traits и compiled model evaluation;
 - `gamlss-family` содержит распределения, likelihoods, score helpers и CDF/quantile utilities;
+- `gamlss-special` содержит special functions и общие численные helpers для likelihood/CDF/quantile кода;
 - `gamlss-spline` содержит spline/Fourier predictors, penalties и metadata;
 - `gamlss-transform` содержит target transforms и persisted transform state;
 - `gamlss-diagnostics` содержит post-fit diagnostics поверх fitted distributional models.
@@ -28,6 +29,7 @@ Crate `gamlss` — основная точка входа для большин�
 
 - [`core`](crate::core) для typed ядра;
 - [`family`](crate::family) для distributions и likelihoods;
+- [`special`](crate::special) для special functions и численных helpers;
 - [`spline`](crate::spline) для spline predictors и penalties;
 - [`transform`](crate::transform) для target preprocessing;
 - [`diagnostics`](crate::diagnostics) для post-fit diagnostics;

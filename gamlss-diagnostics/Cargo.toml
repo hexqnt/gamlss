@@ -14,7 +14,11 @@ include = ["src/**/*", "Cargo.toml", "README.md"]
 
 [dependencies]
 gamlss-core.workspace = true
+gamlss-special.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
 gamlss-family.workspace = true
+
+[lints]
+workspace = true

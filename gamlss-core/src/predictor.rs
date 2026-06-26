@@ -1,60 +1,20 @@
 use std::marker::PhantomData;
 
-use crate::{DesignMatrix, Link, ModelError, Softplus};
+use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus, design::scale_active_rows};
 
-/// Predictor block for one distribution parameter.
+const EXPECTED_FINITE: &str = "finite";
+
+/// Convenience predictor block alias for `softplus(beta)`.
 ///
-/// Implementations map a local coefficient slice to a scalar linear predictor
-/// contribution for each observation and know how to propagate per-observation
-/// scores back to that local coefficient slice.
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
+pub type SoftplusScalar = TransformedScalar<SoftplusTransform>;
+
+/// Convenience predictor block alias for `-softplus(beta)`.
 ///
-/// The model validates row counts before evaluation. In release builds,
-/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
-/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
-/// must add into the existing `grad` buffer rather than clearing it.
-pub trait PredictorBlock {
-    /// Number of observations.
-    fn nrows(&self) -> usize;
-    /// Number of local coefficients consumed by this block.
-    fn nparams(&self) -> usize;
-    /// Predictor contribution for one row.
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
-    /// Adds the gradient contribution implied by `scores` into `grad`.
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
-    /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
-    ///
-    /// Default implementation materializes scaled scores and delegates to
-    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
-    /// this method when they can fuse the multiplier into their gradient pass.
-    #[inline]
-    fn add_weighted_gradient(
-        &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(scores.len(), multiplier.len());
-
-        let scaled_scores = scores
-            .iter()
-            .zip(multiplier)
-            .map(|(score, multiplier)| score * multiplier)
-            .collect::<Vec<_>>();
-        self.add_gradient(&scaled_scores, beta, grad);
-    }
-
-    /// Validates internal block consistency.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError`] when internal dimensions or invariants do not
-    /// match the block contract.
-    #[inline]
-    fn validate(&self) -> Result<(), ModelError> {
-        Ok(())
-    }
-}
+/// The generic building block is [`TransformedScalar`]; this alias is provided
+/// for common scalar constraints.
+pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 
 /// Linear predictor block backed by a [`DesignMatrix`].
 ///
@@ -63,7 +23,7 @@ pub trait PredictorBlock {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LinearPredictorBlock<X> {
     /// Design matrix used by this predictor.
-    pub x: X,
+    x: X,
 }
 
 impl<X> LinearPredictorBlock<X> {
@@ -72,6 +32,13 @@ impl<X> LinearPredictorBlock<X> {
     #[inline]
     pub const fn new(x: X) -> Self {
         Self { x }
+    }
+
+    /// Returns the wrapped design matrix.
+    #[must_use]
+    #[inline]
+    pub const fn x(&self) -> &X {
+        &self.x
     }
 
     /// Returns the wrapped design matrix.
@@ -86,17 +53,17 @@ impl<X> PredictorBlock for LinearPredictorBlock<X>
 where
     X: DesignMatrix,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.nrows()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.x.ncols()
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.x.dot_row(row, beta)
     }
@@ -104,6 +71,11 @@ where
     #[inline]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         self.x.add_t_mul_vec(scores, grad);
+    }
+
+    #[inline]
+    fn set_constant_start(&self, value: f64, beta: &mut [f64]) -> bool {
+        self.x.set_constant_start(value, beta)
     }
 
     #[inline]
@@ -116,41 +88,80 @@ where
     ) {
         self.x.add_weighted_t_mul_vec(scores, multiplier, grad);
     }
-}
 
-/// Predictor blocks that expose an underlying [`DesignMatrix`].
-///
-/// This extension trait enables Fisher Scoring solvers to construct the
-/// weighted Gram matrix `X^T W X` for each parameter block. Only predictor
-/// blocks with a linear structure can provide this — nonlinear blocks like
-/// [`TransformedScalar`] or [`ProductBlock`] must fall back to gradient-only
-/// optimizers.
-///
-/// Currently only [`LinearPredictorBlock`] implements this trait.
-/// Future sparse or structured matrix backends will implement it as well.
-pub trait HasDesignMatrix: PredictorBlock {
-    /// The underlying design matrix type.
-    type Matrix: DesignMatrix;
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        self.x.add_weighted_t_mul_vec_by(scores, multiplier, grad);
+    }
 
-    /// Returns a reference to the design matrix.
-    fn design(&self) -> &Self::Matrix;
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
+    }
 }
 
 impl<X: DesignMatrix> HasDesignMatrix for LinearPredictorBlock<X> {
     type Matrix = X;
 
-    #[inline(always)]
+    #[inline]
     fn design(&self) -> &Self::Matrix {
         &self.x
     }
 }
 
-/// Transform for a single coefficient used by [`TransformedScalar`].
-pub trait CoefficientTransform {
-    /// Transformed coefficient value.
-    fn value(beta: f64) -> f64;
-    /// Derivative of [`Self::value`] with respect to `beta`.
-    fn derivative(beta: f64) -> f64;
+impl<X: DesignMatrix> LinearPredictorGeometry for LinearPredictorBlock<X> {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_geometry_lengths(self.x.nrows(), self.x.ncols(), row_weights, out)?;
+        self.x.gram_weighted(row_weights, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_geometry_lengths(self.x.nrows(), self.x.ncols(), row_weights, out)?;
+        self.x.gram_weighted_by(row_weights, multiplier, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        validate_vector_geometry_lengths(self.x.nrows(), self.x.ncols(), row_scores, out)?;
+        self.x.add_t_mul_vec(row_scores, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        validate_vector_geometry_lengths(self.x.nrows(), self.x.ncols(), row_scores, out)?;
+        self.x
+            .add_weighted_t_mul_vec_by(row_scores, multiplier, out);
+        Ok(())
+    }
 }
 
 /// Softplus coefficient transform: `softplus(beta)`.
@@ -158,12 +169,12 @@ pub trait CoefficientTransform {
 pub struct SoftplusTransform;
 
 impl CoefficientTransform for SoftplusTransform {
-    #[inline(always)]
+    #[inline]
     fn value(beta: f64) -> f64 {
         Softplus::inverse(beta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative(beta: f64) -> f64 {
         Softplus::derivative_inverse(beta)
     }
@@ -174,12 +185,12 @@ impl CoefficientTransform for SoftplusTransform {
 pub struct NegativeSoftplusTransform;
 
 impl CoefficientTransform for NegativeSoftplusTransform {
-    #[inline(always)]
+    #[inline]
     fn value(beta: f64) -> f64 {
         -Softplus::inverse(beta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn derivative(beta: f64) -> f64 {
         -Softplus::derivative_inverse(beta)
     }
@@ -189,7 +200,7 @@ impl CoefficientTransform for NegativeSoftplusTransform {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransformedScalar<T> {
     /// Number of observations this scalar contribution applies to.
-    pub nrows: usize,
+    nrows: usize,
     marker: PhantomData<T>,
 }
 
@@ -203,23 +214,30 @@ impl<T> TransformedScalar<T> {
             marker: PhantomData,
         }
     }
+
+    /// Returns the number of observations this scalar contribution applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
 }
 
 impl<T> PredictorBlock for TransformedScalar<T>
 where
     T: CoefficientTransform,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         1
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         T::value(beta[0])
     }
@@ -251,27 +269,21 @@ where
 
         grad[0] = weighted_sum(scores, multiplier).mul_add(T::derivative(beta[0]), grad[0]);
     }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let value = T::value(0.0);
+        value.is_finite().then_some(value)
+    }
 }
-
-/// Convenience predictor block alias for `softplus(beta)`.
-///
-/// The generic building block is [`TransformedScalar`]; this alias is provided
-/// for common scalar constraints.
-pub type SoftplusScalar = TransformedScalar<SoftplusTransform>;
-
-/// Convenience predictor block alias for `-softplus(beta)`.
-///
-/// The generic building block is [`TransformedScalar`]; this alias is provided
-/// for common scalar constraints.
-pub type NegativeSoftplusScalar = TransformedScalar<NegativeSoftplusTransform>;
 
 /// Convenience one-coefficient predictor block: `floor + softplus(beta)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FloorSoftplusScalar {
     /// Number of observations this scalar contribution applies to.
-    pub nrows: usize,
+    nrows: usize,
     /// Constant floor added after the softplus transform.
-    pub floor: f64,
+    floor: f64,
 }
 
 impl FloorSoftplusScalar {
@@ -281,20 +293,45 @@ impl FloorSoftplusScalar {
     pub const fn new(nrows: usize, floor: f64) -> Self {
         Self { nrows, floor }
     }
+
+    /// Creates a floor-plus-softplus scalar predictor with a finite floor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `floor` is not finite.
+    #[inline]
+    pub fn try_new(nrows: usize, floor: f64) -> Result<Self, ModelError> {
+        validate_finite("floor", floor)?;
+        Ok(Self::new(nrows, floor))
+    }
+
+    /// Returns the number of observations this scalar contribution applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Returns the constant floor added after the softplus transform.
+    #[must_use]
+    #[inline]
+    pub const fn floor(&self) -> f64 {
+        self.floor
+    }
 }
 
 impl PredictorBlock for FloorSoftplusScalar {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         1
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
         self.floor + Softplus::inverse(beta[0])
     }
@@ -327,15 +364,21 @@ impl PredictorBlock for FloorSoftplusScalar {
         grad[0] = weighted_sum(scores, multiplier)
             .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let value = self.floor + Softplus::inverse(0.0);
+        value.is_finite().then_some(value)
+    }
 }
 
 /// Zero-coefficient constant predictor block.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OffsetBlock {
     /// Number of observations this offset applies to.
-    pub nrows: usize,
+    nrows: usize,
     /// Constant contribution.
-    pub value: f64,
+    value: f64,
 }
 
 impl OffsetBlock {
@@ -345,53 +388,173 @@ impl OffsetBlock {
     pub const fn new(nrows: usize, value: f64) -> Self {
         Self { nrows, value }
     }
+
+    /// Creates a constant predictor block with a finite value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `value` is not finite.
+    #[inline]
+    pub fn try_new(nrows: usize, value: f64) -> Result<Self, ModelError> {
+        validate_finite("offset value", value)?;
+        Ok(Self::new(nrows, value))
+    }
+
+    /// Returns the number of observations this offset applies to.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Returns the constant contribution.
+    #[must_use]
+    #[inline]
+    pub const fn value(&self) -> f64 {
+        self.value
+    }
 }
 
 impl PredictorBlock for OffsetBlock {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.nrows
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         0
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, _: usize, _: &[f64]) -> f64 {
         self.value
     }
 
-    #[inline(always)]
+    #[inline]
     fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {}
 
-    #[inline(always)]
+    #[inline]
     fn add_weighted_gradient(&self, _: &[f64], _: &[f64], _: &[f64], _: &mut [f64]) {}
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        self.value.is_finite().then_some(self.value)
+    }
 }
 
 /// Product/interacted predictor block: `multiplier[row] * inner.eta_row(row)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductBlock<X> {
     /// Per-observation multiplier.
-    pub multiplier: Vec<f64>,
+    multiplier: Vec<f64>,
     /// Wrapped predictor block.
-    pub inner: X,
+    inner: X,
 }
 
 impl<X> ProductBlock<X> {
-    /// Creates a product predictor block.
+    /// Creates a product predictor block without validating dimensions or
+    /// multiplier values.
+    ///
+    /// Use [`Self::try_new`] when the multiplier comes from user input or
+    /// dynamic model metadata.
     #[must_use]
     #[inline]
-    pub const fn new(multiplier: Vec<f64>, inner: X) -> Self {
+    pub const fn new_unchecked(multiplier: Vec<f64>, inner: X) -> Self {
         Self { multiplier, inner }
+    }
+
+    /// Returns the per-observation multiplier.
+    #[must_use]
+    #[inline]
+    pub fn multiplier(&self) -> &[f64] {
+        &self.multiplier
+    }
+
+    /// Returns the wrapped predictor block.
+    #[must_use]
+    #[inline]
+    pub const fn inner(&self) -> &X {
+        &self.inner
+    }
+
+    /// Consumes the wrapper and returns the wrapped predictor block.
+    #[must_use]
+    #[inline]
+    pub fn into_inner(self) -> X {
+        self.inner
     }
 
     /// Consumes the wrapper and returns `(multiplier, inner)`.
     #[must_use]
     #[inline]
-    pub fn into_inner(self) -> (Vec<f64>, X) {
+    pub fn into_parts(self) -> (Vec<f64>, X) {
         (self.multiplier, self.inner)
+    }
+}
+
+impl<X> ProductBlock<X>
+where
+    X: PredictorBlock,
+{
+    /// Creates a product predictor block after validating multiplier shape and
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DesignRowMismatch`] when `multiplier.len()` does
+    /// not match `inner.nrows()`, or [`ModelError::InvalidMultiplier`] when a
+    /// multiplier value is not finite.
+    #[inline]
+    pub fn try_new(multiplier: Vec<f64>, inner: X) -> Result<Self, ModelError> {
+        let block = Self::new_unchecked(multiplier, inner);
+        block.inner.validate()?;
+        block.validate_multiplier()?;
+        Ok(block)
+    }
+
+    #[inline]
+    fn validate_multiplier(&self) -> Result<(), ModelError> {
+        if self.multiplier.len() != self.inner.nrows() {
+            return Err(ModelError::DesignRowMismatch {
+                parameter: "product multiplier",
+                expected_rows: self.inner.nrows(),
+                actual_rows: self.multiplier.len(),
+            });
+        }
+
+        for (index, value) in self.multiplier.iter().copied().enumerate() {
+            if !value.is_finite() {
+                return Err(ModelError::InvalidMultiplier { index });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<X> ProductBlock<X>
+where
+    X: LinearPredictorGeometry,
+{
+    #[inline]
+    fn validate_geometry_outer_lengths(
+        &self,
+        row_weights: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier()?;
+        validate_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_weights, out)
+    }
+
+    #[inline]
+    fn validate_vector_geometry_outer_lengths(
+        &self,
+        row_scores: &[f64],
+        out: &[f64],
+    ) -> Result<(), ModelError> {
+        self.validate_multiplier()?;
+        validate_vector_geometry_lengths(self.inner.nrows(), self.inner.nparams(), row_scores, out)
     }
 }
 
@@ -399,17 +562,17 @@ impl<X> PredictorBlock for ProductBlock<X>
 where
     X: PredictorBlock,
 {
-    #[inline(always)]
+    #[inline]
     fn nrows(&self) -> usize {
         self.inner.nrows()
     }
 
-    #[inline(always)]
+    #[inline]
     fn nparams(&self) -> usize {
         self.inner.nparams()
     }
 
-    #[inline(always)]
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.multiplier[row] * self.inner.eta_row(row, beta)
     }
@@ -424,27 +587,116 @@ where
     }
 
     #[inline]
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert_eq!(scores.len(), self.nrows());
+        debug_assert_eq!(multiplier.len(), self.nrows());
+        debug_assert_eq!(self.multiplier.len(), self.nrows());
+
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.nrows());
+        debug_assert_eq!(self.multiplier.len(), self.nrows());
+
+        let product_multiplier = ProductRowMultiplier {
+            left: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_weighted_gradient_by(scores, &product_multiplier, beta, grad);
+    }
+
+    #[inline]
     fn validate(&self) -> Result<(), ModelError> {
         self.inner.validate()?;
-        if self.multiplier.len() == self.inner.nrows() {
-            Ok(())
-        } else {
-            Err(ModelError::DesignRowMismatch {
-                parameter: "product multiplier",
-                expected_rows: self.inner.nrows(),
-                actual_rows: self.multiplier.len(),
-            })
+        self.validate_multiplier()
+    }
+
+    #[inline]
+    #[allow(clippy::float_cmp)]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        let inner = self.inner.zero_beta_constant_contribution()?;
+        if inner == 0.0 {
+            return Some(0.0);
         }
+
+        let first = self.multiplier.first().copied()?;
+        if !first.is_finite() || !self.multiplier.iter().all(|value| *value == first) {
+            return None;
+        }
+
+        let value = first * inner;
+        value.is_finite().then_some(value)
     }
 }
 
-#[inline]
-fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
-    scores
-        .iter()
-        .zip(multiplier)
-        .map(|(score, multiplier)| score * multiplier)
-        .sum()
+impl<X> LinearPredictorGeometry for ProductBlock<X>
+where
+    X: LinearPredictorGeometry,
+{
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.add_weighted_gram_by(row_weights, &UnitRowMultiplier, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.validate_geometry_outer_lengths(row_weights, out)?;
+        let product_multiplier = ProductSquaredRowMultiplier {
+            product: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_weighted_gram_by(row_weights, &product_multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.add_t_mul_vec_by(row_scores, &UnitRowMultiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.validate_vector_geometry_outer_lengths(row_scores, out)?;
+        let product_multiplier = ProductRowMultiplier {
+            left: self.multiplier.as_slice(),
+            right: multiplier,
+        };
+        self.inner
+            .add_t_mul_vec_by(row_scores, &product_multiplier, out)
+    }
 }
 
 /// Sum of several predictor blocks sharing the same observations.
@@ -466,6 +718,310 @@ impl<Terms> SumBlock<Terms> {
     }
 }
 
+struct ProductRowMultiplier<'a, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    left: &'a [f64],
+    right: &'a M,
+}
+
+impl<M> RowMultiplier for ProductRowMultiplier<'_, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    #[inline]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self.left[row] * self.right.multiplier_at(row)
+    }
+}
+
+struct ProductSquaredRowMultiplier<'a, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    product: &'a [f64],
+    right: &'a M,
+}
+
+impl<M> RowMultiplier for ProductSquaredRowMultiplier<'_, M>
+where
+    M: RowMultiplier + ?Sized,
+{
+    #[inline]
+    fn multiplier_at(&self, row: usize) -> f64 {
+        self.product[row] * self.product[row] * self.right.multiplier_at(row)
+    }
+}
+
+struct UnitRowMultiplier;
+
+impl RowMultiplier for UnitRowMultiplier {
+    #[inline]
+    fn multiplier_at(&self, _: usize) -> f64 {
+        1.0
+    }
+}
+
+/// Predictor block for one distribution parameter.
+///
+/// Implementations map a local coefficient slice to a scalar linear predictor
+/// contribution for each observation and know how to propagate per-observation
+/// scores back to that local coefficient slice.
+///
+/// The model validates row counts before evaluation. In release builds,
+/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
+/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
+/// must add into the existing `grad` buffer rather than clearing it. Gradient
+/// operations must treat an exactly zero score as disabling that row and avoid
+/// reading its multiplier or row geometry.
+pub trait PredictorBlock {
+    /// Number of observations.
+    fn nrows(&self) -> usize;
+    /// Number of local coefficients consumed by this block.
+    fn nparams(&self) -> usize;
+    /// Predictor contribution for one row.
+    fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Writes a constant predictor start into the local coefficient slice.
+    ///
+    /// Implementations should return `true` only when the write makes this
+    /// block contribute `value` for every row with the rest of the local slice
+    /// left at zero. Unsupported blocks should leave `beta` unchanged.
+    #[inline]
+    fn set_constant_start(&self, _value: f64, _beta: &mut [f64]) -> bool {
+        false
+    }
+    /// Constant contribution when all local coefficients are zero.
+    ///
+    /// Returns `None` when the zero-coefficient contribution is not constant
+    /// across rows or cannot be determined cheaply. [`SumBlock`] uses this to
+    /// account for offsets and transformed scalar baselines when constructing
+    /// constant starts.
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        None
+    }
+    /// Adds the gradient contribution implied by `scores` into `grad`.
+    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
+    /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
+    ///
+    /// Default implementation materializes scaled scores and delegates to
+    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
+    /// this method when they can fuse the multiplier into their gradient pass.
+    #[inline]
+    fn add_weighted_gradient(
+        &self,
+        scores: &[f64],
+        multiplier: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+    }
+
+    /// Adds the gradient contribution implied by a lazy row multiplier.
+    ///
+    /// Default implementation materializes scaled scores and delegates to
+    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
+    /// this method to keep row scaling fused through composed predictors.
+    #[inline]
+    fn add_weighted_gradient_by<M>(
+        &self,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert_eq!(scores.len(), self.nrows());
+
+        let scaled_scores = scale_active_rows(scores, multiplier);
+        self.add_gradient(&scaled_scores, beta, grad);
+    }
+
+    /// Validates internal block consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when internal dimensions or invariants do not
+    /// match the block contract.
+    #[inline]
+    fn validate(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+/// Predictor blocks that expose a concrete underlying [`DesignMatrix`].
+///
+/// This is intentionally narrower than [`LinearPredictorGeometry`]: it is for
+/// callers that need direct access to the matrix object itself. Solvers that
+/// only need products such as `X^T W X` and `X^T v` should prefer
+/// [`LinearPredictorGeometry`], which also supports lazily row-scaled linear
+/// predictors such as [`ProductBlock<LinearPredictorBlock<_>>`].
+pub trait HasDesignMatrix: PredictorBlock {
+    /// The underlying design matrix type.
+    type Matrix: DesignMatrix;
+
+    /// Returns a reference to the design matrix.
+    fn design(&self) -> &Self::Matrix;
+}
+
+/// Predictor blocks that are linear in their local coefficients.
+///
+/// This capability separates Fisher/IRLS geometry from concrete design-matrix
+/// ownership. A block may expose `X^T W X` and `X^T v` operations even when its
+/// effective row design is represented lazily, for example
+/// [`ProductBlock<LinearPredictorBlock<_>>`], where row `i` contributes
+/// `multiplier[i] * x_i`. Exactly zero row weights or scores disable the row;
+/// implementations should not evaluate its lazy multiplier or geometry.
+pub trait LinearPredictorGeometry: PredictorBlock {
+    /// Adds the weighted local Gram matrix into `out`.
+    ///
+    /// `out` is row-major with shape `nparams × nparams`. Implementations add
+    /// into existing values rather than clearing the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_weights` or `out` do not match the
+    /// block dimensions.
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+    /// Adds a weighted local Gram matrix with an extra lazy row multiplier.
+    ///
+    /// The default implementation materializes scaled row weights before
+    /// delegating to [`Self::add_weighted_gram`]. Composed predictors override
+    /// this to keep row scaling lazy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_weights` or `out` do not match the
+    /// block dimensions.
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        let scaled_weights = scale_active_rows(row_weights, multiplier);
+        self.add_weighted_gram(&scaled_weights, out)
+    }
+    /// Adds the transposed row geometry times `row_scores` into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_scores` or `out` do not match the block
+    /// dimensions.
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError>;
+    /// Adds a transposed product with an extra lazy row multiplier.
+    ///
+    /// The default implementation materializes scaled row scores before
+    /// delegating to [`Self::add_t_mul_vec`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when `row_scores` or `out` do not match the block
+    /// dimensions.
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        let scaled_scores = scale_active_rows(row_scores, multiplier);
+        self.add_t_mul_vec(&scaled_scores, out)
+    }
+}
+
+/// Transform for a single coefficient used by [`TransformedScalar`].
+pub trait CoefficientTransform {
+    /// Transformed coefficient value.
+    fn value(beta: f64) -> f64;
+    /// Derivative of [`Self::value`] with respect to `beta`.
+    fn derivative(beta: f64) -> f64;
+}
+
+#[inline]
+fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
+    scores
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(row, score)| {
+            if score == 0.0 {
+                0.0
+            } else {
+                score * multiplier[row]
+            }
+        })
+        .sum()
+}
+
+const fn validate_finite(parameter: &'static str, value: f64) -> Result<(), ModelError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(ModelError::InvalidParameter {
+            parameter,
+            expected: EXPECTED_FINITE,
+        })
+    }
+}
+
+fn validate_geometry_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_weights: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_weights)?;
+    let expected_values = nparams
+        .checked_mul(nparams)
+        .ok_or(ModelError::ArithmeticOverflow {
+            context: "linear predictor geometry Gram value count",
+        })?;
+    if out.len() != expected_values {
+        return Err(ModelError::DesignSize {
+            expected_values,
+            actual_values: out.len(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_vector_geometry_lengths(
+    nrows: usize,
+    nparams: usize,
+    row_scores: &[f64],
+    out: &[f64],
+) -> Result<(), ModelError> {
+    validate_row_values_len(nrows, row_scores)?;
+    if out.len() != nparams {
+        return Err(ModelError::GradientLength {
+            expected: nparams,
+            actual: out.len(),
+        });
+    }
+    Ok(())
+}
+
+const fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
+    if row_values.len() != nrows {
+        return Err(ModelError::WeightLength {
+            expected: nrows,
+            actual: row_values.len(),
+        });
+    }
+    Ok(())
+}
+
 macro_rules! impl_sum_block {
     (
         terms = ($($term:ident),+);
@@ -477,12 +1033,12 @@ macro_rules! impl_sum_block {
         where
             $($term: PredictorBlock,)+
         {
-            #[inline(always)]
+            #[inline]
             fn nrows(&self) -> usize {
                 self.terms.0.nrows()
             }
 
-            #[inline(always)]
+            #[inline]
             fn nparams(&self) -> usize {
                 0 $(+ self.terms.$idx.nparams())+
             }
@@ -514,6 +1070,38 @@ macro_rules! impl_sum_block {
             }
 
             #[inline]
+            fn set_constant_start(&self, value: f64, beta: &mut [f64]) -> bool {
+                let baselines = [$(self.terms.$idx.zero_beta_constant_contribution(),)+];
+                let mut start = 0;
+                $(
+                    let $var = &self.terms.$idx;
+                    let end = start + $var.nparams();
+                    let other_baseline = baselines
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != $idx)
+                        .try_fold(0.0, |sum, (_, baseline)| baseline.map(|value| sum + value));
+                    if let Some(other_baseline) = other_baseline {
+                        if $var.set_constant_start(value - other_baseline, &mut beta[start..end]) {
+                            return true;
+                        }
+                    }
+                    start = end;
+                )+
+                let _ = start;
+                false
+            }
+
+            #[inline]
+            fn zero_beta_constant_contribution(&self) -> Option<f64> {
+                let mut contribution = 0.0;
+                $(
+                    contribution += self.terms.$idx.zero_beta_constant_contribution()?;
+                )+
+                contribution.is_finite().then_some(contribution)
+            }
+
+            #[inline]
             fn add_weighted_gradient(
                 &self,
                 scores: &[f64],
@@ -521,11 +1109,33 @@ macro_rules! impl_sum_block {
                 beta: &[f64],
                 grad: &mut [f64],
             ) {
+                debug_assert_eq!(scores.len(), self.nrows());
+                debug_assert_eq!(multiplier.len(), self.nrows());
+                debug_assert_eq!(beta.len(), self.nparams());
+                debug_assert_eq!(grad.len(), self.nparams());
+
+                self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+            }
+
+            #[inline]
+            fn add_weighted_gradient_by<M>(
+                &self,
+                scores: &[f64],
+                multiplier: &M,
+                beta: &[f64],
+                grad: &mut [f64],
+            ) where
+                M: RowMultiplier + ?Sized,
+            {
+                debug_assert_eq!(scores.len(), self.nrows());
+                debug_assert_eq!(beta.len(), self.nparams());
+                debug_assert_eq!(grad.len(), self.nparams());
+
                 let mut start = 0;
                 $(
                     let $var = &self.terms.$idx;
                     let end = start + $var.nparams();
-                    $var.add_weighted_gradient(
+                    $var.add_weighted_gradient_by(
                         scores,
                         multiplier,
                         &beta[start..end],
@@ -650,12 +1260,96 @@ impl_sum_block!(
 mod tests {
     use approx::assert_relative_eq;
 
-    use crate::{DenseDesign, ModelError, PredictorBlock};
+    use crate::{
+        DenseDesign, DesignMatrix, LinearPredictorGeometry, ModelError, PredictorBlock,
+        RowMultiplier,
+    };
 
     use super::{
         FloorSoftplusScalar, LinearPredictorBlock, NegativeSoftplusScalar, OffsetBlock,
         ProductBlock, SoftplusScalar,
     };
+
+    struct DefaultPaths;
+
+    impl PredictorBlock for DefaultPaths {
+        fn nrows(&self) -> usize {
+            3
+        }
+
+        fn nparams(&self) -> usize {
+            1
+        }
+
+        fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
+            beta[0]
+        }
+
+        fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+            grad[0] += scores.iter().sum::<f64>();
+        }
+    }
+
+    impl LinearPredictorGeometry for DefaultPaths {
+        fn add_weighted_gram(
+            &self,
+            row_weights: &[f64],
+            out: &mut [f64],
+        ) -> Result<(), ModelError> {
+            out[0] += row_weights.iter().sum::<f64>();
+            Ok(())
+        }
+
+        fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+            out[0] += row_scores.iter().sum::<f64>();
+            Ok(())
+        }
+    }
+
+    struct PanicOnMaskedRow;
+
+    impl RowMultiplier for PanicOnMaskedRow {
+        fn multiplier_at(&self, row: usize) -> f64 {
+            assert_ne!(row, 1, "zero row must not read multiplier");
+            2.0
+        }
+    }
+
+    struct LazyGradientBlock;
+
+    impl PredictorBlock for LazyGradientBlock {
+        fn nrows(&self) -> usize {
+            3
+        }
+
+        fn nparams(&self) -> usize {
+            1
+        }
+
+        fn eta_row(&self, _: usize, beta: &[f64]) -> f64 {
+            beta[0]
+        }
+
+        fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {
+            panic!("composed lazy path must not materialize scores");
+        }
+
+        fn add_weighted_gradient_by<M>(
+            &self,
+            scores: &[f64],
+            multiplier: &M,
+            _: &[f64],
+            grad: &mut [f64],
+        ) where
+            M: RowMultiplier + ?Sized,
+        {
+            for (row, score) in scores.iter().copied().enumerate() {
+                if score != 0.0 {
+                    grad[0] = score.mul_add(multiplier.multiplier_at(row), grad[0]);
+                }
+            }
+        }
+    }
 
     #[test]
     fn linear_predictor_block_matches_design_matrix_operations() {
@@ -663,6 +1357,7 @@ mod tests {
         let block = LinearPredictorBlock::new(design);
         let beta = [10.0, 1.0];
 
+        assert_eq!(block.x().nrows(), 2);
         assert_relative_eq!(block.eta_row(1, &beta), 34.0);
 
         let mut grad = vec![0.0, 0.0];
@@ -683,6 +1378,55 @@ mod tests {
 
         assert_relative_eq!(grad[0], -4.0);
         assert_relative_eq!(grad[1], -5.0);
+    }
+
+    #[test]
+    fn linear_predictor_geometry_delegates_dense_products() {
+        let block = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+
+        assert_eq!(block.nrows(), 2);
+        assert_eq!(block.nparams(), 2);
+
+        let mut gram = vec![1.0, 2.0, 3.0, 4.0];
+        block.add_weighted_gram(&[0.5, 2.0], &mut gram).unwrap();
+        assert_relative_eq!(gram[0], 19.5);
+        assert_relative_eq!(gram[1], 27.0);
+        assert_relative_eq!(gram[2], 28.0);
+        assert_relative_eq!(gram[3], 38.0);
+
+        let mut t_mul = vec![1.0, 1.0];
+        block.add_t_mul_vec(&[0.5, 2.0], &mut t_mul).unwrap();
+        assert_relative_eq!(t_mul[0], 7.5);
+        assert_relative_eq!(t_mul[1], 10.0);
+    }
+
+    #[test]
+    fn linear_predictor_geometry_validates_lengths() {
+        let block = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+
+        assert_eq!(
+            block.add_weighted_gram(&[1.0], &mut [0.0; 4]).unwrap_err(),
+            ModelError::WeightLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
+        assert_eq!(
+            block
+                .add_weighted_gram(&[1.0, 1.0], &mut [0.0; 3])
+                .unwrap_err(),
+            ModelError::DesignSize {
+                expected_values: 4,
+                actual_values: 3,
+            }
+        );
+        assert_eq!(
+            block.add_t_mul_vec(&[1.0, 1.0], &mut [0.0]).unwrap_err(),
+            ModelError::GradientLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
     }
 
     #[test]
@@ -712,17 +1456,31 @@ mod tests {
 
     #[test]
     fn transformed_scalar_blocks_match_finite_difference() {
-        assert_scalar_gradient_matches_finite_difference(SoftplusScalar::new(3), &[0.5, 1.0, 2.0]);
+        let softplus = SoftplusScalar::new(3);
+        assert_eq!(softplus.nrows(), 3);
+        assert_scalar_gradient_matches_finite_difference(softplus, &[0.5, 1.0, 2.0]);
         assert_scalar_gradient_matches_finite_difference(
             NegativeSoftplusScalar::new(3),
             &[0.5, 1.0, 2.0],
         );
-        assert_scalar_gradient_matches_finite_difference(
-            FloorSoftplusScalar::new(3, 10.0),
-            &[0.5, 1.0, 2.0],
+        let floored = FloorSoftplusScalar::try_new(3, 10.0).unwrap();
+        assert_eq!(floored.nrows(), 3);
+        assert_relative_eq!(floored.floor(), 10.0);
+        assert_scalar_gradient_matches_finite_difference(floored, &[0.5, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn floor_softplus_scalar_try_new_validates_floor() {
+        assert_eq!(
+            FloorSoftplusScalar::try_new(2, f64::NAN).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "floor",
+                expected: "finite",
+            }
         );
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_scalar_gradient_matches_finite_difference(
         block: impl PredictorBlock,
         scores: &[f64],
@@ -744,42 +1502,179 @@ mod tests {
 
     #[test]
     fn offset_block_is_constant_and_has_no_gradient() {
-        let block = OffsetBlock::new(2, 3.5);
+        let block = OffsetBlock::try_new(2, 3.5).unwrap();
         let mut grad = [];
 
+        assert_eq!(block.nrows(), 2);
+        assert_relative_eq!(block.value(), 3.5);
         assert_eq!(block.nparams(), 0);
         assert_relative_eq!(block.eta_row(1, &[]), 3.5);
         block.add_gradient(&[1.0, 2.0], &[], &mut grad);
     }
 
     #[test]
+    fn offset_block_try_new_validates_value() {
+        assert_eq!(
+            OffsetBlock::try_new(2, f64::INFINITY).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "offset value",
+                expected: "finite",
+            }
+        );
+    }
+
+    #[test]
     fn product_block_scales_eta_and_gradient() {
         let inner = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
-        let block = ProductBlock::new(vec![2.0, -1.0], inner);
+        let block = ProductBlock::try_new(vec![2.0, -1.0], inner).unwrap();
         let beta = [0.5, 1.0];
         let scores = [0.25, 2.0];
         let mut grad = [0.0, 0.0];
 
+        assert_eq!(block.multiplier(), &[2.0, -1.0]);
+        assert_eq!(block.inner().nparams(), 2);
         assert_relative_eq!(block.eta_row(0, &beta), 5.0);
         assert_relative_eq!(block.eta_row(1, &beta), -5.5);
 
         block.add_gradient(&scores, &beta, &mut grad);
-        assert_relative_eq!(grad[0], 2.0 * 0.25 * 1.0 - 1.0 * 2.0 * 3.0);
-        assert_relative_eq!(grad[1], 2.0 * 0.25 * 2.0 - 1.0 * 2.0 * 4.0);
+        assert_relative_eq!(grad[0], -5.5);
+        assert_relative_eq!(grad[1], -7.0);
+    }
+
+    #[test]
+    fn product_block_geometry_scales_rows_lazily() {
+        let inner = LinearPredictorBlock::new(DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]));
+        let block = ProductBlock::try_new(vec![2.0, -1.0], inner).unwrap();
+
+        let mut gram = vec![0.0; 4];
+        block.add_weighted_gram(&[0.5, 2.0], &mut gram).unwrap();
+
+        // Effective weights are [0.5 * 2^2, 2.0 * (-1)^2] = [2.0, 2.0].
+        assert_relative_eq!(gram[0], 20.0);
+        assert_relative_eq!(gram[1], 28.0);
+        assert_relative_eq!(gram[2], 28.0);
+        assert_relative_eq!(gram[3], 40.0);
+
+        let mut t_mul = vec![0.0, 0.0];
+        block.add_t_mul_vec(&[0.25, 2.0], &mut t_mul).unwrap();
+        assert_relative_eq!(t_mul[0], -5.5);
+        assert_relative_eq!(t_mul[1], -7.0);
     }
 
     #[test]
     fn product_block_validates_multiplier_length() {
         let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
-        let block = ProductBlock::new(vec![1.0], inner);
+        let block = ProductBlock::new_unchecked(vec![1.0], inner);
 
+        assert_multiplier_length_error(block.validate().unwrap_err());
+    }
+
+    #[test]
+    fn product_block_try_new_validates_multiplier_length() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+
+        assert_multiplier_length_error(ProductBlock::try_new(vec![1.0], inner).unwrap_err());
+    }
+
+    #[test]
+    fn product_block_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+        let block = ProductBlock::new_unchecked(vec![1.0, f64::INFINITY], inner);
+
+        assert_invalid_multiplier_error(block.validate().unwrap_err());
+    }
+
+    #[test]
+    fn product_block_try_new_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+
+        assert_invalid_multiplier_error(
+            ProductBlock::try_new(vec![1.0, f64::INFINITY], inner).unwrap_err(),
+        );
+    }
+
+    #[test]
+    fn predictor_gradient_default_skips_zero_score_multiplier() {
+        let block = DefaultPaths;
+        let values = [1.0, 0.0, 3.0];
+
+        let mut gradient = [0.0];
+        block.add_weighted_gradient_by(&values, &PanicOnMaskedRow, &[], &mut gradient);
+        assert_relative_eq!(gradient[0], 8.0);
+    }
+
+    #[test]
+    fn product_of_sum_keeps_weighted_gradient_multiplier_lazy() {
+        let sum = crate::SumBlock::new((LazyGradientBlock, LazyGradientBlock));
+        // The inactive row deliberately contains an invalid product multiplier.
+        // A materialized or eagerly evaluated path would read it.
+        let block = ProductBlock::new_unchecked(vec![2.0, f64::NAN, 4.0], sum);
+        let mut gradient = [0.0, 0.0];
+
+        block.add_weighted_gradient_by(
+            &[1.0, 0.0, 3.0],
+            &PanicOnMaskedRow,
+            &[0.0, 0.0],
+            &mut gradient,
+        );
+
+        assert_relative_eq!(gradient[0], 28.0);
+        assert_relative_eq!(gradient[1], 28.0);
+    }
+
+    #[test]
+    fn product_block_geometry_validates_multiplier_finiteness() {
+        let inner = LinearPredictorBlock::new(DenseDesign::intercept(2));
+        let block = ProductBlock::new_unchecked(vec![1.0, f64::NAN], inner);
+
+        assert_invalid_multiplier_error(
+            block
+                .add_weighted_gram(&[1.0, 0.0], &mut [0.0])
+                .unwrap_err(),
+        );
+        assert_invalid_multiplier_error(block.add_t_mul_vec(&[1.0, 0.0], &mut [0.0]).unwrap_err());
+    }
+
+    #[test]
+    fn predictor_geometry_defaults_skip_zero_row_multipliers() {
+        let block = DefaultPaths;
+        let values = [1.0, 0.0, 3.0];
+        let mut gram = [0.0];
+        block
+            .add_weighted_gram_by(&values, &PanicOnMaskedRow, &mut gram)
+            .unwrap();
+        assert_relative_eq!(gram[0], 8.0);
+
+        let mut transpose = [0.0];
+        block
+            .add_t_mul_vec_by(&values, &PanicOnMaskedRow, &mut transpose)
+            .unwrap();
+        assert_relative_eq!(transpose[0], 8.0);
+    }
+
+    #[test]
+    fn scalar_weighted_gradient_skips_zero_score_nan_multiplier() {
+        let values = [1.0, 0.0, 3.0];
+        let scalar = SoftplusScalar::new(3);
+        let mut scalar_gradient = [0.0];
+        scalar.add_weighted_gradient(&values, &[2.0, f64::NAN, 2.0], &[0.0], &mut scalar_gradient);
+        assert!(scalar_gradient[0].is_finite());
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn assert_multiplier_length_error(error: ModelError) {
         assert_eq!(
-            block.validate().unwrap_err(),
+            error,
             ModelError::DesignRowMismatch {
                 parameter: "product multiplier",
                 expected_rows: 2,
                 actual_rows: 1,
             }
         );
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn assert_invalid_multiplier_error(error: ModelError) {
+        assert_eq!(error, ModelError::InvalidMultiplier { index: 1 });
     }
 }

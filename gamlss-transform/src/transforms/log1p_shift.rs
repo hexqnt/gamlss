@@ -12,25 +12,6 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Log1pShift;
 
-/// State for [`Log1pShift`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Log1pShiftState {
-    /// Additive shift applied before `ln_1p`.
-    pub shift: f64,
-    /// Small non-negative distance between the shifted training minimum and
-    /// zero.
-    pub margin: f64,
-}
-
-impl Log1pShiftState {
-    /// Lower bound accepted by [`Log1pShift::transform_slice`].
-    #[must_use]
-    #[inline(always)]
-    pub fn lower_bound(self) -> f64 {
-        -self.shift
-    }
-}
-
 impl TargetTransform for Log1pShift {
     type State = Log1pShiftState;
 
@@ -43,12 +24,12 @@ impl TargetTransform for Log1pShift {
         Ok(Log1pShiftState { shift, margin })
     }
 
-    #[inline(always)]
+    #[inline]
     fn transform(state: &Self::State, y: f64) -> f64 {
         (y + state.shift).ln_1p()
     }
 
-    #[inline(always)]
+    #[inline]
     fn inverse(state: &Self::State, value: f64) -> f64 {
         value.exp_m1() - state.shift
     }
@@ -72,6 +53,25 @@ impl TargetTransform for Log1pShift {
             *out = Self::transform(state, value);
         }
         Ok(())
+    }
+}
+
+/// State for [`Log1pShift`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Log1pShiftState {
+    /// Additive shift applied before `ln_1p`.
+    pub shift: f64,
+    /// Small non-negative distance between the shifted training minimum and
+    /// zero.
+    pub margin: f64,
+}
+
+impl Log1pShiftState {
+    /// Lower bound accepted by [`Log1pShift::transform_slice`].
+    #[must_use]
+    #[inline]
+    pub fn lower_bound(self) -> f64 {
+        -self.shift
     }
 }
 

@@ -2,47 +2,54 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{
-    Family, HasCdf, HasQuantile, Log, ParameterParts, ParameterizedFamily, PositiveLink, Scale,
-    Shape,
+use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
+
+use gamlss_special::{ln_gamma, regularized_gamma_lower};
+
+use crate::domain::{is_positive_finite, is_probability};
+use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary};
+
+pub use mean_shape::{MeanShape, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta};
+pub use scale_shape::{
+    ScaleShape, WeibullEta, WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta,
+    WeibullTheta,
 };
 
-/// Weibull family parameterized by positive shape and scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Weibull<ShapeLink = Log, ScaleLink = Log> {
-    marker: PhantomData<(ShapeLink, ScaleLink)>,
+mod mean_shape;
+mod scale_shape;
+
+const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
+
+/// Weibull family implementation carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
+    marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
-impl<ShapeLink, ScaleLink> Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
+impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     /// Creates a stateless Weibull family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
-    fn theta_from_eta(eta: WeibullEta) -> WeibullTheta {
-        WeibullTheta {
-            shape: ShapeLink::inverse(eta.shape),
-            scale: ScaleLink::inverse(eta.scale),
-        }
+    #[inline]
+    fn valid_scale_shape(theta: WeibullScaleShapeTheta) -> bool {
+        is_positive_finite(theta.scale) && is_positive_finite(theta.shape)
     }
 
-    #[inline(always)]
-    fn nll_theta(y: f64, theta: WeibullTheta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+    #[inline]
+    fn mean_factor(shape: f64) -> f64 {
+        ln_gamma(1.0 + 1.0 / shape).exp()
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
+        if y <= 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::INFINITY;
         }
 
@@ -52,210 +59,215 @@ where
             + (theta.shape * log_ratio).exp()
     }
 
-    #[inline(always)]
-    fn nll_and_gradient_eta_values(y: f64, eta: WeibullEta) -> (f64, WeibullEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
-        if !nll.is_finite() {
-            return (
-                nll,
-                WeibullEta {
-                    shape: f64::NAN,
-                    scale: f64::NAN,
-                },
-            );
-        }
-
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn gradient_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> (f64, f64) {
         let log_ratio = y.ln() - theta.scale.ln();
         let power = (theta.shape * log_ratio).exp();
-        let d_shape = -1.0 / theta.shape - log_ratio + power * log_ratio;
-        let d_scale = theta.shape * (1.0 - power) / theta.scale;
-        let gradient_eta = WeibullEta {
-            shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
-        };
-
-        (nll, gradient_eta)
-    }
-}
-
-impl<ShapeLink, ScaleLink> Default for Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Predictors for the Weibull family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullEta {
-    /// Shape predictor.
-    pub shape: f64,
-    /// Scale predictor.
-    pub scale: f64,
-}
-
-impl ParameterParts<2> for WeibullEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            shape: values[0],
-            scale: values[1],
-        }
+        (
+            theta.shape * (1.0 - power) / theta.scale,
+            -1.0 / theta.shape - log_ratio + power * log_ratio,
+        )
     }
 
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.shape,
-            1 => self.scale,
-            _ => unreachable!("weibull eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Natural-scale Weibull parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullTheta {
-    /// Positive shape parameter.
-    pub shape: f64,
-    /// Positive scale parameter.
-    pub scale: f64,
-}
-
-impl<ShapeLink, ScaleLink> Family for Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    type Eta = WeibullEta;
-    type Theta = WeibullTheta;
-    type NllGradientEta = WeibullEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<ShapeLink, ScaleLink> ParameterizedFamily<2> for Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    type Params = (Shape, Scale);
-    type Links = (ShapeLink, ScaleLink);
-}
-
-impl<ShapeLink, ScaleLink> HasCdf for Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+    #[inline]
+    fn cdf_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
+        if !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::NAN;
         }
         if y <= 0.0 {
             return 0.0;
         }
 
-        -(-(y / theta.scale).powf(theta.shape)).exp_m1()
+        let log_ratio = y.ln() - theta.scale.ln();
+        -(-(theta.shape * log_ratio).exp()).exp_m1()
     }
-}
 
-impl<ShapeLink, ScaleLink> HasQuantile for Weibull<ShapeLink, ScaleLink>
-where
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+    #[inline]
+    fn quantile_scale_shape(p: f64, theta: WeibullScaleShapeTheta) -> f64 {
+        if !is_probability(p) || !Self::valid_scale_shape(theta) {
             return f64::NAN;
         }
 
         theta.scale * (-(-p).ln_1p()).powf(1.0 / theta.shape)
     }
-}
 
-#[cfg(feature = "rand")]
-impl<Rng, ShapeLink, ScaleLink> CanSimulate<Rng> for Weibull<ShapeLink, ScaleLink>
-where
-    Rng: rand::Rng,
-    ShapeLink: PositiveLink<f64>,
-    ScaleLink: PositiveLink<f64>,
-{
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.shape <= 0.0
-            || !theta.shape.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-        {
+    #[inline]
+    #[allow(clippy::suboptimal_flops, clippy::imprecise_flops)]
+    fn crps_scale_shape(y: f64, theta: WeibullScaleShapeTheta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_scale_shape(theta) {
             return f64::NAN;
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::Weibull::new(theta.scale, theta.shape)
-                .expect("validated weibull parameters must construct"),
-            rng,
-        )
+        let a = 1.0 + 1.0 / theta.shape;
+        let mean = theta.scale * ln_gamma(a).exp();
+        let t = if y == 0.0 {
+            0.0
+        } else {
+            (y / theta.scale).powf(theta.shape)
+        };
+        let cdf = -(-t).exp_m1();
+        y * (2.0 * cdf - 1.0) - 2.0 * mean * regularized_gamma_lower(a, t)
+            + mean * 2.0_f64.powf(-1.0 / theta.shape)
+    }
+
+    #[inline]
+    fn initial_scale_shape<'obs, Obs>(obs: &'obs Obs) -> Option<(f64, f64)>
+    where
+        Obs: ObservationView<'obs, Observation = f64> + 'obs,
+    {
+        let mut log_values = Vec::new();
+        for row in 0..obs.len() {
+            let y = obs.observation_at(row);
+            if y.is_finite() && y > 0.0 {
+                log_values.push((y.ln(), obs.weight_at(row)));
+            }
+        }
+        let summary = weighted_summary(&log_values)?;
+
+        let shape = if summary.variance <= VARIANCE_FLOOR {
+            10.0
+        } else {
+            positive_floor(std::f64::consts::PI / (6.0 * summary.variance).sqrt())
+        };
+        let scale = positive_floor((summary.mean + EULER_GAMMA / shape).exp());
+        Some((scale, shape))
     }
 }
 
-/// Weibull distribution with log links for shape and scale.
-pub type DefaultWeibull = Weibull<Log, Log>;
+impl<Param, FirstLink, SecondLink> Default for Weibull<Param, FirstLink, SecondLink> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+macro_rules! impl_weibull_helpers {
+    ($param:ty, $first:ident, $second:ident) => {
+        impl<$first, $second> HasCdf for Weibull<$param, $first, $second>
+        where
+            Weibull<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <Weibull<$param, $first, $second> as Family>::Theta:
+                Copy + Into<WeibullScaleShapeTheta>,
+        {
+            fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+                Self::cdf_scale_shape(y, theta.into())
+            }
+        }
+
+        impl<$first, $second> HasQuantile for Weibull<$param, $first, $second>
+        where
+            Weibull<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <Weibull<$param, $first, $second> as Family>::Theta:
+                Copy + Into<WeibullScaleShapeTheta>,
+        {
+            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+                Self::quantile_scale_shape(p, theta.into())
+            }
+        }
+
+        impl<$first, $second> HasCrps for Weibull<$param, $first, $second>
+        where
+            Weibull<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <Weibull<$param, $first, $second> as Family>::Theta:
+                Copy + Into<WeibullScaleShapeTheta>,
+        {
+            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+                Self::crps_scale_shape(y, theta.into())
+            }
+        }
+
+        #[cfg(feature = "rand")]
+        impl<Rng, $first, $second> CanSimulate<Rng> for Weibull<$param, $first, $second>
+        where
+            Rng: rand::Rng,
+            Weibull<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
+            <Weibull<$param, $first, $second> as Family>::Theta:
+                Copy + Into<WeibullScaleShapeTheta>,
+        {
+            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+                let theta = theta.into();
+                if !Self::valid_scale_shape(theta) {
+                    return f64::NAN;
+                }
+
+                rand_distr::Distribution::sample(
+                    &rand_distr::Weibull::new(theta.scale, theta.shape)
+                        .expect("validated weibull parameters must construct"),
+                    rng,
+                )
+            }
+        }
+    };
+}
+
+impl_weibull_helpers!(MeanShape, MeanLink, ShapeLink);
+impl_weibull_helpers!(ScaleShape, ScaleLink, ShapeLink);
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
-    use super::{DefaultWeibull, WeibullTheta};
+    use super::{
+        WeibullMeanShape, WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeTheta,
+    };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
-    fn weibull_gradient_matches_finite_difference() {
-        let family = DefaultWeibull::new();
-        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    fn weibull_parameterization_gradients_match_finite_difference() {
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &WeibullScaleShape::new(),
+            1.7,
+            [0.8_f64.ln(), 1.5_f64.ln()],
+        );
+        assert_gradient_matches_finite_difference::<_, 2>(
+            &WeibullMeanShape::new(),
+            1.7,
+            [1.2_f64.ln(), 1.5_f64.ln()],
+        );
     }
 
     #[test]
-    fn weibull_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultWeibull::new();
-        let theta = WeibullTheta {
+    fn weibull_mean_matches_scale_shape_equivalent() {
+        let mean = WeibullMeanShape::new();
+        let scale_shape = WeibullScaleShape::new();
+        let theta = WeibullMeanShapeTheta {
+            mean: 1.2,
             shape: 1.5,
-            scale: 0.8,
+        };
+        let canonical = theta.scale_shape();
+
+        assert_relative_eq!(
+            mean.nll(1.7, theta),
+            scale_shape.nll(1.7, canonical),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.cdf(1.7, theta),
+            scale_shape.cdf(1.7, canonical),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.quantile(0.4, theta),
+            scale_shape.quantile(0.4, canonical),
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            mean.crps(1.7, theta),
+            scale_shape.crps(1.7, canonical),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn weibull_rejects_invalid_domains_and_handles_boundaries() {
+        let family = WeibullMeanShape::new();
+        let theta = WeibullMeanShapeTheta {
+            mean: 1.2,
+            shape: 1.5,
         };
 
         assert!(family.nll(1.7, theta).is_finite());
@@ -264,21 +276,36 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    WeibullTheta {
-                        shape: 0.0,
-                        scale: theta.scale,
-                    },
+                    WeibullMeanShapeTheta {
+                        mean: 0.0,
+                        shape: 1.5
+                    }
                 )
                 .is_infinite()
         );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    WeibullMeanShapeTheta {
+                        mean: 1.2,
+                        shape: 0.0
+                    }
+                )
+                .is_infinite()
+        );
+        assert_eq!(family.cdf(0.0, theta), 0.0);
+        assert_eq!(family.cdf(-1.0, theta), 0.0);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert!(family.quantile(1.0, theta).is_infinite());
     }
 
     #[test]
-    fn weibull_cdf_matches_reference_points() {
-        let family = DefaultWeibull::new();
-        let theta = WeibullTheta {
-            shape: 2.0,
+    fn weibull_cdf_and_crps_match_fixed_values() {
+        let family = WeibullScaleShape::new();
+        let theta = WeibullScaleShapeTheta {
             scale: 3.0,
+            shape: 2.0,
         };
 
         assert_relative_eq!(
@@ -291,83 +318,17 @@ mod tests {
             0.5,
             epsilon = 1.0e-12
         );
-    }
 
-    #[test]
-    fn weibull_quantile_inverts_cdf() {
-        let family = DefaultWeibull::new();
-        let theta = WeibullTheta {
-            shape: 2.0,
-            scale: 3.0,
+        let exp_theta = WeibullScaleShapeTheta {
+            scale: 0.5,
+            shape: 1.0,
         };
-
-        assert_relative_eq!(family.quantile(0.0, theta), 0.0, epsilon = 1.0e-12);
-        assert!(family.quantile(1.0, theta).is_infinite());
-
-        let y = family.quantile(0.75, theta);
-        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
-        assert!(
-            family
-                .quantile(
-                    0.5,
-                    WeibullTheta {
-                        shape: 0.0,
-                        scale: 3.0
-                    }
-                )
-                .is_nan()
-        );
-    }
-
-    #[test]
-    fn weibull_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultWeibull::new();
-
         assert_relative_eq!(
-            family.cdf(
-                0.0,
-                WeibullTheta {
-                    shape: 2.0,
-                    scale: 3.0
-                }
-            ),
-            0.0,
+            family.crps(1.0, exp_theta),
+            0.385_335_283_236_612_7,
             epsilon = 1.0e-12
         );
-        assert_relative_eq!(
-            family.cdf(
-                -1.0,
-                WeibullTheta {
-                    shape: 2.0,
-                    scale: 3.0
-                }
-            ),
-            0.0,
-            epsilon = 1.0e-12
-        );
-        assert!(
-            family
-                .cdf(
-                    f64::NAN,
-                    WeibullTheta {
-                        shape: 2.0,
-                        scale: 3.0
-                    }
-                )
-                .is_nan()
-        );
-        assert!(
-            family
-                .cdf(
-                    1.0,
-                    WeibullTheta {
-                        shape: 0.0,
-                        scale: 3.0
-                    }
-                )
-                .is_nan()
-        );
+        assert_relative_eq!(family.crps(0.0, exp_theta), 0.25, epsilon = 1.0e-12);
     }
 
     #[cfg(feature = "rand")]
@@ -375,26 +336,15 @@ mod tests {
     fn weibull_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultWeibull::new();
+        let family = WeibullMeanShape::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            WeibullTheta {
+            WeibullMeanShapeTheta {
+                mean: 1.2,
                 shape: 1.5,
-                scale: 0.8,
             },
         );
-        assert!(sample >= 0.0 && sample.is_finite());
-        assert!(
-            family
-                .sample(
-                    &mut rng,
-                    WeibullTheta {
-                        shape: 0.0,
-                        scale: 0.8
-                    }
-                )
-                .is_nan()
-        );
+        assert!(sample > 0.0 && sample.is_finite());
     }
 }

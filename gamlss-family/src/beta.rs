@@ -1,11 +1,20 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, Log, Logit, Mu, ParameterParts, ParameterizedFamily, PositiveLink, Precision,
-    UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu, ObservationView,
+    ParameterParts, ParameterizedFamily, PositiveLink, Precision, UnitIntervalLink,
 };
 
-use crate::special::{digamma, ln_gamma};
+use gamlss_special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
+
+use crate::initial::{
+    VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary, weighted_values,
+};
+
+/// Beta distribution with logit link for mean and log link for precision.
+pub type BetaMeanPrecision = Beta<Logit, Log>;
 
 /// Beta family parameterized by mean in `(0, 1)` and positive precision.
 ///
@@ -17,7 +26,7 @@ use crate::special::{digamma, ln_gamma};
 ///
 /// let _ = Beta::<Identity, Log>::new();
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,
 }
@@ -29,13 +38,14 @@ where
 {
     /// Creates a stateless beta family.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn theta_from_eta(eta: BetaEta) -> BetaTheta {
         BetaTheta {
             mu: MuLink::inverse(eta.mu),
@@ -43,7 +53,8 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: BetaTheta) -> f64 {
         if y <= 0.0
             || y >= 1.0
@@ -65,7 +76,8 @@ where
             - (beta - 1.0) * (1.0 - y).ln()
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: BetaEta) -> (f64, BetaEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -105,6 +117,178 @@ where
     }
 }
 
+impl<MuLink, PrecisionLink> Family for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    type Eta = BetaEta;
+    type Theta = BetaTheta;
+    type NllGradientEta = BetaEta;
+    type Observation<'obs> = f64;
+
+    #[inline]
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        Self::theta_from_eta(eta)
+    }
+
+    #[inline]
+    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        Self::nll_theta(y, theta)
+    }
+
+    #[inline]
+    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(eta))
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        Self::nll_and_gradient_eta_values(y, eta)
+    }
+}
+
+impl<MuLink, PrecisionLink> ParameterizedFamily<2> for Beta<MuLink, PrecisionLink>
+where
+    MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+    PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Params = (Mu, Precision);
+    type Links = (MuLink, PrecisionLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(probability_floor(y)));
+        let Some(summary) = weighted_summary(&values) else {
+            return BetaEta::from_array([0.0, 0.0]);
+        };
+
+        let mu = probability_floor(summary.mean);
+        let max_variance = (mu * (1.0 - mu)).max(VARIANCE_FLOOR);
+        let variance = summary.variance.clamp(VARIANCE_FLOOR, max_variance * 0.99);
+        let precision = positive_floor(max_variance / variance - 1.0);
+
+        BetaEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            precision: PrecisionLink::initial_eta_from_theta(precision),
+        }
+    }
+}
+
+impl<MuLink, PrecisionLink> HasCdf for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+        if !y.is_finite()
+            || theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
+        }
+        if y >= 1.0 {
+            return 1.0;
+        }
+
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        regularized_beta(alpha, beta, y)
+    }
+}
+
+impl<MuLink, PrecisionLink> HasQuantile for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        if p <= 0.5 {
+            invert_bounded_cdf(p, 0.0, 1.0, |y| regularized_beta(alpha, beta, y))
+        } else {
+            1.0 - invert_bounded_cdf(1.0 - p, 0.0, 1.0, |tail| {
+                regularized_beta(beta, alpha, tail)
+            })
+        }
+    }
+}
+
+impl<MuLink, PrecisionLink> HasCrps for Beta<MuLink, PrecisionLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&y)
+            || !y.is_finite()
+            || theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let left = integrate_finite(0.0, y, |x| {
+            let cdf = self.cdf(x, theta);
+            cdf * cdf
+        });
+        let right = integrate_finite(y, 1.0, |x| {
+            let survival = 1.0 - self.cdf(x, theta);
+            survival * survival
+        });
+
+        left + right
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, PrecisionLink> CanSimulate<Rng> for Beta<MuLink, PrecisionLink>
+where
+    Rng: rand::Rng,
+    MuLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || theta.mu >= 1.0
+            || !theta.mu.is_finite()
+            || theta.precision <= 0.0
+            || !theta.precision.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        rand_distr::Distribution::sample(
+            &rand_distr::Beta::new(alpha, beta).expect("validated beta parameters must construct"),
+            rng,
+        )
+    }
+}
+
 /// Predictors for the beta family on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BetaEta {
@@ -115,7 +299,7 @@ pub struct BetaEta {
 }
 
 impl ParameterParts<2> for BetaEta {
-    #[inline(always)]
+    #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
             mu: values[0],
@@ -123,7 +307,7 @@ impl ParameterParts<2> for BetaEta {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
             0 => self.mu,
@@ -142,65 +326,26 @@ pub struct BetaTheta {
     pub precision: f64,
 }
 
-impl<MuLink, PrecisionLink> Family for Beta<MuLink, PrecisionLink>
-where
-    MuLink: UnitIntervalLink<f64>,
-    PrecisionLink: PositiveLink<f64>,
-{
-    type Eta = BetaEta;
-    type Theta = BetaTheta;
-    type NllGradientEta = BetaEta;
-    type Observation<'obs> = f64;
-
-    #[inline(always)]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
-    }
-
-    #[inline(always)]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
-    }
-
-    #[inline(always)]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
-    }
-
-    #[inline(always)]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
-    }
-}
-
-impl<MuLink, PrecisionLink> ParameterizedFamily<2> for Beta<MuLink, PrecisionLink>
-where
-    MuLink: UnitIntervalLink<f64>,
-    PrecisionLink: PositiveLink<f64>,
-{
-    type Params = (Mu, Precision);
-    type Links = (MuLink, PrecisionLink);
-}
-
-/// Beta distribution with logit link for mean and log link for precision.
-pub type DefaultBeta = Beta<Logit, Log>;
-
 #[cfg(test)]
 mod tests {
-    use gamlss_core::Family;
+    use approx::assert_relative_eq;
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
+    use statrs::distribution::{Beta as StatrsBeta, ContinuousCDF};
 
-    use super::{BetaTheta, DefaultBeta};
+    use super::{BetaMeanPrecision, BetaTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn beta_gradient_matches_finite_difference() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 0.4, [0.2, 1.0]);
     }
 
     #[test]
     fn beta_rejects_invalid_domain_and_has_finite_nll_inside_domain() {
-        let family = DefaultBeta::new();
+        let family = BetaMeanPrecision::new();
         let theta = BetaTheta {
             mu: 0.4,
             precision: 3.0,
@@ -219,6 +364,157 @@ mod tests {
                     },
                 )
                 .is_infinite()
+        );
+    }
+
+    #[test]
+    fn beta_cdf_and_quantile_match_statrs_reference() {
+        let family = BetaMeanPrecision::new();
+        let theta = BetaTheta {
+            mu: 0.4,
+            precision: 3.0,
+        };
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
+        let reference = StatrsBeta::new(alpha, beta).unwrap();
+
+        for y in [0.01, 0.2, 0.4, 0.8, 0.99] {
+            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+        }
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-10
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn beta_cdf_and_quantile_handle_boundaries_and_invalid_domains() {
+        let family = BetaMeanPrecision::new();
+        let theta = BetaTheta {
+            mu: 0.4,
+            precision: 3.0,
+        };
+
+        assert_eq!(family.cdf(0.0, theta), 0.0);
+        assert_eq!(family.cdf(1.0, theta), 1.0);
+        assert_eq!(family.quantile(0.0, theta), 0.0);
+        assert_eq!(family.quantile(1.0, theta), 1.0);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .cdf(
+                    0.5,
+                    BetaTheta {
+                        mu: 0.0,
+                        precision: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn beta_crps_matches_fixed_values() {
+        let family = BetaMeanPrecision::new();
+
+        assert_relative_eq!(
+            family.crps(
+                0.4,
+                BetaTheta {
+                    mu: 0.5,
+                    precision: 2.0,
+                },
+            ),
+            0.093_333_333_333_333_34,
+            epsilon = 1.0e-10
+        );
+        assert_relative_eq!(
+            family.crps(
+                0.0,
+                BetaTheta {
+                    mu: 0.5,
+                    precision: 2.0,
+                },
+            ),
+            0.333_333_333_333_333_3,
+            epsilon = 1.0e-10
+        );
+    }
+
+    #[test]
+    fn beta_crps_returns_nan_for_invalid_domains() {
+        let family = BetaMeanPrecision::new();
+
+        assert!(
+            family
+                .crps(
+                    -0.1,
+                    BetaTheta {
+                        mu: 0.4,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            family
+                .crps(
+                    0.4,
+                    BetaTheta {
+                        mu: 1.0,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn beta_crps_is_nonnegative_for_valid_domains() {
+        let family = BetaMeanPrecision::new();
+
+        assert!(
+            family.crps(
+                0.4,
+                BetaTheta {
+                    mu: 0.4,
+                    precision: 3.0,
+                },
+            ) >= 0.0
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn beta_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = BetaMeanPrecision::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            BetaTheta {
+                mu: 0.4,
+                precision: 3.0,
+            },
+        );
+
+        assert!(sample > 0.0 && sample < 1.0);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    BetaTheta {
+                        mu: 0.0,
+                        precision: 3.0,
+                    },
+                )
+                .is_nan()
         );
     }
 }

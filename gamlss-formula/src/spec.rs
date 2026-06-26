@@ -1,10 +1,10 @@
 use gamlss_core::{
-    Gamlss, Identity, Log, Logit, Mu, ParameterBlock, ParameterBlocks, Precision, Rate, Scale,
+    Cv, Gamlss, Identity, Log, LogSd, Logit, Mean, Mu, ParameterBlock, ParameterBlocks, Precision,
     Shape, Sigma,
 };
 use gamlss_family::{
-    DefaultBeta, DefaultGamma, DefaultInverseGaussian, DefaultLogNormal, DefaultNormal,
-    DefaultWeibull,
+    BetaMeanPrecision, GammaMeanCv, InverseGaussianMuShape, LogNormalMeanLogSd, NormalMuSigma,
+    WeibullMeanShape,
 };
 
 use crate::{
@@ -22,29 +22,29 @@ pub type FormulaBlock<P, L> = ParameterBlock<P, L, FormulaPredictorBlock, Formul
 /// Blocks for a normal formula model.
 pub type NormalBlocks = (FormulaBlock<Mu, Identity>, FormulaBlock<Sigma, Log>);
 /// Blocks for a gamma formula model.
-pub type GammaBlocks = (FormulaBlock<Shape, Log>, FormulaBlock<Rate, Log>);
+pub type GammaBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Cv, Log>);
 /// Blocks for a log-normal formula model.
-pub type LogNormalBlocks = (FormulaBlock<Mu, Identity>, FormulaBlock<Sigma, Log>);
+pub type LogNormalBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<LogSd, Log>);
 /// Blocks for a Weibull formula model.
-pub type WeibullBlocks = (FormulaBlock<Shape, Log>, FormulaBlock<Scale, Log>);
+pub type WeibullBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Shape, Log>);
 /// Blocks for an inverse Gaussian formula model.
 pub type InverseGaussianBlocks = (FormulaBlock<Mu, Log>, FormulaBlock<Shape, Log>);
 /// Blocks for a beta formula model.
 pub type BetaBlocks = (FormulaBlock<Mu, Logit>, FormulaBlock<Precision, Log>);
 
 /// Compiled normal formula model.
-pub type CompiledNormal<'a> = Gamlss<DefaultNormal, NormalBlocks, NumericResponse<'a>>;
+pub type CompiledNormal<'a> = Gamlss<NormalMuSigma, NormalBlocks, NumericResponse<'a>>;
 /// Compiled gamma formula model.
-pub type CompiledGamma<'a> = Gamlss<DefaultGamma, GammaBlocks, NumericResponse<'a>>;
+pub type CompiledGamma<'a> = Gamlss<GammaMeanCv, GammaBlocks, NumericResponse<'a>>;
 /// Compiled log-normal formula model.
-pub type CompiledLogNormal<'a> = Gamlss<DefaultLogNormal, LogNormalBlocks, NumericResponse<'a>>;
+pub type CompiledLogNormal<'a> = Gamlss<LogNormalMeanLogSd, LogNormalBlocks, NumericResponse<'a>>;
 /// Compiled Weibull formula model.
-pub type CompiledWeibull<'a> = Gamlss<DefaultWeibull, WeibullBlocks, NumericResponse<'a>>;
+pub type CompiledWeibull<'a> = Gamlss<WeibullMeanShape, WeibullBlocks, NumericResponse<'a>>;
 /// Compiled inverse Gaussian formula model.
 pub type CompiledInverseGaussian<'a> =
-    Gamlss<DefaultInverseGaussian, InverseGaussianBlocks, NumericResponse<'a>>;
+    Gamlss<InverseGaussianMuShape, InverseGaussianBlocks, NumericResponse<'a>>;
 /// Compiled beta formula model.
-pub type CompiledBeta<'a> = Gamlss<DefaultBeta, BetaBlocks, NumericResponse<'a>>;
+pub type CompiledBeta<'a> = Gamlss<BetaMeanPrecision, BetaBlocks, NumericResponse<'a>>;
 
 /// Built normal formula model.
 pub type BuiltNormal<'a> = BuiltModel<CompiledNormal<'a>>;
@@ -80,7 +80,7 @@ macro_rules! define_spec {
         impl $spec {
             /// Creates an empty model specification.
             #[must_use]
-            pub fn new() -> Self {
+            pub const fn new() -> Self {
                 Self {
                     response: None,
                     weights: None,
@@ -158,7 +158,7 @@ macro_rules! define_spec {
                     second_build.penalty,
                     0,
                 );
-                let blocks: $blocks = ParameterBlocks::new((first, second));
+                let blocks: $blocks = ParameterBlocks::try_new((first, second))?;
                 let model: $compiled<'a> =
                     Gamlss::try_new_with_observations(<$family>::new(), blocks, response)?;
                 let layout = model.parameter_layout();
@@ -203,7 +203,7 @@ macro_rules! define_spec {
                     0,
                 );
 
-                Ok(ParameterBlocks::new((first, second)))
+                Ok(ParameterBlocks::try_new((first, second))?)
             }
 
             /// Builds reusable prediction design from fitted term metadata.
@@ -220,24 +220,39 @@ macro_rules! define_spec {
             /// Predicts natural-scale distribution parameters with reusable prediction design.
             pub fn predict_theta_with_design(
                 &self,
-                theta: &[f64],
+                parameters: &[f64],
                 design: &PredictionDesign<$blocks>,
             ) -> Result<Vec<<$family as gamlss_core::Family>::Theta>, FormulaError>
             {
-                Ok(self.model().predict_theta_with_blocks(theta, design.blocks())?)
+                Ok(self.model().predict_theta_with_blocks(parameters, design.blocks())?)
+            }
+
+            /// Predicts natural-scale distribution parameters into an existing output slice.
+            pub fn predict_theta_with_design_into(
+                &self,
+                parameters: &[f64],
+                design: &PredictionDesign<$blocks>,
+                out: &mut [<$family as gamlss_core::Family>::Theta],
+            ) -> Result<(), FormulaError>
+            {
+                Ok(self.model().predict_theta_with_blocks_into(
+                    parameters,
+                    design.blocks(),
+                    out,
+                )?)
             }
 
             /// Predicts natural-scale distribution parameters for new rows.
             pub fn predict_theta<D>(
                 &self,
-                theta: &[f64],
+                parameters: &[f64],
                 data: &D,
             ) -> Result<Vec<<$family as gamlss_core::Family>::Theta>, FormulaError>
             where
                 D: DataView + ?Sized,
             {
                 let design = self.prediction_design(data)?;
-                self.predict_theta_with_design(theta, &design)
+                self.predict_theta_with_design(parameters, &design)
             }
         }
     };
@@ -245,7 +260,7 @@ macro_rules! define_spec {
 
 define_spec!(
     /// Typed normal model specification.
-    NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, DefaultNormal;
+    NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, NormalMuSigma;
     family_name = "normal", domain = ResponseDomain::Finite;
     first = mu_terms, mu, "mu", Mu, Identity;
     second = sigma_terms, sigma, "sigma", Sigma, Log
@@ -253,31 +268,31 @@ define_spec!(
 
 define_spec!(
     /// Typed gamma model specification.
-    GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, DefaultGamma;
+    GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, GammaMeanCv;
     family_name = "gamma", domain = ResponseDomain::Positive;
-    first = shape_terms, shape, "shape", Shape, Log;
-    second = rate_terms, rate, "rate", Rate, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = cv_terms, cv, "cv", Cv, Log
 );
 
 define_spec!(
     /// Typed log-normal model specification.
-    LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, DefaultLogNormal;
+    LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, LogNormalMeanLogSd;
     family_name = "log-normal", domain = ResponseDomain::Positive;
-    first = mu_terms, mu, "mu", Mu, Identity;
-    second = sigma_terms, sigma, "sigma", Sigma, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = log_sd_terms, log_sd, "log_sd", LogSd, Log
 );
 
 define_spec!(
     /// Typed Weibull model specification.
-    WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, DefaultWeibull;
+    WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, WeibullMeanShape;
     family_name = "weibull", domain = ResponseDomain::Positive;
-    first = shape_terms, shape, "shape", Shape, Log;
-    second = scale_terms, scale, "scale", Scale, Log
+    first = mean_terms, mean, "mean", Mean, Log;
+    second = shape_terms, shape, "shape", Shape, Log
 );
 
 define_spec!(
     /// Typed inverse Gaussian model specification.
-    InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, DefaultInverseGaussian;
+    InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, InverseGaussianMuShape;
     family_name = "inverse Gaussian", domain = ResponseDomain::Positive;
     first = mu_terms, mu, "mu", Mu, Log;
     second = shape_terms, shape, "shape", Shape, Log
@@ -285,7 +300,7 @@ define_spec!(
 
 define_spec!(
     /// Typed beta model specification.
-    BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, DefaultBeta;
+    BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, BetaMeanPrecision;
     family_name = "beta", domain = ResponseDomain::Unit;
     first = mu_terms, mu, "mu", Mu, Logit;
     second = precision_terms, precision, "precision", Precision, Log
@@ -298,73 +313,73 @@ pub struct ModelSpec;
 impl ModelSpec {
     /// Creates a normal model spec.
     #[must_use]
-    pub fn normal() -> NormalSpec {
+    pub const fn normal() -> NormalSpec {
         NormalSpec::new()
     }
 
     /// Creates a gamma model spec.
     #[must_use]
-    pub fn gamma() -> GammaSpec {
+    pub const fn gamma() -> GammaSpec {
         GammaSpec::new()
     }
 
     /// Creates a log-normal model spec.
     #[must_use]
-    pub fn log_normal() -> LogNormalSpec {
+    pub const fn log_normal() -> LogNormalSpec {
         LogNormalSpec::new()
     }
 
     /// Creates a Weibull model spec.
     #[must_use]
-    pub fn weibull() -> WeibullSpec {
+    pub const fn weibull() -> WeibullSpec {
         WeibullSpec::new()
     }
 
     /// Creates an inverse Gaussian model spec.
     #[must_use]
-    pub fn inverse_gaussian() -> InverseGaussianSpec {
+    pub const fn inverse_gaussian() -> InverseGaussianSpec {
         InverseGaussianSpec::new()
     }
 
     /// Creates a beta model spec.
     #[must_use]
-    pub fn beta() -> BetaSpec {
+    pub const fn beta() -> BetaSpec {
         BetaSpec::new()
     }
 }
 
 /// Creates a normal model spec.
 #[must_use]
-pub fn normal() -> NormalSpec {
+pub const fn normal() -> NormalSpec {
     ModelSpec::normal()
 }
 
 /// Creates a gamma model spec.
 #[must_use]
-pub fn gamma() -> GammaSpec {
+pub const fn gamma() -> GammaSpec {
     ModelSpec::gamma()
 }
 
 /// Creates a log-normal model spec.
 #[must_use]
-pub fn log_normal() -> LogNormalSpec {
+pub const fn log_normal() -> LogNormalSpec {
     ModelSpec::log_normal()
 }
 
 /// Creates a Weibull model spec.
 #[must_use]
-pub fn weibull() -> WeibullSpec {
+pub const fn weibull() -> WeibullSpec {
     ModelSpec::weibull()
 }
 
 /// Creates an inverse Gaussian model spec.
 #[must_use]
-pub fn inverse_gaussian() -> InverseGaussianSpec {
+pub const fn inverse_gaussian() -> InverseGaussianSpec {
     ModelSpec::inverse_gaussian()
 }
 
 /// Creates a beta model spec.
 #[must_use]
-pub fn beta() -> BetaSpec {
+pub const fn beta() -> BetaSpec {
     ModelSpec::beta()
 }

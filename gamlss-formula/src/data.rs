@@ -4,42 +4,6 @@ use gamlss_core::{ModelError, ObservationView};
 
 use crate::FormulaError;
 
-/// Marker type for categorical columns.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Category;
-
-/// Typed reference to a named input column.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Col<T> {
-    name: Arc<str>,
-    marker: PhantomData<T>,
-}
-
-impl<T> Col<T> {
-    /// Returns the external column name.
-    #[must_use]
-    #[inline(always)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl<T> fmt::Debug for Col<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Col").field(&self.name).finish()
-    }
-}
-
-/// Creates a typed column reference.
-#[must_use]
-#[inline]
-pub fn col<T>(name: impl Into<Arc<str>>) -> Col<T> {
-    Col {
-        name: name.into(),
-        marker: PhantomData,
-    }
-}
-
 /// Numeric column storage returned by [`DataView`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum NumericCol<'a> {
@@ -52,7 +16,7 @@ pub enum NumericCol<'a> {
 impl<'a> NumericCol<'a> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[f64] {
         match self {
             Self::Borrowed(values) => values,
@@ -69,7 +33,7 @@ impl<'a> NumericCol<'a> {
 }
 
 /// Boolean column storage returned by [`DataView`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoolCol<'a> {
     /// Borrowed contiguous `bool` storage.
     Borrowed(&'a [bool]),
@@ -80,7 +44,7 @@ pub enum BoolCol<'a> {
 impl BoolCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[bool] {
         match self {
             Self::Borrowed(values) => values,
@@ -90,7 +54,7 @@ impl BoolCol<'_> {
 }
 
 /// Categorical column storage returned by [`DataView`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatCol<'a> {
     /// Borrowed string levels.
     Borrowed(&'a [String]),
@@ -101,12 +65,110 @@ pub enum CatCol<'a> {
 impl CatCol<'_> {
     /// Returns the column as a slice.
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn as_slice(&self) -> &[String] {
         match self {
             Self::Borrowed(values) => values,
             Self::Owned(values) => values,
         }
+    }
+}
+
+/// Response storage used by compiled formula models.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NumericResponse<'a> {
+    /// Borrowed response storage.
+    Borrowed(&'a [f64]),
+    /// Owned response storage.
+    Owned(Vec<f64>),
+    /// Response with observation weights.
+    Weighted {
+        /// Response values.
+        values: NumericCol<'a>,
+        /// Observation weights.
+        weights: NumericCol<'a>,
+    },
+}
+
+impl NumericResponse<'_> {
+    /// Returns response values as a slice.
+    #[must_use]
+    #[inline]
+    pub fn as_slice(&self) -> &[f64] {
+        match self {
+            Self::Borrowed(values) => values,
+            Self::Owned(values) => values,
+            Self::Weighted { values, .. } => values.as_slice(),
+        }
+    }
+
+    /// Returns observation weights when present.
+    #[must_use]
+    #[inline]
+    pub fn weights(&self) -> Option<&[f64]> {
+        match self {
+            Self::Borrowed(_) | Self::Owned(_) => None,
+            Self::Weighted { weights, .. } => Some(weights.as_slice()),
+        }
+    }
+}
+
+impl<'row> ObservationView<'row> for NumericResponse<'_> {
+    type Observation = f64;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    #[inline]
+    fn observation_at(&'row self, row: usize) -> Self::Observation {
+        self.as_slice()[row]
+    }
+
+    fn weight_at(&self, row: usize) -> f64 {
+        self.weights().map_or(1.0, |weights| weights[row])
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        if let Some(weights) = self.weights() {
+            let expected = self.as_slice().len();
+            let actual = weights.len();
+            if actual != expected {
+                return Err(ModelError::WeightLength { expected, actual });
+            }
+            for (index, weight) in weights.iter().copied().enumerate() {
+                if !weight.is_finite() || weight < 0.0 {
+                    return Err(ModelError::InvalidWeight { index });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+/// Marker type for categorical columns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Category;
+
+/// Typed reference to a named input column.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Col<T> {
+    name: Arc<str>,
+    marker: PhantomData<T>,
+}
+
+impl<T> Col<T> {
+    /// Returns the external column name.
+    #[must_use]
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl<T> fmt::Debug for Col<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Col").field(&self.name).finish()
     }
 }
 
@@ -138,75 +200,12 @@ pub trait DataView {
     }
 }
 
-/// Response storage used by compiled formula models.
-#[derive(Debug, Clone, PartialEq)]
-pub enum NumericResponse<'a> {
-    /// Borrowed response storage.
-    Borrowed(&'a [f64]),
-    /// Owned response storage.
-    Owned(Vec<f64>),
-    /// Response with observation weights.
-    Weighted {
-        /// Response values.
-        values: NumericCol<'a>,
-        /// Observation weights.
-        weights: NumericCol<'a>,
-    },
-}
-
-impl NumericResponse<'_> {
-    /// Returns response values as a slice.
-    #[must_use]
-    #[inline(always)]
-    pub fn as_slice(&self) -> &[f64] {
-        match self {
-            Self::Borrowed(values) => values,
-            Self::Owned(values) => values,
-            Self::Weighted { values, .. } => values.as_slice(),
-        }
-    }
-
-    /// Returns observation weights when present.
-    #[must_use]
-    #[inline(always)]
-    pub fn weights(&self) -> Option<&[f64]> {
-        match self {
-            Self::Borrowed(_) | Self::Owned(_) => None,
-            Self::Weighted { weights, .. } => Some(weights.as_slice()),
-        }
-    }
-}
-
-impl<'row> ObservationView<'row> for NumericResponse<'_> {
-    type Observation = f64;
-
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.as_slice().len()
-    }
-
-    #[inline(always)]
-    fn observation_at(&'row self, row: usize) -> Self::Observation {
-        self.as_slice()[row]
-    }
-
-    fn weight_at(&self, _row: usize) -> f64 {
-        self.weights().map_or(1.0, |weights| weights[_row])
-    }
-
-    fn validate(&self) -> Result<(), ModelError> {
-        if let Some(weights) = self.weights() {
-            let expected = self.as_slice().len();
-            let actual = weights.len();
-            if actual != expected {
-                return Err(ModelError::WeightLength { expected, actual });
-            }
-            for (index, weight) in weights.iter().copied().enumerate() {
-                if !weight.is_finite() || weight < 0.0 {
-                    return Err(ModelError::InvalidWeight { index });
-                }
-            }
-        }
-        Ok(())
+/// Creates a typed column reference.
+#[must_use]
+#[inline]
+pub fn col<T>(name: impl Into<Arc<str>>) -> Col<T> {
+    Col {
+        name: name.into(),
+        marker: PhantomData,
     }
 }

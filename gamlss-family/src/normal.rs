@@ -3,23 +3,42 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, Identity,
-    LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
-    ParameterParts, ParameterizedFamily, Penalty, PositiveLink, Sigma,
+    DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
+    Identity, InitialEtaFromTheta, LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty,
+    ObservationView, ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty,
+    PositiveLink, Sigma,
 };
 
-use crate::special::unit_normal_cdf;
+use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
+
+use crate::domain::is_finite_location_scale;
+use crate::initial::{robust_location_scale, weighted_values};
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
 const INV_SQRT_PI: f64 = 0.564_189_583_547_756_3;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
-/// Нормальное распределение с типизированными link-функциями для `mu` и `sigma`.
+/// Normal distribution with `Identity` link for `mu` and `Log` link for `sigma`.
+pub type NormalMuSigma = Normal<Identity, Log>;
+
+/// Typed GAMLSS model for the default normal family.
 ///
-/// `SigmaLink` обязан быть positive link, чтобы scale-параметр оставался
-/// положительным на уровне типов.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The lifetime tracks the borrowed response slice.
+pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
+    NormalMuSigma,
+    (
+        ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
+        ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
+    ),
+    &'a [f64],
+>;
+
+/// Normal distribution with typed link functions for `mu` and `sigma`.
+///
+/// `SigmaLink` must be a positive link so that the scale parameter stays
+/// positive at the type level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
@@ -29,16 +48,17 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    /// Создаёт stateless значение family.
+    /// Creates a stateless family value.
     #[inline]
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             marker: PhantomData,
         }
     }
 
-    /// Преобразует предикторы с link-шкалы в параметры на естественной шкале.
-    #[inline(always)]
+    /// Converts link-scale predictors to natural-scale parameters.
+    #[inline]
     fn theta_from_eta(eta: NormalEta) -> NormalTheta {
         NormalTheta {
             mu: MuLink::inverse(eta.mu),
@@ -46,14 +66,19 @@ where
         }
     }
 
-    /// Negative log-likelihood одного наблюдения на естественной шкале.
+    #[inline]
+    fn valid_theta(theta: NormalTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma)
+    }
+
+    /// Negative log-likelihood for one observation on the natural scale.
     ///
-    /// Возвращает `INFINITY` при non-finite observation/location или
-    /// неположительном sigma.
-    #[inline(always)]
+    /// Returns `INFINITY` for non-finite observation/location or non-positive
+    /// sigma.
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -62,11 +87,11 @@ where
         HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
     }
 
-    /// Вычисляет NLL и gradient по eta для одного наблюдения.
+    /// Computes NLL and gradient w.r.t. eta for one observation.
     ///
-    /// Использует аналитические производные NLL по `mu` и `sigma` и
-    /// домножает на производные link-функций (chain rule).
-    #[inline(always)]
+    /// Uses analytic NLL derivatives w.r.t. `mu` and `sigma` and multiplies
+    /// by the link function derivatives (chain rule).
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
@@ -104,43 +129,6 @@ where
     }
 }
 
-/// Предикторы нормального распределения на link-шкале.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NormalEta {
-    /// Предиктор для `mu`.
-    pub mu: f64,
-    /// Предиктор для `sigma`.
-    pub sigma: f64,
-}
-
-impl ParameterParts<2> for NormalEta {
-    #[inline(always)]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline(always)]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("normal eta only has indices 0 and 1"),
-        }
-    }
-}
-
-/// Параметры нормального распределения на естественной шкале.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NormalTheta {
-    /// Location-параметр.
-    pub mu: f64,
-    /// Положительный scale-параметр.
-    pub sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for Normal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -151,22 +139,22 @@ where
     type NllGradientEta = NormalEta;
     type Observation<'obs> = f64;
 
-    #[inline(always)]
+    #[inline]
     fn theta(&self, eta: Self::Eta) -> Self::Theta {
         Self::theta_from_eta(eta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
         Self::nll_theta(y, theta)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
         Self::nll_theta(y, Self::theta_from_eta(eta))
     }
 
-    #[inline(always)]
+    #[inline]
     fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
         Self::nll_and_gradient_eta_values(y, eta)
     }
@@ -174,11 +162,26 @@ where
 
 impl<MuLink, SigmaLink> ParameterizedFamily<2> for Normal<MuLink, SigmaLink>
 where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Params = (Mu, Sigma);
     type Links = (MuLink, SigmaLink);
+
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mu, sigma)) = robust_location_scale(&values) else {
+            return NormalEta::from_array([0.0, 0.0]);
+        };
+
+        NormalEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+        }
+    }
 }
 
 impl<MuLink, SigmaLink> HasDeviance for Normal<MuLink, SigmaLink>
@@ -186,9 +189,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn deviance<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+    fn deviance(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -203,12 +205,25 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
         unit_normal_cdf((y - theta.mu) / theta.sigma)
+    }
+}
+
+impl<MuLink, SigmaLink> HasQuantile for Normal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+        if !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+
+        theta.sigma.mul_add(unit_normal_quantile(p), theta.mu)
     }
 }
 
@@ -217,9 +232,9 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps<'obs>(&self, y: Self::Observation<'obs>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
-        {
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -231,7 +246,7 @@ where
 }
 
 impl HasInitialEta for Normal<Identity, Log> {
-    fn initial_eta<'obs>(&self, y: Self::Observation<'obs>) -> Self::Eta {
+    fn initial_eta(&self, y: Self::Observation<'_>) -> Self::Eta {
         NormalEta {
             mu: y,
             sigma: DEFAULT_INITIAL_LOG_SIGMA,
@@ -247,7 +262,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -259,43 +274,66 @@ where
     }
 }
 
-/// Нормальное распределение с `Identity` link для `mu` и `Log` link для `sigma`.
-pub type DefaultNormal = Normal<Identity, Log>;
+/// Normal distribution predictors on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalEta {
+    /// Predictor for `mu`.
+    pub mu: f64,
+    /// Predictor for `sigma`.
+    pub sigma: f64,
+}
 
-/// Типизированная GAMLSS-модель для normal family по умолчанию.
-///
-/// The lifetime tracks the borrowed response slice.
-pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
-    DefaultNormal,
-    (
-        ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
-        ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
-    ),
-    &'a [f64],
->;
+impl ParameterParts<2> for NormalEta {
+    #[inline]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
 
-/// Создаёт normal GAMLSS-модель из response, двух design matrices и штрафов.
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("normal eta only has indices 0 and 1"),
+        }
+    }
+}
+
+/// Normal distribution parameters on the natural scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalTheta {
+    /// Location parameter.
+    pub mu: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+}
+
+/// Creates a normal GAMLSS model from a response, two design matrices and
+/// penalties.
 ///
 /// The returned model borrows `y` and owns the design matrices and penalties.
-pub fn normal_gamlss<'a, XMu, XSigma, PMu, PSigma>(
-    y: &'a [f64],
+pub fn normal_gamlss<XMu, XSigma, PMu, PSigma>(
+    y: &[f64],
     mu_x: XMu,
     sigma_x: XSigma,
     mu_penalty: PMu,
     sigma_penalty: PSigma,
-) -> Result<NormalGamlss<'a, XMu, XSigma, PMu, PSigma>, ModelError>
+) -> Result<NormalGamlss<'_, XMu, XSigma, PMu, PSigma>, ModelError>
 where
     XMu: DesignMatrix,
     XSigma: DesignMatrix,
     PMu: Penalty,
     PSigma: Penalty,
 {
-    let blocks = ParameterBlocks::new((
+    let blocks = ParameterBlocks::try_new((
         ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, mu_penalty, 0),
         ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, 0),
-    ));
+    ))?;
 
-    Gamlss::try_new(DefaultNormal::new(), blocks, y)
+    Gamlss::try_new(NormalMuSigma::new(), blocks, y)
 }
 
 #[cfg(test)]
@@ -304,21 +342,23 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
     use gamlss_core::{
-        DenseDesign, Family, HasCdf, HasCrps, HasDeviance, HasInitialEta, NoPenalty, Objective,
+        DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
+        HasLogDensity, HasQuantile, NoPenalty, Objective,
     };
+    use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
-    use super::{DEFAULT_INITIAL_LOG_SIGMA, DefaultNormal, NormalEta, NormalTheta, normal_gamlss};
+    use super::{DEFAULT_INITIAL_LOG_SIGMA, NormalEta, NormalMuSigma, NormalTheta, normal_gamlss};
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn normal_gradient_matches_finite_difference() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 
     #[test]
     fn normal_rejects_non_finite_domain_and_returns_nan_gradient() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -363,7 +403,7 @@ mod tests {
 
     #[test]
     fn normal_initial_eta_starts_inside_domain_for_valid_observation() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let eta = family.initial_eta(1.7);
 
         assert_relative_eq!(eta.mu, 1.7);
@@ -373,7 +413,7 @@ mod tests {
 
     #[test]
     fn normal_initial_eta_propagates_invalid_observation_without_panic() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let invalid_eta = family.initial_eta(f64::NAN);
 
         assert!(invalid_eta.mu.is_nan());
@@ -382,7 +422,7 @@ mod tests {
 
     #[test]
     fn normal_deviance_returns_non_finite_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -410,7 +450,7 @@ mod tests {
 
     #[test]
     fn normal_deviance_is_standardized_squared_residual() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let deviance = family.deviance(
             2.5,
             NormalTheta {
@@ -424,7 +464,7 @@ mod tests {
 
     #[test]
     fn normal_cdf_matches_standard_normal_reference_points() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let theta = NormalTheta {
             mu: 2.0,
             sigma: 0.5,
@@ -445,7 +485,7 @@ mod tests {
 
     #[test]
     fn normal_cdf_returns_nan_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -472,8 +512,56 @@ mod tests {
     }
 
     #[test]
+    fn density_helpers_reuse_nll() {
+        let family = NormalMuSigma::new();
+        let theta = NormalTheta {
+            mu: 0.4,
+            sigma: 0.8,
+        };
+        let nll = family.nll(1.7, theta);
+
+        assert_relative_eq!(family.log_density(1.7, theta), -nll, epsilon = 1.0e-12);
+        assert_relative_eq!(family.density(1.7, theta), (-nll).exp(), epsilon = 1.0e-12);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn normal_quantile_inverts_cdf() {
+        let family = NormalMuSigma::new();
+        let theta = NormalTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+
+        let y = family.quantile(0.75, theta);
+
+        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-7);
+        assert_eq!(family.quantile(0.0, theta), f64::NEG_INFINITY);
+        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, theta).is_nan());
+    }
+
+    #[test]
+    fn normal_quantile_matches_statrs_reference() {
+        let family = NormalMuSigma::new();
+        let theta = NormalTheta {
+            mu: 2.0,
+            sigma: 0.5,
+        };
+        let reference = StatrsNormal::new(theta.mu, theta.sigma).unwrap();
+
+        for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
+            assert_relative_eq!(
+                family.quantile(p, theta),
+                reference.inverse_cdf(p),
+                epsilon = 1.0e-6
+            );
+        }
+    }
+
+    #[test]
     fn normal_crps_matches_fixed_values() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert_relative_eq!(
             family.crps(
@@ -483,14 +571,14 @@ mod tests {
                     sigma: 2.0,
                 },
             ),
-            0.662_807_065_409_673_2,
+            0.662_807_062_509_711_8,
             epsilon = 1.0e-12
         );
     }
 
     #[test]
     fn normal_crps_returns_nan_for_invalid_domains() {
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
 
         assert!(
             family
@@ -545,7 +633,7 @@ mod tests {
     fn normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = DefaultNormal::new();
+        let family = NormalMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family

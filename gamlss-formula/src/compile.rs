@@ -14,17 +14,10 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ResponseDomain {
+pub enum ResponseDomain {
     Finite,
     Positive,
     Unit,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ParameterBuild {
-    pub(crate) predictor: FormulaPredictorBlock,
-    pub(crate) penalty: FormulaPenalty,
-    pub(crate) terms: ParameterTerms,
 }
 
 #[derive(Debug)]
@@ -61,6 +54,13 @@ enum PreparedDenseTerm<'a> {
         right_basis: OpenUniformSplineBasis,
         range: Range<usize>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterBuild {
+    pub(crate) predictor: FormulaPredictorBlock,
+    pub(crate) penalty: FormulaPenalty,
+    pub(crate) terms: ParameterTerms,
 }
 
 struct RowMajorDesignBuilder {
@@ -149,16 +149,12 @@ impl RowMajorDesignBuilder {
         self.values[index] = value;
     }
 
-    fn row_offset(&self, row: usize) -> usize {
+    const fn row_offset(&self, row: usize) -> usize {
         row * self.ncols
     }
 }
 
-pub(crate) fn validate_col_len(
-    name: &str,
-    values: &[f64],
-    expected: usize,
-) -> Result<(), FormulaError> {
+pub fn validate_col_len(name: &str, values: &[f64], expected: usize) -> Result<(), FormulaError> {
     validate_len(name, values.len(), expected)
 }
 
@@ -233,7 +229,8 @@ fn validate_response_domain(
     Ok(())
 }
 
-pub(crate) fn required_response<'a, D>(
+#[allow(clippy::ref_option)]
+pub fn required_response<'a, D>(
     family: &'static str,
     domain: ResponseDomain,
     data: &'a D,
@@ -264,7 +261,7 @@ where
     ))
 }
 
-pub(crate) fn fit_terms<D>(
+pub fn fit_terms<D>(
     parameter: &'static str,
     expr: Option<TermExpr>,
     data: &D,
@@ -391,7 +388,7 @@ where
                 let width = basis.n_basis();
                 let range = checked_range(offset, width)?;
                 let coefficients = indexed_names(parameter, term.col.name(), "pspline", width);
-                penalty.add_spline(range.clone(), term.lambda, term.penalty_order);
+                penalty.add_spline(range.clone(), term.lambda, term.penalty_order)?;
                 prepared.push(PreparedDenseTerm::PSpline {
                     values,
                     basis,
@@ -414,7 +411,7 @@ where
                 let range = checked_range(offset, width)?;
                 let coefficients =
                     indexed_names(parameter, term.col.name(), "cyclic_pspline", width);
-                penalty.add_cyclic_spline(range.clone(), term.lambda, term.penalty_order);
+                penalty.add_cyclic_spline(range.clone(), term.lambda, term.penalty_order)?;
                 prepared.push(PreparedDenseTerm::CyclicPSpline {
                     values,
                     spec,
@@ -488,8 +485,7 @@ where
                         let right_name = right_name.clone();
                         (0..right_basis.n_basis()).map(move |right_index| {
                             format!(
-                                "{parameter}.{}:{}:tensor[{left_index},{right_index}]",
-                                left_name, right_name
+                                "{parameter}.{left_name}:{right_name}:tensor[{left_index},{right_index}]"
                             )
                         })
                     })
@@ -550,7 +546,7 @@ where
     }
 
     Ok(ParameterBuild {
-        predictor: predictor_from_prepared(nrows, offset, prepared, offset_values, monotone)?,
+        predictor: predictor_from_prepared(nrows, offset, &prepared, offset_values, monotone)?,
         penalty,
         terms: ParameterTerms {
             parameter,
@@ -559,7 +555,7 @@ where
     })
 }
 
-pub(crate) fn predictor_from_fitted_terms<D>(
+pub fn predictor_from_fitted_terms<D>(
     parameter: &'static str,
     terms: &[FittedTerm],
     data: &D,
@@ -712,7 +708,7 @@ where
         return Err(FormulaError::DuplicateParameter(parameter));
     }
 
-    predictor_from_prepared(nrows, nparams, prepared, offset_values, monotone)
+    predictor_from_prepared(nrows, nparams, &prepared, offset_values, monotone)
 }
 
 fn numeric_col<'a, D>(data: &'a D, col: &Col<f64>) -> Result<NumericCol<'a>, FormulaError>
@@ -756,11 +752,11 @@ fn merge_offset(offset: &mut Option<Vec<f64>>, values: &[f64]) {
 fn predictor_from_prepared(
     nrows: usize,
     nparams: usize,
-    terms: Vec<PreparedDenseTerm<'_>>,
+    terms: &[PreparedDenseTerm<'_>],
     offset: Option<Vec<f64>>,
     monotone: Vec<MonotoneSegment>,
 ) -> Result<FormulaPredictorBlock, FormulaError> {
-    let dense = dense_from_prepared_terms(nrows, dense_ncols(&terms), &terms)?;
+    let dense = dense_from_prepared_terms(nrows, dense_ncols(terms), terms)?;
     Ok(FormulaPredictorBlock::new(dense, offset, monotone, nparams))
 }
 

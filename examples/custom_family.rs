@@ -35,35 +35,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UserNormalEta {
-    mu: f64,
-    sigma: f64,
-}
-
-impl ParameterParts<2> for UserNormalEta {
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("user normal eta only has indices 0 and 1"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UserNormalTheta {
-    mu: f64,
-    sigma: f64,
-}
-
 impl<MuLink, SigmaLink> Family for UserNormal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -144,6 +115,35 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UserNormalEta {
+    mu: f64,
+    sigma: f64,
+}
+
+impl ParameterParts<2> for UserNormalEta {
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            sigma: values[1],
+        }
+    }
+
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.sigma,
+            _ => unreachable!("user normal eta only has indices 0 and 1"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UserNormalTheta {
+    mu: f64,
+    sigma: f64,
+}
+
 fn erf_approx(x: f64) -> f64 {
     // Abramowitz-Stegun 7.1.26 approximation. Good enough for a helper example;
     // likelihood and NLL gradient above do not depend on this approximation.
@@ -162,25 +162,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = vec![1.0, 1.4, 1.8, 2.2, 2.6];
     let n = y.len();
 
-    let blocks = ParameterBlocks::new((
+    let blocks = ParameterBlocks::try_new((
         ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
         ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
-    ));
+    ))?;
 
     let family = UserNormal::<Identity, Log>::new();
     let mut model = Gamlss::try_new(family, blocks, &y)?;
-    let mut theta = model.initial_theta()?;
+    let mut parameters = model.initial_parameters()?;
     let mut grad = vec![0.0; model.dim()];
 
     for _ in 0..2_000 {
-        model.gradient(&theta, &mut grad)?;
-        for (theta_value, grad_value) in theta.iter_mut().zip(&grad) {
-            *theta_value -= 0.02 * grad_value;
+        model.gradient(&parameters, &mut grad)?;
+        for (parameter, grad_value) in parameters.iter_mut().zip(&grad) {
+            *parameter -= 0.02 * grad_value;
         }
     }
 
-    let diagnostics = model.training_diagnostics(&theta)?;
-    let coefficients = model.unpack_theta(&theta)?;
+    let diagnostics = model.training_diagnostics(&parameters)?;
+    let coefficients = model.unpack_parameters(&parameters)?;
     let mu_hat = coefficients
         .coefficients_of::<Mu>()
         .and_then(|values| values.first().copied())

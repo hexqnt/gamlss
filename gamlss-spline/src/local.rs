@@ -1,11 +1,11 @@
 use crate::SplineOrder;
 
-/// Локальный базис для одной строки — компактное sparse-представление.
+/// Local basis for one row — a compact sparse representation.
 ///
-/// Хранит до 4 ненулевых индексов и весов, достаточных для кубического
-/// сплайна. Используется в `eta_row` и `add_gradient` predictor-ов.
+/// Stores up to 4 non-zero indices and weights, sufficient for a cubic spline.
+/// Used in the `eta_row` and `add_gradient` methods of predictors.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(crate) struct LocalBasis {
+pub struct LocalBasis {
     indices: [usize; 4],
     weights: [f64; 4],
     len: usize,
@@ -22,7 +22,8 @@ impl LocalBasis {
         }
     }
 
-    /// Скалярное произведение базиса на коэффициенты.
+    /// Dot product of the basis with coefficients.
+    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn dot(self, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.for_each(|index, weight| {
@@ -31,20 +32,40 @@ impl LocalBasis {
         value
     }
 
-    /// Добавляет `scale * weights[i]` в `out[indices[i]]` для каждого
-    /// ненулевого элемента базиса.
+    /// Adds `scale * weights[i]` into `out[indices[i]]` for each non-zero
+    /// element of the basis.
+    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn add_scaled(self, scale: f64, out: &mut [f64]) {
         self.for_each(|index, weight| {
             out[index] += scale * weight;
         });
     }
+
+    /// Adds `scale * self * self^T` into a row-major `nparams × nparams`
+    /// matrix.
+    pub(crate) fn add_scaled_outer(self, scale: f64, nparams: usize, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), nparams * nparams);
+
+        for local_j in 0..self.len {
+            let j = self.indices[local_j];
+            let scaled_j = scale * self.weights[local_j];
+            for local_k in local_j..self.len {
+                let k = self.indices[local_k];
+                let delta = scaled_j * self.weights[local_k];
+                out[j * nparams + k] += delta;
+                if k != j {
+                    out[k * nparams + j] += delta;
+                }
+            }
+        }
+    }
 }
 
-/// Вычисляет локальный базис open-uniform сплайна для нормированной
-/// координаты `u` в диапазоне данных.
+/// Computes the local basis of an open-uniform spline for the normalized
+/// coordinate `u` in the data range.
 ///
-/// При `u <= 0` или `u >= 1` возвращает линейную экстраполяцию.
-pub(crate) fn open_uniform_local_basis(
+/// For `u <= 0` or `u >= 1` returns a linear extrapolation.
+pub fn open_uniform_local_basis(
     u: f64,
     order: SplineOrder,
     n_basis: usize,
@@ -73,10 +94,15 @@ pub(crate) fn open_uniform_local_basis(
     basis
 }
 
-/// Вычисляет локальный базис циклического сплайна для фазы `phi`.
+/// Computes the local basis of a cyclic spline for phase `phi`.
 ///
-/// `phi` приводится к `[0, 1)` через `rem_euclid`.
-pub(crate) fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
+/// `phi` is reduced to `[0, 1)` via `rem_euclid`.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
     let x = phi.rem_euclid(1.0) * n_basis as f64;
     let cell = x.floor() as usize;
     let u = x - cell as f64;
@@ -98,10 +124,11 @@ pub(crate) fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -
     basis
 }
 
-/// Линейная экстраполяция сплайна за границами диапазона данных.
+/// Linear extrapolation of the spline beyond the data range boundaries.
 ///
-/// Использует первые/последние два контрольных коэффициента для
-/// продолжения сплайна за `[0, 1)` с сохранением непрерывности.
+/// Uses the first/last two control coefficients to continue the spline beyond
+/// `[0, 1)` while preserving continuity.
+#[allow(clippy::cast_precision_loss)]
 fn edge_extrapolation_basis(
     offset: f64,
     degree: usize,
@@ -113,25 +140,35 @@ fn edge_extrapolation_basis(
     if right {
         LocalBasis {
             indices: [n_basis - 2, n_basis - 1, 0, 0],
-            weights: [-slope_scale * offset, 1.0 + slope_scale * offset, 0.0, 0.0],
+            weights: [
+                -slope_scale * offset,
+                slope_scale.mul_add(offset, 1.0),
+                0.0,
+                0.0,
+            ],
             len: 2,
         }
     } else {
         LocalBasis {
             indices: [0, 1, 0, 0],
-            weights: [1.0 - slope_scale * offset, slope_scale * offset, 0.0, 0.0],
+            weights: [
+                slope_scale.mul_add(-offset, 1.0),
+                slope_scale * offset,
+                0.0,
+                0.0,
+            ],
             len: 2,
         }
     }
 }
 
-/// Находит span (индекс контрольной точки) для open-uniform сплайна
-/// бинарным поиском.
+/// Finds the span (control point index) for an open-uniform spline via binary
+/// search.
 fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
     let last_control = n_basis - 1;
     let mut low = degree;
     let mut high = n_basis;
-    let mut mid = (low + high) / 2;
+    let mut mid = usize::midpoint(low, high);
     while u < open_uniform_knot(mid, n_basis, degree)
         || u >= open_uniform_knot(mid + 1, n_basis, degree)
     {
@@ -140,14 +177,14 @@ fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
         } else {
             low = mid;
         }
-        mid = (low + high) / 2;
+        mid = usize::midpoint(low, high);
     }
     mid.min(last_control)
 }
 
-/// Вычисляет веса B-spline базисных функций в заданном span.
+/// Computes the weights of the B-spline basis functions in a given span.
 ///
-/// Использует рекуррентный алгоритм Кокса-де Бура.
+/// Uses the Cox-de Boor recurrence algorithm.
 fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -> [f64; 4] {
     let mut weights = [0.0; 4];
     let mut left = [0.0; 4];
@@ -164,7 +201,7 @@ fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -
             } else {
                 weights[r] / denominator
             };
-            weights[r] = saved + right[r + 1] * temp;
+            weights[r] = right[r + 1].mul_add(temp, saved);
             saved = left[j - r] * temp;
         }
         weights[j] = saved;
@@ -172,9 +209,11 @@ fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -
     weights
 }
 
-/// Возвращает нормализованную позицию узла open-uniform сплайна.
+/// Returns the normalized knot position for an open-uniform spline.
 ///
-/// Узлы равномерно распределены между 0 и 1 с кратными граничными узлами.
+/// Knots are uniformly distributed between 0 and 1 with repeated boundary
+/// knots.
+#[allow(clippy::cast_precision_loss)]
 fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
     if index <= degree {
         0.0
@@ -185,7 +224,8 @@ fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
     }
 }
 
-/// Веса локального сплайна (linear, quadratic, cubic) по параметру `u`.
+/// Local spline weights (linear, quadratic, cubic) for parameter `u`.
+#[allow(clippy::suboptimal_flops)]
 fn spline_weights(order: SplineOrder, u: f64) -> [f64; 4] {
     match order {
         SplineOrder::Linear => [1.0 - u, u, 0.0, 0.0],
