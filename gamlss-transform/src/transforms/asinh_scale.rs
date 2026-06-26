@@ -1,4 +1,6 @@
-use crate::{TargetTransform, TransformError, median_sorted, validate_non_empty_finite};
+use crate::transforms::{
+    TargetTransform, TransformError, median_sorted, validate_non_empty_finite,
+};
 
 /// Signed inverse-hyperbolic-sine transform with a fitted robust scale.
 ///

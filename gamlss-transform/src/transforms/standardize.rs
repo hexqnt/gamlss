@@ -1,4 +1,4 @@
-use crate::{TargetTransform, TransformError, validate_non_empty_finite};
+use crate::transforms::{TargetTransform, TransformError, validate_non_empty_finite};
 
 /// Standardization transform: `(y - center) / scale`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

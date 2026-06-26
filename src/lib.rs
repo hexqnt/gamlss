@@ -87,9 +87,12 @@ pub mod prelude {
     pub use gamlss_family::prelude::*;
     pub use gamlss_spline::prelude::*;
     pub use gamlss_transform::{
-        AsinhScale, AsinhScaleState, IdentityPositive, IdentityPositiveState, Log as TargetLog,
-        Log1pShift, Log1pShiftState, LogState, Standardize, StandardizeState, TargetTransform,
-        TransformError,
+        AsinhScale, AsinhScaleState, BoxCox, BoxCoxFixed, BoxCoxState, IdentityPositive,
+        IdentityPositiveState, Log as TargetLog, Log1pShift, Log1pShiftState, LogState,
+        MaxAbsScale, MaxAbsScaleState, MinMaxScale, MinMaxScaleState, QuantileNormal,
+        QuantileState, QuantileUniform, RobustStandardize, RobustStandardizeState, Standardize,
+        StandardizeState, TargetTransform, Then, ThenState, TransformError, YeoJohnson,
+        YeoJohnsonFixed, YeoJohnsonState,
     };
 
     #[cfg(feature = "formula")]

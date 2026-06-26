@@ -13,6 +13,7 @@ categories.workspace = true
 include = ["src/**/*", "Cargo.toml", "README.md"]
 
 [dependencies]
+gamlss-special.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
