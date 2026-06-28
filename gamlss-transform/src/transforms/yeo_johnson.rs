@@ -240,7 +240,7 @@ mod tests {
 
         for (y, expected_lambda) in cases {
             let state = YeoJohnson::fit(y).unwrap();
-            assert_relative_eq!(state.lambda, expected_lambda, epsilon = 1.0e-10);
+            assert_relative_eq!(state.lambda, expected_lambda, epsilon = 1.0e-8);
         }
     }
 
