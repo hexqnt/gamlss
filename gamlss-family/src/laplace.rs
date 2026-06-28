@@ -9,10 +9,9 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use rand::RngExt;
 
+use crate::constants::LOG_2;
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
-
-const LOG_2: f64 = std::f64::consts::LN_2;
 
 /// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type LaplaceMuSigma = Laplace<Identity, Log>;

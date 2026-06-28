@@ -11,12 +11,10 @@ use gamlss_core::{
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
+use crate::constants::{HALF_LOG_2_PI, INV_SQRT_2_PI, INV_SQRT_PI};
 use crate::domain::is_finite_location_scale;
 use crate::initial::{robust_location_scale, weighted_values};
 
-const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
-const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
-const INV_SQRT_PI: f64 = 0.564_189_583_547_756_3;
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
 /// Normal distribution with `Identity` link for `mu` and `Log` link for `sigma`.

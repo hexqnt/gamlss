@@ -4,6 +4,8 @@ use gamlss_special::{
     invert_real_cdf, log_ndtr, normal_mills_ratio, owens_t, unit_normal_cdf, unit_normal_log_pdf,
 };
 
+use crate::constants::{LOG_2, SQRT_2_OVER_PI};
+
 pub use mean_sd::{
     SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
 };
@@ -11,9 +13,6 @@ pub use mu_sigma_nu::{SkewNormal, SkewNormalEta, SkewNormalMuSigmaNu, SkewNormal
 
 mod mean_sd;
 mod mu_sigma_nu;
-
-const LOG_2: f64 = std::f64::consts::LN_2;
-const SQRT_2_OVER_PI: f64 = 0.797_884_560_802_865_4;
 
 #[derive(Debug, Clone, Copy)]
 struct SkewNormalGradient {

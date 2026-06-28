@@ -5,6 +5,8 @@ use gamlss_special::{
     student_t_log_pdf_standardized,
 };
 
+use crate::constants::LOG_2;
+
 pub use mean_sd::{
     SkewStudentTMeanSd, SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
 };
@@ -14,8 +16,6 @@ pub use mu_sigma_nu_tau::{
 
 mod mean_sd;
 mod mu_sigma_nu_tau;
-
-const LOG_2: f64 = std::f64::consts::LN_2;
 
 #[inline]
 fn valid_location_scale(mu: f64, sigma: f64, nu: f64, tau: f64) -> bool {

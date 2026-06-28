@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, PositiveLink};
 
+use crate::constants::HALF_LOG_2_PI;
+
 pub use mean_cv::{
     InverseGaussianCv, InverseGaussianMeanCv, InverseGaussianMeanCvEta, InverseGaussianMeanCvTheta,
 };
@@ -11,8 +13,6 @@ pub use mean_shape::{
 
 mod mean_cv;
 mod mean_shape;
-
-const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
 /// Inverse Gaussian family parameterized by positive mean and shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

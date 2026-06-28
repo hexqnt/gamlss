@@ -14,6 +14,8 @@
 //!
 //! The `rand` feature enables the sampling API in [`family`] and corresponds to
 //! the `gamlss-family/rand` feature.
+//! The `multivariate` feature enables optional multivariate distribution
+//! families in [`family`].
 //!
 //! # Key features
 //!

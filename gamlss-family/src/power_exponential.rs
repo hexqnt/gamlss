@@ -7,10 +7,9 @@ use gamlss_core::{
 
 use gamlss_special::{invert_real_cdf, ln_gamma, regularized_gamma_lower};
 
+use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
-
-const LOG_2: f64 = std::f64::consts::LN_2;
 
 /// Power exponential distribution with identity/log/log links.
 ///

@@ -73,6 +73,55 @@ pub enum TransformError {
     },
 }
 
+/// Static composition of two target transforms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Then<First, Second>(PhantomData<(First, Second)>);
+
+impl<First, Second> TargetTransform for Then<First, Second>
+where
+    First: TargetTransform,
+    Second: TargetTransform,
+{
+    type State = ThenState<First::State, Second::State>;
+
+    fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
+        let (first, transformed) = First::fit_transform(y)?;
+        let second = Second::fit(&transformed)?;
+        Ok(ThenState { first, second })
+    }
+
+    #[inline]
+    fn transform(state: &Self::State, y: f64) -> f64 {
+        Second::transform(&state.second, First::transform(&state.first, y))
+    }
+
+    #[inline]
+    fn inverse(state: &Self::State, value: f64) -> f64 {
+        First::inverse(&state.first, Second::inverse(&state.second, value))
+    }
+
+    #[inline]
+    fn checked_transform(state: &Self::State, y: f64) -> Result<f64, TransformError> {
+        let first = First::checked_transform(&state.first, y)?;
+        Second::checked_transform(&state.second, first)
+    }
+
+    #[inline]
+    fn checked_inverse(state: &Self::State, value: f64) -> Result<f64, TransformError> {
+        let second = Second::checked_inverse(&state.second, value)?;
+        First::checked_inverse(&state.first, second)
+    }
+}
+
+/// State for [`Then`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThenState<FirstState, SecondState> {
+    /// State of the first transform.
+    pub first: FirstState,
+    /// State of the second transform.
+    pub second: SecondState,
+}
+
 /// Transform of the target variable with state estimated on the training target.
 pub trait TargetTransform {
     /// State of the transform, persisted alongside the fitted model.
@@ -203,55 +252,6 @@ pub trait TargetTransform {
         out: &mut [f64],
     ) -> Result<(), TransformError> {
         map_slice_into(values, out, |value| Self::checked_inverse(state, value))
-    }
-}
-
-/// Static composition of two target transforms.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Then<First, Second>(PhantomData<(First, Second)>);
-
-/// State for [`Then`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThenState<FirstState, SecondState> {
-    /// State of the first transform.
-    pub first: FirstState,
-    /// State of the second transform.
-    pub second: SecondState,
-}
-
-impl<First, Second> TargetTransform for Then<First, Second>
-where
-    First: TargetTransform,
-    Second: TargetTransform,
-{
-    type State = ThenState<First::State, Second::State>;
-
-    fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
-        let (first, transformed) = First::fit_transform(y)?;
-        let second = Second::fit(&transformed)?;
-        Ok(ThenState { first, second })
-    }
-
-    #[inline]
-    fn transform(state: &Self::State, y: f64) -> f64 {
-        Second::transform(&state.second, First::transform(&state.first, y))
-    }
-
-    #[inline]
-    fn inverse(state: &Self::State, value: f64) -> f64 {
-        First::inverse(&state.first, Second::inverse(&state.second, value))
-    }
-
-    #[inline]
-    fn checked_transform(state: &Self::State, y: f64) -> Result<f64, TransformError> {
-        let first = First::checked_transform(&state.first, y)?;
-        Second::checked_transform(&state.second, first)
-    }
-
-    #[inline]
-    fn checked_inverse(state: &Self::State, value: f64) -> Result<f64, TransformError> {
-        let second = Second::checked_inverse(&state.second, value)?;
-        First::checked_inverse(&state.first, second)
     }
 }
 

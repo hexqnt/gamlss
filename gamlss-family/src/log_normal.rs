@@ -6,6 +6,8 @@ use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Identity, Log};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
+use crate::constants::HALF_LOG_2_PI;
+
 pub use log_location_log_sd::{
     LogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
 };
@@ -17,8 +19,6 @@ mod log_location_log_sd;
 mod mean_cv;
 mod mean_log_sd;
 mod median_log_sd;
-
-const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 
 /// Log-normal family implementation carrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

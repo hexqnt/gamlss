@@ -34,6 +34,12 @@ pub use log_normal::{
 };
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
+#[cfg(feature = "multivariate")]
+pub use multivariate::normal::{
+    DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
+    DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
+    MvNormalCholeskyTheta,
+};
 pub use negative_binomial::{
     NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
     NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
@@ -88,6 +94,7 @@ pub mod beinf;
 pub mod bernoulli;
 /// Beta distribution.
 pub mod beta;
+mod constants;
 mod domain;
 /// Exponential distribution.
 pub mod exponential;
@@ -112,6 +119,9 @@ pub mod log_normal;
 pub mod logistic;
 /// Lomax distribution.
 pub mod lomax;
+/// Multivariate distributions.
+#[cfg(feature = "multivariate")]
+pub mod multivariate;
 /// Negative binomial distribution.
 pub mod negative_binomial;
 /// Normal distribution.
@@ -142,6 +152,13 @@ pub mod zip;
 
 /// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
+    #[cfg(feature = "multivariate")]
+    pub use crate::{
+        DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
+        DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
+        MvNormalCholeskyTheta,
+    };
+
     pub use crate::{
         Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta,
         BernoulliProbability, BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta,

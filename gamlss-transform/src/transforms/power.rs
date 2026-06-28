@@ -9,6 +9,39 @@ const LAMBDA_SEARCH_RADIUS: f64 = 2.0;
 const LAMBDA_SEARCH_ITERATIONS: usize = 80;
 const LAMBDA_SEARCH_GRID: [f64; 7] = [-5.0, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0];
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ProfileAccumulator {
+    count: f64,
+    mean: f64,
+    sum_squares: f64,
+}
+
+impl ProfileAccumulator {
+    pub(super) fn push(&mut self, value: f64) -> Option<()> {
+        if !value.is_finite() {
+            return None;
+        }
+
+        self.count += 1.0;
+        let delta = value - self.mean;
+        self.mean += delta / self.count;
+        self.sum_squares = delta.mul_add(value - self.mean, self.sum_squares);
+        Some(())
+    }
+
+    pub(super) fn log_likelihood(self) -> Option<f64> {
+        if self.count < 2.0 {
+            return None;
+        }
+
+        let variance = self.sum_squares / self.count;
+        if variance.is_finite() && variance > 0.0 {
+            Some(-0.5 * self.count * variance.ln())
+        } else {
+            None
+        }
+    }
+}
 pub(super) fn fit_lambda(
     y: &[f64],
     objective: impl Fn(&[f64], f64) -> Option<f64>,
@@ -58,39 +91,5 @@ pub(super) fn fit_lambda(
         Ok(lambda)
     } else {
         Err(TransformError::InvalidParameter { name: "lambda" })
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(super) struct ProfileAccumulator {
-    count: f64,
-    mean: f64,
-    sum_squares: f64,
-}
-
-impl ProfileAccumulator {
-    pub(super) fn push(&mut self, value: f64) -> Option<()> {
-        if !value.is_finite() {
-            return None;
-        }
-
-        self.count += 1.0;
-        let delta = value - self.mean;
-        self.mean += delta / self.count;
-        self.sum_squares = delta.mul_add(value - self.mean, self.sum_squares);
-        Some(())
-    }
-
-    pub(super) fn log_likelihood(self) -> Option<f64> {
-        if self.count < 2.0 {
-            return None;
-        }
-
-        let variance = self.sum_squares / self.count;
-        if variance.is_finite() && variance > 0.0 {
-            Some(-0.5 * self.count * variance.ln())
-        } else {
-            None
-        }
     }
 }
