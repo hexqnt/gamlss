@@ -404,8 +404,13 @@ pub trait HasCrps: Family {
 
 /// Distribution helper for simulation.
 pub trait CanSimulate<Rng>: Family {
-    /// Generates one value for natural-scale parameters.
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
+    /// Generated sample representation.
+    ///
+    /// Scalar families usually use `f64`; multivariate families can use arrays
+    /// or custom row-value structs.
+    type Sample;
+    /// Generates one sample for natural-scale parameters.
+    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> Self::Sample;
 }
 
 /// Distribution helper for per-observation deviance.

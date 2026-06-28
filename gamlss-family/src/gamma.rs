@@ -163,6 +163,8 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
+            type Sample = f64;
+
             fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
                 let theta = theta.into();
                 if !Self::valid_shape_rate(theta) {

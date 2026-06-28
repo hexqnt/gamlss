@@ -184,6 +184,8 @@ macro_rules! impl_weibull_helpers {
             <Weibull<$param, $first, $second> as Family>::Theta:
                 Copy + Into<WeibullScaleShapeTheta>,
         {
+            type Sample = f64;
+
             fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
                 let theta = theta.into();
                 if !Self::valid_scale_shape(theta) {

@@ -299,6 +299,8 @@ where
     Rng: rand::Rng,
     MuLink: PositiveLink<f64>,
 {
+    type Sample = f64;
+
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;

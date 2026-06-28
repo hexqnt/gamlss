@@ -118,6 +118,8 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
+            type Sample = f64;
+
             fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
                 let theta = theta.into();
                 if !Self::valid_rate(theta) {

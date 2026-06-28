@@ -270,6 +270,8 @@ where
     MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
+    type Sample = f64;
+
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if theta.mu <= 0.0
             || theta.mu >= 1.0

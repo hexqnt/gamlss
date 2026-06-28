@@ -155,6 +155,8 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
+            type Sample = f64;
+
             fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
                 let theta = theta.into();
                 if !Self::valid_log_location_log_sd(theta) {

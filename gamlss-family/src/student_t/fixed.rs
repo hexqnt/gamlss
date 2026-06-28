@@ -217,6 +217,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    type Sample = f64;
+
     #[allow(clippy::suboptimal_flops)]
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {

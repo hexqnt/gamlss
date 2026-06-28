@@ -193,6 +193,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
+    type Sample = f64;
+
     fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
         if !Self::valid_theta(theta) {
             return f64::NAN;
