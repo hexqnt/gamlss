@@ -400,7 +400,9 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
         .x()
         .dense()
         .values()
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .enumerate()
     {
         assert_relative_eq!(values[0], 1.0);
