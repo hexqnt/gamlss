@@ -251,7 +251,7 @@ impl<MuLink> HasCdf for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         Self::cdf_theta(y, theta)
     }
 }

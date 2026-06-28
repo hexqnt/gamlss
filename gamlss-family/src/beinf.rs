@@ -300,7 +300,7 @@ where
     NuLink: PositiveLink<f64>,
     TauLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         Self::cdf_theta(y, theta)
     }
 }

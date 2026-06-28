@@ -204,7 +204,7 @@ where
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
             || !theta.mu.is_finite()

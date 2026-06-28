@@ -34,9 +34,9 @@
 pub use design::{DenseDesign, DesignMatrix, RowMultiplier};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, DenseInformation, Family, HasCdf, HasCrps, HasDensity, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
-    ParameterParts, ParameterizedFamily,
+    CanSimulate, DenseInformation, Family, HasCdf, HasConditionalCdf, HasCrps, HasDensity,
+    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
+    HasMarginalCdf, HasQuantile, HasRosenblattTransform, ParameterParts, ParameterizedFamily,
 };
 pub use link::{
     ClampedLog, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink, Softplus,
@@ -89,18 +89,18 @@ pub mod prelude {
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
         CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation, DesignMatrix,
         Dispersion, Family, FiniteScalarObservations, Gamlss, GamlssBlocks, GlobalPenalty,
-        GradientWorkspace, HasCdf, HasCrps, HasDensity, HasDesignMatrix, HasDeviance,
-        HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasQuantile,
-        HingeQuadraticPenalty, Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder,
-        LinearPredictorBlock, LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus,
-        LogSd, Logit, MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective,
-        ObjectiveScale, ObservationView, OffsetBlock, OneProbability, ParameterBlock,
-        ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts,
-        ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Power, Precision,
-        PredictionView, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty,
-        RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau,
-        TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets,
-        UnitIntervalLink, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
-        ZeroProbability,
+        GradientWorkspace, HasCdf, HasConditionalCdf, HasCrps, HasDensity, HasDesignMatrix,
+        HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
+        HasMarginalCdf, HasQuantile, HasRosenblattTransform, HingeQuadraticPenalty, Identity,
+        InitialEtaFromTheta, LinearForm, LinearFormBuilder, LinearPredictorBlock,
+        LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit,
+        MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
+        ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
+        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
+        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictionView,
+        PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale,
+        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
+        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, UnitIntervalLink,
+        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

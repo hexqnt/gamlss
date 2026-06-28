@@ -5,13 +5,14 @@
 )]
 use gamlss_core::{
     ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion, Family,
-    FiniteScalarObservations, FloorSoftplusScalar, Gamlss, HasDensity, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, Identity,
-    LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit, Mean, Median, Mu,
-    NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
-    OneProbability, ParameterBlock, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-    ParameterizedFamily, PositiveLink, Power, PredictorBlock, Probability, Sigma, Size, Softplus,
-    SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
+    FiniteScalarObservations, FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity,
+    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
+    HasMarginalCdf, HasRosenblattTransform, Identity, LinearForm, LinearFormBuilder, Log,
+    LogLocation, LogSd, Logit, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective,
+    ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterLayout,
+    ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power,
+    PredictorBlock, Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
+    TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,9 +117,57 @@ impl HasDeviance for DependentConstraintFamily {
     }
 }
 
+impl HasCdf for DependentConstraintFamily {
+    fn cdf(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if Self::target(observation) <= theta.0 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+}
+
+impl HasConditionalCdf for DependentConstraintFamily {}
+
+impl HasRosenblattTransform for DependentConstraintFamily {}
+
 impl HasInitialEta for DependentConstraintFamily {
     fn initial_eta(&self, observation: Self::Observation<'_>) -> Self::Eta {
         (Self::target(observation), 0.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScalarCdfFamily;
+
+impl Family for ScalarCdfFamily {
+    type Eta = f64;
+    type Theta = f64;
+    type NllGradientEta = f64;
+    type Observation<'obs> = f64;
+
+    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        eta
+    }
+
+    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        (observation - theta).abs()
+    }
+
+    fn nll_and_gradient_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: Self::Eta,
+    ) -> (f64, Self::NllGradientEta) {
+        let nll = self.nll(observation, eta);
+        let gradient = if observation < eta { 1.0 } else { -1.0 };
+        (nll, gradient)
+    }
+}
+
+impl HasCdf for ScalarCdfFamily {
+    fn cdf(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        if observation <= theta { 1.0 } else { 0.0 }
     }
 }
 
@@ -230,6 +279,24 @@ fn public_api_supports_default_log_density_helper() {
         -DependentConstraintFamily.nll(&[1.0, 3.0], theta)
     );
     assert_eq!(DependentConstraintFamily.density(&[1.0, 3.0], theta), 1.0);
+}
+
+#[test]
+fn cdf_contract_accepts_family_observations_and_scalar_marginals() {
+    assert_eq!(DependentConstraintFamily.cdf(&[1.0, 3.0], (2.0, 0.0)), 1.0);
+    assert_eq!(DependentConstraintFamily.cdf(&[3.0, 5.0], (2.0, 0.0)), 0.0);
+
+    assert_eq!(ScalarCdfFamily.marginal_cdf(0, 1.0, 2.0), 1.0);
+    assert!(ScalarCdfFamily.marginal_cdf(1, 1.0, 2.0).is_nan());
+}
+
+#[test]
+fn multivariate_cdf_marker_traits_remain_root_reexports() {
+    fn assert_conditional_cdf<F: HasConditionalCdf>() {}
+    fn assert_rosenblatt_transform<F: HasRosenblattTransform>() {}
+
+    assert_conditional_cdf::<DependentConstraintFamily>();
+    assert_rosenblatt_transform::<DependentConstraintFamily>();
 }
 
 #[test]

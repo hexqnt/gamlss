@@ -181,7 +181,7 @@ where
     NuLink: Link<f64>,
     TauLink: Link<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::NAN;
         };

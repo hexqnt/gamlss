@@ -344,17 +344,60 @@ where
     }
 }
 
-/// Distribution helper for the CDF.
+/// Distribution helper for the canonical CDF of a family.
+///
+/// For scalar families this is the ordinary univariate CDF. For multivariate
+/// families this is the joint lower-orthant CDF,
+/// `P(Y_1 <= y_1, ..., Y_d <= y_d)`, evaluated at the full observation value.
 pub trait HasCdf: Family {
-    /// CDF at point `y` for natural-scale parameters.
+    /// CDF at observation `y` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid query
     /// points or parameter domains rather than panicking, matching the base
     /// [`Family`] likelihood contract. For finite query points outside but
     /// below the distribution support, implementations should return the
     /// boundary probability `0.0`.
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64;
 }
+
+/// Distribution helper for component-wise marginal CDFs.
+///
+/// This is separate from [`HasCdf`] because the canonical multivariate CDF is a
+/// joint CDF. Marginal CDFs need a component selector for multivariate
+/// observations.
+pub trait HasMarginalCdf: Family {
+    /// Marginal CDF for `component` at scalar point `y`.
+    ///
+    /// Implementations should return a non-finite value for an invalid
+    /// component index or invalid parameter domain rather than panicking.
+    fn marginal_cdf(&self, component: usize, y: f64, theta: Self::Theta) -> f64;
+}
+
+impl<F> HasMarginalCdf for F
+where
+    F: HasCdf + for<'obs> Family<Observation<'obs> = f64>,
+{
+    #[inline]
+    fn marginal_cdf(&self, component: usize, y: f64, theta: Self::Theta) -> f64 {
+        if component == 0 {
+            self.cdf(y, theta)
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+/// Marker extension trait for families with conditional CDF support.
+///
+/// This is reserved for multivariate diagnostics and forecasting APIs that
+/// need conditional probability statements rather than a joint CDF.
+pub trait HasConditionalCdf: Family {}
+
+/// Marker extension trait for families with Rosenblatt transform support.
+///
+/// This is reserved for multivariate PIT and residual diagnostics where the
+/// joint CDF is not a scalar PIT substitute.
+pub trait HasRosenblattTransform: Family {}
 
 /// Distribution helper for the quantile function.
 pub trait HasQuantile: Family {

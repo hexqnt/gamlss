@@ -222,7 +222,7 @@ where
     SizeLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         Zinb::<Log, Log, Logit>::cdf_theta(y, theta.component())
     }
 }

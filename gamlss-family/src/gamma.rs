@@ -131,7 +131,7 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
-            fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::cdf_shape_rate(y, theta.into())
             }
         }

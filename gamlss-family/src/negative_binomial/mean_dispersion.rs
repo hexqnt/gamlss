@@ -192,7 +192,7 @@ where
     MeanLink: PositiveLink<f64>,
     DispersionLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         NegativeBinomial::<Log, Log>::cdf_theta(y, theta.mean_size())
     }
 }

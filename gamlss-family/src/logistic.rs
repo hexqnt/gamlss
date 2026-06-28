@@ -175,7 +175,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }

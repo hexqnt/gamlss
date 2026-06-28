@@ -86,7 +86,7 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
-            fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::cdf_rate(y, theta.into())
             }
         }

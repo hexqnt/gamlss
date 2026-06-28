@@ -272,7 +272,7 @@ where
     DispersionLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         Self::cdf_theta(y, theta)
     }
 }
@@ -479,7 +479,7 @@ where
     CvLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
         Tweedie::<Log, Log, Logit>::cdf_theta(y, theta.into())
     }
 }

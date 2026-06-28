@@ -120,7 +120,7 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
-            fn cdf(&self, y: f64, theta: Self::Theta) -> f64 {
+            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
                 Self::cdf_log_location_log_sd(y, theta.into())
             }
         }
