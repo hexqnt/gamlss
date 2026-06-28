@@ -4,15 +4,16 @@
     clippy::cast_precision_loss
 )]
 use gamlss_core::{
-    ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion, Family,
-    FiniteScalarObservations, FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity,
-    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-    HasMarginalCdf, HasRosenblattTransform, Identity, LinearForm, LinearFormBuilder, Log,
-    LogLocation, LogSd, Logit, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective,
-    ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterLayout,
-    ParameterName, ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power,
-    PredictorBlock, Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
-    TrainingDiagnostics, UnitIntervalLink, ZeroProbability,
+    CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion,
+    Family, FiniteScalarObservations, FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf,
+    HasConditionalCdf, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
+    HasInitialEta, HasLogDensity, HasMarginalCdf, HasRosenblattTransform, Identity, LinearForm,
+    LinearFormBuilder, Log, LogLocation, LogSd, Logit, LowerTriangularParameterBlock, Mean, Median,
+    Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
+    OneProbability, ParameterBlock, ParameterBlocks, ParameterLayout, ParameterName,
+    ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power, PredictorBlock,
+    Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics,
+    UnitIntervalLink, VectorParameterBlock, ZeroProbability,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,6 +131,8 @@ impl HasCdf for DependentConstraintFamily {
 impl HasConditionalCdf for DependentConstraintFamily {}
 
 impl HasRosenblattTransform for DependentConstraintFamily {}
+
+impl FixedDimensionalFamily<2> for DependentConstraintFamily {}
 
 impl HasInitialEta for DependentConstraintFamily {
     fn initial_eta(&self, observation: Self::Observation<'_>) -> Self::Eta {
@@ -257,6 +260,35 @@ fn semantic_parameter_markers_remain_root_reexports() {
     assert_eq!(ZeroProbability::NAME, "zero_probability");
     assert_eq!(OneProbability::NAME, "one_probability");
     assert_eq!(Power::NAME, "power");
+    assert_eq!(CholeskyScale::NAME, "cholesky");
+}
+
+#[test]
+fn structured_parameter_blocks_remain_root_reexports() {
+    let vector = VectorParameterBlock::<Mu, 2, _, _>::new(
+        [
+            gamlss_core::LinearPredictorBlock::new(DenseDesign::intercept(3)),
+            gamlss_core::LinearPredictorBlock::new(DenseDesign::intercept(3)),
+        ],
+        NoPenalty,
+        99,
+    );
+    let lower = LowerTriangularParameterBlock::<CholeskyScale, 2, _, _>::new(
+        vec![
+            gamlss_core::LinearPredictorBlock::new(DenseDesign::intercept(3)),
+            gamlss_core::LinearPredictorBlock::new(DenseDesign::intercept(3)),
+            gamlss_core::LinearPredictorBlock::new(DenseDesign::intercept(3)),
+        ],
+        NoPenalty,
+        99,
+    );
+
+    let (vector, lower) = ParameterBlocks::new((vector, lower));
+
+    assert_eq!(vector.range(), 0..2);
+    assert_eq!(vector.component_range(1), Some(1..2));
+    assert_eq!(lower.range(), 2..5);
+    assert_eq!(lower.entry_range(1, 0), Some(3..4));
 }
 
 #[test]
@@ -294,9 +326,11 @@ fn cdf_contract_accepts_family_observations_and_scalar_marginals() {
 fn multivariate_cdf_marker_traits_remain_root_reexports() {
     fn assert_conditional_cdf<F: HasConditionalCdf>() {}
     fn assert_rosenblatt_transform<F: HasRosenblattTransform>() {}
+    fn assert_fixed_dimensional<F: FixedDimensionalFamily<2>>() {}
 
     assert_conditional_cdf::<DependentConstraintFamily>();
     assert_rosenblatt_transform::<DependentConstraintFamily>();
+    assert_fixed_dimensional::<DependentConstraintFamily>();
 }
 
 #[test]

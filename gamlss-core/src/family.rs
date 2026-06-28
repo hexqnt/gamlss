@@ -143,6 +143,9 @@ where
     ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
 }
 
+/// Marker trait for families with a compile-time fixed observation dimension.
+pub trait FixedDimensionalFamily<const D: usize>: Family {}
+
 /// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///
 /// `part(index)` is used in the model hot path after compile-time arity

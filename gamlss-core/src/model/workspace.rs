@@ -20,31 +20,40 @@ impl GradientWorkspace {
         Self::default()
     }
 
-    pub(crate) fn prepare(&mut self, block_count: usize) {
+    /// Ensures storage for `block_count` independent row/local gradient buffers.
+    ///
+    /// Custom [`crate::GamlssBlocks`] implementations can use more workspace
+    /// buffers than there are public parameter slices when one structured
+    /// parameter contains multiple scalar predictor components.
+    pub fn prepare(&mut self, block_count: usize) {
         self.row_gradients.resize_with(block_count, Vec::new);
         self.local_gradients.resize_with(block_count, Vec::new);
     }
 
-    pub(crate) fn prepare_row_gradient(&mut self, index: usize, len: usize) {
+    /// Resizes the row-gradient buffer at `index` to `len`.
+    pub fn prepare_row_gradient(&mut self, index: usize, len: usize) {
         let row_gradient = &mut self.row_gradients[index];
         row_gradient.resize(len, 0.0);
     }
 
-    pub(crate) fn set_row_gradient(&mut self, index: usize, row: usize, value: f64) {
+    /// Sets one row-gradient entry.
+    pub fn set_row_gradient(&mut self, index: usize, row: usize, value: f64) {
         debug_assert!(index < self.row_gradients.len());
         let row_gradient = &mut self.row_gradients[index];
         debug_assert!(row < row_gradient.len());
         row_gradient[row] = value;
     }
 
-    pub(crate) fn local_gradient_mut(&mut self, index: usize, len: usize) -> &mut [f64] {
+    /// Returns a zero-filled local coefficient-gradient buffer.
+    pub fn local_gradient_mut(&mut self, index: usize, len: usize) -> &mut [f64] {
         let gradient = &mut self.local_gradients[index];
         gradient.resize(len, 0.0);
         gradient.fill(0.0);
         gradient
     }
 
-    pub(crate) fn row_gradient_and_local_gradient_mut(
+    /// Returns the row-gradient buffer and a zero-filled local gradient buffer.
+    pub fn row_gradient_and_local_gradient_mut(
         &mut self,
         index: usize,
         local_gradient_len: usize,
@@ -59,7 +68,8 @@ impl GradientWorkspace {
         )
     }
 
-    pub(crate) fn penalty_gradient_mut(&mut self, len: usize) -> &mut [f64] {
+    /// Returns a zero-filled temporary buffer suitable for penalty gradients.
+    pub fn penalty_gradient_mut(&mut self, len: usize) -> &mut [f64] {
         self.penalty_gradient.resize(len, 0.0);
         self.penalty_gradient.fill(0.0);
         &mut self.penalty_gradient

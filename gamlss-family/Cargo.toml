@@ -14,6 +14,7 @@ include = ["src/**/*", "Cargo.toml", "README.md"]
 
 [features]
 default = []
+multivariate = []
 rand = ["dep:rand", "dep:rand_distr"]
 
 [dependencies]

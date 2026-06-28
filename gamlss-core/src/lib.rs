@@ -34,9 +34,10 @@
 pub use design::{DenseDesign, DesignMatrix, RowMultiplier};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, DenseInformation, Family, HasCdf, HasConditionalCdf, HasCrps, HasDensity,
-    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-    HasMarginalCdf, HasQuantile, HasRosenblattTransform, ParameterParts, ParameterizedFamily,
+    CanSimulate, DenseInformation, Family, FixedDimensionalFamily, HasCdf, HasConditionalCdf,
+    HasCrps, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta,
+    HasLogDensity, HasMarginalCdf, HasQuantile, HasRosenblattTransform, ParameterParts,
+    ParameterizedFamily,
 };
 pub use link::{
     ClampedLog, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink, Softplus,
@@ -49,10 +50,10 @@ pub use model::{
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
-    AssignParameterOffsets, ComponentMean, Cv, Dispersion, LogLocation, LogSd, Mean, Median, Mu,
-    Nu, OneProbability, ParameterBlock, ParameterBlocks, ParameterName, Power, Precision,
-    Probability, Rate, Scale, Shape, Sigma, Size, Tau, TotalMean, TryAssignParameterOffsets,
-    ZeroProbability,
+    AssignParameterOffsets, CholeskyScale, ComponentMean, Cv, Dispersion, LogLocation, LogSd,
+    LowerTriangularParameterBlock, Mean, Median, Mu, Nu, OneProbability, ParameterBlock,
+    ParameterBlocks, ParameterName, Power, Precision, Probability, Rate, Scale, Shape, Sigma, Size,
+    Tau, TotalMean, TryAssignParameterOffsets, VectorParameterBlock, ZeroProbability,
 };
 pub use penalty::{
     AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
@@ -86,21 +87,22 @@ pub mod predictor;
 /// Most commonly used imports from `gamlss-core`.
 pub mod prelude {
     pub use crate::{
-        AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, ClampedLog,
-        CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation, DesignMatrix,
-        Dispersion, Family, FiniteScalarObservations, Gamlss, GamlssBlocks, GlobalPenalty,
-        GradientWorkspace, HasCdf, HasConditionalCdf, HasCrps, HasDensity, HasDesignMatrix,
-        HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-        HasMarginalCdf, HasQuantile, HasRosenblattTransform, HingeQuadraticPenalty, Identity,
-        InitialEtaFromTheta, LinearForm, LinearFormBuilder, LinearPredictorBlock,
-        LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus, LogSd, Logit,
-        MatrixPenalty, Mean, Median, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
-        ObservationView, OffsetBlock, OneProbability, ParameterBlock, ParameterBlocks,
-        ParameterCoefficients, ParameterLayout, ParameterName, ParameterParts, ParameterSlice,
-        ParameterizedFamily, Penalty, PositiveLink, Power, Precision, PredictionView,
-        PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty, RowMultiplier, Scale,
-        SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, UnitIntervalLink,
-        UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
+        AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, CholeskyScale,
+        ClampedLog, CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation,
+        DesignMatrix, Dispersion, Family, FiniteScalarObservations, FixedDimensionalFamily, Gamlss,
+        GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasConditionalCdf, HasCrps,
+        HasDensity, HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
+        HasInitialEta, HasLogDensity, HasMarginalCdf, HasQuantile, HasRosenblattTransform,
+        HingeQuadraticPenalty, Identity, InitialEtaFromTheta, LinearForm, LinearFormBuilder,
+        LinearPredictorBlock, LinearPredictorGeometry, LinearTerm, Link, Log, LogLocation, LogPlus,
+        LogSd, Logit, LowerTriangularParameterBlock, MatrixPenalty, Mean, Median, ModelError, Mu,
+        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, OneProbability,
+        ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterLayout, ParameterName,
+        ParameterParts, ParameterSlice, ParameterizedFamily, Penalty, PositiveLink, Power,
+        Precision, PredictionView, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty,
+        RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau,
+        TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets,
+        UnitIntervalLink, UnpackedParameters, VectorParameterBlock, WithGlobalPenalties,
+        WorkspaceGamlss, ZeroProbability,
     };
 }

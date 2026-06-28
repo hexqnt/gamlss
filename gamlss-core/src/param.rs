@@ -247,6 +247,14 @@ impl ParameterName for Precision {
     const NAME: &'static str = "precision";
 }
 
+/// Marker for a Cholesky scale factor parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CholeskyScale;
+
+impl ParameterName for CholeskyScale {
+    const NAME: &'static str = "cholesky";
+}
+
 /// Typed coefficient block for a single distribution parameter.
 ///
 /// `P` specifies the parameter role, `L` specifies the link function, `X` holds
@@ -408,6 +416,391 @@ pub trait ParameterName {
     const NAME: &'static str;
 }
 
+/// Typed coefficient block for a vector-valued distribution parameter.
+///
+/// The block owns one scalar predictor per vector component and lays their
+/// local coefficient ranges contiguously inside the common beta vector. It is
+/// intended for structured families whose natural parameter is a vector, such
+/// as a multivariate normal mean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorParameterBlock<P, const D: usize, X, Penalty> {
+    x: [X; D],
+    penalty: Penalty,
+    offset: usize,
+    len: usize,
+    component_offsets: [usize; D],
+    marker: PhantomData<P>,
+}
+
+impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty>
+where
+    X: PredictorBlock,
+{
+    /// Creates a vector block from one predictor per component.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the sum of component predictor lengths does not fit in `usize`.
+    #[must_use]
+    pub fn new(x: [X; D], penalty: Penalty, offset: usize) -> Self {
+        let mut component_offsets = [0; D];
+        let mut len: usize = 0;
+        for index in 0..D {
+            component_offsets[index] = len;
+            len = len
+                .checked_add(x[index].nparams())
+                .expect("vector parameter block length must fit in usize");
+        }
+        Self {
+            x,
+            penalty,
+            offset,
+            len,
+            component_offsets,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty> {
+    /// Returns a copy of the block with a new offset.
+    #[must_use]
+    #[inline]
+    pub const fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Returns all component predictors.
+    #[must_use]
+    #[inline]
+    pub const fn components(&self) -> &[X; D] {
+        &self.x
+    }
+
+    /// Returns the predictor for `component`.
+    #[must_use]
+    #[inline]
+    pub fn component(&self, component: usize) -> Option<&X> {
+        self.x.get(component)
+    }
+
+    /// Penalty applied to the block's concatenated coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn penalty(&self) -> &Penalty {
+        &self.penalty
+    }
+
+    /// Coefficient range of the full vector block.
+    #[must_use]
+    #[inline]
+    pub const fn range(&self) -> Range<usize> {
+        self.offset..self.end()
+    }
+
+    /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
+    #[must_use]
+    #[inline]
+    pub const fn end(&self) -> usize {
+        self.offset
+            .checked_add(self.len)
+            .expect("vector parameter block range end must fit in usize")
+    }
+
+    /// Number of coefficients in the full vector block.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// `true` if the block contains no coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Local coefficient range for one vector component.
+    #[must_use]
+    #[inline]
+    pub fn component_local_range(&self, component: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let start = *self.component_offsets.get(component)?;
+        let len = self.x.get(component)?.nparams();
+        Some(start..start + len)
+    }
+
+    /// Absolute beta range for one vector component.
+    #[must_use]
+    #[inline]
+    pub fn component_range(&self, component: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let range = self.component_local_range(component)?;
+        let start = self.offset.checked_add(range.start)?;
+        let end = self.offset.checked_add(range.end)?;
+        Some(start..end)
+    }
+}
+
+impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    /// Validates and returns the full block coefficient range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
+    /// in `usize`.
+    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+        let end = self
+            .offset
+            .checked_add(self.len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: self.offset,
+                len: self.len,
+            })?;
+        Ok(self.offset..end)
+    }
+}
+
+/// Typed coefficient block for a packed lower-triangular matrix parameter.
+///
+/// Predictors are stored in row-major lower-triangular order:
+/// `(0,0), (1,0), (1,1), (2,0), ...`. This matches Cholesky scale factors and
+/// other structured matrix parameters whose upper-triangular entries are not
+/// modeled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LowerTriangularParameterBlock<P, const D: usize, X, Penalty> {
+    x: Vec<X>,
+    penalty: Penalty,
+    offset: usize,
+    len: usize,
+    entry_offsets: Vec<usize>,
+    marker: PhantomData<P>,
+}
+
+impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+    X: PredictorBlock,
+{
+    /// Creates a lower-triangular block from packed row-major predictors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x.len()` is not `D * (D + 1) / 2` or if the sum of entry
+    /// predictor lengths does not fit in `usize`.
+    #[must_use]
+    pub fn new(x: Vec<X>, penalty: Penalty, offset: usize) -> Self {
+        Self::try_new(x, penalty, offset)
+            .expect("lower-triangular block must have D * (D + 1) / 2 predictors")
+    }
+
+    /// Creates a lower-triangular block from packed row-major predictors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] if `x.len()` is not `D * (D + 1) / 2`.
+    /// Returns [`ModelError::ArithmeticOverflow`] if the packed length or total
+    /// coefficient length does not fit in `usize`.
+    pub fn try_new(x: Vec<X>, penalty: Penalty, offset: usize) -> Result<Self, ModelError> {
+        let expected = lower_triangular_len(D).ok_or(ModelError::ArithmeticOverflow {
+            context: "lower-triangular predictor count",
+        })?;
+        if x.len() != expected {
+            return Err(ModelError::InvalidParameter {
+                parameter: P::NAME,
+                expected: "D * (D + 1) / 2 predictor blocks",
+            });
+        }
+
+        let mut entry_offsets = vec![0; expected];
+        let mut len: usize = 0;
+        for (index, predictor) in x.iter().enumerate() {
+            entry_offsets[index] = len;
+            len = len
+                .checked_add(predictor.nparams())
+                .ok_or(ModelError::ArithmeticOverflow {
+                    context: "lower-triangular parameter block length",
+                })?;
+        }
+
+        Ok(Self {
+            x,
+            penalty,
+            offset,
+            len,
+            entry_offsets,
+            marker: PhantomData,
+        })
+    }
+}
+
+impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penalty> {
+    /// Returns the packed lower-triangular length for dimension `D`.
+    #[must_use]
+    #[inline]
+    pub const fn packed_len() -> Option<usize> {
+        lower_triangular_len(D)
+    }
+
+    /// Returns the packed row-major lower-triangular index for `(row, col)`.
+    #[must_use]
+    #[inline]
+    pub const fn packed_index(row: usize, col: usize) -> Option<usize> {
+        if col <= row && row < D {
+            match row.checked_add(1) {
+                Some(next) => match row.checked_mul(next) {
+                    Some(product) => match (product / 2).checked_add(col) {
+                        Some(index) => Some(index),
+                        None => None,
+                    },
+                    None => None,
+                },
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Returns a copy of the block with a new offset.
+    #[must_use]
+    #[inline]
+    pub const fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Returns all packed lower-triangular predictors.
+    #[must_use]
+    #[inline]
+    pub fn entries(&self) -> &[X] {
+        &self.x
+    }
+
+    /// Returns the predictor for lower-triangular entry `(row, col)`.
+    #[must_use]
+    #[inline]
+    pub fn entry(&self, row: usize, col: usize) -> Option<&X> {
+        Self::packed_index(row, col).and_then(|index| self.x.get(index))
+    }
+
+    /// Penalty applied to the block's concatenated coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn penalty(&self) -> &Penalty {
+        &self.penalty
+    }
+
+    /// Coefficient range of the full lower-triangular block.
+    #[must_use]
+    #[inline]
+    pub const fn range(&self) -> Range<usize> {
+        self.offset..self.end()
+    }
+
+    /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
+    #[must_use]
+    #[inline]
+    pub const fn end(&self) -> usize {
+        self.offset
+            .checked_add(self.len)
+            .expect("lower-triangular parameter block range end must fit in usize")
+    }
+
+    /// Number of coefficients in the full lower-triangular block.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// `true` if the block contains no coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Local coefficient range for one lower-triangular entry.
+    #[must_use]
+    #[inline]
+    pub fn entry_local_range(&self, row: usize, col: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let index = Self::packed_index(row, col)?;
+        let start = *self.entry_offsets.get(index)?;
+        let len = self.x.get(index)?.nparams();
+        Some(start..start + len)
+    }
+
+    /// Absolute beta range for one lower-triangular entry.
+    #[must_use]
+    #[inline]
+    pub fn entry_range(&self, row: usize, col: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let range = self.entry_local_range(row, col)?;
+        let start = self.offset.checked_add(range.start)?;
+        let end = self.offset.checked_add(range.end)?;
+        Some(start..end)
+    }
+}
+
+impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    /// Validates and returns the full block coefficient range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
+    /// in `usize`.
+    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+        let end = self
+            .offset
+            .checked_add(self.len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: self.offset,
+                len: self.len,
+            })?;
+        Ok(self.offset..end)
+    }
+}
+
+const fn lower_triangular_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_add(1) {
+        Some(next) => match dimension.checked_mul(next) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => None,
+    }
+}
+
 /// Tuple contract implemented for typed parameter block tuples up to arity 8.
 pub trait AssignParameterOffsets: Sized {
     /// Returns `self` with sequential offsets starting at `start`.
@@ -498,6 +891,71 @@ where
 
     fn assigned_offset(&self) -> usize {
         self.offset()
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        P::NAME
+    }
+}
+
+impl<P, const D: usize, X, Penalty> OffsetAssignable for VectorParameterBlock<P, D, X, Penalty> {
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<P, const D: usize, X, Penalty> TryOffsetAssignable for VectorParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.offset
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        P::NAME
+    }
+}
+
+impl<P, const D: usize, X, Penalty> OffsetAssignable
+    for LowerTriangularParameterBlock<P, D, X, Penalty>
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<P, const D: usize, X, Penalty> TryOffsetAssignable
+    for LowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.offset
     }
 
     fn assigned_len(&self) -> usize {

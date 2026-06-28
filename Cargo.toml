@@ -71,6 +71,7 @@ include = [
 [features]
 default = ["formula"]
 formula = ["dep:gamlss-formula"]
+multivariate = ["gamlss-family/multivariate"]
 rand = ["gamlss-family/rand"]
 
 [dependencies]
