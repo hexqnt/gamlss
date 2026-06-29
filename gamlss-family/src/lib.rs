@@ -37,8 +37,8 @@ pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
 #[cfg(feature = "multivariate")]
 pub use multivariate::normal::{
     DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-    DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
-    MvNormalCholeskyTheta,
+    DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
+    MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
 };
 pub use negative_binomial::{
     NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
@@ -155,8 +155,8 @@ pub mod prelude {
     #[cfg(feature = "multivariate")]
     pub use crate::{
         DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-        DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
-        MvNormalCholeskyTheta,
+        DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
+        MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
     };
 
     pub use crate::{

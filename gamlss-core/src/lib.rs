@@ -37,7 +37,7 @@ pub use family::{
     CanSimulate, DenseInformation, Family, FixedDimensionalFamily, HasCdf, HasConditionalCdf,
     HasCrps, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta,
     HasLogDensity, HasMarginalCdf, HasQuantile, HasRosenblattTransform, ParameterParts,
-    ParameterizedFamily,
+    ParameterizedFamily, VectorLowerTriangularFamily,
 };
 pub use link::{
     ClampedLog, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink, Softplus,
@@ -102,7 +102,7 @@ pub mod prelude {
         Precision, PredictionView, PredictorBlock, Probability, ProductBlock, Rate, RidgePenalty,
         RowMultiplier, Scale, SegmentPenalty, Shape, Sigma, Size, Softplus, SumBlock, Tau,
         TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets,
-        UnitIntervalLink, UnpackedParameters, VectorParameterBlock, WithGlobalPenalties,
-        WorkspaceGamlss, ZeroProbability,
+        UnitIntervalLink, UnpackedParameters, VectorLowerTriangularFamily, VectorParameterBlock,
+        WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

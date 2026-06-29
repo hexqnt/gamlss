@@ -2,14 +2,111 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, HasMarginalCdf, Identity, Link, Log, PositiveLink};
+use gamlss_core::{Family, HasMarginalCdf, Identity, Link, Log, ModelError, PositiveLink};
 use gamlss_special::unit_normal_cdf;
 
 use super::kernel;
 
+/// Runtime-dimensional packed lower-triangular matrix storage.
+///
+/// Values are stored in row-major lower-triangular order:
+/// `(0,0), (1,0), (1,1), (2,0), ...`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackedLowerTriangular {
+    dimension: usize,
+    values: Vec<f64>,
+}
+
+impl PackedLowerTriangular {
+    /// Creates packed lower-triangular storage after validating its length.
+    pub fn try_new(dimension: usize, values: Vec<f64>) -> Result<Self, ModelError> {
+        if dimension == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+        let expected = kernel::cholesky_len(dimension).ok_or(ModelError::ArithmeticOverflow {
+            context: "lower-triangular storage length",
+        })?;
+        if values.len() != expected {
+            return Err(ModelError::InvalidParameter {
+                parameter: "cholesky",
+                expected: "D * (D + 1) / 2 lower-triangular values",
+            });
+        }
+        Ok(Self { dimension, values })
+    }
+
+    fn filled(dimension: usize, value: f64) -> Self {
+        Self {
+            dimension,
+            values: vec![value; kernel::cholesky_len(dimension).unwrap_or(0)],
+        }
+    }
+
+    /// Observation/parameter dimension.
+    #[must_use]
+    #[inline]
+    pub const fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    /// Packed lower-triangular values.
+    #[must_use]
+    #[inline]
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
+
+    /// Mutable packed lower-triangular values.
+    #[must_use]
+    #[inline]
+    pub fn values_mut(&mut self) -> &mut [f64] {
+        &mut self.values
+    }
+
+    /// Returns a lower-triangular entry, or `None` for invalid/upper entries.
+    #[must_use]
+    pub fn get(&self, row: usize, col: usize) -> Option<f64> {
+        if row < self.dimension && col <= row {
+            kernel::packed_index(row, col).and_then(|index| self.values.get(index).copied())
+        } else {
+            None
+        }
+    }
+
+    /// Returns a mutable lower-triangular entry, or `None` for invalid/upper entries.
+    #[must_use]
+    pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
+        if row < self.dimension && col <= row {
+            kernel::packed_index(row, col).and_then(|index| self.values.get_mut(index))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn lower(&self, row: usize, col: usize) -> f64 {
+        self.values[kernel::packed_index(row, col).expect("valid lower-triangular index")]
+    }
+}
+
+impl kernel::LowerTriangularMatrix for PackedLowerTriangular {
+    #[inline]
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    #[inline]
+    fn lower(&self, row: usize, col: usize) -> f64 {
+        self.lower(row, col)
+    }
+}
+
 /// Runtime-dimensional multivariate normal parameterized by mean and Cholesky scale.
 ///
-/// The natural-scale `cholesky` matrix uses full row-major `D x D` storage.
+/// The natural-scale `cholesky` matrix uses packed lower-triangular storage.
 /// Diagonal entries are transformed with `DiagonalLink`; off-diagonal lower
 /// entries are transformed with `OffDiagonalLink`; upper entries are ignored
 /// and normalized to zero by [`Family::theta`].
@@ -27,13 +124,22 @@ where
     OffDiagonalLink: Link<f64>,
 {
     /// Creates a stateless family value for a runtime dimension.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `dimension == 0`.
     #[inline]
-    pub const fn new(dimension: usize) -> Self {
-        Self {
+    pub const fn new(dimension: usize) -> Result<Self, ModelError> {
+        if dimension == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
             dimension,
             marker: PhantomData,
-        }
+        })
     }
 
     /// Returns the configured observation dimension.
@@ -43,33 +149,28 @@ where
         self.dimension
     }
 
-    /// Returns the expected full row-major Cholesky storage length for this dimension.
+    /// Returns the expected packed lower-triangular Cholesky storage length.
     #[must_use]
     #[inline]
     pub const fn cholesky_len_for_dimension(dimension: usize) -> Option<usize> {
         kernel::cholesky_len(dimension)
     }
 
-    const fn cholesky_len(&self) -> Option<usize> {
-        kernel::cholesky_len(self.dimension)
-    }
-
-    fn eta_has_expected_len(&self, eta: &DynMvNormalCholeskyEta) -> bool {
-        self.cholesky_len()
-            .is_some_and(|len| eta.mu.len() == self.dimension && eta.cholesky.len() == len)
+    const fn eta_has_expected_len(&self, eta: &DynMvNormalCholeskyEta) -> bool {
+        eta.mu.len() == self.dimension && eta.cholesky.dimension() == self.dimension
     }
 
     fn nan_eta(&self) -> DynMvNormalCholeskyEta {
         DynMvNormalCholeskyEta {
             mu: vec![f64::NAN; self.dimension],
-            cholesky: vec![f64::NAN; self.cholesky_len().unwrap_or(0)],
+            cholesky: PackedLowerTriangular::filled(self.dimension, f64::NAN),
         }
     }
 
     fn nan_theta(&self) -> DynMvNormalCholeskyTheta {
         DynMvNormalCholeskyTheta {
             mu: vec![f64::NAN; self.dimension],
-            cholesky: vec![f64::NAN; self.cholesky_len().unwrap_or(0)],
+            cholesky: PackedLowerTriangular::filled(self.dimension, f64::NAN),
         }
     }
 
@@ -79,7 +180,7 @@ where
         }
 
         let mut mu = vec![0.0; self.dimension];
-        let mut cholesky = vec![0.0; eta.cholesky.len()];
+        let mut cholesky = PackedLowerTriangular::filled(self.dimension, 0.0);
 
         for index in 0..self.dimension {
             mu[index] = MuLink::inverse(eta.mu[index]);
@@ -87,12 +188,14 @@ where
 
         for row in 0..self.dimension {
             for col in 0..=row {
-                let index = kernel::matrix_index(self.dimension, row, col);
-                cholesky[index] = if row == col {
-                    DiagonalLink::inverse(eta.cholesky[index])
+                let value = if row == col {
+                    DiagonalLink::inverse(eta.cholesky.lower(row, col))
                 } else {
-                    OffDiagonalLink::inverse(eta.cholesky[index])
+                    OffDiagonalLink::inverse(eta.cholesky.lower(row, col))
                 };
+                *cholesky
+                    .get_mut(row, col)
+                    .expect("row and col are valid lower-triangular indices") = value;
             }
         }
 
@@ -136,7 +239,7 @@ where
 
         let mut gradient = DynMvNormalCholeskyEta {
             mu: vec![0.0; self.dimension],
-            cholesky: vec![0.0; eta.cholesky.len()],
+            cholesky: PackedLowerTriangular::filled(self.dimension, 0.0),
         };
 
         for index in 0..self.dimension {
@@ -145,15 +248,16 @@ where
 
         for row in 0..self.dimension {
             for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                let index = kernel::matrix_index(self.dimension, row, col);
-                let mut d_nll_d_l =
-                    kernel::cholesky_score(self.dimension, row, col, z_col, &a, &theta.cholesky);
+                let mut d_nll_d_l = kernel::cholesky_score(row, col, z_col, &a, &theta.cholesky);
                 if row == col {
-                    d_nll_d_l *= DiagonalLink::derivative_inverse(eta.cholesky[index]);
+                    d_nll_d_l *= DiagonalLink::derivative_inverse(eta.cholesky.lower(row, col));
                 } else {
-                    d_nll_d_l *= OffDiagonalLink::derivative_inverse(eta.cholesky[index]);
+                    d_nll_d_l *= OffDiagonalLink::derivative_inverse(eta.cholesky.lower(row, col));
                 }
-                gradient.cholesky[index] = d_nll_d_l;
+                *gradient
+                    .cholesky
+                    .get_mut(row, col)
+                    .expect("row and col are valid lower-triangular indices") = d_nll_d_l;
             }
         }
 
@@ -173,7 +277,10 @@ where
     OffDiagonalLink: Link<f64>,
 {
     fn default() -> Self {
-        Self::new(1)
+        Self {
+            dimension: 1,
+            marker: PhantomData,
+        }
     }
 }
 
@@ -260,7 +367,7 @@ where
         let mut out = theta.mu;
         for row in 0..self.dimension {
             for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                out[row] += theta.cholesky[kernel::matrix_index(self.dimension, row, col)] * z_col;
+                out[row] += theta.cholesky.lower(row, col) * z_col;
             }
         }
         out
@@ -271,38 +378,68 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynMvNormalCholeskyEta {
     /// Mean predictors.
-    pub mu: Vec<f64>,
-    /// Full row-major `D x D` Cholesky predictor storage. Upper-triangular entries are ignored.
-    pub cholesky: Vec<f64>,
+    mu: Vec<f64>,
+    /// Packed lower-triangular Cholesky predictor storage.
+    cholesky: PackedLowerTriangular,
 }
 
 impl DynMvNormalCholeskyEta {
     /// Creates a runtime-dimensional eta container from owned parts.
-    #[must_use]
-    #[inline]
-    pub const fn new(mu: Vec<f64>, cholesky: Vec<f64>) -> Self {
-        Self { mu, cholesky }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `mu.len()` does not match
+    /// the Cholesky dimension.
+    pub fn new(mu: Vec<f64>, cholesky: PackedLowerTriangular) -> Result<Self, ModelError> {
+        if mu.len() != cholesky.dimension() {
+            return Err(ModelError::InvalidParameter {
+                parameter: "mu",
+                expected: "same length as Cholesky dimension",
+            });
+        }
+        Ok(Self { mu, cholesky })
     }
 
-    /// Returns a Cholesky predictor entry for full row-major `dimension x dimension` storage.
+    /// Mean predictors.
     #[must_use]
     #[inline]
-    pub fn cholesky_entry(&self, dimension: usize, row: usize, col: usize) -> Option<f64> {
-        kernel::checked_matrix_index(dimension, row, col)
-            .and_then(|index| self.cholesky.get(index).copied())
+    pub fn mu(&self) -> &[f64] {
+        &self.mu
     }
 
-    /// Returns a mutable Cholesky predictor entry for full row-major `dimension x dimension` storage.
+    /// Mutable mean predictors.
     #[must_use]
     #[inline]
-    pub fn cholesky_entry_mut(
-        &mut self,
-        dimension: usize,
-        row: usize,
-        col: usize,
-    ) -> Option<&mut f64> {
-        kernel::checked_matrix_index(dimension, row, col)
-            .and_then(|index| self.cholesky.get_mut(index))
+    pub fn mu_mut(&mut self) -> &mut [f64] {
+        &mut self.mu
+    }
+
+    /// Packed lower-triangular Cholesky predictors.
+    #[must_use]
+    #[inline]
+    pub const fn cholesky(&self) -> &PackedLowerTriangular {
+        &self.cholesky
+    }
+
+    /// Mutable packed lower-triangular Cholesky predictors.
+    #[must_use]
+    #[inline]
+    pub const fn cholesky_mut(&mut self) -> &mut PackedLowerTriangular {
+        &mut self.cholesky
+    }
+
+    /// Returns a Cholesky predictor entry.
+    #[must_use]
+    #[inline]
+    pub fn cholesky_entry(&self, row: usize, col: usize) -> Option<f64> {
+        self.cholesky.get(row, col)
+    }
+
+    /// Returns a mutable Cholesky predictor entry.
+    #[must_use]
+    #[inline]
+    pub fn cholesky_entry_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
+        self.cholesky.get_mut(row, col)
     }
 }
 
@@ -310,38 +447,54 @@ impl DynMvNormalCholeskyEta {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynMvNormalCholeskyTheta {
     /// Mean vector.
-    pub mu: Vec<f64>,
-    /// Full row-major `D x D` Cholesky scale-factor storage. Upper-triangular entries are ignored.
-    pub cholesky: Vec<f64>,
+    mu: Vec<f64>,
+    /// Packed lower-triangular Cholesky scale-factor storage.
+    cholesky: PackedLowerTriangular,
 }
 
 impl DynMvNormalCholeskyTheta {
     /// Creates a runtime-dimensional theta container from owned parts.
-    #[must_use]
-    #[inline]
-    pub const fn new(mu: Vec<f64>, cholesky: Vec<f64>) -> Self {
-        Self { mu, cholesky }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `mu.len()` does not match
+    /// the Cholesky dimension.
+    pub fn new(mu: Vec<f64>, cholesky: PackedLowerTriangular) -> Result<Self, ModelError> {
+        if mu.len() != cholesky.dimension() {
+            return Err(ModelError::InvalidParameter {
+                parameter: "mu",
+                expected: "same length as Cholesky dimension",
+            });
+        }
+        Ok(Self { mu, cholesky })
     }
 
-    /// Returns a Cholesky scale-factor entry for full row-major `dimension x dimension` storage.
+    /// Mean vector.
     #[must_use]
     #[inline]
-    pub fn cholesky_entry(&self, dimension: usize, row: usize, col: usize) -> Option<f64> {
-        kernel::checked_matrix_index(dimension, row, col)
-            .and_then(|index| self.cholesky.get(index).copied())
+    pub fn mu(&self) -> &[f64] {
+        &self.mu
     }
 
-    /// Returns a mutable Cholesky scale-factor entry for full row-major `dimension x dimension` storage.
+    /// Packed lower-triangular Cholesky scale factor.
     #[must_use]
     #[inline]
-    pub fn cholesky_entry_mut(
-        &mut self,
-        dimension: usize,
-        row: usize,
-        col: usize,
-    ) -> Option<&mut f64> {
-        kernel::checked_matrix_index(dimension, row, col)
-            .and_then(|index| self.cholesky.get_mut(index))
+    pub const fn cholesky(&self) -> &PackedLowerTriangular {
+        &self.cholesky
+    }
+
+    /// Returns a Cholesky scale-factor entry.
+    #[must_use]
+    #[inline]
+    pub fn cholesky_entry(&self, row: usize, col: usize) -> Option<f64> {
+        self.cholesky.get(row, col)
+    }
+
+    /// Returns a mutable Cholesky scale-factor entry.
+    #[must_use]
+    #[inline]
+    pub fn cholesky_entry_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
+        self.cholesky.get_mut(row, col)
     }
 }
 
@@ -350,7 +503,7 @@ mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{Family, HasMarginalCdf};
 
-    use super::{DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta};
+    use super::{DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta, PackedLowerTriangular};
     use crate::multivariate::normal::DynMvNormalCholeskyDefault;
 
     fn finite_difference_dynamic_gradient(
@@ -359,29 +512,29 @@ mod tests {
         epsilon: f64,
         tolerance: f64,
     ) {
-        let family = DynMvNormalCholeskyDefault::new(y.len());
+        let family = DynMvNormalCholeskyDefault::new(y.len()).unwrap();
         let (_, gradient) = family.nll_and_gradient_eta(y, eta.clone());
 
-        for index in 0..eta.mu.len() {
+        for index in 0..eta.mu().len() {
             let mut plus = eta.clone();
-            plus.mu[index] += epsilon;
+            plus.mu_mut()[index] += epsilon;
             let mut minus = eta.clone();
-            minus.mu[index] -= epsilon;
+            minus.mu_mut()[index] -= epsilon;
             let finite_difference =
                 (family.nll_eta(y, plus) - family.nll_eta(y, minus)) / (2.0 * epsilon);
-            assert_relative_eq!(gradient.mu[index], finite_difference, epsilon = tolerance);
+            assert_relative_eq!(gradient.mu()[index], finite_difference, epsilon = tolerance);
         }
 
         for row in 0..y.len() {
             for col in 0..=row {
                 let mut plus = eta.clone();
-                *plus.cholesky_entry_mut(y.len(), row, col).unwrap() += epsilon;
+                *plus.cholesky_entry_mut(row, col).unwrap() += epsilon;
                 let mut minus = eta.clone();
-                *minus.cholesky_entry_mut(y.len(), row, col).unwrap() -= epsilon;
+                *minus.cholesky_entry_mut(row, col).unwrap() -= epsilon;
                 let finite_difference =
                     (family.nll_eta(y, plus) - family.nll_eta(y, minus)) / (2.0 * epsilon);
                 assert_relative_eq!(
-                    gradient.cholesky_entry(y.len(), row, col).unwrap(),
+                    gradient.cholesky_entry(row, col).unwrap(),
                     finite_difference,
                     epsilon = tolerance
                 );
@@ -395,40 +548,42 @@ mod tests {
             &[1.7, -0.8, 0.2],
             &DynMvNormalCholeskyEta::new(
                 vec![0.4, -0.3, 0.1],
-                vec![-0.2, 0.0, 0.0, 0.25, 0.1, 0.0, -0.1, 0.2, 0.3],
-            ),
+                PackedLowerTriangular::try_new(3, vec![-0.2, 0.25, 0.1, -0.1, 0.2, 0.3]).unwrap(),
+            )
+            .unwrap(),
             1.0e-6,
             1.0e-6,
         );
     }
 
     #[test]
-    fn invalid_lengths_return_infinite_nll_and_nan_gradient() {
-        let family = DynMvNormalCholeskyDefault::new(2);
-        let bad_eta = DynMvNormalCholeskyEta::new(vec![0.0], vec![0.0; 4]);
-        let theta = family.theta(bad_eta.clone());
-
-        assert!(family.nll(&[0.0, 0.0], theta).is_infinite());
-
-        let (nll, gradient) = family.nll_and_gradient_eta(&[0.0, 0.0], bad_eta);
-        assert!(nll.is_infinite());
-        assert_eq!(gradient.mu.len(), 2);
-        assert_eq!(gradient.cholesky.len(), 4);
-        assert!(gradient.mu.iter().all(|value| value.is_nan()));
-        assert!(gradient.cholesky.iter().all(|value| value.is_nan()));
+    fn invalid_lengths_return_constructor_errors() {
+        assert!(DynMvNormalCholeskyDefault::new(0).is_err());
+        assert!(PackedLowerTriangular::try_new(2, vec![0.0; 4]).is_err());
+        assert!(
+            DynMvNormalCholeskyEta::new(
+                vec![0.0],
+                PackedLowerTriangular::try_new(2, vec![0.0; 3]).unwrap(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn marginal_cdf_uses_component_variance() {
-        let family = DynMvNormalCholeskyDefault::new(2);
-        let theta = DynMvNormalCholeskyTheta::new(vec![0.0, 1.0], vec![2.0, 0.0, 3.0, 4.0]);
+        let family = DynMvNormalCholeskyDefault::new(2).unwrap();
+        let theta = DynMvNormalCholeskyTheta::new(
+            vec![0.0, 1.0],
+            PackedLowerTriangular::try_new(2, vec![2.0, 3.0, 4.0]).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(
             DynMvNormalCholeskyDefault::cholesky_len_for_dimension(2),
-            Some(4)
+            Some(3)
         );
-        assert_eq!(theta.cholesky_entry(2, 1, 0), Some(3.0));
-        assert_eq!(theta.cholesky_entry(2, 2, 0), None);
+        assert_eq!(theta.cholesky_entry(1, 0), Some(3.0));
+        assert_eq!(theta.cholesky_entry(2, 0), None);
         assert_relative_eq!(
             family.marginal_cdf(0, 0.0, theta.clone()),
             0.5,
@@ -446,11 +601,15 @@ mod tests {
     fn sampling_returns_finite_values_for_valid_theta() {
         use gamlss_core::CanSimulate;
 
-        let family = DynMvNormalCholeskyDefault::new(2);
+        let family = DynMvNormalCholeskyDefault::new(2).unwrap();
         let mut rng = rand::rng();
         let valid = family.sample(
             &mut rng,
-            DynMvNormalCholeskyTheta::new(vec![0.0, 1.0], vec![2.0, 0.0, 3.0, 4.0]),
+            DynMvNormalCholeskyTheta::new(
+                vec![0.0, 1.0],
+                PackedLowerTriangular::try_new(2, vec![2.0, 3.0, 4.0]).unwrap(),
+            )
+            .unwrap(),
         );
         assert_eq!(valid.len(), 2);
         assert!(valid.iter().all(|value| value.is_finite()));

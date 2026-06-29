@@ -1,4 +1,4 @@
-use crate::model::ObservationView;
+use crate::{ParameterName, model::ObservationView};
 
 /// Dense expected information matrix for a fixed-arity family.
 ///
@@ -145,6 +145,48 @@ where
 
 /// Marker trait for families with a compile-time fixed observation dimension.
 pub trait FixedDimensionalFamily<const D: usize>: Family {}
+
+/// Family whose link-scale parameters are assembled from one vector parameter
+/// and one lower-triangular matrix parameter.
+///
+/// This covers structured fixed-dimensional families such as a multivariate
+/// normal with a mean vector and Cholesky scale factor while keeping compiled
+/// model evaluation generic over the family math.
+pub trait VectorLowerTriangularFamily<const D: usize>: Family {
+    /// Parameter role represented by the vector block.
+    type VectorParameter: ParameterName;
+    /// Parameter role represented by the lower-triangular block.
+    type LowerTriangularParameter: ParameterName;
+
+    /// Assembles link-scale predictors from structured scalar parts.
+    ///
+    /// `lower[row][col]` is meaningful for `col <= row`; upper-triangular
+    /// entries are supplied as zero and should be ignored by implementations.
+    fn eta_from_vector_lower(vector: [f64; D], lower: [[f64; D]; D]) -> Self::Eta;
+
+    /// Returns one vector-component gradient from a link-scale gradient value.
+    fn vector_gradient_part(gradient: &Self::NllGradientEta, component: usize) -> f64;
+
+    /// Returns one lower-triangular gradient entry from a link-scale gradient value.
+    fn lower_triangular_gradient_part(
+        gradient: &Self::NllGradientEta,
+        row: usize,
+        col: usize,
+    ) -> f64;
+
+    /// Sample-aware initial predictors for the vector and lower-triangular parts.
+    ///
+    /// The default starts every structured predictor at zero.
+    fn initial_vector_lower_from_observations<'obs, Obs>(
+        &self,
+        _obs: &'obs Obs,
+    ) -> ([f64; D], [[f64; D]; D])
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        ([0.0; D], [[0.0; D]; D])
+    }
+}
 
 /// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///

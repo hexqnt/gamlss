@@ -1,8 +1,9 @@
 use std::ops::Range;
 
 use crate::{
-    BlockObjective, Family, GlobalPenalty, ModelError, Objective, ParameterBlock, ParameterName,
-    ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
+    BlockObjective, Family, GlobalPenalty, LowerTriangularParameterBlock, ModelError, Objective,
+    ParameterBlock, ParameterName, ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
+    VectorLowerTriangularFamily, VectorParameterBlock,
 };
 
 pub use layout::{
@@ -1391,6 +1392,431 @@ where
     })
 }
 
+impl<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower> GamlssBlocks<F>
+    for (
+        VectorParameterBlock<PVector, D, XVector, PenVector>,
+        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
+    )
+where
+    F: VectorLowerTriangularFamily<D, VectorParameter = PVector, LowerTriangularParameter = PLower>,
+    PVector: ParameterName,
+    PLower: ParameterName,
+    XVector: PredictorBlock,
+    XLower: PredictorBlock,
+    PenVector: Penalty,
+    PenLower: Penalty,
+{
+    fn nrows(&self) -> usize {
+        self.0.component(0).map_or(0, PredictorBlock::nrows)
+    }
+
+    fn len(&self) -> usize {
+        <Self as GamlssBlocks<F>>::try_len(self)
+            .expect("validated structured parameter block layout must fit in usize")
+    }
+
+    fn try_len(&self) -> Result<usize, ModelError> {
+        Ok(self.0.try_range()?.end.max(self.1.try_range()?.end))
+    }
+
+    fn validate(&self, nobs: usize) -> Result<(), ModelError> {
+        if D == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+
+        validate_vector_parameter_block::<PVector, D, _, _>(&self.0, nobs)?;
+        validate_lower_triangular_parameter_block::<PLower, D, _, _>(&self.1, nobs)?;
+        self.0.penalty().validate_dim(self.0.len())?;
+        self.1.penalty().validate_dim(self.1.len())?;
+
+        let vector = self.0.try_range()?;
+        let lower = self.1.try_range()?;
+        if ranges_overlap(vector, lower) {
+            return Err(ModelError::BlockOverlap {
+                first: PVector::NAME,
+                second: PLower::NAME,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let mut loss = 0.0;
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            if weight == 0.0 {
+                continue;
+            }
+            let observation = obs.observation_at(row);
+            loss = weight.mul_add(
+                family.nll_eta(
+                    observation,
+                    structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row),
+                ),
+                loss,
+            );
+        }
+        loss
+    }
+
+    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
+        structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row)
+    }
+
+    fn penalty_value(&self, beta: &[f64]) -> f64 {
+        self.0.penalty().value(&beta[self.0.range()])
+            + self.1.penalty().value(&beta[self.1.range()])
+    }
+
+    fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
+            .expect("validated structured parameter block layout must fit in usize")
+    }
+
+    fn try_initial_parameters<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let (vector_eta, lower_eta) = family.initial_vector_lower_from_observations(obs);
+        let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
+
+        for (component, value) in vector_eta.iter().copied().enumerate() {
+            if value.is_finite() {
+                let predictor = self
+                    .0
+                    .component(component)
+                    .expect("validated vector block has D components");
+                let range = self
+                    .0
+                    .component_range(component)
+                    .expect("validated vector component has a coefficient range");
+                predictor.set_constant_start(value, &mut beta[range]);
+            }
+        }
+
+        for (row, row_values) in lower_eta.iter().enumerate() {
+            for (col, value) in row_values.iter().copied().take(row + 1).enumerate() {
+                if value.is_finite() {
+                    let predictor = self
+                        .1
+                        .entry(row, col)
+                        .expect("validated lower-triangular block has this entry");
+                    let range = self
+                        .1
+                        .entry_range(row, col)
+                        .expect("validated lower-triangular entry has a coefficient range");
+                    predictor.set_constant_start(value, &mut beta[range]);
+                }
+            }
+        }
+
+        Ok(beta)
+    }
+
+    fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        self.0
+            .penalty()
+            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
+        self.1
+            .penalty()
+            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
+    }
+
+    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
+        let scalar_count = structured_scalar_count::<PLower, D>();
+        let mut workspace = GradientWorkspace::new();
+        workspace.prepare(scalar_count);
+        for index in 0..scalar_count {
+            workspace.prepare_row_gradient(index, nobs);
+        }
+
+        for component in 0..D {
+            let len = self
+                .0
+                .component_range(component)
+                .expect("validated vector component has a coefficient range")
+                .len();
+            let _ = workspace.local_gradient_mut(component, len);
+        }
+
+        for row in 0..D {
+            for col in 0..=row {
+                let len = self
+                    .1
+                    .entry_range(row, col)
+                    .expect("validated lower-triangular entry has a coefficient range")
+                    .len();
+                let _ =
+                    workspace.local_gradient_mut(lower_workspace_index::<PLower, D>(row, col), len);
+            }
+        }
+
+        workspace
+    }
+
+    fn value_gradient_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let scalar_count = structured_scalar_count::<PLower, D>();
+        workspace.prepare(scalar_count);
+        for index in 0..scalar_count {
+            workspace.prepare_row_gradient(index, obs.len());
+        }
+
+        let mut loss = 0.0;
+        for row_index in 0..obs.len() {
+            let weight = obs.weight_at(row_index);
+            if weight == 0.0 {
+                for index in 0..scalar_count {
+                    workspace.set_row_gradient(index, row_index, 0.0);
+                }
+                continue;
+            }
+
+            let observation = obs.observation_at(row_index);
+            let eta = structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row_index);
+            let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
+            loss = weight.mul_add(nll, loss);
+
+            for component in 0..D {
+                workspace.set_row_gradient(
+                    component,
+                    row_index,
+                    weight * F::vector_gradient_part(&gradient, component),
+                );
+            }
+            for row in 0..D {
+                for col in 0..=row {
+                    workspace.set_row_gradient(
+                        lower_workspace_index::<PLower, D>(row, col),
+                        row_index,
+                        weight * F::lower_triangular_gradient_part(&gradient, row, col),
+                    );
+                }
+            }
+        }
+
+        for component in 0..D {
+            let predictor = self
+                .0
+                .component(component)
+                .expect("validated vector block has D components");
+            let range = self
+                .0
+                .component_range(component)
+                .expect("validated vector component has a coefficient range");
+            let (row_gradient, local_gradient) =
+                workspace.row_gradient_and_local_gradient_mut(component, range.len());
+            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
+            add_into(&mut grad[range], local_gradient);
+        }
+
+        for row in 0..D {
+            for col in 0..=row {
+                let predictor = self
+                    .1
+                    .entry(row, col)
+                    .expect("validated lower-triangular block has this entry");
+                let range = self
+                    .1
+                    .entry_range(row, col)
+                    .expect("validated lower-triangular entry has a coefficient range");
+                let (row_gradient, local_gradient) = workspace.row_gradient_and_local_gradient_mut(
+                    lower_workspace_index::<PLower, D>(row, col),
+                    range.len(),
+                );
+                predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
+                add_into(&mut grad[range], local_gradient);
+            }
+        }
+
+        loss += self.0.penalty().value(&beta[self.0.range()]);
+        self.0
+            .penalty()
+            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
+        loss += self.1.penalty().value(&beta[self.1.range()]);
+        self.1
+            .penalty()
+            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
+
+        loss
+    }
+
+    fn block_ranges(&self) -> Vec<Range<usize>> {
+        vec![self.0.range(), self.1.range()]
+    }
+
+    fn parameter_layout(&self) -> ParameterLayout {
+        ParameterLayout::new(vec![
+            ParameterSlice {
+                name: PVector::NAME,
+                range: self.0.range(),
+            },
+            ParameterSlice {
+                name: PLower::NAME,
+                range: self.1.range(),
+            },
+        ])
+    }
+
+    fn parameter_slice_count(&self) -> usize {
+        2
+    }
+
+    fn parameter_slice_matches(
+        &self,
+        index: usize,
+        name: &'static str,
+        range: Range<usize>,
+    ) -> bool {
+        match index {
+            0 => name == PVector::NAME && range == self.0.range(),
+            1 => name == PLower::NAME && range == self.1.range(),
+            _ => false,
+        }
+    }
+
+    fn visit_parameter_slices<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        visit(0, PVector::NAME, self.0.range());
+        visit(1, PLower::NAME, self.1.range());
+    }
+
+    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
+    where
+        Other: GamlssBlocks<F>,
+    {
+        other.parameter_slice_count() == 2
+            && other.parameter_slice_matches(0, PVector::NAME, self.0.range())
+            && other.parameter_slice_matches(1, PLower::NAME, self.1.range())
+    }
+}
+
+fn structured_eta_row<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower>(
+    blocks: &(
+        VectorParameterBlock<PVector, D, XVector, PenVector>,
+        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
+    ),
+    beta: &[f64],
+    row: usize,
+) -> F::Eta
+where
+    F: VectorLowerTriangularFamily<D>,
+    XVector: PredictorBlock,
+    XLower: PredictorBlock,
+{
+    let mut vector = [0.0; D];
+    let mut lower = [[0.0; D]; D];
+
+    for (component, value) in vector.iter_mut().enumerate() {
+        let predictor = blocks
+            .0
+            .component(component)
+            .expect("validated vector block has D components");
+        let range = blocks
+            .0
+            .component_range(component)
+            .expect("validated vector component has a coefficient range");
+        *value = predictor.eta_row(row, &beta[range]);
+    }
+
+    for (matrix_row, row_values) in lower.iter_mut().enumerate() {
+        for (matrix_col, value) in row_values.iter_mut().take(matrix_row + 1).enumerate() {
+            let predictor = blocks
+                .1
+                .entry(matrix_row, matrix_col)
+                .expect("validated lower-triangular block has this entry");
+            let range = blocks
+                .1
+                .entry_range(matrix_row, matrix_col)
+                .expect("validated lower-triangular entry has a coefficient range");
+            *value = predictor.eta_row(row, &beta[range]);
+        }
+    }
+
+    F::eta_from_vector_lower(vector, lower)
+}
+
+fn validate_vector_parameter_block<P, const D: usize, X, Penalty>(
+    block: &VectorParameterBlock<P, D, X, Penalty>,
+    nobs: usize,
+) -> Result<(), ModelError>
+where
+    P: ParameterName,
+    X: PredictorBlock,
+{
+    block.try_range()?;
+    for component in 0..D {
+        let predictor = block
+            .component(component)
+            .expect("vector block has D components");
+        predictor.validate()?;
+        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
+    }
+    Ok(())
+}
+
+fn validate_lower_triangular_parameter_block<P, const D: usize, X, Penalty>(
+    block: &LowerTriangularParameterBlock<P, D, X, Penalty>,
+    nobs: usize,
+) -> Result<(), ModelError>
+where
+    P: ParameterName,
+    X: PredictorBlock,
+{
+    block.try_range()?;
+    let expected = LowerTriangularParameterBlock::<P, D, X, Penalty>::packed_len().ok_or(
+        ModelError::ArithmeticOverflow {
+            context: "lower-triangular predictor count",
+        },
+    )?;
+    if block.entries().len() != expected {
+        return Err(ModelError::InvalidParameter {
+            parameter: P::NAME,
+            expected: "D * (D + 1) / 2 predictor blocks",
+        });
+    }
+    for predictor in block.entries() {
+        predictor.validate()?;
+        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
+    }
+    Ok(())
+}
+
+const fn structured_scalar_count<P, const D: usize>() -> usize {
+    D + LowerTriangularParameterBlock::<P, D, (), ()>::packed_len()
+        .expect("D * (D + 1) / 2 must fit")
+}
+
+fn lower_workspace_index<P, const D: usize>(row: usize, col: usize) -> usize {
+    D + LowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
+        .expect("row and col are valid lower-triangular indices")
+}
+
 /// Macro that generates a [`GamlssBlocks`] implementation for tuple parameter
 /// blocks.
 ///
@@ -1940,11 +2366,12 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty, HingeQuadraticPenalty, Identity,
-        LinearFormBuilder, LinearPredictorBlock, ModelError, Mu, NoPenalty, Nu, Objective,
-        ObjectiveScale, ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks,
-        ParameterLayout, ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock,
-        RidgePenalty, Sigma, SumBlock, Tau,
+        CholeskyScale, DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty,
+        HingeQuadraticPenalty, Identity, LinearFormBuilder, LinearPredictorBlock,
+        LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
+        ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterLayout,
+        ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma,
+        SumBlock, Tau, VectorLowerTriangularFamily, VectorParameterBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -2003,6 +2430,78 @@ mod tests {
     impl ParameterizedFamily<2> for TwoParameterMock {
         type Params = (Mu, Sigma);
         type Links = (Identity, Identity);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct StructuredMock;
+
+    impl StructuredMock {
+        #[allow(clippy::suboptimal_flops)]
+        fn linear_prediction(eta: &([f64; 2], [[f64; 2]; 2])) -> f64 {
+            eta.0[0] + 2.0 * eta.0[1] + 3.0 * eta.1[0][0] + 4.0 * eta.1[1][0] + 5.0 * eta.1[1][1]
+        }
+    }
+
+    impl Family for StructuredMock {
+        type Eta = ([f64; 2], [[f64; 2]; 2]);
+        type Theta = Self::Eta;
+        type NllGradientEta = Self::Eta;
+        type Observation<'obs> = [f64; 2];
+
+        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+            eta
+        }
+
+        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+            let residual = Self::linear_prediction(&theta) - observation[0];
+            0.5 * residual * residual
+        }
+
+        fn nll_and_gradient_eta(
+            &self,
+            observation: Self::Observation<'_>,
+            eta: Self::Eta,
+        ) -> (f64, Self::NllGradientEta) {
+            let residual = Self::linear_prediction(&eta) - observation[0];
+            (
+                self.nll(observation, eta),
+                (
+                    [residual, 2.0 * residual],
+                    [[3.0 * residual, 0.0], [4.0 * residual, 5.0 * residual]],
+                ),
+            )
+        }
+    }
+
+    impl VectorLowerTriangularFamily<2> for StructuredMock {
+        type VectorParameter = Mu;
+        type LowerTriangularParameter = CholeskyScale;
+
+        fn eta_from_vector_lower(vector: [f64; 2], lower: [[f64; 2]; 2]) -> Self::Eta {
+            (vector, lower)
+        }
+
+        fn vector_gradient_part(gradient: &Self::NllGradientEta, component: usize) -> f64 {
+            gradient.0[component]
+        }
+
+        fn lower_triangular_gradient_part(
+            gradient: &Self::NllGradientEta,
+            row: usize,
+            col: usize,
+        ) -> f64 {
+            gradient.1[row][col]
+        }
+
+        fn initial_vector_lower_from_observations<'obs, Obs>(
+            &self,
+            _obs: &'obs Obs,
+        ) -> ([f64; 2], [[f64; 2]; 2])
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            ([1.0, 2.0], [[3.0, 0.0], [4.0, 5.0]])
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -2110,6 +2609,65 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn structured_vector_lower_triangular_blocks_use_generic_contract() {
+        let y = [[3.0, 0.0], [5.0, 0.0]];
+        let n = y.len();
+        let vector = VectorParameterBlock::<Mu, 2, _, _>::new(
+            [
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            RidgePenalty::new_unchecked(0.25),
+            99,
+        );
+        let lower = LowerTriangularParameterBlock::<CholeskyScale, 2, _, _>::new(
+            vec![
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let blocks = ParameterBlocks::new((vector, lower));
+        let model =
+            Gamlss::try_new_with_observations(StructuredMock, blocks, y.as_slice()).unwrap();
+
+        assert_eq!(model.nparams(), 5);
+        assert_eq!(model.parameter_layout().slice("mu"), Some(0..2));
+        assert_eq!(model.parameter_layout().slice("cholesky"), Some(2..5));
+        assert_eq!(
+            model.initial_parameters().unwrap(),
+            vec![1.0, 2.0, 3.0, 4.0, 5.0]
+        );
+
+        let beta = vec![0.2, -0.1, 0.3, 0.4, -0.2];
+        let eta = model.predict_eta_row(&beta, 0).unwrap();
+        assert_relative_eq!(eta.0[0], 0.2);
+        assert_relative_eq!(eta.0[1], -0.1);
+        assert_relative_eq!(eta.1[0][0], 0.3);
+        assert_relative_eq!(eta.1[0][1], 0.0);
+        assert_relative_eq!(eta.1[1][0], 0.4);
+        assert_relative_eq!(eta.1[1][1], -0.2);
+
+        let mut gradient = vec![0.0; model.nparams()];
+        let value = model.try_value_gradient_into(&beta, &mut gradient).unwrap();
+        assert!(value.is_finite());
+
+        let epsilon = 1.0e-6;
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += epsilon;
+            let mut minus = beta.clone();
+            minus[index] -= epsilon;
+            let finite_difference = (model.try_value(&plus).unwrap()
+                - model.try_value(&minus).unwrap())
+                / (2.0 * epsilon);
+            assert_relative_eq!(gradient[index], finite_difference, epsilon = 1.0e-6);
+        }
     }
 
     #[test]
