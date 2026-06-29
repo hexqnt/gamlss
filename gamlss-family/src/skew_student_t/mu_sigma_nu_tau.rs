@@ -5,21 +5,23 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
 };
 
+use gamlss_special::{student_t_cdf_standardized, student_t_log_pdf_standardized};
+
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 
-use super::{cdf_location_scale, nll_location_scale, quantile_location_scale};
+use super::{cdf_location_scale, nll_location_scale, quantile_location_scale, skew_argument};
 
 /// Skew Student-t distribution with identity/log/identity/log links.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic for location, scale and skewness. The
+/// degrees-of-freedom component currently uses a finite-difference fallback.
 pub type SkewStudentTMuSigmaNuTau = SkewStudentT<Identity, Log, Identity, Log>;
 
 /// Azzalini/ST1-style skew Student-t family.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic for location, scale and skewness. The
+/// degrees-of-freedom component currently uses a finite-difference fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewStudentT<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
@@ -57,16 +59,51 @@ where
     }
 
     #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn gradient_theta_mu_sigma_nu(y: f64, theta: SkewStudentTTheta) -> (f64, f64, f64) {
+        let z = (y - theta.mu) / theta.sigma;
+        let skew_arg = skew_argument(z, theta.nu, theta.tau);
+        let skew = student_t_cdf_standardized(skew_arg, theta.tau + 1.0);
+        let skew_density = student_t_log_pdf_standardized(skew_arg, theta.tau + 1.0).exp();
+        let skew_score = skew_density / skew;
+        let sqrt_ratio = ((theta.tau + 1.0) / (theta.tau + z * z)).sqrt();
+        let d_skew_arg_d_z = theta.nu * sqrt_ratio * theta.tau / (theta.tau + z * z);
+        let d_nll_d_z = (theta.tau + 1.0) * z / (theta.tau + z * z) - skew_score * d_skew_arg_d_z;
+
+        (
+            -d_nll_d_z / theta.sigma,
+            z.mul_add(-d_nll_d_z, 1.0) / theta.sigma,
+            -skew_score * z * sqrt_ratio,
+        )
+    }
+
+    #[inline]
+    fn tau_gradient_eta(y: f64, eta: SkewStudentTEta) -> f64 {
+        let [tau] = finite_difference_gradient_eta::<_, f64, 1>(eta.tau, |tau| {
+            Self::nll_theta(y, Self::theta_from_eta(SkewStudentTEta { tau, ..eta }))
+        });
+        tau
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewStudentTEta) -> (f64, SkewStudentTEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, SkewStudentTEta::from_array([f64::NAN; 4]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, SkewStudentTEta, 4>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, SkewStudentTEta::from_array(gradient))
+        let (d_location, d_scale, d_skewness) = Self::gradient_theta_mu_sigma_nu(y, theta);
+
+        (
+            nll,
+            SkewStudentTEta {
+                mu: d_location * MuLink::derivative_inverse(eta.mu),
+                sigma: d_scale * SigmaLink::derivative_inverse(eta.sigma),
+                nu: d_skewness * NuLink::derivative_inverse(eta.nu),
+                tau: Self::tau_gradient_eta(y, eta),
+            },
+        )
     }
 }
 
