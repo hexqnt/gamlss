@@ -5,16 +5,12 @@ use gamlss_core::{
     ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
 };
 
-use gamlss_special::{invert_real_cdf, ln_gamma, regularized_gamma_lower};
+use gamlss_special::{digamma, invert_real_cdf, ln_gamma, regularized_gamma_lower};
 
 use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 /// Power exponential distribution with identity/log/log links.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 pub type PowerExponentialMuSigmaNu = PowerExponential<Identity, Log, Log>;
 /// Alias commonly used for the generalized error distribution.
 pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
@@ -22,9 +18,6 @@ pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
 /// Default generalized error distribution alias.
 pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 /// Power exponential / generalized error distribution.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
@@ -60,6 +53,11 @@ where
     }
 
     #[inline]
+    fn d_log_scale_c_d_nu(nu: f64) -> f64 {
+        3.0_f64.mul_add(digamma(3.0 / nu), -digamma(1.0 / nu)) / (2.0 * nu * nu)
+    }
+
+    #[inline]
     fn nll_theta(y: f64, theta: PowerExponentialTheta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
@@ -78,8 +76,35 @@ where
     }
 
     #[inline]
+    fn gradient_theta(y: f64, theta: PowerExponentialTheta) -> PowerExponentialTheta {
+        let c = Self::scale_c(theta.nu);
+        let residual = y - theta.mu;
+        let abs_residual = residual.abs();
+        let z = abs_residual / (c * theta.sigma);
+        let z_power = z.powf(theta.nu);
+        let d_log_z = theta.nu * z_power;
+        let d_log_c = Self::d_log_scale_c_d_nu(theta.nu);
+        let d_log_gamma_inv_nu = -digamma(1.0 / theta.nu) / (theta.nu * theta.nu);
+        let d_power = if abs_residual == 0.0 {
+            0.0
+        } else {
+            z_power * theta.nu.mul_add(-d_log_c, z.ln())
+        };
+        PowerExponentialTheta {
+            mu: if residual == 0.0 {
+                0.0
+            } else {
+                -d_log_z / residual
+            },
+            sigma: (1.0 - d_log_z) / theta.sigma,
+            nu: d_log_c + d_log_gamma_inv_nu - 1.0 / theta.nu + d_power,
+        }
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: PowerExponentialEta) -> (f64, PowerExponentialEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
@@ -91,10 +116,15 @@ where
             );
         }
 
-        let gradient = finite_difference_gradient_eta::<_, PowerExponentialEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, PowerExponentialEta::from_array(gradient))
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            PowerExponentialEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
     }
 }
 

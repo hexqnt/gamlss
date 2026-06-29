@@ -8,12 +8,8 @@ use gamlss_core::{
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 /// SHASH distribution with identity/log/log/log links.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// Sinh-arcsinh family using positive skewness and tail parameters.
 ///
@@ -21,9 +17,6 @@ pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// standard normal. Values of `nu` above or below one skew the distribution
 /// through `ln(nu)`, which keeps the default log link centered at the symmetric
 /// case.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shash<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
@@ -58,9 +51,16 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn transformed_z(y: f64, theta: ShashTheta) -> (f64, f64) {
+        let (x, _, z) = Self::transformed_x_h_z(y, theta);
+        (x, z)
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn transformed_x_h_z(y: f64, theta: ShashTheta) -> (f64, f64, f64) {
         let x = (y - theta.mu) / theta.sigma;
         let h = theta.tau * x.asinh() - theta.nu.ln();
-        (x, h.sinh())
+        (x, h, h.sinh())
     }
 
     #[inline]
@@ -78,24 +78,48 @@ where
             return f64::INFINITY;
         }
 
-        let (x, z) = Self::transformed_z(y, theta);
-        let h = theta.tau * x.asinh() - theta.nu.ln();
+        let (x, h, z) = Self::transformed_x_h_z(y, theta);
         theta.sigma.ln() - theta.tau.ln() + 0.5 * (x * x).ln_1p()
             - h.cosh().ln()
             - unit_normal_log_pdf(z)
     }
 
     #[inline]
+    fn gradient_theta(y: f64, theta: ShashTheta) -> ShashTheta {
+        let (x, h, _) = Self::transformed_x_h_z(y, theta);
+        let asinh_x = x.asinh();
+        let sinh_h = h.sinh();
+        let cosh_h = h.cosh();
+        let d_h = sinh_h.mul_add(cosh_h, -h.tanh());
+        let inv_one_plus_x2 = 1.0 / x.mul_add(x, 1.0);
+        let d_x = (d_h * theta.tau).mul_add(inv_one_plus_x2.sqrt(), x * inv_one_plus_x2);
+
+        ShashTheta {
+            mu: -d_x / theta.sigma,
+            sigma: x.mul_add(-d_x, 1.0) / theta.sigma,
+            nu: -d_h / theta.nu,
+            tau: d_h.mul_add(asinh_x, -1.0 / theta.tau),
+        }
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: ShashEta) -> (f64, ShashEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, ShashEta::from_array([f64::NAN; 4]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, ShashEta, 4>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, ShashEta::from_array(gradient))
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            ShashEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+            },
+        )
     }
 }
 

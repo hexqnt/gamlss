@@ -8,17 +8,10 @@ use gamlss_core::{
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
 use crate::initial::{robust_location_scale, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 /// Johnson SU distribution with identity/log/identity/log links.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 /// Johnson SU family in a location-scale-skewness-tail parameterization.
-///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
@@ -70,16 +63,39 @@ where
     }
 
     #[inline]
+    fn gradient_theta(y: f64, theta: JohnsonSuTheta) -> JohnsonSuTheta {
+        let s = (y - theta.mu) / theta.sigma;
+        let asinh_s = s.asinh();
+        let inv_sqrt = 1.0 / s.mul_add(s, 1.0).sqrt();
+        let z = theta.tau.mul_add(asinh_s, theta.nu);
+        let d_s = (z * theta.tau).mul_add(inv_sqrt, s / s.mul_add(s, 1.0));
+
+        JohnsonSuTheta {
+            mu: -d_s / theta.sigma,
+            sigma: s.mul_add(-d_s, 1.0) / theta.sigma,
+            nu: z,
+            tau: z.mul_add(asinh_s, -1.0 / theta.tau),
+        }
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: JohnsonSuEta) -> (f64, JohnsonSuEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
             return (nll, JohnsonSuEta::from_array([f64::NAN; 4]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, JohnsonSuEta, 4>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, JohnsonSuEta::from_array(gradient))
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            JohnsonSuEta {
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+            },
+        )
     }
 }
 
