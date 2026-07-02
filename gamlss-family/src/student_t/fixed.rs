@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Link, ModelError, Mu,
-    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Link,
+    ModelError, Mu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -113,38 +113,44 @@ where
 {
     type Eta = StudentTEta;
     type Theta = StudentTTheta;
-    type NllGradientEta = StudentTEta;
+    type GradientEta = StudentTEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        self.nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        self.nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        self.nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        self.nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        self.nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for StudentT<MuLink, SigmaLink>
+impl<MuLink, SigmaLink> InitialEtaFromObservations<2> for StudentT<MuLink, SigmaLink>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -166,7 +172,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
         {
             return f64::NAN;
@@ -182,7 +188,7 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -196,7 +202,7 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
@@ -206,7 +212,7 @@ where
             return f64::NAN;
         }
 
-        student_t_crps_theta(self.degrees_of_freedom, y, theta)
+        student_t_crps_theta(self.degrees_of_freedom, y, *theta)
     }
 }
 
@@ -220,7 +226,7 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
             return f64::NAN;
         }

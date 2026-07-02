@@ -7,13 +7,14 @@ use gamlss_core::{
     CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion,
     Family, FiniteScalarObservations, FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf,
     HasConditionalCdf, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
-    HasInitialEta, HasLogDensity, HasMarginalCdf, HasRosenblattTransform, Identity, LinearForm,
-    LinearFormBuilder, Log, LogLocation, LogSd, Logit, LowerTriangularParameterBlock, Mean, Median,
-    Mu, NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
-    OneProbability, ParameterBlock, ParameterBlocks, ParameterLayout, ParameterName,
-    ParameterParts, ParameterSlice, ParameterizedFamily, PositiveLink, Power, PredictorBlock,
-    Probability, Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics,
-    UnitIntervalLink, VectorParameterBlock, ZeroProbability,
+    HasInitialEta, HasLogDensity, HasMarginalCdf, HasRosenblattTransform, Identity,
+    InitialEtaFromObservations, LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit,
+    LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
+    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterBlocks,
+    ParameterDescriptor, ParameterLayout, ParameterName, ParameterPart, ParameterParts,
+    ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ScalarParams, Sigma, Size,
+    Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
+    VectorParameterBlock, ZeroProbability,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,15 +50,24 @@ impl DependentConstraintFamily {
 impl Family for DependentConstraintFamily {
     type Eta = (f64, f64);
     type Theta = (f64, f64);
-    type NllGradientEta = (f64, f64);
+    type GradientEta = (f64, f64);
     type Observation<'obs> = &'obs [f64];
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Nu), (Identity, Identity), 2>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
         let constrained = eta.1.tanh();
         (eta.0 + constrained, constrained)
     }
 
-    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn nll(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        _workspace: &mut Self::Workspace,
+    ) -> f64 {
         let residual = theta.0 - Self::target(observation);
         0.5 * residual * residual
     }
@@ -65,31 +75,30 @@ impl Family for DependentConstraintFamily {
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta) {
-        let theta = self.theta(eta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = self.theta(eta, workspace);
         let residual = theta.0 - Self::target(observation);
         let d_constrained = 1.0 - theta.1 * theta.1;
         (
-            self.nll(observation, theta),
+            self.nll(observation, &theta, workspace),
             (residual, residual * d_constrained),
         )
     }
 }
 
-impl ParameterizedFamily<2> for DependentConstraintFamily {
-    type Params = (Mu, Nu);
-    type Links = (Identity, Identity);
-}
+impl InitialEtaFromObservations<2> for DependentConstraintFamily {}
 
 impl HasDiagonalFisherInfo for DependentConstraintFamily {
     fn nll_gradient_and_diagonal_fisher_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, Self::NllGradientEta) {
-        let (nll, gradient) = self.nll_and_gradient_eta(observation, eta);
-        let theta = self.theta(eta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, Self::GradientEta) {
+        let (nll, gradient) = self.nll_and_gradient_eta(observation, eta, workspace);
+        let theta = self.theta(eta, workspace);
         let d_constrained = 1.0 - theta.1 * theta.1;
         (nll, gradient, (1.0, d_constrained.powi(2)))
     }
@@ -99,10 +108,11 @@ impl HasExpectedInformation<2> for DependentConstraintFamily {
     fn nll_gradient_and_expected_information_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, DenseInformation<2>) {
-        let (nll, gradient) = self.nll_and_gradient_eta(observation, eta);
-        let theta = self.theta(eta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, DenseInformation<2>) {
+        let (nll, gradient) = self.nll_and_gradient_eta(observation, eta, workspace);
+        let theta = self.theta(eta, workspace);
         let d_constrained = 1.0 - theta.1 * theta.1;
         (
             nll,
@@ -113,13 +123,14 @@ impl HasExpectedInformation<2> for DependentConstraintFamily {
 }
 
 impl HasDeviance for DependentConstraintFamily {
-    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        2.0 * self.nll(observation, theta)
+    fn deviance(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let mut workspace = self.workspace();
+        2.0 * self.nll(observation, theta, &mut workspace)
     }
 }
 
 impl HasCdf for DependentConstraintFamily {
-    fn cdf(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if Self::target(observation) <= theta.0 {
             1.0
         } else {
@@ -146,31 +157,41 @@ struct ScalarCdfFamily;
 impl Family for ScalarCdfFamily {
     type Eta = f64;
     type Theta = f64;
-    type NllGradientEta = f64;
+    type GradientEta = f64;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        eta
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        *eta
     }
 
-    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn nll(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        _workspace: &mut Self::Workspace,
+    ) -> f64 {
         (observation - theta).abs()
     }
 
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta) {
-        let nll = self.nll(observation, eta);
-        let gradient = if observation < eta { 1.0 } else { -1.0 };
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let nll = self.nll(observation, eta, workspace);
+        let gradient = if observation < *eta { 1.0 } else { -1.0 };
         (nll, gradient)
     }
 }
 
 impl HasCdf for ScalarCdfFamily {
-    fn cdf(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if observation <= theta { 1.0 } else { 0.0 }
+    fn cdf(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if observation <= *theta { 1.0 } else { 0.0 }
     }
 }
 
@@ -243,6 +264,37 @@ fn parameter_layout_helpers_remain_root_reexports() {
     assert_eq!(layout.ncoefficients(), 3);
     assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
     assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
+
+    assert_eq!(
+        layout.block_descriptors(),
+        vec![
+            ParameterDescriptor::whole("mu", 0..2),
+            ParameterDescriptor::whole("sigma", 2..3),
+        ]
+    );
+
+    let mut visited = Vec::new();
+    layout.visit_block_descriptors(|index, descriptor| visited.push((index, descriptor)));
+    assert_eq!(
+        visited,
+        vec![
+            (0, ParameterDescriptor::whole("mu", 0..2)),
+            (1, ParameterDescriptor::whole("sigma", 2..3)),
+        ]
+    );
+
+    assert_eq!(
+        ParameterDescriptor::vector_component("mu", 1, 4..6).part,
+        ParameterPart::VectorComponent { component: 1 }
+    );
+    assert_eq!(
+        ParameterDescriptor::lower_triangular_entry("cholesky", 2, 1, 6..7).part,
+        ParameterPart::LowerTriangularEntry { row: 2, col: 1 }
+    );
+    assert_eq!(
+        ParameterDescriptor::matrix_entry("loading", 3, 2, 7..9).part,
+        ParameterPart::MatrixEntry { row: 3, col: 2 }
+    );
 }
 
 #[test]
@@ -304,22 +356,23 @@ fn link_domain_marker_traits_remain_root_reexports() {
 
 #[test]
 fn public_api_supports_default_log_density_helper() {
-    let theta = DependentConstraintFamily.theta((2.0, 0.0));
+    let mut workspace = DependentConstraintFamily.workspace();
+    let theta = DependentConstraintFamily.theta(&(2.0, 0.0), &mut workspace);
 
     assert_eq!(
-        DependentConstraintFamily.log_density(&[1.0, 3.0], theta),
-        -DependentConstraintFamily.nll(&[1.0, 3.0], theta)
+        DependentConstraintFamily.log_density(&[1.0, 3.0], &theta),
+        -DependentConstraintFamily.nll(&[1.0, 3.0], &theta, &mut workspace)
     );
-    assert_eq!(DependentConstraintFamily.density(&[1.0, 3.0], theta), 1.0);
+    assert_eq!(DependentConstraintFamily.density(&[1.0, 3.0], &theta), 1.0);
 }
 
 #[test]
 fn cdf_contract_accepts_family_observations_and_scalar_marginals() {
-    assert_eq!(DependentConstraintFamily.cdf(&[1.0, 3.0], (2.0, 0.0)), 1.0);
-    assert_eq!(DependentConstraintFamily.cdf(&[3.0, 5.0], (2.0, 0.0)), 0.0);
+    assert_eq!(DependentConstraintFamily.cdf(&[1.0, 3.0], &(2.0, 0.0)), 1.0);
+    assert_eq!(DependentConstraintFamily.cdf(&[3.0, 5.0], &(2.0, 0.0)), 0.0);
 
-    assert_eq!(ScalarCdfFamily.marginal_cdf(0, 1.0, 2.0), 1.0);
-    assert!(ScalarCdfFamily.marginal_cdf(1, 1.0, 2.0).is_nan());
+    assert_eq!(ScalarCdfFamily.marginal_cdf(0, 1.0, &2.0), 1.0);
+    assert!(ScalarCdfFamily.marginal_cdf(1, 1.0, &2.0).is_nan());
 }
 
 #[test]
@@ -371,8 +424,10 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     assert_eq!(diagnostics.penalty, 0.0);
     assert_eq!(diagnostics.nonfinite_gradient_count, 0);
 
-    let (nll, gradient, diagonal_fisher) =
-        DependentConstraintFamily.nll_gradient_and_diagonal_fisher_eta(&[1.0, 3.0], (2.0, 0.0));
+    let mut family_workspace = DependentConstraintFamily.workspace();
+    let eta = (2.0, 0.0);
+    let (nll, gradient, diagonal_fisher) = DependentConstraintFamily
+        .nll_gradient_and_diagonal_fisher_eta(&[1.0, 3.0], &eta, &mut family_workspace);
 
     assert_eq!(nll, 0.0);
     assert_eq!(gradient.part(0), 0.0);
@@ -380,7 +435,7 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     assert_eq!(diagonal_fisher, (1.0, 1.0));
 
     let (nll, gradient, information) = DependentConstraintFamily
-        .nll_gradient_and_expected_information_eta(&[1.0, 3.0], (2.0, 0.0));
+        .nll_gradient_and_expected_information_eta(&[1.0, 3.0], &eta, &mut family_workspace);
 
     assert_eq!(nll, 0.0);
     assert_eq!(gradient.part(0), 0.0);
@@ -399,8 +454,11 @@ fn public_api_supports_deviance_and_initial_eta_extension_traits() {
 
     assert_eq!(initial_eta, (2.0, 0.0));
     assert_eq!(
-        DependentConstraintFamily
-            .deviance(&[1.0, 3.0], DependentConstraintFamily.theta(initial_eta)),
+        {
+            let mut workspace = DependentConstraintFamily.workspace();
+            let theta = DependentConstraintFamily.theta(&initial_eta, &mut workspace);
+            DependentConstraintFamily.deviance(&[1.0, 3.0], &theta)
+        },
         0.0
     );
 }

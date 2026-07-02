@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Mu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams,
 };
 
 use gamlss_special::{
@@ -201,37 +201,43 @@ where
 {
     type Eta = PoissonEta;
     type Theta = PoissonTheta;
-    type NllGradientEta = PoissonEta;
+    type GradientEta = PoissonEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu,), (MuLink,), 1>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink> ParameterizedFamily<1> for Poisson<MuLink>
+impl<MuLink> InitialEtaFromObservations<1> for Poisson<MuLink>
 where
     MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu,);
-    type Links = (MuLink,);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -251,8 +257,8 @@ impl<MuLink> HasCdf for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta)
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        Self::cdf_theta(y, *theta)
     }
 }
 
@@ -261,13 +267,13 @@ where
     MuLink: PositiveLink<f64>,
 {
     #[allow(clippy::cast_precision_loss)]
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
 
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, theta)
+            Self::cdf_theta(count as f64, *theta)
         })
     }
 }
@@ -277,13 +283,13 @@ where
     MuLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
 
-        let cdf = Self::cdf_theta(y, theta);
-        let pmf = Self::pmf_theta(y, theta);
+        let cdf = Self::cdf_theta(y, *theta);
+        let pmf = Self::pmf_theta(y, *theta);
         let half_gini = Self::half_gini_mean_difference(theta.mu);
         if !cdf.is_finite() || !pmf.is_finite() || !half_gini.is_finite() {
             return f64::NAN;
@@ -301,7 +307,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -366,10 +372,22 @@ mod tests {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
-        assert!(family.nll(3.0, theta).is_finite());
-        assert!(family.nll(-1.0, theta).is_infinite());
-        assert!(family.nll(1.5, theta).is_infinite());
-        assert!(family.nll(3.0, PoissonTheta { mu: 0.0 }).is_infinite());
+        assert!(family.nll(3.0, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(-1.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(1.5, &theta, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(3.0, &PoissonTheta { mu: 0.0 }, &mut family.workspace())
+                .is_infinite()
+        );
     }
 
     #[test]
@@ -382,13 +400,13 @@ mod tests {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert!((family.cdf(0.0, theta) - (-2.0_f64).exp()).abs() < 1.0e-12);
-        assert!((family.cdf(1.5, theta) - 3.0 * (-2.0_f64).exp()).abs() < 1.0e-12);
-        assert!(family.cdf(3.0, PoissonTheta { mu: 0.0 }).is_nan());
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert!((family.cdf(0.0, &theta) - (-2.0_f64).exp()).abs() < 1.0e-12);
+        assert!((family.cdf(1.5, &theta) - 3.0 * (-2.0_f64).exp()).abs() < 1.0e-12);
+        assert!(family.cdf(3.0, &PoissonTheta { mu: 0.0 }).is_nan());
         assert!(
             family
-                .cdf((super::MAX_CDF_TERMS + 1) as f64, theta)
+                .cdf((super::MAX_CDF_TERMS + 1) as f64, &theta)
                 .is_nan()
         );
     }
@@ -396,7 +414,7 @@ mod tests {
     #[test]
     fn poisson_cdf_is_stable_for_large_mean() {
         let family = PoissonMean::new();
-        let cdf = family.cdf(1000.0, PoissonTheta { mu: 1000.0 });
+        let cdf = family.cdf(1000.0, &PoissonTheta { mu: 1000.0 });
 
         assert!(cdf.is_finite());
         assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
@@ -411,14 +429,14 @@ mod tests {
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
             );
         }
 
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
-        assert!(family.quantile(0.5, PoissonTheta { mu: 0.0 }).is_nan());
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
+        assert!(family.quantile(0.5, &PoissonTheta { mu: 0.0 }).is_nan());
     }
 
     #[test]
@@ -427,10 +445,10 @@ mod tests {
         let theta = PoissonTheta { mu: 6.0 };
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
-            let q = family.quantile(p, theta);
-            assert!(family.cdf(q, theta) >= p);
+            let q = family.quantile(p, &theta);
+            assert!(family.cdf(q, &theta) >= p);
             if q > 0.0 {
-                assert!(family.cdf(q - 1.0, theta) < p);
+                assert!(family.cdf(q - 1.0, &theta) < p);
             }
         }
     }
@@ -441,12 +459,12 @@ mod tests {
         let theta = PoissonTheta { mu: 2.0 };
 
         assert_relative_eq!(
-            family.crps(3.0, theta),
+            family.crps(3.0, &theta),
             0.664_529_576_806_184_1,
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            family.crps(0.0, theta),
+            family.crps(0.0, &theta),
             1.228_494_478_547_156,
             epsilon = 1.0e-12
         );
@@ -458,7 +476,7 @@ mod tests {
         let theta = PoissonTheta { mu: 6.0 };
 
         assert_relative_eq!(
-            family.crps(5.0, theta),
+            family.crps(5.0, &theta),
             poisson_crps_by_truncated_expectations(5, theta.mu),
             epsilon = 1.0e-12
         );
@@ -470,12 +488,12 @@ mod tests {
         let family = PoissonMean::new();
         let theta = PoissonTheta { mu: 2.0 };
 
-        assert!(family.crps(-1.0, theta).is_nan());
-        assert!(family.crps(1.5, theta).is_nan());
-        assert!(family.crps(3.0, PoissonTheta { mu: 0.0 }).is_nan());
+        assert!(family.crps(-1.0, &theta).is_nan());
+        assert!(family.crps(1.5, &theta).is_nan());
+        assert!(family.crps(3.0, &PoissonTheta { mu: 0.0 }).is_nan());
         assert!(
             family
-                .crps((super::MAX_CDF_TERMS + 1) as f64, theta)
+                .crps((super::MAX_CDF_TERMS + 1) as f64, &theta)
                 .is_nan()
         );
     }
@@ -484,8 +502,8 @@ mod tests {
     fn poisson_crps_is_nonnegative_for_valid_domains() {
         let family = PoissonMean::new();
 
-        assert!(family.crps(3.0, PoissonTheta { mu: 2.0 }) >= 0.0);
-        assert!(family.crps(1000.0, PoissonTheta { mu: 1000.0 }) >= 0.0);
+        assert!(family.crps(3.0, &PoissonTheta { mu: 2.0 }) >= 0.0);
+        assert!(family.crps(1000.0, &PoissonTheta { mu: 1000.0 }) >= 0.0);
     }
 
     #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
@@ -515,8 +533,8 @@ mod tests {
 
         let family = PoissonMean::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, PoissonTheta { mu: 2.0 });
+        let sample = family.sample(&mut rng, &PoissonTheta { mu: 2.0 });
         assert!(sample >= 0.0 && sample.fract() == 0.0);
-        assert!(family.sample(&mut rng, PoissonTheta { mu: 0.0 }).is_nan());
+        assert!(family.sample(&mut rng, &PoissonTheta { mu: 0.0 }).is_nan());
     }
 }

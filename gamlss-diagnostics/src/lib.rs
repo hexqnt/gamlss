@@ -161,14 +161,14 @@ where
         &self,
         parameters: &[f64],
         out: &mut [f64],
-        mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+        mut evaluate: impl FnMut(&F, f64, &F::Theta) -> f64,
     ) -> Result<(), ModelError> {
         validate_output_len(self.nrows(), out.len())?;
         self.prediction.for_each_theta(parameters, |row, theta| {
             out[row] = evaluate(
                 self.prediction.family(),
                 self.obs.observation_at(row),
-                theta,
+                &theta,
             );
         })
     }
@@ -498,7 +498,7 @@ where
                 return;
             }
 
-            let value = family.crps(obs.observation_at(row), theta);
+            let value = family.crps(obs.observation_at(row), &theta);
             weighted_sum = weight.mul_add(value, weighted_sum);
             weight_sum += weight;
         })?;
@@ -511,7 +511,7 @@ fn diagnostic_values_into<F, Blocks, Obs>(
     model: &Gamlss<F, Blocks, Obs>,
     parameters: &[f64],
     out: &mut [f64],
-    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+    mut evaluate: impl FnMut(&F, f64, &F::Theta) -> f64,
 ) -> Result<(), ModelError>
 where
     F: for<'row> Family<Observation<'row> = f64>,
@@ -522,7 +522,7 @@ where
     let family = model.family();
     let obs = model.obs();
     model.for_each_theta(parameters, |row, theta| {
-        out[row] = evaluate(family, obs.observation_at(row), theta);
+        out[row] = evaluate(family, obs.observation_at(row), &theta);
     })
 }
 
@@ -548,8 +548,11 @@ const fn validate_output_len(expected: usize, actual: usize) -> Result<(), Model
     }
 }
 
-fn normalize_pit_values(values: Vec<f64>) -> Vec<f64> {
-    values.into_iter().map(unit_normal_quantile).collect()
+fn normalize_pit_values(mut values: Vec<f64>) -> Vec<f64> {
+    for value in &mut values {
+        *value = unit_normal_quantile(*value);
+    }
+    values
 }
 
 #[cfg(test)]

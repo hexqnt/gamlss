@@ -120,8 +120,8 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
-            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::cdf_log_location_log_sd(y, theta.into())
+            fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::cdf_log_location_log_sd(y, (*theta).into())
             }
         }
 
@@ -131,8 +131,8 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
-            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-                Self::quantile_log_location_log_sd(p, theta.into())
+            fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+                Self::quantile_log_location_log_sd(p, (*theta).into())
             }
         }
 
@@ -142,8 +142,8 @@ macro_rules! impl_log_normal_helpers {
             <LogNormal<$param, $first, $second> as Family>::Theta:
                 Copy + Into<LogNormalLogLocationLogSdTheta>,
         {
-            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::crps_log_location_log_sd(y, theta.into())
+            fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::crps_log_location_log_sd(y, (*theta).into())
             }
         }
 
@@ -157,8 +157,8 @@ macro_rules! impl_log_normal_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-                let theta = theta.into();
+            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+                let theta = (*theta).into();
                 if !Self::valid_log_location_log_sd(theta) {
                     return f64::NAN;
                 }
@@ -241,23 +241,23 @@ mod tests {
         let kernel = theta.log_location_log_sd();
 
         assert_relative_eq!(
-            mean.nll(1.7, theta),
-            canonical.nll(1.7, kernel),
+            mean.nll(1.7, &theta, &mut mean.workspace()),
+            canonical.nll(1.7, &kernel, &mut canonical.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.cdf(1.7, theta),
-            canonical.cdf(1.7, kernel),
+            mean.cdf(1.7, &theta),
+            canonical.cdf(1.7, &kernel),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.quantile(0.4, theta),
-            canonical.quantile(0.4, kernel),
+            mean.quantile(0.4, &theta),
+            canonical.quantile(0.4, &kernel),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.crps(1.7, theta),
-            canonical.crps(1.7, kernel),
+            mean.crps(1.7, &theta),
+            canonical.crps(1.7, &kernel),
             epsilon = 1.0e-12
         );
     }
@@ -270,23 +270,23 @@ mod tests {
         let kernel = theta.log_location_log_sd();
 
         assert_relative_eq!(
-            mean_cv.nll(1.7, theta),
-            canonical.nll(1.7, kernel),
+            mean_cv.nll(1.7, &theta, &mut mean_cv.workspace()),
+            canonical.nll(1.7, &kernel, &mut canonical.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.cdf(1.7, theta),
-            canonical.cdf(1.7, kernel),
+            mean_cv.cdf(1.7, &theta),
+            canonical.cdf(1.7, &kernel),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.quantile(0.4, theta),
-            canonical.quantile(0.4, kernel),
+            mean_cv.quantile(0.4, &theta),
+            canonical.quantile(0.4, &kernel),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.crps(1.7, theta),
-            canonical.crps(1.7, kernel),
+            mean_cv.crps(1.7, &theta),
+            canonical.crps(1.7, &kernel),
             epsilon = 1.0e-12
         );
     }
@@ -298,10 +298,11 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    LogNormalMeanLogSdTheta {
+                    &LogNormalMeanLogSdTheta {
                         mean: 1.0,
                         log_sd: 0.8
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_finite()
         );
@@ -309,10 +310,11 @@ mod tests {
             family
                 .nll(
                     0.0,
-                    LogNormalMeanLogSdTheta {
+                    &LogNormalMeanLogSdTheta {
                         mean: 1.0,
                         log_sd: 0.8
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
@@ -320,10 +322,11 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    LogNormalMeanLogSdTheta {
+                    &LogNormalMeanLogSdTheta {
                         mean: 0.0,
                         log_sd: 0.8
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
@@ -331,10 +334,11 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    LogNormalMeanLogSdTheta {
+                    &LogNormalMeanLogSdTheta {
                         mean: 1.0,
                         log_sd: 0.0
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
@@ -350,12 +354,12 @@ mod tests {
         let reference = StatrsLogNormal::new(theta.log_location, theta.log_sd).unwrap();
 
         for y in [0.05, 0.25, 1.0, 2.0, 8.0] {
-            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-7);
+            assert_relative_eq!(family.cdf(y, &theta), reference.cdf(y), epsilon = 1.0e-7);
         }
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_relative_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 reference.inverse_cdf(p),
                 epsilon = 1.0e-6
             );
@@ -371,13 +375,13 @@ mod tests {
             log_sd: 1.0,
         };
 
-        assert_eq!(family.cdf(0.0, theta), 0.0);
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
-        assert!(family.crps(1.0, theta).is_finite());
-        assert!(family.crps(-1.0, theta).is_nan());
+        assert_eq!(family.cdf(0.0, &theta), 0.0);
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(1.0, &theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
+        assert!(family.crps(1.0, &theta).is_finite());
+        assert!(family.crps(-1.0, &theta).is_nan());
     }
 
     #[cfg(feature = "rand")]
@@ -389,7 +393,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            LogNormalMeanLogSdTheta {
+            &LogNormalMeanLogSdTheta {
                 mean: 1.5,
                 log_sd: 0.8,
             },

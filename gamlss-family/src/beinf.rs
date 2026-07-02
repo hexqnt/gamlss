@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu, Nu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau, UnitIntervalLink,
+    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
+    Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau, UnitIntervalLink,
 };
 
 use gamlss_special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
@@ -207,31 +207,40 @@ where
 {
     type Eta = BeinfEta;
     type Theta = BeinfTheta;
-    type NllGradientEta = BeinfEta;
+    type GradientEta = BeinfEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma, Nu, Tau), (MuLink, SigmaLink, NuLink, TauLink), 4>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink, NuLink, TauLink> ParameterizedFamily<4>
+impl<MuLink, SigmaLink, NuLink, TauLink> InitialEtaFromObservations<4>
     for Beinf<MuLink, SigmaLink, NuLink, TauLink>
 where
     MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
@@ -239,9 +248,6 @@ where
     NuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     TauLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Sigma, Nu, Tau);
-    type Links = (MuLink, SigmaLink, NuLink, TauLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -300,8 +306,8 @@ where
     NuLink: PositiveLink<f64>,
     TauLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta)
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        Self::cdf_theta(y, *theta)
     }
 }
 
@@ -312,11 +318,11 @@ where
     NuLink: PositiveLink<f64>,
     TauLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&p) {
             return f64::NAN;
         }
-        let Some(parts) = Self::parts(theta) else {
+        let Some(parts) = Self::parts(*theta) else {
             return f64::NAN;
         };
         if p <= parts.p0 {

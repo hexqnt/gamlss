@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink, Size, TotalMean, UnitIntervalLink, ZeroProbability,
+    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams, Size, TotalMean, UnitIntervalLink,
+    ZeroProbability,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -125,23 +126,37 @@ where
 {
     type Eta = ZinbTotalMeanSizeZeroProbabilityEta;
     type Theta = ZinbTotalMeanSizeZeroProbabilityTheta;
-    type NllGradientEta = ZinbTotalMeanSizeZeroProbabilityEta;
+    type GradientEta = ZinbTotalMeanSizeZeroProbabilityEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<
+        (TotalMean, Size, ZeroProbability),
+        (MeanLink, SizeLink, ZeroProbabilityLink),
+        3,
+    >;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         Zinb::<Log, Log, Logit>::nll_theta(y, theta.component())
     }
 
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
+        let theta = Self::theta_from_eta(*eta);
+        self.nll(y, &theta, workspace)
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = Self::theta_from_eta(eta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
         let component = theta.component();
         let nll = Zinb::<Log, Log, Logit>::nll_theta(y, component);
         if !nll.is_finite() {
@@ -169,16 +184,13 @@ where
     }
 }
 
-impl<MeanLink, SizeLink, ZeroProbabilityLink> ParameterizedFamily<3>
+impl<MeanLink, SizeLink, ZeroProbabilityLink> InitialEtaFromObservations<3>
     for ZinbTotalMeanSize<MeanLink, SizeLink, ZeroProbabilityLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     SizeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (TotalMean, Size, ZeroProbability);
-    type Links = (MeanLink, SizeLink, ZeroProbabilityLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -222,7 +234,7 @@ where
     SizeLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         Zinb::<Log, Log, Logit>::cdf_theta(y, theta.component())
     }
 }
@@ -234,7 +246,7 @@ where
     SizeLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let theta = theta.component();
         if !is_positive_finite(theta.mu)
             || !is_positive_finite(theta.shape)

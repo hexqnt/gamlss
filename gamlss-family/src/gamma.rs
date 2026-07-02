@@ -99,7 +99,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     where
         Obs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        let mut values = Vec::new();
+        let mut values = Vec::with_capacity(obs.len());
         for row in 0..obs.len() {
             let y = obs.observation_at(row);
             if y.is_finite() && y > 0.0 {
@@ -131,8 +131,8 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
-            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::cdf_shape_rate(y, theta.into())
+            fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::cdf_shape_rate(y, (*theta).into())
             }
         }
 
@@ -141,8 +141,8 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
-            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-                Self::quantile_shape_rate(p, theta.into())
+            fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+                Self::quantile_shape_rate(p, (*theta).into())
             }
         }
 
@@ -151,8 +151,8 @@ macro_rules! impl_gamma_helpers {
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
-            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::crps_shape_rate(y, theta.into())
+            fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::crps_shape_rate(y, (*theta).into())
             }
         }
 
@@ -165,8 +165,8 @@ macro_rules! impl_gamma_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-                let theta = theta.into();
+            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+                let theta = (*theta).into();
                 if !Self::valid_shape_rate(theta) {
                     return f64::NAN;
                 }
@@ -221,23 +221,23 @@ mod tests {
         let canonical = theta.shape_rate();
 
         assert_relative_eq!(
-            mean_cv.nll(1.7, theta),
-            shape_rate.nll(1.7, canonical),
+            mean_cv.nll(1.7, &theta, &mut mean_cv.workspace()),
+            shape_rate.nll(1.7, &canonical, &mut shape_rate.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.cdf(1.7, theta),
-            shape_rate.cdf(1.7, canonical),
+            mean_cv.cdf(1.7, &theta),
+            shape_rate.cdf(1.7, &canonical),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.quantile(0.4, theta),
-            shape_rate.quantile(0.4, canonical),
+            mean_cv.quantile(0.4, &theta),
+            shape_rate.quantile(0.4, &canonical),
             epsilon = 1.0e-8
         );
         assert_relative_eq!(
-            mean_cv.crps(1.7, theta),
-            shape_rate.crps(1.7, canonical),
+            mean_cv.crps(1.7, &theta),
+            shape_rate.crps(1.7, &canonical),
             epsilon = 1.0e-12
         );
     }
@@ -248,32 +248,49 @@ mod tests {
 
         assert!(
             family
-                .nll(1.7, GammaMeanCvTheta { mean: 1.0, cv: 0.5 })
+                .nll(
+                    1.7,
+                    &GammaMeanCvTheta { mean: 1.0, cv: 0.5 },
+                    &mut family.workspace()
+                )
                 .is_finite()
         );
         assert!(
             family
-                .nll(0.0, GammaMeanCvTheta { mean: 1.0, cv: 0.5 })
-                .is_infinite()
-        );
-        assert!(
-            family
-                .nll(1.7, GammaMeanCvTheta { mean: 0.0, cv: 0.5 })
-                .is_infinite()
-        );
-        assert!(
-            family
-                .nll(1.7, GammaMeanCvTheta { mean: 1.0, cv: 0.0 })
+                .nll(
+                    0.0,
+                    &GammaMeanCvTheta { mean: 1.0, cv: 0.5 },
+                    &mut family.workspace()
+                )
                 .is_infinite()
         );
         assert!(
             family
                 .nll(
                     1.7,
-                    GammaMeanCvTheta {
+                    &GammaMeanCvTheta { mean: 0.0, cv: 0.5 },
+                    &mut family.workspace()
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    &GammaMeanCvTheta { mean: 1.0, cv: 0.0 },
+                    &mut family.workspace()
+                )
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    &GammaMeanCvTheta {
                         mean: f64::NAN,
                         cv: 0.5
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
@@ -289,12 +306,12 @@ mod tests {
         let reference = StatrsGamma::new(theta.shape, theta.rate).unwrap();
 
         for y in [0.05, 0.25, 1.0, 2.0, 8.0] {
-            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+            assert_relative_eq!(family.cdf(y, &theta), reference.cdf(y), epsilon = 1.0e-11);
         }
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_relative_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 reference.inverse_cdf(p),
                 epsilon = 1.0e-8
             );
@@ -310,17 +327,17 @@ mod tests {
             rate: 2.0,
         };
 
-        assert_eq!(family.cdf(0.0, theta), 0.0);
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_eq!(family.cdf(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(1.0, &theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert_relative_eq!(
-            family.crps(1.0, theta),
+            family.crps(1.0, &theta),
             0.385_335_283_236_612_7,
             epsilon = 1.0e-12
         );
-        assert_relative_eq!(family.crps(0.0, theta), 0.25, epsilon = 1.0e-12);
-        assert!(family.crps(-1.0, theta).is_nan());
+        assert_relative_eq!(family.crps(0.0, &theta), 0.25, epsilon = 1.0e-12);
+        assert!(family.crps(-1.0, &theta).is_nan());
     }
 
     #[cfg(feature = "rand")]
@@ -330,11 +347,11 @@ mod tests {
 
         let family = GammaMeanCv::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, GammaMeanCvTheta { mean: 1.5, cv: 0.7 });
+        let sample = family.sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.7 });
         assert!(sample > 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(&mut rng, GammaMeanCvTheta { mean: 1.5, cv: 0.0 })
+                .sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.0 })
                 .is_nan()
         );
     }

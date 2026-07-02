@@ -98,6 +98,12 @@ impl ISplineBasis {
         self.mspline.evaluate(x)
     }
 
+    /// Visits non-zero first-derivative basis values at `x` without allocating.
+    #[inline]
+    pub fn for_each_derivative_basis(&self, x: f64, f: impl FnMut(usize, f64)) {
+        self.mspline.for_each_basis(x, f);
+    }
+
     /// Evaluates one I-spline basis function at `x`.
     #[must_use]
     #[inline]

@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
+    Log, Mu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
 };
 
 use crate::domain::{is_finite_location_scale, is_probability};
@@ -101,38 +101,44 @@ where
 {
     type Eta = GumbelEta;
     type Theta = GumbelTheta;
-    type NllGradientEta = GumbelEta;
+    type GradientEta = GumbelEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for Gumbel<MuLink, SigmaLink>
+impl<MuLink, SigmaLink> InitialEtaFromObservations<2> for Gumbel<MuLink, SigmaLink>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -161,8 +167,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -177,8 +183,8 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !is_probability(p) || !Self::valid_theta(theta) {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !is_probability(p) || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -195,8 +201,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !Self::valid_theta(theta) {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -269,15 +275,16 @@ mod tests {
             sigma: 1.5,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
         assert!(
             family
                 .nll(
                     1.7,
-                    GumbelTheta {
+                    &GumbelTheta {
                         mu: theta.mu,
                         sigma: 0.0,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -292,11 +299,11 @@ mod tests {
         };
 
         assert_relative_eq!(
-            family.cdf(theta.mu, theta),
+            family.cdf(theta.mu, &theta),
             (-1.0_f64).exp(),
             epsilon = 1.0e-12
         );
-        assert!(family.cdf(f64::NAN, theta).is_nan());
+        assert!(family.cdf(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -307,19 +314,19 @@ mod tests {
             sigma: 1.5,
         };
 
-        assert!(family.quantile(0.0, theta).is_infinite());
-        assert!(family.quantile(0.0, theta).is_sign_negative());
-        assert!(family.quantile(1.0, theta).is_infinite());
-        assert!(family.quantile(1.0, theta).is_sign_positive());
+        assert!(family.quantile(0.0, &theta).is_infinite());
+        assert!(family.quantile(0.0, &theta).is_sign_negative());
+        assert!(family.quantile(1.0, &theta).is_infinite());
+        assert!(family.quantile(1.0, &theta).is_sign_positive());
 
-        let y = family.quantile(0.75, theta);
-        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        let y = family.quantile(0.75, &theta);
+        assert_relative_eq!(family.cdf(y, &theta), 0.75, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .quantile(
                     0.5,
-                    GumbelTheta {
+                    &GumbelTheta {
                         mu: 0.4,
                         sigma: 0.0
                     }
@@ -339,7 +346,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    GumbelTheta {
+                    &GumbelTheta {
                         mu: 0.4,
                         sigma: 1.5
                     }
@@ -350,7 +357,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    GumbelTheta {
+                    &GumbelTheta {
                         mu: 0.4,
                         sigma: 0.0
                     }

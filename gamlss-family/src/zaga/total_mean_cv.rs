@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Cv, Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, TotalMean, UnitIntervalLink,
+    Cv, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
     ZeroProbability,
 };
 
@@ -122,23 +122,34 @@ where
 {
     type Eta = ZagaTotalMeanCvZeroProbabilityEta;
     type Theta = ZagaTotalMeanCvZeroProbabilityTheta;
-    type NllGradientEta = ZagaTotalMeanCvZeroProbabilityEta;
+    type GradientEta = ZagaTotalMeanCvZeroProbabilityEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec =
+        ScalarParams<(TotalMean, Cv, ZeroProbability), (MeanLink, CvLink, ZeroProbabilityLink), 3>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         Zaga::<Log, Log, Logit>::nll_theta(y, theta.component())
     }
 
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
+        let theta = Self::theta_from_eta(*eta);
+        self.nll(y, &theta, workspace)
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = Self::theta_from_eta(eta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
         let component = theta.component();
         let nll = Zaga::<Log, Log, Logit>::nll_theta(y, component);
         if !nll.is_finite() {
@@ -166,16 +177,13 @@ where
     }
 }
 
-impl<MeanLink, CvLink, ZeroProbabilityLink> ParameterizedFamily<3>
+impl<MeanLink, CvLink, ZeroProbabilityLink> InitialEtaFromObservations<3>
     for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (TotalMean, Cv, ZeroProbability);
-    type Links = (MeanLink, CvLink, ZeroProbabilityLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -222,7 +230,7 @@ where
     CvLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         Zaga::<Log, Log, Logit>::cdf_theta(y, theta.component())
     }
 }
@@ -234,7 +242,7 @@ where
     CvLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&p)
             || theta.zero_probability <= 0.0
             || theta.zero_probability >= 1.0

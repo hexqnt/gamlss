@@ -4,9 +4,9 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
-    Identity, InitialEtaFromTheta, LinearPredictorBlock, Link, Log, ModelError, Mu, NoPenalty,
-    ObservationView, ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, Penalty,
-    PositiveLink, Sigma,
+    Identity, InitialEtaFromObservations, InitialEtaFromTheta, LinearPredictorBlock, Link, Log,
+    ModelError, Mu, NoPenalty, ObservationView, ParameterBlock, ParameterBlocks, ParameterParts,
+    Penalty, PositiveLink, ScalarParams, Sigma,
 };
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
@@ -134,38 +134,44 @@ where
 {
     type Eta = NormalEta;
     type Theta = NormalTheta;
-    type NllGradientEta = NormalEta;
+    type GradientEta = NormalEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for Normal<MuLink, SigmaLink>
+impl<MuLink, SigmaLink> InitialEtaFromObservations<2> for Normal<MuLink, SigmaLink>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -187,8 +193,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn deviance(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn deviance(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::INFINITY;
         }
 
@@ -202,8 +208,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -216,8 +222,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !Self::valid_theta(theta) {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -231,8 +237,8 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -261,8 +267,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !Self::valid_theta(theta) {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -364,16 +370,21 @@ mod tests {
             sigma: 0.8,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(f64::NAN, theta).is_infinite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(f64::NAN, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: f64::INFINITY,
                         sigma: theta.sigma,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -381,20 +392,22 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: theta.mu,
                         sigma: 0.0,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
 
         let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
-            NormalEta {
+            &NormalEta {
                 mu: 0.4,
                 sigma: f64::NEG_INFINITY,
             },
+            &mut family.workspace(),
         );
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
@@ -408,7 +421,11 @@ mod tests {
 
         assert_relative_eq!(eta.mu, 1.7);
         assert_relative_eq!(eta.sigma, DEFAULT_INITIAL_LOG_SIGMA);
-        assert!(family.nll_eta(1.7, eta).is_finite());
+        assert!(
+            family
+                .nll_eta(1.7, &eta, &mut family.workspace())
+                .is_finite()
+        );
     }
 
     #[test]
@@ -428,7 +445,7 @@ mod tests {
             family
                 .deviance(
                     1.7,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 1.7,
                         sigma: 0.0,
                     },
@@ -439,7 +456,7 @@ mod tests {
             family
                 .deviance(
                     f64::NAN,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 1.7,
                         sigma: 1.0,
                     },
@@ -453,7 +470,7 @@ mod tests {
         let family = NormalMuSigma::new();
         let deviance = family.deviance(
             2.5,
-            NormalTheta {
+            &NormalTheta {
                 mu: 1.5,
                 sigma: 0.5,
             },
@@ -470,14 +487,14 @@ mod tests {
             sigma: 0.5,
         };
 
-        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5, epsilon = 1.0e-7);
+        assert_relative_eq!(family.cdf(theta.mu, &theta), 0.5, epsilon = 1.0e-7);
         assert_relative_eq!(
-            family.cdf(theta.mu + theta.sigma, theta),
+            family.cdf(theta.mu + theta.sigma, &theta),
             0.841_344_746,
             epsilon = 1.0e-7
         );
         assert_relative_eq!(
-            family.cdf(theta.mu - theta.sigma, theta),
+            family.cdf(theta.mu - theta.sigma, &theta),
             0.158_655_254,
             epsilon = 1.0e-7
         );
@@ -491,7 +508,7 @@ mod tests {
             family
                 .cdf(
                     1.0,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
@@ -502,7 +519,7 @@ mod tests {
             family
                 .cdf(
                     f64::NAN,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
@@ -518,10 +535,10 @@ mod tests {
             mu: 0.4,
             sigma: 0.8,
         };
-        let nll = family.nll(1.7, theta);
+        let nll = family.nll(1.7, &theta, &mut family.workspace());
 
-        assert_relative_eq!(family.log_density(1.7, theta), -nll, epsilon = 1.0e-12);
-        assert_relative_eq!(family.density(1.7, theta), (-nll).exp(), epsilon = 1.0e-12);
+        assert_relative_eq!(family.log_density(1.7, &theta), -nll, epsilon = 1.0e-12);
+        assert_relative_eq!(family.density(1.7, &theta), (-nll).exp(), epsilon = 1.0e-12);
     }
 
     #[test]
@@ -533,12 +550,12 @@ mod tests {
             sigma: 0.5,
         };
 
-        let y = family.quantile(0.75, theta);
+        let y = family.quantile(0.75, &theta);
 
-        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-7);
-        assert_eq!(family.quantile(0.0, theta), f64::NEG_INFINITY);
-        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_relative_eq!(family.cdf(y, &theta), 0.75, epsilon = 1.0e-7);
+        assert_eq!(family.quantile(0.0, &theta), f64::NEG_INFINITY);
+        assert_eq!(family.quantile(1.0, &theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -552,7 +569,7 @@ mod tests {
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_relative_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 reference.inverse_cdf(p),
                 epsilon = 1.0e-6
             );
@@ -566,7 +583,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 1.0,
-                NormalTheta {
+                &NormalTheta {
                     mu: 0.0,
                     sigma: 2.0,
                 },
@@ -584,7 +601,7 @@ mod tests {
             family
                 .crps(
                     1.0,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 0.0,
                         sigma: 0.0,
                     },
@@ -595,7 +612,7 @@ mod tests {
             family
                 .crps(
                     f64::NAN,
-                    NormalTheta {
+                    &NormalTheta {
                         mu: 0.0,
                         sigma: 1.0,
                     },
@@ -639,7 +656,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    super::NormalTheta {
+                    &super::NormalTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
@@ -650,7 +667,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    super::NormalTheta {
+                    &super::NormalTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }

@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, LogPlus, Mean, Nu,
-    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
+    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
+    Log, LogPlus, Mean, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
+    Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -115,31 +116,41 @@ where
 {
     type Eta = SkewStudentTMeanSdEta;
     type Theta = SkewStudentTMeanSdTheta;
-    type NllGradientEta = SkewStudentTMeanSdEta;
+    type GradientEta = SkewStudentTMeanSdEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec =
+        ScalarParams<(Mean, Sigma, Nu, Tau), (MeanLink, SigmaLink, NuLink, TauLink), 4>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MeanLink, SigmaLink, NuLink, TauLink> ParameterizedFamily<4>
+impl<MeanLink, SigmaLink, NuLink, TauLink> InitialEtaFromObservations<4>
     for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + Link<f64>,
@@ -147,9 +158,6 @@ where
     NuLink: InitialEtaFromTheta<f64> + Link<f64>,
     TauLink: InitialEtaFromTheta<f64> + Link<f64>,
 {
-    type Params = (Mean, Sigma, Nu, Tau);
-    type Links = (MeanLink, SigmaLink, NuLink, TauLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -181,7 +189,7 @@ where
     NuLink: Link<f64>,
     TauLink: Link<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::NAN;
         };
@@ -204,7 +212,7 @@ where
     NuLink: Link<f64>,
     TauLink: Link<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
             return f64::NAN;
         };

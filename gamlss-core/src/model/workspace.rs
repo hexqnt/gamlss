@@ -1,3 +1,53 @@
+use crate::Family;
+
+/// Reusable model scratch buffers for GAMLSS objective evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelWorkspace<F>
+where
+    F: Family,
+{
+    family: F::Workspace,
+    gradient: GradientWorkspace,
+}
+
+impl<F> ModelWorkspace<F>
+where
+    F: Family,
+{
+    /// Creates reusable buffers for `family` and the model gradient path.
+    #[must_use]
+    pub fn new(family: &F, nobs: usize, blocks: impl FnOnce(usize) -> GradientWorkspace) -> Self {
+        Self {
+            family: family.workspace(),
+            gradient: blocks(nobs),
+        }
+    }
+
+    /// Family-specific likelihood workspace.
+    #[inline]
+    pub const fn family_mut(&mut self) -> &mut F::Workspace {
+        &mut self.family
+    }
+
+    /// Gradient assembly workspace.
+    #[inline]
+    pub const fn gradient(&self) -> &GradientWorkspace {
+        &self.gradient
+    }
+
+    /// Mutable gradient assembly workspace.
+    #[inline]
+    pub const fn gradient_mut(&mut self) -> &mut GradientWorkspace {
+        &mut self.gradient
+    }
+
+    /// Mutable family and gradient workspaces.
+    #[inline]
+    pub const fn parts_mut(&mut self) -> (&mut F::Workspace, &mut GradientWorkspace) {
+        (&mut self.family, &mut self.gradient)
+    }
+}
+
 /// Reusable scratch buffers for GAMLSS gradient evaluation.
 ///
 /// The workspace stores one per-observation gradient vector and one local

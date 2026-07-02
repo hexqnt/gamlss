@@ -86,20 +86,26 @@ impl RowMajorDesignBuilder {
 
     fn fill_intercept(&mut self, range: &Range<usize>) {
         debug_assert_eq!(range.len(), 1);
+        debug_assert!(range.end <= self.ncols);
 
         let col = range.start;
-        for row in 0..self.nrows {
-            self.set(row, col, 1.0);
+        for row_values in self.values.chunks_exact_mut(self.ncols) {
+            row_values[col] = 1.0;
         }
     }
 
     fn fill_column(&mut self, range: &Range<usize>, values: &[f64]) {
         debug_assert_eq!(range.len(), 1);
         debug_assert_eq!(values.len(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
         let col = range.start;
-        for (row, value) in values.iter().copied().enumerate() {
-            self.set(row, col, value);
+        for (row_values, value) in self
+            .values
+            .chunks_exact_mut(self.ncols)
+            .zip(values.iter().copied())
+        {
+            row_values[col] = value;
         }
     }
 
@@ -111,11 +117,16 @@ impl RowMajorDesignBuilder {
     ) -> Result<(), FormulaError> {
         debug_assert_eq!(range.len(), basis.n_basis());
         debug_assert_eq!(values.len(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
-        for (row, value) in values.iter().copied().enumerate() {
-            let row_offset = self.row_offset(row) + range.start;
+        for (row_values, value) in self
+            .values
+            .chunks_exact_mut(self.ncols)
+            .zip(values.iter().copied())
+        {
+            let basis_values = &mut row_values[range.clone()];
             basis.for_each_value_basis(value, |local_col, weight| {
-                self.values[row_offset + local_col] = weight;
+                basis_values[local_col] = weight;
             })?;
         }
         Ok(())
@@ -127,11 +138,12 @@ impl RowMajorDesignBuilder {
     {
         debug_assert_eq!(range.len(), basis.nparams());
         debug_assert_eq!(basis.nrows(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
-        for row in 0..self.nrows {
-            let row_offset = self.row_offset(row) + range.start;
+        for (row, row_values) in self.values.chunks_exact_mut(self.ncols).enumerate() {
+            let basis_values = &mut row_values[range.clone()];
             basis.for_each_row_basis(row, |local_col, weight| {
-                self.values[row_offset + local_col] = weight;
+                basis_values[local_col] = weight;
             });
         }
     }
@@ -142,15 +154,6 @@ impl RowMajorDesignBuilder {
             self.ncols,
             self.values,
         )?)
-    }
-
-    fn set(&mut self, row: usize, col: usize, value: f64) {
-        let index = self.row_offset(row) + col;
-        self.values[index] = value;
-    }
-
-    const fn row_offset(&self, row: usize) -> usize {
-        row * self.ncols
     }
 }
 
@@ -839,14 +842,18 @@ fn dense_from_prepared_terms(
 
 fn fill_flat_columns(builder: &mut RowMajorDesignBuilder, range: &Range<usize>, values: &[f64]) {
     debug_assert_eq!(values.len(), builder.nrows * range.len());
-    for row in 0..builder.nrows {
-        for local_col in 0..range.len() {
-            builder.set(
-                row,
-                range.start + local_col,
-                values[row * range.len() + local_col],
-            );
-        }
+    debug_assert!(range.end <= builder.ncols);
+
+    if range.is_empty() {
+        return;
+    }
+
+    for (row_values, source_values) in builder
+        .values
+        .chunks_exact_mut(builder.ncols)
+        .zip(values.chunks_exact(range.len()))
+    {
+        row_values[range.clone()].copy_from_slice(source_values);
     }
 }
 
@@ -857,7 +864,11 @@ fn factor_columns(
 ) -> Result<Vec<f64>, FormulaError> {
     let width = levels.len().saturating_sub(1);
     let mut columns = vec![0.0; values.len() * width];
-    for (row, value) in values.iter().enumerate() {
+    if width == 0 {
+        return Ok(columns);
+    }
+
+    for (row, (row_values, value)) in columns.chunks_exact_mut(width).zip(values).enumerate() {
         let Some(level_index) = levels.iter().position(|level| level == value) else {
             return Err(FormulaError::UnknownCategoryLevel {
                 name: name.to_owned(),
@@ -866,7 +877,7 @@ fn factor_columns(
             });
         };
         if level_index > 0 {
-            columns[row * width + level_index - 1] = 1.0;
+            row_values[level_index - 1] = 1.0;
         }
     }
     Ok(columns)

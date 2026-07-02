@@ -1,6 +1,7 @@
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
+    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
+    ZeroProbability,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -58,23 +59,32 @@ where
 {
     type Eta = ZipEta;
     type Theta = ZipTotalMeanZeroProbabilityTheta;
-    type NllGradientEta = ZipEta;
+    type GradientEta = ZipEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(TotalMean, ZeroProbability), (MeanLink, ZeroProbabilityLink), 2>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         Self::nll_theta(y, theta.component())
     }
 
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta).component())
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta).component())
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = Self::theta_from_eta(eta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
         let component = theta.component();
         let nll = Self::nll_theta(y, component);
         if !nll.is_finite() {
@@ -96,15 +106,12 @@ where
     }
 }
 
-impl<MeanLink, ZeroProbabilityLink> ParameterizedFamily<2>
+impl<MeanLink, ZeroProbabilityLink> InitialEtaFromObservations<2>
     for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (TotalMean, ZeroProbability);
-    type Links = (MeanLink, ZeroProbabilityLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -136,7 +143,7 @@ where
     MeanLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         Self::cdf_theta(y, theta.component())
     }
 }
@@ -147,7 +154,7 @@ where
     MeanLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let theta = theta.component();
         if !is_positive_finite(theta.mu) || !is_strict_probability(theta.sigma) {
             return f64::NAN;

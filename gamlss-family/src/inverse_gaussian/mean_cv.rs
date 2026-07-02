@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Cv, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink,
+    Cv, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Mean, ObservationView, ParameterParts, PositiveLink, ScalarParams,
 };
 
 use crate::initial::{
@@ -107,23 +107,33 @@ where
 {
     type Eta = InverseGaussianMeanCvEta;
     type Theta = InverseGaussianMeanCvTheta;
-    type NllGradientEta = InverseGaussianMeanCvEta;
+    type GradientEta = InverseGaussianMeanCvEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mean, Cv), (MeanLink, CvLink), 2>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         InverseGaussian::<Log, Log>::nll_theta(y, theta.mean_shape())
     }
 
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
+        let theta = Self::theta_from_eta(*eta);
+        self.nll(y, &theta, workspace)
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = Self::theta_from_eta(eta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
         let mean_shape = theta.mean_shape();
         let nll = InverseGaussian::<Log, Log>::nll_theta(y, mean_shape);
         if !nll.is_finite() {
@@ -148,14 +158,11 @@ where
     }
 }
 
-impl<MeanLink, CvLink> ParameterizedFamily<2> for InverseGaussianCv<MeanLink, CvLink>
+impl<MeanLink, CvLink> InitialEtaFromObservations<2> for InverseGaussianCv<MeanLink, CvLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mean, Cv);
-    type Links = (MeanLink, CvLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -185,8 +192,8 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().cdf(y, theta.mean_shape())
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        InverseGaussian::<Log, Log>::new().cdf(y, &theta.mean_shape())
     }
 }
 
@@ -195,8 +202,8 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().quantile(p, theta.mean_shape())
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        InverseGaussian::<Log, Log>::new().quantile(p, &theta.mean_shape())
     }
 }
 
@@ -205,7 +212,7 @@ where
     MeanLink: PositiveLink<f64>,
     CvLink: PositiveLink<f64>,
 {
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().crps(y, theta.mean_shape())
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        InverseGaussian::<Log, Log>::new().crps(y, &theta.mean_shape())
     }
 }

@@ -2,8 +2,8 @@
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
-use gamlss_core::{Objective, Penalty};
-use gamlss_spline::{SplineError, SplineOrder};
+use gamlss_core::{DenseDesign, Objective, Penalty, PredictorBlock};
+use gamlss_spline::{ISplineBasis, MonotoneDirection, SplineError, SplineOrder};
 
 use super::*;
 
@@ -560,6 +560,34 @@ fn advanced_numeric_terms_build_and_predict() {
             .iter()
             .any(|term| matches!(term, FittedTerm::Monotone { .. }))
     );
+}
+
+#[test]
+fn monotone_weighted_gradient_skips_zero_score_multiplier_rows() {
+    let basis = ISplineBasis::open_uniform_from_data(&[0.0, 0.5, 1.0], 5, 3).unwrap();
+    let nparams = basis.n_basis() + 1;
+    let block = FormulaPredictorBlock::new(
+        DenseDesign::from_row_major(3, 0, Vec::new()).unwrap(),
+        None,
+        vec![crate::predictor::MonotoneSegment {
+            range: 0..nparams,
+            values: vec![0.0, 0.5, 1.0],
+            basis,
+            direction: MonotoneDirection::Increasing,
+        }],
+        nparams,
+    );
+    let scores = [1.0, 0.0, 2.0];
+    let multiplier = [1.0, f64::NAN, 1.0];
+    let beta = vec![0.0; nparams];
+    let mut expected = vec![0.0; nparams];
+    let mut weighted = vec![0.0; nparams];
+
+    block.add_gradient(&scores, &beta, &mut expected);
+    block.add_weighted_gradient(&scores, &multiplier, &beta, &mut weighted);
+
+    assert_eq!(weighted, expected);
+    assert!(weighted.iter().all(|value| value.is_finite()));
 }
 
 #[test]

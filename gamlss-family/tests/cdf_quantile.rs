@@ -300,8 +300,8 @@ fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
     let lambda = theta.mean.powf(2.0 - theta.power) / (theta.dispersion * (2.0 - theta.power));
     let atom = (-lambda).exp();
 
-    assert_close(tweedie.cdf(0.0, theta), atom, 0.0, 1.0e-14);
-    assert_eq!(tweedie.quantile(0.5 * atom, theta), 0.0);
+    assert_close(tweedie.cdf(0.0, &theta), atom, 0.0, 1.0e-14);
+    assert_eq!(tweedie.quantile(0.5 * atom, &theta), 0.0);
 
     let grid = [0.0_f64, 0.05, 0.25, 1.0, 2.0, 5.0, 10.0];
     assert_cdf_monotone(&tweedie, theta, &grid);
@@ -310,9 +310,11 @@ fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
     }
 
     let lower = 1.0e-4;
-    let upper = tweedie.quantile(0.95, theta);
-    let integral = integrate_simpson(lower, upper, 2048, |y| (-tweedie.nll(y, theta)).exp());
-    let expected = tweedie.cdf(upper, theta) - tweedie.cdf(lower, theta);
+    let upper = tweedie.quantile(0.95, &theta);
+    let integral = integrate_simpson(lower, upper, 2048, |y| {
+        (-tweedie.nll(y, &theta, &mut tweedie.workspace())).exp()
+    });
+    let expected = tweedie.cdf(upper, &theta) - tweedie.cdf(lower, &theta);
     assert_close(integral, expected, 0.0, 3.0e-4);
 }
 

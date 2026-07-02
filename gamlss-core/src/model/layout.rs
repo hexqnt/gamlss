@@ -2,6 +2,38 @@ use std::ops::Range;
 
 use crate::ParameterName;
 
+/// Structured position inside a distribution parameter.
+///
+/// This is an extensibility descriptor for vector, matrix, and future
+/// structured parameter blocks. The existing [`ParameterLayout`] intentionally
+/// keeps its stable block-level view; APIs that need component-level
+/// introspection can attach this descriptor without overloading parameter names
+/// such as `"mu"` or `"cholesky"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterPart {
+    /// The descriptor refers to the whole named parameter block.
+    Whole,
+    /// One component of a vector-valued parameter.
+    VectorComponent {
+        /// Zero-based component index.
+        component: usize,
+    },
+    /// One entry of a lower-triangular matrix parameter.
+    LowerTriangularEntry {
+        /// Zero-based row index.
+        row: usize,
+        /// Zero-based column index.
+        col: usize,
+    },
+    /// One entry of a dense matrix parameter.
+    MatrixEntry {
+        /// Zero-based row index.
+        row: usize,
+        /// Zero-based column index.
+        col: usize,
+    },
+}
+
 /// Named coefficient block inside the flat parameter vector.
 ///
 /// Associates a stable distribution parameter name (e.g. `"mu"`) with a range
@@ -12,6 +44,81 @@ pub struct ParameterSlice {
     pub name: &'static str,
     /// Coefficient range for this parameter inside the full beta vector.
     pub range: Range<usize>,
+}
+
+/// Descriptor for a structured parameter or sub-parameter coefficient range.
+///
+/// This type is deliberately separate from [`ParameterSlice`] so the current
+/// public layout API remains source-compatible while future structured
+/// multivariate blocks can expose component-level metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParameterDescriptor {
+    /// Stable distribution parameter name, e.g. `"mu"` or `"cholesky"`.
+    pub name: &'static str,
+    /// Structured position inside the named parameter.
+    pub part: ParameterPart,
+    /// Coefficient range for this part inside the full beta vector.
+    pub range: Range<usize>,
+}
+
+impl ParameterDescriptor {
+    /// Creates a descriptor for a whole parameter block.
+    #[must_use]
+    #[inline]
+    pub const fn whole(name: &'static str, range: Range<usize>) -> Self {
+        Self {
+            name,
+            part: ParameterPart::Whole,
+            range,
+        }
+    }
+
+    /// Creates a descriptor for one vector component.
+    #[must_use]
+    #[inline]
+    pub const fn vector_component(
+        name: &'static str,
+        component: usize,
+        range: Range<usize>,
+    ) -> Self {
+        Self {
+            name,
+            part: ParameterPart::VectorComponent { component },
+            range,
+        }
+    }
+
+    /// Creates a descriptor for one lower-triangular matrix entry.
+    #[must_use]
+    #[inline]
+    pub const fn lower_triangular_entry(
+        name: &'static str,
+        row: usize,
+        col: usize,
+        range: Range<usize>,
+    ) -> Self {
+        Self {
+            name,
+            part: ParameterPart::LowerTriangularEntry { row, col },
+            range,
+        }
+    }
+
+    /// Creates a descriptor for one dense matrix entry.
+    #[must_use]
+    #[inline]
+    pub const fn matrix_entry(
+        name: &'static str,
+        row: usize,
+        col: usize,
+        range: Range<usize>,
+    ) -> Self {
+        Self {
+            name,
+            part: ParameterPart::MatrixEntry { row, col },
+            range,
+        }
+    }
 }
 
 /// Mapping from distribution parameters to ranges in the flat beta vector.
@@ -65,6 +172,30 @@ impl ParameterLayout {
     #[inline]
     pub fn slices(&self) -> &[ParameterSlice] {
         &self.slices
+    }
+
+    /// Returns block-level descriptors for the current layout.
+    ///
+    /// Structured multivariate blocks may expose finer-grained descriptors in
+    /// future APIs. This method provides the compatibility baseline: every
+    /// existing slice is represented as a whole-parameter descriptor.
+    #[must_use]
+    pub fn block_descriptors(&self) -> Vec<ParameterDescriptor> {
+        self.slices
+            .iter()
+            .map(|slice| ParameterDescriptor::whole(slice.name, slice.range.clone()))
+            .collect()
+    }
+
+    /// Visits block-level descriptors in model order without allocating.
+    #[inline]
+    pub fn visit_block_descriptors(&self, mut visit: impl FnMut(usize, ParameterDescriptor)) {
+        for (index, slice) in self.slices.iter().enumerate() {
+            visit(
+                index,
+                ParameterDescriptor::whole(slice.name, slice.range.clone()),
+            );
+        }
     }
 
     /// Visits parameter slices in model order without allocating.

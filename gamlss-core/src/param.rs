@@ -108,6 +108,14 @@ impl ParameterName for ComponentMean {
     const NAME: &'static str = "component_mean";
 }
 
+/// Marker for baseline-softmax mixture weights.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MixtureWeight;
+
+impl ParameterName for MixtureWeight {
+    const NAME: &'static str = "mixture_weight";
+}
+
 /// Marker for an unconditional total mean in mixture or zero-adjusted models.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TotalMean;
@@ -408,12 +416,6 @@ where
             })?;
         Ok(self.offset..end)
     }
-}
-
-/// Stable public name for a distribution parameter marker.
-pub trait ParameterName {
-    /// Name used in parameter layouts and unpacked coefficient views.
-    const NAME: &'static str;
 }
 
 /// Typed coefficient block for a vector-valued distribution parameter.
@@ -791,14 +793,10 @@ where
     }
 }
 
-const fn lower_triangular_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_add(1) {
-        Some(next) => match dimension.checked_mul(next) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => None,
-    }
+/// Stable public name for a distribution parameter marker.
+pub trait ParameterName {
+    /// Name used in parameter layouts and unpacked coefficient views.
+    const NAME: &'static str;
 }
 
 /// Tuple contract implemented for typed parameter block tuples up to arity 8.
@@ -817,6 +815,16 @@ pub trait TryAssignParameterOffsets: Sized {
     /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
     /// fit in `usize`.
     fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
+}
+
+const fn lower_triangular_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_add(1) {
+        Some(next) => match dimension.checked_mul(next) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => None,
+    }
 }
 
 macro_rules! impl_assign_offsets {

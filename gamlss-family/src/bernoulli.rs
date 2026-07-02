@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Logit, Mu, ObservationView,
-    ParameterParts, ParameterizedFamily, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
+    Mu, ObservationView, ParameterParts, ScalarParams, UnitIntervalLink,
 };
 
 use crate::initial::probability_floor;
@@ -95,37 +95,43 @@ where
 {
     type Eta = BernoulliEta;
     type Theta = BernoulliTheta;
-    type NllGradientEta = BernoulliEta;
+    type GradientEta = BernoulliEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu,), (MuLink,), 1>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink> ParameterizedFamily<1> for Bernoulli<MuLink>
+impl<MuLink> InitialEtaFromObservations<1> for Bernoulli<MuLink>
 where
     MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (Mu,);
-    type Links = (MuLink,);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -160,7 +166,7 @@ impl<MuLink> HasCdf for Bernoulli<MuLink>
 where
     MuLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -179,7 +185,7 @@ impl<MuLink> HasQuantile for Bernoulli<MuLink>
 where
     MuLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&p) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite()
         {
             return f64::NAN;
@@ -193,7 +199,7 @@ impl<MuLink> HasCrps for Bernoulli<MuLink>
 where
     MuLink: UnitIntervalLink<f64>,
 {
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !Self::valid_binary(y) || theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -211,7 +217,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
             return f64::NAN;
         }
@@ -275,10 +281,18 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert!(family.nll(1.0, theta).is_finite());
-        assert!(family.nll(0.0, theta).is_finite());
-        assert!(family.nll(0.5, theta).is_infinite());
-        assert!(family.nll(1.0, BernoulliTheta { mu: 1.0 }).is_infinite());
+        assert!(family.nll(1.0, &theta, &mut family.workspace()).is_finite());
+        assert!(family.nll(0.0, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(0.5, &theta, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(1.0, &BernoulliTheta { mu: 1.0 }, &mut family.workspace())
+                .is_infinite()
+        );
     }
 
     #[test]
@@ -287,11 +301,11 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert_eq!(family.cdf(0.0, theta), 0.6);
-        assert_eq!(family.cdf(0.5, theta), 0.6);
-        assert_eq!(family.cdf(1.0, theta), 1.0);
-        assert!(family.cdf(f64::NAN, theta).is_nan());
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert_eq!(family.cdf(0.0, &theta), 0.6);
+        assert_eq!(family.cdf(0.5, &theta), 0.6);
+        assert_eq!(family.cdf(1.0, &theta), 1.0);
+        assert!(family.cdf(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -300,12 +314,12 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert_eq!(family.quantile(0.6, theta), 0.0);
-        assert_eq!(family.quantile(0.600_000_000_001, theta), 1.0);
-        assert_eq!(family.quantile(1.0, theta), 1.0);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
-        assert!(family.quantile(0.5, BernoulliTheta { mu: 1.0 }).is_nan());
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(0.6, &theta), 0.0);
+        assert_eq!(family.quantile(0.600_000_000_001, &theta), 1.0);
+        assert_eq!(family.quantile(1.0, &theta), 1.0);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
+        assert!(family.quantile(0.5, &BernoulliTheta { mu: 1.0 }).is_nan());
     }
 
     #[test]
@@ -313,8 +327,8 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert_relative_eq!(family.crps(1.0, theta), 0.36, epsilon = 1.0e-12);
-        assert_relative_eq!(family.crps(0.0, theta), 0.16, epsilon = 1.0e-12);
+        assert_relative_eq!(family.crps(1.0, &theta), 0.36, epsilon = 1.0e-12);
+        assert_relative_eq!(family.crps(0.0, &theta), 0.16, epsilon = 1.0e-12);
     }
 
     #[test]
@@ -322,8 +336,8 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert!(family.crps(0.5, theta).is_nan());
-        assert!(family.crps(1.0, BernoulliTheta { mu: 1.0 }).is_nan());
+        assert!(family.crps(0.5, &theta).is_nan());
+        assert!(family.crps(1.0, &BernoulliTheta { mu: 1.0 }).is_nan());
     }
 
     #[test]
@@ -331,8 +345,8 @@ mod tests {
         let family = BernoulliProbability::new();
         let theta = BernoulliTheta { mu: 0.4 };
 
-        assert!(family.crps(1.0, theta) >= 0.0);
-        assert!(family.crps(0.0, theta) >= 0.0);
+        assert!(family.crps(1.0, &theta) >= 0.0);
+        assert!(family.crps(0.0, &theta) >= 0.0);
     }
 
     #[cfg(feature = "rand")]
@@ -343,8 +357,12 @@ mod tests {
 
         let family = BernoulliProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, BernoulliTheta { mu: 0.4 });
+        let sample = family.sample(&mut rng, &BernoulliTheta { mu: 0.4 });
         assert!(sample == 0.0 || sample == 1.0);
-        assert!(family.sample(&mut rng, BernoulliTheta { mu: 1.0 }).is_nan());
+        assert!(
+            family
+                .sample(&mut rng, &BernoulliTheta { mu: 1.0 })
+                .is_nan()
+        );
     }
 }

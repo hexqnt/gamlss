@@ -220,7 +220,7 @@ pub trait Link<S> {
 /// optimizer starts finite.
 ///
 /// Custom links used with built-in families must implement this trait to
-/// participate in [`crate::ParameterizedFamily`] and model initialization.
+/// participate in [`crate::InitialEtaFromObservations`] and model initialization.
 pub trait InitialEtaFromTheta<S>: Link<S> {
     /// Converts a natural-scale parameter value into a finite link-scale start.
     fn initial_eta_from_theta(theta: S) -> S;

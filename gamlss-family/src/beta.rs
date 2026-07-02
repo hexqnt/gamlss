@@ -3,8 +3,9 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Precision, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Logit, Mu, ObservationView, ParameterParts, PositiveLink, Precision, ScalarParams,
+    UnitIntervalLink,
 };
 
 use gamlss_special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
@@ -21,7 +22,7 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 /// The mean link must guarantee values in `(0, 1)`.
 ///
 /// ```compile_fail
-/// use gamlss_core::{Identity, Log};
+/// use gamlss_core::{ScalarParams, Identity, Log};
 /// use gamlss_family::Beta;
 ///
 /// let _ = Beta::<Identity, Log>::new();
@@ -124,38 +125,44 @@ where
 {
     type Eta = BetaEta;
     type Theta = BetaTheta;
-    type NllGradientEta = BetaEta;
+    type GradientEta = BetaEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Precision), (MuLink, PrecisionLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, PrecisionLink> ParameterizedFamily<2> for Beta<MuLink, PrecisionLink>
+impl<MuLink, PrecisionLink> InitialEtaFromObservations<2> for Beta<MuLink, PrecisionLink>
 where
     MuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
     PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Precision);
-    type Links = (MuLink, PrecisionLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -183,7 +190,7 @@ where
     MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite()
             || theta.mu <= 0.0
             || theta.mu >= 1.0
@@ -211,7 +218,7 @@ where
     MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0
             || theta.mu >= 1.0
             || !theta.mu.is_finite()
@@ -238,7 +245,7 @@ where
     MuLink: UnitIntervalLink<f64>,
     PrecisionLink: PositiveLink<f64>,
 {
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !(0.0..=1.0).contains(&y)
             || !y.is_finite()
             || theta.mu <= 0.0
@@ -272,7 +279,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0
             || theta.mu >= 1.0
             || !theta.mu.is_finite()
@@ -353,17 +360,26 @@ mod tests {
             precision: 3.0,
         };
 
-        assert!(family.nll(0.4, theta).is_finite());
-        assert!(family.nll(0.0, theta).is_infinite());
-        assert!(family.nll(1.0, theta).is_infinite());
+        assert!(family.nll(0.4, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(0.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(1.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     0.4,
-                    BetaTheta {
+                    &BetaTheta {
                         mu: 1.0,
                         precision: theta.precision,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -381,12 +397,12 @@ mod tests {
         let reference = StatrsBeta::new(alpha, beta).unwrap();
 
         for y in [0.01, 0.2, 0.4, 0.8, 0.99] {
-            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+            assert_relative_eq!(family.cdf(y, &theta), reference.cdf(y), epsilon = 1.0e-11);
         }
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_relative_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 reference.inverse_cdf(p),
                 epsilon = 1.0e-10
             );
@@ -402,16 +418,16 @@ mod tests {
             precision: 3.0,
         };
 
-        assert_eq!(family.cdf(0.0, theta), 0.0);
-        assert_eq!(family.cdf(1.0, theta), 1.0);
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert_eq!(family.quantile(1.0, theta), 1.0);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_eq!(family.cdf(0.0, &theta), 0.0);
+        assert_eq!(family.cdf(1.0, &theta), 1.0);
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(1.0, &theta), 1.0);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .cdf(
                     0.5,
-                    BetaTheta {
+                    &BetaTheta {
                         mu: 0.0,
                         precision: 1.0,
                     },
@@ -427,7 +443,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 0.4,
-                BetaTheta {
+                &BetaTheta {
                     mu: 0.5,
                     precision: 2.0,
                 },
@@ -438,7 +454,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 0.0,
-                BetaTheta {
+                &BetaTheta {
                     mu: 0.5,
                     precision: 2.0,
                 },
@@ -456,7 +472,7 @@ mod tests {
             family
                 .crps(
                     -0.1,
-                    BetaTheta {
+                    &BetaTheta {
                         mu: 0.4,
                         precision: 3.0,
                     },
@@ -467,7 +483,7 @@ mod tests {
             family
                 .crps(
                     0.4,
-                    BetaTheta {
+                    &BetaTheta {
                         mu: 1.0,
                         precision: 3.0,
                     },
@@ -483,7 +499,7 @@ mod tests {
         assert!(
             family.crps(
                 0.4,
-                BetaTheta {
+                &BetaTheta {
                     mu: 0.4,
                     precision: 3.0,
                 },
@@ -500,7 +516,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            BetaTheta {
+            &BetaTheta {
                 mu: 0.4,
                 precision: 3.0,
             },
@@ -511,7 +527,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    BetaTheta {
+                    &BetaTheta {
                         mu: 0.0,
                         precision: 3.0,
                     },

@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink,
+    Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Mean, ObservationView, ParameterParts, PositiveLink, ScalarParams,
 };
 
 use gamlss_special::{digamma, discrete_quantile, is_nonnegative_integer};
@@ -111,23 +111,33 @@ where
 {
     type Eta = NegativeBinomialMeanDispersionEta;
     type Theta = NegativeBinomialMeanDispersionTheta;
-    type NllGradientEta = NegativeBinomialMeanDispersionEta;
+    type GradientEta = NegativeBinomialMeanDispersionEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mean, Dispersion), (MeanLink, DispersionLink), 2>;
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         NegativeBinomial::<Log, Log>::nll_theta(y, theta.mean_size())
     }
 
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        self.nll(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
+        let theta = Self::theta_from_eta(*eta);
+        self.nll(y, &theta, workspace)
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = Self::theta_from_eta(eta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
         let mean_size = theta.mean_size();
         let nll = NegativeBinomial::<Log, Log>::nll_theta(y, mean_size);
         if !nll.is_finite() {
@@ -155,15 +165,12 @@ where
     }
 }
 
-impl<MeanLink, DispersionLink> ParameterizedFamily<2>
+impl<MeanLink, DispersionLink> InitialEtaFromObservations<2>
     for NegativeBinomialDispersion<MeanLink, DispersionLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     DispersionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mean, Dispersion);
-    type Links = (MeanLink, DispersionLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -192,7 +199,7 @@ where
     MeanLink: PositiveLink<f64>,
     DispersionLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         NegativeBinomial::<Log, Log>::cdf_theta(y, theta.mean_size())
     }
 }
@@ -202,7 +209,7 @@ where
     MeanLink: PositiveLink<f64>,
     DispersionLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let theta = theta.mean_size();
         if theta.mu <= 0.0
             || !theta.mu.is_finite()

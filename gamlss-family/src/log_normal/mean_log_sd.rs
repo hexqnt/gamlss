@@ -1,6 +1,6 @@
 use gamlss_core::{
-    Family, InitialEtaFromTheta, LogSd, Mean, ObservationView, ParameterParts, ParameterizedFamily,
-    PositiveLink,
+    Family, InitialEtaFromObservations, InitialEtaFromTheta, LogSd, Mean, ObservationView,
+    ParameterParts, PositiveLink, ScalarParams,
 };
 
 use crate::initial::{positive_floor, robust_location_scale, weighted_values};
@@ -105,38 +105,45 @@ where
 {
     type Eta = LogNormalMeanLogSdEta;
     type Theta = LogNormalMeanLogSdTheta;
-    type NllGradientEta = LogNormalMeanLogSdEta;
+    type GradientEta = LogNormalMeanLogSdEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mean, LogSd), (MeanLink, LogSdLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         Self::nll_log_location_log_sd(y, theta.log_location_log_sd())
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta).log_location_log_sd())
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_log_location_log_sd(y, Self::theta_from_eta(*eta).log_location_log_sd())
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MeanLink, LogSdLink> ParameterizedFamily<2> for LogNormal<MeanLogSd, MeanLink, LogSdLink>
+impl<MeanLink, LogSdLink> InitialEtaFromObservations<2>
+    for LogNormal<MeanLogSd, MeanLink, LogSdLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mean, LogSd);
-    type Links = (MeanLink, LogSdLink);
-
     #[allow(clippy::suboptimal_flops)]
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where

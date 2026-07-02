@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Logit, Mu,
-    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Power, UnitIntervalLink,
+    Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
+    Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, ScalarParams,
+    UnitIntervalLink,
 };
 
 use gamlss_special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower};
@@ -212,40 +213,47 @@ where
 {
     type Eta = TweedieEta;
     type Theta = TweedieTheta;
-    type NllGradientEta = TweedieEta;
+    type GradientEta = TweedieEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec =
+        ScalarParams<(Mu, Dispersion, Power), (MeanLink, DispersionLink, PowerLink), 3>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MeanLink, DispersionLink, PowerLink> ParameterizedFamily<3>
+impl<MeanLink, DispersionLink, PowerLink> InitialEtaFromObservations<3>
     for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     DispersionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     PowerLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (Mu, Dispersion, Power);
-    type Links = (MeanLink, DispersionLink, PowerLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -272,8 +280,8 @@ where
     DispersionLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta)
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        Self::cdf_theta(y, *theta)
     }
 }
 
@@ -284,8 +292,8 @@ where
     DispersionLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        Self::quantile_theta(p, theta)
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        Self::quantile_theta(p, *theta)
     }
 }
 
@@ -420,39 +428,46 @@ where
 {
     type Eta = TweedieMeanCvPowerEta;
     type Theta = TweedieMeanCvPowerTheta;
-    type NllGradientEta = TweedieMeanCvPowerEta;
+    type GradientEta = TweedieMeanCvPowerEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Cv, Power), (MeanLink, CvLink, PowerLink), 3>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::nll_theta(y, theta.into())
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Tweedie::<Log, Log, Logit>::nll_theta(y, (*theta).into())
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(eta).into())
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(*eta).into())
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MeanLink, CvLink, PowerLink> ParameterizedFamily<3> for TweedieCv<MeanLink, CvLink, PowerLink>
+impl<MeanLink, CvLink, PowerLink> InitialEtaFromObservations<3>
+    for TweedieCv<MeanLink, CvLink, PowerLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     PowerLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
-    type Params = (Mu, Cv, Power);
-    type Links = (MeanLink, CvLink, PowerLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -479,8 +494,8 @@ where
     CvLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::cdf_theta(y, theta.into())
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::cdf_theta(y, (*theta).into())
     }
 }
 
@@ -490,8 +505,8 @@ where
     CvLink: PositiveLink<f64>,
     PowerLink: UnitIntervalLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::quantile_theta(p, theta.into())
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::quantile_theta(p, (*theta).into())
     }
 }
 

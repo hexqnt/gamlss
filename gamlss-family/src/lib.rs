@@ -34,6 +34,11 @@ pub use log_normal::{
 };
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
+pub use mixture::{
+    Mixture, MixtureEta, MixtureGradient, MixtureTheta, MixtureWorkspace, ResponsibleGradient,
+};
+#[cfg(feature = "multivariate")]
+pub use multivariate::IndependentVec;
 #[cfg(feature = "multivariate")]
 pub use multivariate::normal::{
     DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
@@ -119,6 +124,8 @@ pub mod log_normal;
 pub mod logistic;
 /// Lomax distribution.
 pub mod lomax;
+/// Homogeneous fixed-size mixture distributions.
+pub mod mixture;
 /// Multivariate distributions.
 #[cfg(feature = "multivariate")]
 pub mod multivariate;
@@ -155,8 +162,8 @@ pub mod prelude {
     #[cfg(feature = "multivariate")]
     pub use crate::{
         DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-        DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
-        MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
+        DynMvNormalCholeskyTheta, FixedLowerTriangular, IndependentVec, MvNormalCholesky,
+        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
     };
 
     pub use crate::{
@@ -218,7 +225,7 @@ pub(crate) mod test_support {
     ) where
         F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
         assert_gradient_matches_finite_difference_with_tolerance::<F, K>(
             family,
@@ -238,9 +245,10 @@ pub(crate) mod test_support {
     ) where
         F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
-        let (_, gradient) = family.nll_and_gradient_eta(y, F::Eta::from_array(eta));
+        let (_, gradient) =
+            family.nll_and_gradient_eta(y, &F::Eta::from_array(eta), &mut family.workspace());
 
         for index in 0..K {
             let mut plus = eta;
@@ -248,9 +256,10 @@ pub(crate) mod test_support {
             let mut minus = eta;
             minus[index] -= epsilon;
 
-            let finite_difference = (family.nll_eta(y, F::Eta::from_array(plus))
-                - family.nll_eta(y, F::Eta::from_array(minus)))
-                / (2.0 * epsilon);
+            let finite_difference =
+                (family.nll_eta(y, &F::Eta::from_array(plus), &mut family.workspace())
+                    - family.nll_eta(y, &F::Eta::from_array(minus), &mut family.workspace()))
+                    / (2.0 * epsilon);
             let actual = gradient.part(index);
 
             assert!(
@@ -289,7 +298,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod initializer_tests {
-    use gamlss_core::{Family, ParameterParts, ParameterizedFamily};
+    use gamlss_core::{Family, InitialEtaFromObservations, ParameterParts};
 
     use crate::{
         BeinfMuSigmaNuTau, BernoulliProbability, BetaMeanPrecision, GammaShapeRate,
@@ -304,9 +313,9 @@ mod initializer_tests {
     #[allow(clippy::needless_pass_by_value)]
     fn assert_finite_initial_eta<F, const K: usize>(family: F, data: &[f64], probe: f64)
     where
-        F: for<'obs> Family<Observation<'obs> = f64> + ParameterizedFamily<K>,
+        F: for<'obs> Family<Observation<'obs> = f64> + InitialEtaFromObservations<K>,
         F::Eta: Copy + ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
         let obs: &[f64] = data;
         let eta = family.initial_eta_from_observations(&obs);
@@ -317,7 +326,9 @@ mod initializer_tests {
             );
         }
         assert!(
-            family.nll_eta(probe, eta).is_finite(),
+            family
+                .nll_eta(probe, &eta, &mut family.workspace())
+                .is_finite(),
             "initialized eta should produce finite nll"
         );
     }

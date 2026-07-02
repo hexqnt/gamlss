@@ -182,8 +182,8 @@ where
         let mut mu = vec![0.0; self.dimension];
         let mut cholesky = PackedLowerTriangular::filled(self.dimension, 0.0);
 
-        for index in 0..self.dimension {
-            mu[index] = MuLink::inverse(eta.mu[index]);
+        for (mu, eta_mu) in mu.iter_mut().zip(eta.mu.iter().copied()) {
+            *mu = MuLink::inverse(eta_mu);
         }
 
         for row in 0..self.dimension {
@@ -202,14 +202,19 @@ where
         DynMvNormalCholeskyTheta { mu, cholesky }
     }
 
-    fn nll_theta(&self, observation: &[f64], theta: &DynMvNormalCholeskyTheta) -> f64 {
-        let mut z = vec![0.0; self.dimension];
+    fn nll_theta(
+        &self,
+        observation: &[f64],
+        theta: &DynMvNormalCholeskyTheta,
+        workspace: &mut DynMvNormalCholeskyWorkspace,
+    ) -> f64 {
+        workspace.resize(self.dimension);
         kernel::nll(
             self.dimension,
             observation,
             &theta.mu,
             &theta.cholesky,
-            &mut z,
+            &mut workspace.z,
         )
     }
 
@@ -217,21 +222,21 @@ where
         &self,
         observation: &[f64],
         eta: &DynMvNormalCholeskyEta,
+        workspace: &mut DynMvNormalCholeskyWorkspace,
     ) -> (f64, DynMvNormalCholeskyEta) {
         if !self.eta_has_expected_len(eta) {
             return (f64::INFINITY, self.nan_eta());
         }
 
         let theta = self.theta_from_eta(eta);
-        let mut z = vec![0.0; self.dimension];
-        let mut a = vec![0.0; self.dimension];
+        workspace.resize(self.dimension);
         let nll = kernel::nll_and_score(
             self.dimension,
             observation,
             &theta.mu,
             &theta.cholesky,
-            &mut z,
-            &mut a,
+            &mut workspace.z,
+            &mut workspace.a,
         );
         if !nll.is_finite() {
             return (nll, self.nan_eta());
@@ -242,13 +247,19 @@ where
             cholesky: PackedLowerTriangular::filled(self.dimension, 0.0),
         };
 
-        for index in 0..self.dimension {
-            gradient.mu[index] = -a[index] * MuLink::derivative_inverse(eta.mu[index]);
+        for ((gradient_mu, a), eta_mu) in gradient
+            .mu
+            .iter_mut()
+            .zip(workspace.a.iter().copied())
+            .zip(eta.mu.iter().copied())
+        {
+            *gradient_mu = -a * MuLink::derivative_inverse(eta_mu);
         }
 
         for row in 0..self.dimension {
-            for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                let mut d_nll_d_l = kernel::cholesky_score(row, col, z_col, &a, &theta.cholesky);
+            for (col, z_col) in workspace.z.iter().copied().take(row + 1).enumerate() {
+                let mut d_nll_d_l =
+                    kernel::cholesky_score(row, col, z_col, &workspace.a, &theta.cholesky);
                 if row == col {
                     d_nll_d_l *= DiagonalLink::derivative_inverse(eta.cholesky.lower(row, col));
                 } else {
@@ -293,31 +304,48 @@ where
 {
     type Eta = DynMvNormalCholeskyEta;
     type Theta = DynMvNormalCholeskyTheta;
-    type NllGradientEta = DynMvNormalCholeskyEta;
+    type GradientEta = DynMvNormalCholeskyEta;
     type Observation<'obs> = &'obs [f64];
+    type Workspace = DynMvNormalCholeskyWorkspace;
+    type ParamSpec = ();
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        self.theta_from_eta(&eta)
+    fn workspace(&self) -> Self::Workspace {
+        DynMvNormalCholeskyWorkspace::new(self.dimension)
+    }
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        self.theta_from_eta(eta)
     }
 
     #[inline]
-    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        self.nll_theta(observation, &theta)
+    fn nll(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        self.nll_theta(observation, theta, workspace)
     }
 
     #[inline]
-    fn nll_eta(&self, observation: Self::Observation<'_>, eta: Self::Eta) -> f64 {
-        self.nll_theta(observation, &self.theta_from_eta(&eta))
+    fn nll_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        self.nll_theta(observation, &self.theta_from_eta(eta), workspace)
     }
 
     #[inline]
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta) {
-        self.nll_and_gradient_eta_values(observation, &eta)
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        self.nll_and_gradient_eta_values(observation, eta, workspace)
     }
 }
 
@@ -328,12 +356,12 @@ where
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
 {
-    fn marginal_cdf(&self, component: usize, y: f64, theta: Self::Theta) -> f64 {
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || component >= self.dimension {
             return f64::NAN;
         }
 
-        let scale = self.marginal_scale(component, &theta);
+        let scale = self.marginal_scale(component, theta);
         if !scale.is_finite() || scale <= 0.0 {
             return f64::NAN;
         }
@@ -353,7 +381,7 @@ where
 {
     type Sample = Vec<f64>;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> Self::Sample {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
         if !kernel::valid_theta(self.dimension, &theta.mu, &theta.cholesky) {
             return vec![f64::NAN; self.dimension];
         }
@@ -364,13 +392,34 @@ where
             *value = rand_distr::Distribution::sample(&standard, rng);
         }
 
-        let mut out = theta.mu;
+        let mut out = theta.mu.clone();
         for row in 0..self.dimension {
             for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
                 out[row] += theta.cholesky.lower(row, col) * z_col;
             }
         }
         out
+    }
+}
+
+/// Reusable buffers for runtime-dimensional MVN likelihood evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynMvNormalCholeskyWorkspace {
+    z: Vec<f64>,
+    a: Vec<f64>,
+}
+
+impl DynMvNormalCholeskyWorkspace {
+    fn new(dimension: usize) -> Self {
+        Self {
+            z: vec![0.0; dimension],
+            a: vec![0.0; dimension],
+        }
+    }
+
+    fn resize(&mut self, dimension: usize) {
+        self.z.resize(dimension, 0.0);
+        self.a.resize(dimension, 0.0);
     }
 }
 
@@ -513,15 +562,16 @@ mod tests {
         tolerance: f64,
     ) {
         let family = DynMvNormalCholeskyDefault::new(y.len()).unwrap();
-        let (_, gradient) = family.nll_and_gradient_eta(y, eta.clone());
+        let (_, gradient) = family.nll_and_gradient_eta(y, eta, &mut family.workspace());
 
         for index in 0..eta.mu().len() {
             let mut plus = eta.clone();
             plus.mu_mut()[index] += epsilon;
             let mut minus = eta.clone();
             minus.mu_mut()[index] -= epsilon;
-            let finite_difference =
-                (family.nll_eta(y, plus) - family.nll_eta(y, minus)) / (2.0 * epsilon);
+            let finite_difference = (family.nll_eta(y, &plus, &mut family.workspace())
+                - family.nll_eta(y, &minus, &mut family.workspace()))
+                / (2.0 * epsilon);
             assert_relative_eq!(gradient.mu()[index], finite_difference, epsilon = tolerance);
         }
 
@@ -531,8 +581,9 @@ mod tests {
                 *plus.cholesky_entry_mut(row, col).unwrap() += epsilon;
                 let mut minus = eta.clone();
                 *minus.cholesky_entry_mut(row, col).unwrap() -= epsilon;
-                let finite_difference =
-                    (family.nll_eta(y, plus) - family.nll_eta(y, minus)) / (2.0 * epsilon);
+                let finite_difference = (family.nll_eta(y, &plus, &mut family.workspace())
+                    - family.nll_eta(y, &minus, &mut family.workspace()))
+                    / (2.0 * epsilon);
                 assert_relative_eq!(
                     gradient.cholesky_entry(row, col).unwrap(),
                     finite_difference,
@@ -584,13 +635,9 @@ mod tests {
         );
         assert_eq!(theta.cholesky_entry(1, 0), Some(3.0));
         assert_eq!(theta.cholesky_entry(2, 0), None);
+        assert_relative_eq!(family.marginal_cdf(0, 0.0, &theta), 0.5, epsilon = 1.0e-12);
         assert_relative_eq!(
-            family.marginal_cdf(0, 0.0, theta.clone()),
-            0.5,
-            epsilon = 1.0e-12
-        );
-        assert_relative_eq!(
-            family.marginal_cdf(1, 6.0, theta),
+            family.marginal_cdf(1, 6.0, &theta),
             0.841_344_746,
             epsilon = 1.0e-9
         );
@@ -605,7 +652,7 @@ mod tests {
         let mut rng = rand::rng();
         let valid = family.sample(
             &mut rng,
-            DynMvNormalCholeskyTheta::new(
+            &DynMvNormalCholeskyTheta::new(
                 vec![0.0, 1.0],
                 PackedLowerTriangular::try_new(2, vec![2.0, 3.0, 4.0]).unwrap(),
             )

@@ -116,7 +116,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     where
         Obs: ObservationView<'obs, Observation = f64> + 'obs,
     {
-        let mut log_values = Vec::new();
+        let mut log_values = Vec::with_capacity(obs.len());
         for row in 0..obs.len() {
             let y = obs.observation_at(row);
             if y.is_finite() && y > 0.0 {
@@ -149,8 +149,8 @@ macro_rules! impl_weibull_helpers {
             <Weibull<$param, $first, $second> as Family>::Theta:
                 Copy + Into<WeibullScaleShapeTheta>,
         {
-            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::cdf_scale_shape(y, theta.into())
+            fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::cdf_scale_shape(y, (*theta).into())
             }
         }
 
@@ -160,8 +160,8 @@ macro_rules! impl_weibull_helpers {
             <Weibull<$param, $first, $second> as Family>::Theta:
                 Copy + Into<WeibullScaleShapeTheta>,
         {
-            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-                Self::quantile_scale_shape(p, theta.into())
+            fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+                Self::quantile_scale_shape(p, (*theta).into())
             }
         }
 
@@ -171,8 +171,8 @@ macro_rules! impl_weibull_helpers {
             <Weibull<$param, $first, $second> as Family>::Theta:
                 Copy + Into<WeibullScaleShapeTheta>,
         {
-            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::crps_scale_shape(y, theta.into())
+            fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::crps_scale_shape(y, (*theta).into())
             }
         }
 
@@ -186,8 +186,8 @@ macro_rules! impl_weibull_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-                let theta = theta.into();
+            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+                let theta = (*theta).into();
                 if !Self::valid_scale_shape(theta) {
                     return f64::NAN;
                 }
@@ -242,23 +242,23 @@ mod tests {
         let canonical = theta.scale_shape();
 
         assert_relative_eq!(
-            mean.nll(1.7, theta),
-            scale_shape.nll(1.7, canonical),
+            mean.nll(1.7, &theta, &mut mean.workspace()),
+            scale_shape.nll(1.7, &canonical, &mut scale_shape.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.cdf(1.7, theta),
-            scale_shape.cdf(1.7, canonical),
+            mean.cdf(1.7, &theta),
+            scale_shape.cdf(1.7, &canonical),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.quantile(0.4, theta),
-            scale_shape.quantile(0.4, canonical),
+            mean.quantile(0.4, &theta),
+            scale_shape.quantile(0.4, &canonical),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.crps(1.7, theta),
-            scale_shape.crps(1.7, canonical),
+            mean.crps(1.7, &theta),
+            scale_shape.crps(1.7, &canonical),
             epsilon = 1.0e-12
         );
     }
@@ -272,16 +272,21 @@ mod tests {
             shape: 1.5,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(0.0, theta).is_infinite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(0.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    WeibullMeanShapeTheta {
+                    &WeibullMeanShapeTheta {
                         mean: 0.0,
                         shape: 1.5
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
@@ -289,17 +294,18 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    WeibullMeanShapeTheta {
+                    &WeibullMeanShapeTheta {
                         mean: 1.2,
                         shape: 0.0
-                    }
+                    },
+                    &mut family.workspace()
                 )
                 .is_infinite()
         );
-        assert_eq!(family.cdf(0.0, theta), 0.0);
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert!(family.quantile(1.0, theta).is_infinite());
+        assert_eq!(family.cdf(0.0, &theta), 0.0);
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert!(family.quantile(1.0, &theta).is_infinite());
     }
 
     #[test]
@@ -311,12 +317,12 @@ mod tests {
         };
 
         assert_relative_eq!(
-            family.cdf(theta.scale, theta),
+            family.cdf(theta.scale, &theta),
             1.0 - (-1.0_f64).exp(),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            family.cdf(theta.scale * std::f64::consts::LN_2.sqrt(), theta),
+            family.cdf(theta.scale * std::f64::consts::LN_2.sqrt(), &theta),
             0.5,
             epsilon = 1.0e-12
         );
@@ -326,11 +332,11 @@ mod tests {
             shape: 1.0,
         };
         assert_relative_eq!(
-            family.crps(1.0, exp_theta),
+            family.crps(1.0, &exp_theta),
             0.385_335_283_236_612_7,
             epsilon = 1.0e-12
         );
-        assert_relative_eq!(family.crps(0.0, exp_theta), 0.25, epsilon = 1.0e-12);
+        assert_relative_eq!(family.crps(0.0, &exp_theta), 0.25, epsilon = 1.0e-12);
     }
 
     #[cfg(feature = "rand")]
@@ -342,7 +348,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            WeibullMeanShapeTheta {
+            &WeibullMeanShapeTheta {
                 mean: 1.2,
                 shape: 1.5,
             },

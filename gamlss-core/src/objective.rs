@@ -15,8 +15,6 @@ pub struct BlockObjective<'a, O> {
     /// Full beta vector with the current block values patched in before each
     /// objective call.
     full_beta: Vec<f64>,
-    /// Working block beta vector.
-    working_beta: Vec<f64>,
     /// Working full gradient vector.
     full_grad: Vec<f64>,
     /// Slice of the block being optimized.
@@ -53,21 +51,16 @@ where
             });
         }
 
-        let working_beta = full_beta[block.range.clone()].to_vec();
-        debug_assert_eq!(working_beta.len(), block.range.len());
-
         Ok(Self {
             full_objective,
             full_beta,
-            working_beta,
             full_grad,
             block,
         })
     }
 
     fn update_block_beta(&mut self, block_beta: &[f64]) {
-        self.working_beta.copy_from_slice(block_beta);
-        self.full_beta[self.block.range.clone()].copy_from_slice(&self.working_beta);
+        self.full_beta[self.block.range.clone()].copy_from_slice(block_beta);
     }
 }
 
@@ -212,7 +205,6 @@ mod tests {
         )
         .unwrap();
         let full_beta_capacity = objective.full_beta.capacity();
-        let working_beta_capacity = objective.working_beta.capacity();
         let grad_capacity = objective.full_grad.capacity();
         let mut grad = vec![0.0; objective.dim()];
 
@@ -226,14 +218,11 @@ mod tests {
 
         assert_eq!(grad, vec![6.0, 7.0]);
         assert_eq!(objective.full_beta, vec![1.0, 6.0, 7.0]);
-        assert_eq!(objective.working_beta, vec![6.0, 7.0]);
         assert_eq!(objective.full_beta.capacity(), full_beta_capacity);
-        assert_eq!(objective.working_beta.capacity(), working_beta_capacity);
         assert_eq!(objective.full_grad.capacity(), grad_capacity);
 
         assert_eq!(objective.value(&[8.0, 9.0]).unwrap(), 73.0);
         assert_eq!(objective.full_beta.capacity(), full_beta_capacity);
-        assert_eq!(objective.working_beta.capacity(), working_beta_capacity);
         assert_eq!(objective.full_grad.capacity(), grad_capacity);
     }
 

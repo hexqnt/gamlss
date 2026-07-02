@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::{ParameterName, model::ObservationView};
 
 /// Dense expected information matrix for a fixed-arity family.
@@ -45,12 +47,84 @@ impl<const K: usize> DenseInformation<K> {
     }
 }
 
+/// Scalar parameter tuple specification for ordinary GAMLSS families.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScalarParams<Params, Links, const K: usize> {
+    marker: PhantomData<(Params, Links)>,
+}
+
+impl<F, Params, Links, const K: usize> ParamSpec<F> for ScalarParams<Params, Links, K> where
+    F: Family
+{
+}
+
+impl<F, Params, Links, const K: usize> ScalarParamSpec<F, K> for ScalarParams<Params, Links, K>
+where
+    F: Family,
+    F::Eta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
+{
+    type Params = Params;
+    type Links = Links;
+}
+
+/// Location vector plus lower-triangular scale-factor parameter-shape specification.
+///
+/// This is a concrete structured shape for elliptical/location-scale families
+/// such as a multivariate normal parameterized by `mu` and a Cholesky scale
+/// factor. It is intentionally not the generic multivariate-family
+/// abstraction: simplex, copula, shared-factor, sparse-precision, and
+/// independent-product constructions should introduce their own [`ParamSpec`]
+/// shapes when their parameter geometry differs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocationCholesky<PVector, PLower, const D: usize> {
+    marker: PhantomData<(PVector, PLower)>,
+}
+
+impl<F, PVector, PLower, const D: usize> ParamSpec<F> for LocationCholesky<PVector, PLower, D> where
+    F: Family
+{
+}
+
+/// Baseline-softmax simplex parameter-shape specification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SimplexWeights<P, const C: usize> {
+    marker: PhantomData<P>,
+}
+
+impl<F, P, const C: usize> ParamSpec<F> for SimplexWeights<P, C> where F: Family {}
+
+/// Repeated parameter-shape specification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Repeated<Spec, const C: usize> {
+    marker: PhantomData<Spec>,
+}
+
+impl<F, Spec, const C: usize> ParamSpec<F> for Repeated<Spec, C> where F: Family {}
+
+/// Homogeneous mixture parameter-shape specification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MixtureSpec<WeightSpec, ComponentSpec, const C: usize> {
+    marker: PhantomData<(WeightSpec, ComponentSpec)>,
+}
+
+impl<F, WeightSpec, ComponentSpec, const C: usize> ParamSpec<F>
+    for MixtureSpec<WeightSpec, ComponentSpec, C>
+where
+    F: Family,
+{
+}
+
 /// Distribution contract for the compiled GAMLSS objective.
 ///
-/// Custom distributions implement this trait. Parameter arity, parameter roles
-/// and link-function compatibility are specified through
-/// [`ParameterizedFamily`], so the hot path stays typed without dynamic
-/// lookup.
+/// The predictor layer is responsible for computing raw link-scale
+/// [`Eta`](Self::Eta) values from covariates and coefficients. This trait owns
+/// the distribution-side interpretation of those values: applying links,
+/// enforcing dependent constraints, constructing valid natural-scale
+/// [`Theta`](Self::Theta), and evaluating likelihood/gradient terms. Keep
+/// distribution parameterizations such as Cholesky covariance, `D R D`
+/// covariance, simplex weights, or ordered cutpoints in `Family::theta` and the
+/// family gradient logic rather than in predictor blocks.
 ///
 /// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
 /// contributions for one observation. Invalid observation or parameter domains
@@ -71,7 +145,14 @@ pub trait Family {
     /// Distribution parameters on the natural scale.
     type Theta;
     /// Gradient of the negative log-likelihood with respect to `Eta`.
-    type NllGradientEta;
+    type GradientEta;
+    /// Reusable per-family buffers for likelihood evaluation.
+    type Workspace;
+    /// Typed parameter-shape specification used by compiled model blocks.
+    type ParamSpec;
+
+    /// Creates reusable buffers for this family.
+    fn workspace(&self) -> Self::Workspace;
 
     /// Converts link-scale predictors to distribution parameters.
     ///
@@ -80,24 +161,90 @@ pub trait Family {
     /// parameters — for example correlations, covariance factors, ordered
     /// cutpoints, or simplex weights — should be handled here by transforming
     /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
-    fn theta(&self, eta: Self::Eta) -> Self::Theta;
+    /// Predictor blocks should not need to know the statistical geometry of a
+    /// particular distribution to produce valid raw predictors.
+    fn theta(&self, eta: &Self::Eta, workspace: &mut Self::Workspace) -> Self::Theta;
     /// Negative log-likelihood for one observation on the natural scale.
-    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn nll(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        workspace: &mut Self::Workspace,
+    ) -> f64;
     /// Negative log-likelihood for one observation on the link scale.
-    fn nll_eta(&self, observation: Self::Observation<'_>, eta: Self::Eta) -> f64 {
-        self.nll(observation, self.theta(eta))
+    fn nll_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        let theta = self.theta(eta, workspace);
+        self.nll(observation, &theta, workspace)
     }
     /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
     ///
-    /// `NllGradientEta` is the gradient of the negative log-likelihood with
+    /// `GradientEta` is the gradient of the negative log-likelihood with
     /// respect to the link-scale predictors `Eta`, after applying the chain
     /// rule for the family links. It must have the same arity and ordering as
     /// `Eta`.
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta);
+}
+
+/// Marker trait for typed model parameter-shape specifications.
+pub trait ParamSpec<F: Family + ?Sized> {}
+
+/// Shape contract for ordinary scalar-parameter GAMLSS families.
+pub trait ScalarParamSpec<F, const K: usize>: ParamSpec<F>
+where
+    F: Family,
+    F::Eta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
+{
+    /// Parameter roles in model-block order.
+    type Params;
+    /// Link functions in model-block order.
+    type Links;
+}
+
+/// Shape contract for a location vector and lower-triangular scale factor.
+///
+/// Implement this only for families whose link-scale predictors naturally split
+/// into one vector block and one lower-triangular matrix block. Do not use this
+/// as a catch-all marker for multivariate distributions with different
+/// structure.
+pub trait LocationCholeskySpec<F, const D: usize>: ParamSpec<F>
+where
+    F: Family,
+{
+    /// Parameter role represented by the vector block.
+    type VectorParameter: ParameterName;
+    /// Parameter role represented by the lower-triangular block.
+    type LowerTriangularParameter: ParameterName;
+
+    /// Assembles link-scale predictors from structured scalar parts.
+    fn eta_from_vector_lower(vector: [f64; D], lower: [[f64; D]; D]) -> F::Eta;
+
+    /// Returns one vector-component gradient from a link-scale gradient value.
+    fn vector_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+
+    /// Returns one lower-triangular gradient entry from a link-scale gradient value.
+    fn lower_triangular_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
+
+    /// Sample-aware initial predictors for the vector and lower-triangular parts.
+    fn initial_vector_lower_from_observations<'obs, Obs>(
+        _family: &F,
+        _obs: &'obs Obs,
+    ) -> ([f64; D], [[f64; D]; D])
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        ([0.0; D], [[0.0; D]; D])
+    }
 }
 
 /// Extension trait for families that provide diagonal Fisher information.
@@ -114,14 +261,15 @@ pub trait HasDiagonalFisherInfo: Family {
     /// observation on the link scale.
     ///
     /// The `fisher` component must have the same arity and ordering as
-    /// [`Family::Eta`] and [`Family::NllGradientEta`]. Each element is
+    /// [`Family::Eta`] and [`Family::GradientEta`]. Each element is
     /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
     /// respect to the k-th link-scale predictor, given the observation.
     fn nll_gradient_and_diagonal_fisher_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, Self::NllGradientEta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, Self::GradientEta);
 }
 
 /// Extension trait for families that provide dense expected information.
@@ -132,61 +280,20 @@ pub trait HasDiagonalFisherInfo: Family {
 pub trait HasExpectedInformation<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::NllGradientEta: ParameterParts<K>,
+    Self::GradientEta: ParameterParts<K>,
 {
     /// Negative log-likelihood, NLL gradient, and dense expected information
     /// per observation on the link scale.
     fn nll_gradient_and_expected_information_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, DenseInformation<K>);
 }
 
 /// Marker trait for families with a compile-time fixed observation dimension.
 pub trait FixedDimensionalFamily<const D: usize>: Family {}
-
-/// Family whose link-scale parameters are assembled from one vector parameter
-/// and one lower-triangular matrix parameter.
-///
-/// This covers structured fixed-dimensional families such as a multivariate
-/// normal with a mean vector and Cholesky scale factor while keeping compiled
-/// model evaluation generic over the family math.
-pub trait VectorLowerTriangularFamily<const D: usize>: Family {
-    /// Parameter role represented by the vector block.
-    type VectorParameter: ParameterName;
-    /// Parameter role represented by the lower-triangular block.
-    type LowerTriangularParameter: ParameterName;
-
-    /// Assembles link-scale predictors from structured scalar parts.
-    ///
-    /// `lower[row][col]` is meaningful for `col <= row`; upper-triangular
-    /// entries are supplied as zero and should be ignored by implementations.
-    fn eta_from_vector_lower(vector: [f64; D], lower: [[f64; D]; D]) -> Self::Eta;
-
-    /// Returns one vector-component gradient from a link-scale gradient value.
-    fn vector_gradient_part(gradient: &Self::NllGradientEta, component: usize) -> f64;
-
-    /// Returns one lower-triangular gradient entry from a link-scale gradient value.
-    fn lower_triangular_gradient_part(
-        gradient: &Self::NllGradientEta,
-        row: usize,
-        col: usize,
-    ) -> f64;
-
-    /// Sample-aware initial predictors for the vector and lower-triangular parts.
-    ///
-    /// The default starts every structured predictor at zero.
-    fn initial_vector_lower_from_observations<'obs, Obs>(
-        &self,
-        _obs: &'obs Obs,
-    ) -> ([f64; D], [[f64; D]; D])
-    where
-        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-    {
-        ([0.0; D], [[0.0; D]; D])
-    }
-}
 
 /// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///
@@ -356,31 +463,13 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     }
 }
 
-/// Family with a fixed number of parameters, parameter roles and link functions.
-///
-/// `Params` and `Links` are specified as tuples of the same length as the
-/// family arity.
-/// Their order defines the order of predictor blocks, gradient parts and flat
-/// coefficient ranges in compiled models.
-///
-/// `Links` describe the independent scalar link contracts for parameter
-/// blocks. More complex dependent constraints are still expressed by
-/// [`Family::theta`], which sees the full link-scale parameter set.
-pub trait ParameterizedFamily<const K: usize>: Family
+/// Sample-aware initialization for scalar-parameter families.
+pub trait InitialEtaFromObservations<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::NllGradientEta: ParameterParts<K>,
+    Self::GradientEta: ParameterParts<K>,
 {
-    /// Parameter roles of the family.
-    type Params;
-    /// Link functions of the family parameters.
-    type Links;
-
     /// Sample-aware initial predictors on the link scale.
-    ///
-    /// Built-in families override this with robust distribution-specific
-    /// heuristics. The default keeps custom families source-compatible and
-    /// starts all optimizer parameters at zero.
     fn initial_eta_from_observations<'obs, Obs>(&self, _obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -402,7 +491,7 @@ pub trait HasCdf: Family {
     /// [`Family`] likelihood contract. For finite query points outside but
     /// below the distribution support, implementations should return the
     /// boundary probability `0.0`.
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for component-wise marginal CDFs.
@@ -415,7 +504,7 @@ pub trait HasMarginalCdf: Family {
     ///
     /// Implementations should return a non-finite value for an invalid
     /// component index or invalid parameter domain rather than panicking.
-    fn marginal_cdf(&self, component: usize, y: f64, theta: Self::Theta) -> f64;
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64;
 }
 
 impl<F> HasMarginalCdf for F
@@ -423,7 +512,7 @@ where
     F: HasCdf + for<'obs> Family<Observation<'obs> = f64>,
 {
     #[inline]
-    fn marginal_cdf(&self, component: usize, y: f64, theta: Self::Theta) -> f64 {
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
         if component == 0 {
             self.cdf(y, theta)
         } else {
@@ -450,7 +539,7 @@ pub trait HasQuantile: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// probabilities or parameter domains rather than panicking.
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for log-density or log-mass evaluation.
@@ -460,8 +549,9 @@ pub trait HasQuantile: Family {
 /// trait, while discrete families expose a log-PMF.
 pub trait HasLogDensity: Family {
     /// Log-density or log-mass at `observation` for natural-scale parameters.
-    fn log_density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        -self.nll(observation, theta)
+    fn log_density(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let mut workspace = self.workspace();
+        -self.nll(observation, theta, &mut workspace)
     }
 }
 
@@ -474,7 +564,7 @@ impl<T> HasLogDensity for T where T: Family {}
 /// [`Family::nll`] and [`Family::nll_and_gradient_eta`].
 pub trait HasDensity: HasLogDensity {
     /// Density or mass at `observation` for natural-scale parameters.
-    fn density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn density(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         self.log_density(observation, theta).exp()
     }
 }
@@ -487,7 +577,7 @@ pub trait HasCrps: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// observation or parameter domains rather than panicking.
-    fn crps(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn crps(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for simulation.
@@ -498,7 +588,7 @@ pub trait CanSimulate<Rng>: Family {
     /// or custom row-value structs.
     type Sample;
     /// Generates one sample for natural-scale parameters.
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> Self::Sample;
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample;
 }
 
 /// Distribution helper for per-observation deviance.
@@ -512,7 +602,7 @@ pub trait HasDeviance: Family {
     /// Implementations should return a non-finite value for invalid observation
     /// or parameter domains rather than panicking, matching the rest of the
     /// family helper contracts.
-    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn deviance(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for family-specific link-scale initialization.

@@ -46,12 +46,12 @@ impl LocalBasis {
     pub(crate) fn add_scaled_outer(self, scale: f64, nparams: usize, out: &mut [f64]) {
         debug_assert_eq!(out.len(), nparams * nparams);
 
-        for local_j in 0..self.len {
-            let j = self.indices[local_j];
-            let scaled_j = scale * self.weights[local_j];
-            for local_k in local_j..self.len {
-                let k = self.indices[local_k];
-                let delta = scaled_j * self.weights[local_k];
+        let indices = &self.indices[..self.len];
+        let weights = &self.weights[..self.len];
+        for (local_j, (&j, &weight_j)) in indices.iter().zip(weights).enumerate() {
+            let scaled_j = scale * weight_j;
+            for (&k, &weight_k) in indices[local_j..].iter().zip(&weights[local_j..]) {
+                let delta = scaled_j * weight_k;
                 out[j * nparams + k] += delta;
                 if k != j {
                     out[k * nparams + j] += delta;

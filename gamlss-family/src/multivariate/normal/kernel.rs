@@ -1,5 +1,10 @@
 use crate::constants::HALF_LOG_2_PI;
 
+pub(super) trait LowerTriangularMatrix {
+    fn dimension(&self) -> usize;
+    fn lower(&self, row: usize, col: usize) -> f64;
+}
+
 pub(super) const fn cholesky_len(dimension: usize) -> Option<usize> {
     match dimension.checked_add(1) {
         Some(next) => match dimension.checked_mul(next) {
@@ -25,11 +30,6 @@ pub(super) const fn packed_index(row: usize, col: usize) -> Option<usize> {
     } else {
         None
     }
-}
-
-pub(super) trait LowerTriangularMatrix {
-    fn dimension(&self) -> usize;
-    fn lower(&self, row: usize, col: usize) -> f64;
 }
 
 pub(super) fn cholesky_score(
@@ -112,8 +112,12 @@ pub(super) fn nll(
         return f64::INFINITY;
     }
 
-    for index in 0..dimension {
-        z[index] = observation[index] - mu[index];
+    for ((z_value, observation), mu) in z
+        .iter_mut()
+        .zip(observation.iter().copied())
+        .zip(mu.iter().copied())
+    {
+        *z_value = observation - mu;
     }
     forward_solve_in_place(dimension, cholesky, z);
 

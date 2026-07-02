@@ -2,15 +2,16 @@ use std::ops::Range;
 
 use crate::{
     BlockObjective, Family, GlobalPenalty, LowerTriangularParameterBlock, ModelError, Objective,
-    ParameterBlock, ParameterName, ParameterParts, ParameterizedFamily, Penalty, PredictorBlock,
-    VectorLowerTriangularFamily, VectorParameterBlock,
+    ParameterBlock, ParameterName, ParameterParts, Penalty, PredictorBlock, VectorParameterBlock,
+    family::{InitialEtaFromObservations, LocationCholeskySpec, ScalarParamSpec},
 };
 
 pub use layout::{
-    ParameterCoefficients, ParameterLayout, ParameterSlice, TrainingDiagnostics, UnpackedParameters,
+    ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPart, ParameterSlice,
+    TrainingDiagnostics, UnpackedParameters,
 };
 pub use observation::{FiniteScalarObservations, ObservationView};
-pub use workspace::GradientWorkspace;
+pub use workspace::{GradientWorkspace, ModelWorkspace};
 
 mod layout;
 mod observation;
@@ -231,9 +232,14 @@ where
         self.blocks.try_initial_parameters(&self.family, &self.obs)
     }
 
-    /// Creates reusable gradient buffers sized for this model.
-    pub fn gradient_workspace(&self) -> GradientWorkspace {
-        self.blocks.gradient_workspace(self.obs.len())
+    /// Creates reusable objective buffers sized for this model.
+    pub fn gradient_workspace(&self) -> ModelWorkspace<F>
+    where
+        F: Family,
+    {
+        ModelWorkspace::new(&self.family, self.obs.len(), |nobs| {
+            self.blocks.gradient_workspace(nobs)
+        })
     }
 
     /// Wraps the model as an objective with reusable gradient buffers.
@@ -263,12 +269,30 @@ where
         self.blocks.parameter_layout()
     }
 
+    /// Structured coefficient descriptors inside the flat optimizer-parameter vector.
+    ///
+    /// Ordinary scalar-parameter models return one whole-parameter descriptor
+    /// per block. Structured multivariate block implementations may return
+    /// component- or matrix-entry-level descriptors, such as `mu[i]` or
+    /// `cholesky[row, col]`.
+    pub fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
+        self.blocks.parameter_descriptors()
+    }
+
     /// Visits named parameter slices in model order without allocating.
     pub fn visit_parameter_slices<V>(&self, visit: V)
     where
         V: FnMut(usize, &'static str, Range<usize>),
     {
         self.blocks.visit_parameter_slices(visit);
+    }
+
+    /// Visits structured coefficient descriptors in model order without allocating.
+    pub fn visit_parameter_descriptors<V>(&self, visit: V)
+    where
+        V: FnMut(usize, ParameterDescriptor),
+    {
+        self.blocks.visit_parameter_descriptors(visit);
     }
 
     /// Creates a [`BlockObjective`] projected to the coefficients of parameter `P`.
@@ -378,7 +402,7 @@ where
         &self,
         parameters: &[f64],
         grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
+        workspace: &mut ModelWorkspace<F>,
     ) -> Result<TrainingDiagnostics, ModelError> {
         validate_beta_and_gradient_len(self.nparams(), parameters, grad)?;
 
@@ -405,7 +429,9 @@ where
     where
         F: Family,
     {
-        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
+        let eta = self.predict_eta_row(parameters, row)?;
+        let mut workspace = self.family.workspace();
+        Ok(self.family.theta(&eta, &mut workspace))
     }
 
     /// Predicts link-scale distribution predictors for all training rows.
@@ -425,8 +451,12 @@ where
         F: Family,
     {
         validate_len("parameters", parameters.len(), self.nparams())?;
+        let mut workspace = self.family.workspace();
         Ok((0..self.nobs())
-            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
+            .map(|row| {
+                let eta = self.blocks.eta_row(parameters, row);
+                self.family.theta(&eta, &mut workspace)
+            })
             .collect())
     }
 
@@ -443,8 +473,10 @@ where
     {
         validate_len("parameters", parameters.len(), self.nparams())?;
         validate_output_len(self.nobs(), out.len())?;
+        let mut workspace = self.family.workspace();
         for (row, out) in out.iter_mut().enumerate() {
-            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+            let eta = self.blocks.eta_row(parameters, row);
+            *out = self.family.theta(&eta, &mut workspace);
         }
         Ok(())
     }
@@ -459,8 +491,10 @@ where
         F: Family,
     {
         validate_len("parameters", parameters.len(), self.nparams())?;
+        let mut workspace = self.family.workspace();
         for row in 0..self.nobs() {
-            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+            let eta = self.blocks.eta_row(parameters, row);
+            visit(row, self.family.theta(&eta, &mut workspace));
         }
         Ok(())
     }
@@ -612,19 +646,21 @@ where
         &self,
         beta: &[f64],
         grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
+        workspace: &mut ModelWorkspace<F>,
     ) -> Result<(), ModelError> {
         validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
 
         grad.fill(0.0);
+        let (family_workspace, gradient_workspace) = workspace.parts_mut();
         let value = self.blocks.value_gradient_into_workspace(
             &self.family,
             &self.obs,
             beta,
             grad,
-            workspace,
+            family_workspace,
+            gradient_workspace,
         );
-        self.scale_value_gradient(beta, grad, workspace, value);
+        self.scale_value_gradient(beta, grad, workspace.gradient_mut(), value);
         Ok(())
     }
 
@@ -644,19 +680,21 @@ where
         &self,
         beta: &[f64],
         grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
+        workspace: &mut ModelWorkspace<F>,
     ) -> Result<f64, ModelError> {
         validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
 
         grad.fill(0.0);
+        let (family_workspace, gradient_workspace) = workspace.parts_mut();
         let value = self.blocks.value_gradient_into_workspace(
             &self.family,
             &self.obs,
             beta,
             grad,
-            workspace,
+            family_workspace,
+            gradient_workspace,
         );
-        Ok(self.scale_value_gradient(beta, grad, workspace, value))
+        Ok(self.scale_value_gradient(beta, grad, workspace.gradient_mut(), value))
     }
 
     #[allow(clippy::float_cmp)]
@@ -843,7 +881,9 @@ where
         parameters: &[f64],
         row: usize,
     ) -> Result<F::Theta, ModelError> {
-        Ok(self.family.theta(self.predict_eta_row(parameters, row)?))
+        let eta = self.predict_eta_row(parameters, row)?;
+        let mut workspace = self.family.workspace();
+        Ok(self.family.theta(&eta, &mut workspace))
     }
 
     /// Predicts link-scale distribution predictors for all prediction rows.
@@ -865,8 +905,12 @@ where
     /// Returns [`ModelError`] if `parameters` has the wrong length.
     pub fn predict_theta(&self, parameters: &[f64]) -> Result<Vec<F::Theta>, ModelError> {
         validate_len("parameters", parameters.len(), self.nparams)?;
+        let mut workspace = self.family.workspace();
         Ok((0..self.nrows)
-            .map(|row| self.family.theta(self.blocks.eta_row(parameters, row)))
+            .map(|row| {
+                let eta = self.blocks.eta_row(parameters, row);
+                self.family.theta(&eta, &mut workspace)
+            })
             .collect())
     }
 
@@ -884,8 +928,10 @@ where
     ) -> Result<(), ModelError> {
         validate_len("parameters", parameters.len(), self.nparams)?;
         validate_output_len(self.nrows, out.len())?;
+        let mut workspace = self.family.workspace();
         for (row, out) in out.iter_mut().enumerate() {
-            *out = self.family.theta(self.blocks.eta_row(parameters, row));
+            let eta = self.blocks.eta_row(parameters, row);
+            *out = self.family.theta(&eta, &mut workspace);
         }
         Ok(())
     }
@@ -901,8 +947,10 @@ where
         mut visit: impl FnMut(usize, F::Theta),
     ) -> Result<(), ModelError> {
         validate_len("parameters", parameters.len(), self.nparams)?;
+        let mut workspace = self.family.workspace();
         for row in 0..self.nrows {
-            visit(row, self.family.theta(self.blocks.eta_row(parameters, row)));
+            let eta = self.blocks.eta_row(parameters, row);
+            visit(row, self.family.theta(&eta, &mut workspace));
         }
         Ok(())
     }
@@ -919,12 +967,11 @@ impl<F, PBlocks> Copy for PredictionView<'_, F, PBlocks> {}
 /// GAMLSS objective with reusable gradient buffers.
 ///
 /// This wrapper is intended for optimizers that call `gradient` repeatedly.
-/// It owns the compiled model and keeps a [`GradientWorkspace`] between calls,
-/// avoiding per-call allocation of row-gradient and local-gradient vectors.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkspaceGamlss<F, Blocks, Obs> {
+/// It owns the compiled model and keeps a [`ModelWorkspace`] between calls,
+/// avoiding per-call allocation of family and gradient scratch buffers.
+pub struct WorkspaceGamlss<F: Family, Blocks, Obs> {
     model: Gamlss<F, Blocks, Obs>,
-    workspace: GradientWorkspace,
+    workspace: ModelWorkspace<F>,
 }
 
 impl<F, Blocks, Obs> WorkspaceGamlss<F, Blocks, Obs>
@@ -953,23 +1000,23 @@ where
         &mut self.model
     }
 
-    /// Returns the reusable gradient workspace.
+    /// Returns the reusable model workspace.
     #[must_use]
     #[inline]
-    pub const fn workspace(&self) -> &GradientWorkspace {
+    pub const fn workspace(&self) -> &ModelWorkspace<F> {
         &self.workspace
     }
 
-    /// Returns the reusable gradient workspace mutably.
+    /// Returns the reusable model workspace mutably.
     #[inline]
-    pub const fn workspace_mut(&mut self) -> &mut GradientWorkspace {
+    pub const fn workspace_mut(&mut self) -> &mut ModelWorkspace<F> {
         &mut self.workspace
     }
 
     /// Consumes the objective and returns the wrapped model and workspace.
     #[must_use]
     #[inline]
-    pub fn into_parts(self) -> (Gamlss<F, Blocks, Obs>, GradientWorkspace) {
+    pub fn into_parts(self) -> (Gamlss<F, Blocks, Obs>, ModelWorkspace<F>) {
         (self.model, self.workspace)
     }
 
@@ -1081,6 +1128,19 @@ where
     {
         let dim = self.model.nparams();
         with_validated_global_penalties(self, penalties, dim)
+    }
+}
+
+impl<F, Blocks, Obs> std::fmt::Debug for WorkspaceGamlss<F, Blocks, Obs>
+where
+    F: Family,
+    Gamlss<F, Blocks, Obs>: std::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WorkspaceGamlss")
+            .field("model", &self.model)
+            .finish_non_exhaustive()
     }
 }
 
@@ -1285,11 +1345,19 @@ where
         obs: &'obs Obs,
         beta: &[f64],
         grad: &mut [f64],
+        family_workspace: &mut F::Workspace,
         workspace: &mut GradientWorkspace,
     ) where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        let _ = self.value_gradient_into_workspace(family, obs, beta, grad, workspace);
+        let _ = self.value_gradient_into_workspace(
+            family,
+            obs,
+            beta,
+            grad,
+            family_workspace,
+            workspace,
+        );
     }
 
     /// Computes weighted objective value and gradient in one observation pass.
@@ -1299,6 +1367,7 @@ where
         obs: &'obs Obs,
         beta: &[f64],
         grad: &mut [f64],
+        family_workspace: &mut F::Workspace,
         workspace: &mut GradientWorkspace,
     ) -> f64
     where
@@ -1307,6 +1376,17 @@ where
     fn block_ranges(&self) -> Vec<Range<usize>>;
     /// Returns the layout of the coefficient blocks within the flat beta vector.
     fn parameter_layout(&self) -> ParameterLayout;
+
+    /// Returns structured coefficient descriptors within the flat beta vector.
+    ///
+    /// Predictor blocks own coefficient ranges and raw `eta` construction.
+    /// Families own the statistical meaning of those `eta` values and any
+    /// dependent transforms into valid natural-scale parameters. Descriptors
+    /// expose predictor-layer structure for diagnostics and formula builders
+    /// without moving distribution parameterization logic into predictors.
+    fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
+        self.parameter_layout().block_descriptors()
+    }
 
     /// Visits coefficient ranges for each parameter block in model order without allocating.
     fn visit_block_ranges<V>(&self, mut visit: V)
@@ -1345,6 +1425,14 @@ where
         }
     }
 
+    /// Visits structured coefficient descriptors in model order without allocating.
+    fn visit_parameter_descriptors<V>(&self, visit: V)
+    where
+        V: FnMut(usize, ParameterDescriptor),
+    {
+        self.parameter_layout().visit_block_descriptors(visit);
+    }
+
     #[doc(hidden)]
     fn parameter_slice_of<P>(&self) -> Option<Range<usize>>
     where
@@ -1376,29 +1464,15 @@ where
     }
 }
 
-#[inline]
-fn with_validated_global_penalties<O, GP>(
-    objective: O,
-    penalties: GP,
-    dim: usize,
-) -> Result<WithGlobalPenalties<O, GP>, ModelError>
-where
-    GP: GlobalPenalty,
-{
-    penalties.validate(dim)?;
-    Ok(WithGlobalPenalties {
-        objective,
-        penalties,
-    })
-}
-
 impl<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower> GamlssBlocks<F>
     for (
         VectorParameterBlock<PVector, D, XVector, PenVector>,
         LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
     )
 where
-    F: VectorLowerTriangularFamily<D, VectorParameter = PVector, LowerTriangularParameter = PLower>,
+    F: Family,
+    F::ParamSpec:
+        LocationCholeskySpec<F, D, VectorParameter = PVector, LowerTriangularParameter = PLower>,
     PVector: ParameterName,
     PLower: ParameterName,
     XVector: PredictorBlock,
@@ -1449,6 +1523,7 @@ where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
         let mut loss = 0.0;
+        let mut family_workspace = family.workspace();
         for row in 0..obs.len() {
             let weight = obs.weight_at(row);
             if weight == 0.0 {
@@ -1456,10 +1531,10 @@ where
             }
             let observation = obs.observation_at(row);
             loss = weight.mul_add(
-                family.nll_eta(
-                    observation,
-                    structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row),
-                ),
+                {
+                    let eta = structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row);
+                    family.nll_eta(observation, &eta, &mut family_workspace)
+                },
                 loss,
             );
         }
@@ -1491,7 +1566,10 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        let (vector_eta, lower_eta) = family.initial_vector_lower_from_observations(obs);
+        let (vector_eta, lower_eta) =
+            <F::ParamSpec as LocationCholeskySpec<F, D>>::initial_vector_lower_from_observations(
+                family, obs,
+            );
         let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
 
         for (component, value) in vector_eta.iter().copied().enumerate() {
@@ -1574,6 +1652,7 @@ where
         obs: &'obs Obs,
         beta: &[f64],
         grad: &mut [f64],
+        family_workspace: &mut F::Workspace,
         workspace: &mut GradientWorkspace,
     ) -> f64
     where
@@ -1597,14 +1676,17 @@ where
 
             let observation = obs.observation_at(row_index);
             let eta = structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row_index);
-            let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
+            let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, family_workspace);
             loss = weight.mul_add(nll, loss);
 
             for component in 0..D {
                 workspace.set_row_gradient(
                     component,
                     row_index,
-                    weight * F::vector_gradient_part(&gradient, component),
+                    weight
+                        * <F::ParamSpec as LocationCholeskySpec<F, D>>::vector_gradient_part(
+                            &gradient, component,
+                        ),
                 );
             }
             for row in 0..D {
@@ -1612,7 +1694,10 @@ where
                     workspace.set_row_gradient(
                         lower_workspace_index::<PLower, D>(row, col),
                         row_index,
-                        weight * F::lower_triangular_gradient_part(&gradient, row, col),
+                        weight
+                            * <F::ParamSpec as LocationCholeskySpec<F, D>>::lower_triangular_gradient_part(
+                                &gradient, row, col,
+                            ),
                     );
                 }
             }
@@ -1681,6 +1766,14 @@ where
         ])
     }
 
+    fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
+        let mut descriptors = Vec::with_capacity(structured_scalar_count::<PLower, D>());
+        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
+            descriptors.push(descriptor);
+        });
+        descriptors
+    }
+
     fn parameter_slice_count(&self) -> usize {
         2
     }
@@ -1706,6 +1799,38 @@ where
         visit(1, PLower::NAME, self.1.range());
     }
 
+    fn visit_parameter_descriptors<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, ParameterDescriptor),
+    {
+        let mut index = 0;
+        for component in 0..D {
+            let range = self
+                .0
+                .component_range(component)
+                .expect("validated vector component has a coefficient range");
+            visit(
+                index,
+                ParameterDescriptor::vector_component(PVector::NAME, component, range),
+            );
+            index += 1;
+        }
+
+        for row in 0..D {
+            for col in 0..=row {
+                let range = self
+                    .1
+                    .entry_range(row, col)
+                    .expect("validated lower-triangular entry has a coefficient range");
+                visit(
+                    index,
+                    ParameterDescriptor::lower_triangular_entry(PLower::NAME, row, col, range),
+                );
+                index += 1;
+            }
+        }
+    }
+
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
     where
         Other: GamlssBlocks<F>,
@@ -1714,6 +1839,22 @@ where
             && other.parameter_slice_matches(0, PVector::NAME, self.0.range())
             && other.parameter_slice_matches(1, PLower::NAME, self.1.range())
     }
+}
+
+#[inline]
+fn with_validated_global_penalties<O, GP>(
+    objective: O,
+    penalties: GP,
+    dim: usize,
+) -> Result<WithGlobalPenalties<O, GP>, ModelError>
+where
+    GP: GlobalPenalty,
+{
+    penalties.validate(dim)?;
+    Ok(WithGlobalPenalties {
+        objective,
+        penalties,
+    })
 }
 
 fn structured_eta_row<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower>(
@@ -1725,7 +1866,8 @@ fn structured_eta_row<F, const D: usize, PVector, PLower, XVector, XLower, PenVe
     row: usize,
 ) -> F::Eta
 where
-    F: VectorLowerTriangularFamily<D>,
+    F: Family,
+    F::ParamSpec: LocationCholeskySpec<F, D>,
     XVector: PredictorBlock,
     XLower: PredictorBlock,
 {
@@ -1758,7 +1900,7 @@ where
         }
     }
 
-    F::eta_from_vector_lower(vector, lower)
+    <F::ParamSpec as LocationCholeskySpec<F, D>>::eta_from_vector_lower(vector, lower)
 }
 
 fn validate_vector_parameter_block<P, const D: usize, X, Penalty>(
@@ -1840,9 +1982,10 @@ macro_rules! impl_gamlss_blocks {
         impl<F, $($param, $link, $design, $penalty,)+> GamlssBlocks<F>
             for ($(ParameterBlock<$param, $link, $design, $penalty>,)+)
         where
-            F: ParameterizedFamily<$k, Params = ($($param,)+), Links = ($($link,)+)>,
+            F: InitialEtaFromObservations<$k>,
+            F::ParamSpec: ScalarParamSpec<F, $k, Params = ($($param,)+), Links = ($($link,)+)>,
             F::Eta: ParameterParts<$k>,
-            F::NllGradientEta: ParameterParts<$k>,
+            F::GradientEta: ParameterParts<$k>,
             $($param: ParameterName,)+
             $($link: crate::Link<f64>,)+
             $($design: PredictorBlock,)+
@@ -1914,6 +2057,7 @@ macro_rules! impl_gamlss_blocks {
                 $(let $block = &self.$idx;)+
                 $(let $beta_block = &beta[$block.range()];)+
                 let mut loss = 0.0;
+                let mut family_workspace = family.workspace();
 
                 for row in 0..obs.len() {
                     let weight = obs.weight_at(row);
@@ -1922,7 +2066,7 @@ macro_rules! impl_gamlss_blocks {
                     }
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
-                    loss += weight * family.nll_eta(observation, eta);
+                    loss += weight * family.nll_eta(observation, &eta, &mut family_workspace);
                 }
 
                 loss
@@ -2003,6 +2147,7 @@ macro_rules! impl_gamlss_blocks {
                 obs: &'obs Obs,
                 beta: &[f64],
                 grad: &mut [f64],
+                family_workspace: &mut F::Workspace,
                 workspace: &mut GradientWorkspace,
             ) -> f64
             where
@@ -2022,7 +2167,8 @@ macro_rules! impl_gamlss_blocks {
                     }
                     let observation = obs.observation_at(row);
                     let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
-                    let (nll, gradient) = family.nll_and_gradient_eta(observation, eta);
+                    let (nll, gradient) =
+                        family.nll_and_gradient_eta(observation, &eta, family_workspace);
                     loss += weight * nll;
                     $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
                 }
@@ -2367,11 +2513,12 @@ mod tests {
 
     use crate::{
         CholeskyScale, DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty,
-        HingeQuadraticPenalty, Identity, LinearFormBuilder, LinearPredictorBlock,
+        HingeQuadraticPenalty, Identity, InitialEtaFromObservations, LinearFormBuilder,
+        LinearPredictorBlock, LocationCholesky, LocationCholeskySpec,
         LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
-        ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterLayout,
-        ParameterName, ParameterSlice, ParameterizedFamily, PredictorBlock, RidgePenalty, Sigma,
-        SumBlock, Tau, VectorLowerTriangularFamily, VectorParameterBlock,
+        ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterDescriptor,
+        ParameterLayout, ParameterName, ParameterPart, ParameterSlice, PredictorBlock,
+        RidgePenalty, ScalarParams, Sigma, SumBlock, Tau, VectorParameterBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -2380,27 +2527,34 @@ mod tests {
     impl Family for FixedSigmaNormal {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let residual = y - theta;
             0.5 * residual * residual
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-            (self.nll(y, self.theta(eta)), eta - y)
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            let theta = self.theta(eta, _workspace);
+            (self.nll(y, &theta, _workspace), eta - y)
         }
     }
 
-    impl ParameterizedFamily<1> for FixedSigmaNormal {
-        type Params = (Mu,);
-        type Links = (Identity,);
-    }
+    impl InitialEtaFromObservations<1> for FixedSigmaNormal {}
 
     #[derive(Debug, Clone, Copy)]
     struct TwoParameterMock;
@@ -2408,29 +2562,35 @@ mod tests {
     impl Family for TwoParameterMock {
         type Eta = (f64, f64);
         type Theta = (f64, f64);
-        type NllGradientEta = (f64, f64);
+        type GradientEta = (f64, f64);
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu, Sigma), (Identity, Identity), 2>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let first = theta.0 - y;
             let second = theta.1 - 1.0;
             f64::midpoint(first * first, second * second)
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
             let gradient = (eta.0 - y, eta.1 - 1.0);
-            (self.nll(y, eta), gradient)
+            (self.nll(y, eta, _workspace), gradient)
         }
     }
 
-    impl ParameterizedFamily<2> for TwoParameterMock {
-        type Params = (Mu, Sigma);
-        type Links = (Identity, Identity);
-    }
+    impl InitialEtaFromObservations<2> for TwoParameterMock {}
 
     #[derive(Debug, Clone, Copy)]
     struct StructuredMock;
@@ -2445,14 +2605,23 @@ mod tests {
     impl Family for StructuredMock {
         type Eta = ([f64; 2], [[f64; 2]; 2]);
         type Theta = Self::Eta;
-        type NllGradientEta = Self::Eta;
+        type GradientEta = Self::Eta;
         type Observation<'obs> = [f64; 2];
+        type Workspace = ();
+        type ParamSpec = LocationCholesky<Mu, CholeskyScale, 2>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        fn nll(
+            &self,
+            observation: Self::Observation<'_>,
+            theta: &Self::Theta,
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
             let residual = Self::linear_prediction(&theta) - observation[0];
             0.5 * residual * residual
         }
@@ -2460,11 +2629,12 @@ mod tests {
         fn nll_and_gradient_eta(
             &self,
             observation: Self::Observation<'_>,
-            eta: Self::Eta,
-        ) -> (f64, Self::NllGradientEta) {
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
             let residual = Self::linear_prediction(&eta) - observation[0];
             (
-                self.nll(observation, eta),
+                self.nll(observation, eta, _workspace),
                 (
                     [residual, 2.0 * residual],
                     [[3.0 * residual, 0.0], [4.0 * residual, 5.0 * residual]],
@@ -2473,20 +2643,26 @@ mod tests {
         }
     }
 
-    impl VectorLowerTriangularFamily<2> for StructuredMock {
+    impl LocationCholeskySpec<StructuredMock, 2> for LocationCholesky<Mu, CholeskyScale, 2> {
         type VectorParameter = Mu;
         type LowerTriangularParameter = CholeskyScale;
 
-        fn eta_from_vector_lower(vector: [f64; 2], lower: [[f64; 2]; 2]) -> Self::Eta {
+        fn eta_from_vector_lower(
+            vector: [f64; 2],
+            lower: [[f64; 2]; 2],
+        ) -> <StructuredMock as Family>::Eta {
             (vector, lower)
         }
 
-        fn vector_gradient_part(gradient: &Self::NllGradientEta, component: usize) -> f64 {
+        fn vector_gradient_part(
+            gradient: &<StructuredMock as Family>::GradientEta,
+            component: usize,
+        ) -> f64 {
             gradient.0[component]
         }
 
         fn lower_triangular_gradient_part(
-            gradient: &Self::NllGradientEta,
+            gradient: &<StructuredMock as Family>::GradientEta,
             row: usize,
             col: usize,
         ) -> f64 {
@@ -2494,11 +2670,11 @@ mod tests {
         }
 
         fn initial_vector_lower_from_observations<'obs, Obs>(
-            &self,
+            _family: &StructuredMock,
             _obs: &'obs Obs,
         ) -> ([f64; 2], [[f64; 2]; 2])
         where
-            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+            Obs: ObservationView<'obs, Observation = [f64; 2]> + 'obs,
         {
             ([1.0, 2.0], [[3.0, 0.0], [4.0, 5.0]])
         }
@@ -2510,26 +2686,32 @@ mod tests {
     impl Family for InitializingLocation {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             0.5 * (theta - y) * (theta - y)
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-            (self.nll(y, eta), eta - y)
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            (self.nll(y, eta, _workspace), *eta - y)
         }
     }
 
-    impl ParameterizedFamily<1> for InitializingLocation {
-        type Params = (Mu,);
-        type Links = (Identity,);
-
+    impl InitialEtaFromObservations<1> for InitializingLocation {
         fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
         where
             Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -2544,26 +2726,32 @@ mod tests {
     impl Family for NonFiniteInitializingLocation {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             0.5 * (theta - y) * (theta - y)
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-            (self.nll(y, eta), eta - y)
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            (self.nll(y, eta, _workspace), *eta - y)
         }
     }
 
-    impl ParameterizedFamily<1> for NonFiniteInitializingLocation {
-        type Params = (Mu,);
-        type Links = (Identity,);
-
+    impl InitialEtaFromObservations<1> for NonFiniteInitializingLocation {
         fn initial_eta_from_observations<'obs, Obs>(&self, _: &'obs Obs) -> Self::Eta
         where
             Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -2639,6 +2827,56 @@ mod tests {
         assert_eq!(model.nparams(), 5);
         assert_eq!(model.parameter_layout().slice("mu"), Some(0..2));
         assert_eq!(model.parameter_layout().slice("cholesky"), Some(2..5));
+        assert_eq!(
+            model.parameter_descriptors(),
+            vec![
+                ParameterDescriptor::vector_component("mu", 0, 0..1),
+                ParameterDescriptor::vector_component("mu", 1, 1..2),
+                ParameterDescriptor::lower_triangular_entry("cholesky", 0, 0, 2..3),
+                ParameterDescriptor::lower_triangular_entry("cholesky", 1, 0, 3..4),
+                ParameterDescriptor::lower_triangular_entry("cholesky", 1, 1, 4..5),
+            ]
+        );
+
+        let mut parts = Vec::new();
+        model.visit_parameter_descriptors(|index, descriptor| {
+            parts.push((index, descriptor.name, descriptor.part, descriptor.range));
+        });
+        assert_eq!(
+            parts,
+            vec![
+                (
+                    0,
+                    "mu",
+                    ParameterPart::VectorComponent { component: 0 },
+                    0..1
+                ),
+                (
+                    1,
+                    "mu",
+                    ParameterPart::VectorComponent { component: 1 },
+                    1..2
+                ),
+                (
+                    2,
+                    "cholesky",
+                    ParameterPart::LowerTriangularEntry { row: 0, col: 0 },
+                    2..3,
+                ),
+                (
+                    3,
+                    "cholesky",
+                    ParameterPart::LowerTriangularEntry { row: 1, col: 0 },
+                    3..4,
+                ),
+                (
+                    4,
+                    "cholesky",
+                    ParameterPart::LowerTriangularEntry { row: 1, col: 1 },
+                    4..5,
+                ),
+            ]
+        );
         assert_eq!(
             model.initial_parameters().unwrap(),
             vec![1.0, 2.0, 3.0, 4.0, 5.0]
@@ -3364,28 +3602,34 @@ mod tests {
     impl Family for StatefulLocation {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta + self.target_shift
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta + self.target_shift
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let residual = y - theta;
             0.5 * residual * residual
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-            let theta = self.theta(eta);
-            (self.nll(y, theta), theta - y)
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            let theta = self.theta(eta, _workspace);
+            (self.nll(y, &theta, _workspace), theta - y)
         }
     }
 
-    impl ParameterizedFamily<1> for StatefulLocation {
-        type Params = (Mu,);
-        type Links = (Identity,);
-    }
+    impl InitialEtaFromObservations<1> for StatefulLocation {}
 
     #[test]
     fn family_instance_state_participates_in_objective() {
@@ -3409,14 +3653,23 @@ mod tests {
     impl Family for BivariateLocation {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = [f64; 2];
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        fn nll(
+            &self,
+            observation: Self::Observation<'_>,
+            theta: &Self::Theta,
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
             let first = theta - observation[0];
             let second = theta - observation[1];
             f64::midpoint(first * first, second * second)
@@ -3425,17 +3678,15 @@ mod tests {
         fn nll_and_gradient_eta(
             &self,
             observation: Self::Observation<'_>,
-            eta: Self::Eta,
-        ) -> (f64, Self::NllGradientEta) {
-            let gradient = (eta - observation[0]) + (eta - observation[1]);
-            (self.nll(observation, eta), gradient)
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            let gradient = (*eta - observation[0]) + (*eta - observation[1]);
+            (self.nll(observation, eta, _workspace), gradient)
         }
     }
 
-    impl ParameterizedFamily<1> for BivariateLocation {
-        type Params = (Mu,);
-        type Links = (Identity,);
-    }
+    impl InitialEtaFromObservations<1> for BivariateLocation {}
 
     #[test]
     fn model_accepts_multivariate_observation_rows() {
@@ -3481,15 +3732,24 @@ mod tests {
     impl Family for BorrowedRowMean {
         type Eta = f64;
         type Theta = f64;
-        type NllGradientEta = f64;
+        type GradientEta = f64;
         type Observation<'obs> = &'obs [f64];
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
         #[allow(clippy::cast_precision_loss)]
-        fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+        fn nll(
+            &self,
+            observation: Self::Observation<'_>,
+            theta: &Self::Theta,
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
             let mean = observation.iter().sum::<f64>() / observation.len() as f64;
             let residual = theta - mean;
             0.5 * residual * residual
@@ -3499,17 +3759,15 @@ mod tests {
         fn nll_and_gradient_eta(
             &self,
             observation: Self::Observation<'_>,
-            eta: Self::Eta,
-        ) -> (f64, Self::NllGradientEta) {
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
             let mean = observation.iter().sum::<f64>() / observation.len() as f64;
-            (self.nll(observation, eta), eta - mean)
+            (self.nll(observation, eta, _workspace), *eta - mean)
         }
     }
 
-    impl ParameterizedFamily<1> for BorrowedRowMean {
-        type Params = (Mu,);
-        type Links = (Identity,);
-    }
+    impl InitialEtaFromObservations<1> for BorrowedRowMean {}
 
     #[test]
     fn model_accepts_borrowed_dynamic_observation_rows() {
@@ -3535,31 +3793,37 @@ mod tests {
     impl Family for ThreeParameterMock {
         type Eta = (f64, f64, f64);
         type Theta = (f64, f64, f64);
-        type NllGradientEta = (f64, f64, f64);
+        type GradientEta = (f64, f64, f64);
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<(Mu, Sigma, Nu), (Identity, Identity, Identity), 3>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
         #[allow(clippy::suboptimal_flops)]
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let first = theta.0 - y;
             let second = theta.1 - 1.0;
             let third = theta.2 + 1.0;
             0.5 * (first * first + second * second + third * third)
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
             let gradient = (eta.0 - y, eta.1 - 1.0, eta.2 + 1.0);
-            (self.nll(y, eta), gradient)
+            (self.nll(y, eta, _workspace), gradient)
         }
     }
 
-    impl ParameterizedFamily<3> for ThreeParameterMock {
-        type Params = (Mu, Sigma, Nu);
-        type Links = (Identity, Identity, Identity);
-    }
+    impl InitialEtaFromObservations<3> for ThreeParameterMock {}
 
     #[test]
     fn custom_three_parameter_family_uses_generic_blocks() {
@@ -3598,26 +3862,39 @@ mod tests {
     impl Family for FourParameterMock {
         type Eta = (f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64);
-        type NllGradientEta = (f64, f64, f64, f64);
+        type GradientEta = (f64, f64, f64, f64);
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec =
+            ScalarParams<(Mu, Sigma, Nu, Tau), (Identity, Identity, Identity, Identity), 4>;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
             (eta.0 + 1.0, eta.1 + 2.0, eta.2 + 3.0, eta.3 + 4.0)
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             theta.0 + theta.1 + theta.2 + theta.3 + y
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-            (self.nll(y, self.theta(eta)), (1.0, 1.0, 1.0, 1.0))
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            (
+                {
+                    let theta = self.theta(eta, _workspace);
+                    self.nll(y, &theta, _workspace)
+                },
+                (1.0, 1.0, 1.0, 1.0),
+            )
         }
     }
 
-    impl ParameterizedFamily<4> for FourParameterMock {
-        type Params = (Mu, Sigma, Nu, Tau);
-        type Links = (Identity, Identity, Identity, Identity);
-    }
+    impl InitialEtaFromObservations<4> for FourParameterMock {}
 
     #[derive(Debug, Clone, Copy)]
     struct Fifth;
@@ -3632,14 +3909,22 @@ mod tests {
     impl Family for FiveParameterMock {
         type Eta = (f64, f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64, f64);
-        type NllGradientEta = (f64, f64, f64, f64, f64);
+        type GradientEta = (f64, f64, f64, f64, f64);
         type Observation<'obs> = f64;
+        type Workspace = ();
+        type ParamSpec = ScalarParams<
+            (Mu, Sigma, Nu, Tau, Fifth),
+            (Identity, Identity, Identity, Identity, Identity),
+            5,
+        >;
+        #[inline]
+        fn workspace(&self) -> Self::Workspace {}
 
-        fn theta(&self, eta: Self::Eta) -> Self::Theta {
-            eta
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
         }
 
-        fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+        fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let targets = [y, 1.0, 2.0, 3.0, 4.0];
             let values = [theta.0, theta.1, theta.2, theta.3, theta.4];
             0.5 * values
@@ -3652,9 +3937,14 @@ mod tests {
                 .sum::<f64>()
         }
 
-        fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+        fn nll_and_gradient_eta(
+            &self,
+            y: f64,
+            eta: &Self::Eta,
+            _workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
             (
-                self.nll(y, eta),
+                self.nll(y, eta, _workspace),
                 (
                     eta.0 - y,
                     eta.1 - 1.0,
@@ -3666,10 +3956,7 @@ mod tests {
         }
     }
 
-    impl ParameterizedFamily<5> for FiveParameterMock {
-        type Params = (Mu, Sigma, Nu, Tau, Fifth);
-        type Links = (Identity, Identity, Identity, Identity, Identity);
-    }
+    impl InitialEtaFromObservations<5> for FiveParameterMock {}
 
     #[test]
     fn prediction_api_returns_eta_and_theta_for_four_parameter_model() {
@@ -3985,29 +4272,35 @@ mod tests {
         impl Family for TwoParamMock {
             type Eta = (f64, f64);
             type Theta = (f64, f64);
-            type NllGradientEta = (f64, f64);
+            type GradientEta = (f64, f64);
             type Observation<'obs> = f64;
+            type Workspace = ();
+            type ParamSpec = ScalarParams<(Mu, Sigma), (Identity, Identity), 2>;
+            #[inline]
+            fn workspace(&self) -> Self::Workspace {}
 
-            fn theta(&self, eta: Self::Eta) -> Self::Theta {
-                eta
+            fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+                *eta
             }
 
-            fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+            fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
                 let first = theta.0 - y;
                 let second = theta.1 - 1.0;
                 f64::midpoint(first * first, second * second)
             }
 
-            fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
+            fn nll_and_gradient_eta(
+                &self,
+                y: f64,
+                eta: &Self::Eta,
+                _workspace: &mut Self::Workspace,
+            ) -> (f64, Self::GradientEta) {
                 let gradient = (eta.0 - y, eta.1 - 1.0);
-                (self.nll(y, eta), gradient)
+                (self.nll(y, eta, _workspace), gradient)
             }
         }
 
-        impl ParameterizedFamily<2> for TwoParamMock {
-            type Params = (Mu, Sigma);
-            type Links = (Identity, Identity);
-        }
+        impl InitialEtaFromObservations<2> for TwoParamMock {}
 
         let y = vec![1.0, 2.0, 3.0];
         let x_mu = DenseDesign::from_rows(&[[1.0, 0.5], [1.0, 1.5], [1.0, 2.5]]);

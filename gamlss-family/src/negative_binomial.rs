@@ -194,16 +194,20 @@ mod tests {
         };
 
         assert_eq!(
-            mean_dispersion.nll(3.0, mean_dispersion_theta),
-            mean_size.nll(3.0, mean_size_theta)
+            mean_dispersion.nll(
+                3.0,
+                &mean_dispersion_theta,
+                &mut mean_dispersion.workspace()
+            ),
+            mean_size.nll(3.0, &mean_size_theta, &mut mean_size.workspace())
         );
         assert_eq!(
-            mean_dispersion.cdf(3.0, mean_dispersion_theta),
-            mean_size.cdf(3.0, mean_size_theta)
+            mean_dispersion.cdf(3.0, &mean_dispersion_theta),
+            mean_size.cdf(3.0, &mean_size_theta)
         );
         assert_eq!(
-            mean_dispersion.quantile(0.5, mean_dispersion_theta),
-            mean_size.quantile(0.5, mean_size_theta)
+            mean_dispersion.quantile(0.5, &mean_dispersion_theta),
+            mean_size.quantile(0.5, &mean_size_theta)
         );
     }
 
@@ -215,17 +219,26 @@ mod tests {
             shape: 1.5,
         };
 
-        assert!(family.nll(3.0, theta).is_finite());
-        assert!(family.nll(-1.0, theta).is_infinite());
-        assert!(family.nll(1.5, theta).is_infinite());
+        assert!(family.nll(3.0, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(-1.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(1.5, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     3.0,
-                    NegativeBinomialTheta {
+                    &NegativeBinomialTheta {
                         mu: 0.0,
                         shape: theta.shape,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -244,14 +257,14 @@ mod tests {
         let p0 = p.powf(theta.shape);
         let p1 = p0 * theta.shape * q;
 
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert!((family.cdf(0.0, theta) - p0).abs() < 1.0e-12);
-        assert!((family.cdf(1.5, theta) - (p0 + p1)).abs() < 1.0e-12);
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert!((family.cdf(0.0, &theta) - p0).abs() < 1.0e-12);
+        assert!((family.cdf(1.5, &theta) - (p0 + p1)).abs() < 1.0e-12);
         assert!(
             family
                 .cdf(
                     1.0,
-                    NegativeBinomialTheta {
+                    &NegativeBinomialTheta {
                         mu: 0.0,
                         shape: theta.shape,
                     },
@@ -260,7 +273,7 @@ mod tests {
         );
         assert!(
             family
-                .cdf((super::MAX_CDF_TERMS + 1) as f64, theta)
+                .cdf((super::MAX_CDF_TERMS + 1) as f64, &theta)
                 .is_nan()
         );
     }
@@ -270,7 +283,7 @@ mod tests {
         let family = NegativeBinomialMeanSize::new();
         let cdf = family.cdf(
             1000.0,
-            NegativeBinomialTheta {
+            &NegativeBinomialTheta {
                 mu: 1000.0,
                 shape: 1000.0,
             },
@@ -293,18 +306,18 @@ mod tests {
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
             );
         }
 
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .quantile(
                     0.5,
-                    NegativeBinomialTheta {
+                    &NegativeBinomialTheta {
                         mu: 0.0,
                         shape: 1.5,
                     },
@@ -322,10 +335,10 @@ mod tests {
         };
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
-            let q = family.quantile(p, theta);
-            assert!(family.cdf(q, theta) >= p);
+            let q = family.quantile(p, &theta);
+            assert!(family.cdf(q, &theta) >= p);
             if q > 0.0 {
-                assert!(family.cdf(q - 1.0, theta) < p);
+                assert!(family.cdf(q - 1.0, &theta) < p);
             }
         }
     }
@@ -339,7 +352,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            NegativeBinomialTheta {
+            &NegativeBinomialTheta {
                 mu: 2.0,
                 shape: 1.5,
             },
@@ -349,7 +362,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    NegativeBinomialTheta {
+                    &NegativeBinomialTheta {
                         mu: 0.0,
                         shape: 1.5
                     }

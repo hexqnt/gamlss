@@ -1,6 +1,6 @@
 use gamlss_core::{
-    Family, InitialEtaFromTheta, Log, ObservationView, ParameterParts, ParameterizedFamily,
-    PositiveLink, Rate, Shape,
+    Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, ObservationView, ParameterParts,
+    PositiveLink, Rate, ScalarParams, Shape,
 };
 
 use crate::initial::positive_floor;
@@ -94,38 +94,44 @@ where
 {
     type Eta = GammaShapeRateEta;
     type Theta = GammaShapeRateTheta;
-    type NllGradientEta = GammaShapeRateEta;
+    type GradientEta = GammaShapeRateEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Shape, Rate), (ShapeLink, RateLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_shape_rate(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_shape_rate(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_shape_rate(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<ShapeLink, RateLink> ParameterizedFamily<2> for Gamma<ShapeRate, ShapeLink, RateLink>
+impl<ShapeLink, RateLink> InitialEtaFromObservations<2> for Gamma<ShapeRate, ShapeLink, RateLink>
 where
     ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     RateLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Shape, Rate);
-    type Links = (ShapeLink, RateLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,

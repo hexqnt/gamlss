@@ -1,8 +1,8 @@
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, Mu, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink, Shape,
+    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape,
 };
 
 use gamlss_special::{digamma, discrete_quantile, is_nonnegative_integer};
@@ -90,38 +90,44 @@ where
 {
     type Eta = NegativeBinomialEta;
     type Theta = NegativeBinomialTheta;
-    type NllGradientEta = NegativeBinomialEta;
+    type GradientEta = NegativeBinomialEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Shape), (MuLink, ShapeLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, ShapeLink> ParameterizedFamily<2> for NegativeBinomial<MuLink, ShapeLink>
+impl<MuLink, ShapeLink> InitialEtaFromObservations<2> for NegativeBinomial<MuLink, ShapeLink>
 where
     MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Shape);
-    type Links = (MuLink, ShapeLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -149,8 +155,8 @@ where
     MuLink: PositiveLink<f64>,
     ShapeLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta)
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        Self::cdf_theta(y, *theta)
     }
 }
 
@@ -159,7 +165,7 @@ where
     MuLink: PositiveLink<f64>,
     ShapeLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0
             || !theta.mu.is_finite()
             || theta.shape <= 0.0
@@ -170,7 +176,7 @@ where
 
         #[allow(clippy::cast_precision_loss)]
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, theta)
+            Self::cdf_theta(count as f64, *theta)
         })
     }
 }
@@ -184,7 +190,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
         if theta.mu <= 0.0
             || !theta.mu.is_finite()
             || theta.shape <= 0.0

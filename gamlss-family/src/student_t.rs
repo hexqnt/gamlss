@@ -182,16 +182,21 @@ mod tests {
             sigma: 0.8,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(f64::NEG_INFINITY, theta).is_infinite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(f64::NEG_INFINITY, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: f64::NAN,
                         sigma: theta.sigma,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -199,20 +204,22 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: theta.mu,
                         sigma: 0.0,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
 
         let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
-            StudentTEta {
+            &StudentTEta {
                 mu: 0.4,
                 sigma: f64::NEG_INFINITY,
             },
+            &mut family.workspace(),
         );
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
@@ -227,14 +234,14 @@ mod tests {
             sigma: 0.8,
         };
 
-        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5, epsilon = 1.0e-12);
+        assert_relative_eq!(family.cdf(theta.mu, &theta), 0.5, epsilon = 1.0e-12);
         assert_relative_eq!(
-            family.cdf(theta.mu + theta.sigma, theta),
+            family.cdf(theta.mu + theta.sigma, &theta),
             0.818_391_266_175_438_7,
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            family.cdf(theta.mu - theta.sigma, theta),
+            family.cdf(theta.mu - theta.sigma, &theta),
             0.181_608_733_824_561_27,
             epsilon = 1.0e-12
         );
@@ -250,12 +257,12 @@ mod tests {
         let reference = StudentsT::new(theta.mu, theta.sigma, 7.0).unwrap();
 
         for y in [-2.0, -0.3, 0.4, 1.2, 3.0] {
-            assert_relative_eq!(family.cdf(y, theta), reference.cdf(y), epsilon = 1.0e-11);
+            assert_relative_eq!(family.cdf(y, &theta), reference.cdf(y), epsilon = 1.0e-11);
         }
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
             assert_relative_eq!(
-                family.quantile(p, theta),
+                family.quantile(p, &theta),
                 reference.inverse_cdf(p),
                 epsilon = 1.0e-10
             );
@@ -271,12 +278,12 @@ mod tests {
             sigma: 0.8,
         };
 
-        let y = family.quantile(0.75, theta);
+        let y = family.quantile(0.75, &theta);
 
-        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
-        assert_eq!(family.quantile(0.0, theta), f64::NEG_INFINITY);
-        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_relative_eq!(family.cdf(y, &theta), 0.75, epsilon = 1.0e-12);
+        assert_eq!(family.quantile(0.0, &theta), f64::NEG_INFINITY);
+        assert_eq!(family.quantile(1.0, &theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -287,7 +294,7 @@ mod tests {
             family
                 .cdf(
                     1.0,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 0.0,
                     },
@@ -298,7 +305,7 @@ mod tests {
             family
                 .cdf(
                     f64::NAN,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0,
                     },
@@ -314,7 +321,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 1.0,
-                StudentTTheta {
+                &StudentTTheta {
                     mu: 0.0,
                     sigma: 1.0,
                 },
@@ -325,7 +332,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 0.0,
-                StudentTTheta {
+                &StudentTTheta {
                     mu: 0.0,
                     sigma: 1.0,
                 },
@@ -342,14 +349,14 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 2.0,
-                StudentTTheta {
+                &StudentTTheta {
                     mu: 0.0,
                     sigma: 2.0,
                 },
             ),
             2.0 * family.crps(
                 1.0,
-                StudentTTheta {
+                &StudentTTheta {
                     mu: 0.0,
                     sigma: 1.0,
                 },
@@ -366,7 +373,7 @@ mod tests {
             family
                 .crps(
                     f64::NAN,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0,
                     },
@@ -377,7 +384,7 @@ mod tests {
             family
                 .crps(
                     1.0,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 0.0,
                     },
@@ -389,7 +396,7 @@ mod tests {
                 .unwrap()
                 .crps(
                     1.0,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0,
                     },
@@ -405,7 +412,7 @@ mod tests {
         assert!(
             family.crps(
                 1.0,
-                StudentTTheta {
+                &StudentTTheta {
                     mu: 0.0,
                     sigma: 1.0,
                 },
@@ -424,7 +431,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
@@ -435,7 +442,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    StudentTTheta {
+                    &StudentTTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
@@ -461,26 +468,26 @@ mod tests {
 
         for y in [-2.0, 0.3, 1.7, 4.0] {
             assert_relative_eq!(
-                stddev_family.nll(y, theta),
-                scale_family.nll(y, scale_theta),
+                stddev_family.nll(y, &theta, &mut stddev_family.workspace()),
+                scale_family.nll(y, &scale_theta, &mut scale_family.workspace()),
                 epsilon = 1.0e-12
             );
             assert_relative_eq!(
-                stddev_family.cdf(y, theta),
-                scale_family.cdf(y, scale_theta),
+                stddev_family.cdf(y, &theta),
+                scale_family.cdf(y, &scale_theta),
                 epsilon = 1.0e-12
             );
             assert_relative_eq!(
-                stddev_family.crps(y, theta),
-                scale_family.crps(y, scale_theta),
+                stddev_family.crps(y, &theta),
+                scale_family.crps(y, &scale_theta),
                 epsilon = 1.0e-12
             );
         }
 
         for p in [0.01, 0.5, 0.95] {
             assert_relative_eq!(
-                stddev_family.quantile(p, theta),
-                scale_family.quantile(p, scale_theta),
+                stddev_family.quantile(p, &theta),
+                scale_family.quantile(p, &scale_theta),
                 epsilon = 1.0e-10
             );
         }
@@ -495,9 +502,9 @@ mod tests {
             tau: 1.5,
         };
 
-        assert!(family.nll(0.2, theta).is_finite());
-        assert!(family.cdf(0.2, theta).is_finite());
-        assert!(family.quantile(0.5, theta).is_finite());
+        assert!(family.nll(0.2, &theta, &mut family.workspace()).is_finite());
+        assert!(family.cdf(0.2, &theta).is_finite());
+        assert!(family.quantile(0.5, &theta).is_finite());
     }
 
     #[test]
@@ -515,28 +522,29 @@ mod tests {
             tau: 5.0,
         };
 
-        assert!(family.nll(0.2, valid).is_finite());
+        assert!(family.nll(0.2, &valid, &mut family.workspace()).is_finite());
         assert!(
             family
                 .nll(
                     0.2,
-                    StudentTMuSdTauTheta {
+                    &StudentTMuSdTauTheta {
                         sigma: 0.0,
                         ..valid
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
         assert!(
             family
-                .cdf(0.2, StudentTMuSdTauTheta { tau: 2.0, ..valid },)
+                .cdf(0.2, &StudentTMuSdTauTheta { tau: 2.0, ..valid },)
                 .is_nan()
         );
         assert!(
             family
                 .quantile(
                     0.5,
-                    StudentTMuSdTauTheta {
+                    &StudentTMuSdTauTheta {
                         tau: f64::INFINITY,
                         ..valid
                     },
@@ -546,11 +554,12 @@ mod tests {
 
         let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
-            StudentTMuSdTauEta {
+            &StudentTMuSdTauEta {
                 mu: 0.4,
                 sigma: f64::NEG_INFINITY,
                 tau: 5.0_f64.ln(),
             },
+            &mut family.workspace(),
         );
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());

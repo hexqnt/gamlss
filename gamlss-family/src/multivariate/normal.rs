@@ -15,7 +15,7 @@ pub use fixed::{
 
 mod dynamic;
 mod fixed;
-mod kernel;
+pub(crate) mod kernel;
 
 /// Multivariate normal with a lower-triangular Cholesky scale factor.
 pub type MvNormalCholeskyDefault<const D: usize> = MvNormalCholesky<D, Identity, Log, Identity>;
@@ -52,11 +52,19 @@ mod tests {
         )
         .unwrap();
 
-        let (fixed_nll, fixed_gradient) = fixed.nll_and_gradient_eta(y, fixed_eta);
-        let (dynamic_nll, dynamic_gradient) = dynamic.nll_and_gradient_eta(&y, dynamic_eta.clone());
+        let (fixed_nll, fixed_gradient) =
+            fixed.nll_and_gradient_eta(y, &fixed_eta, &mut fixed.workspace());
+        let (dynamic_nll, dynamic_gradient) =
+            dynamic.nll_and_gradient_eta(&y, &dynamic_eta, &mut dynamic.workspace());
 
         assert_relative_eq!(dynamic_nll, fixed_nll, epsilon = 1.0e-12);
-        assert_eq!(dynamic.theta(dynamic_eta).mu().len(), dynamic.dimension());
+        assert_eq!(
+            dynamic
+                .theta(&dynamic_eta, &mut dynamic.workspace())
+                .mu()
+                .len(),
+            dynamic.dimension()
+        );
         assert_eq!(dynamic_gradient.mu(), fixed_gradient.mu());
         for row in 0..3 {
             for col in 0..=row {

@@ -86,8 +86,8 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
-            fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::cdf_rate(y, theta.into())
+            fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::cdf_rate(y, (*theta).into())
             }
         }
 
@@ -96,8 +96,8 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
-            fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-                Self::quantile_rate(p, theta.into())
+            fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+                Self::quantile_rate(p, (*theta).into())
             }
         }
 
@@ -106,8 +106,8 @@ macro_rules! impl_exponential_helpers {
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
             <Exponential<$param, Link> as Family>::Theta: Copy + Into<ExponentialRateTheta>,
         {
-            fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-                Self::crps_rate(y, theta.into())
+            fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+                Self::crps_rate(y, (*theta).into())
             }
         }
 
@@ -120,8 +120,8 @@ macro_rules! impl_exponential_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-                let theta = theta.into();
+            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+                let theta = (*theta).into();
                 if !Self::valid_rate(theta) {
                     return f64::NAN;
                 }
@@ -167,23 +167,23 @@ mod tests {
         let canonical = theta.rate();
 
         assert_relative_eq!(
-            mean.nll(1.7, theta),
-            rate.nll(1.7, canonical),
+            mean.nll(1.7, &theta, &mut mean.workspace()),
+            rate.nll(1.7, &canonical, &mut rate.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.cdf(1.7, theta),
-            rate.cdf(1.7, canonical),
+            mean.cdf(1.7, &theta),
+            rate.cdf(1.7, &canonical),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.quantile(0.4, theta),
-            rate.quantile(0.4, canonical),
+            mean.quantile(0.4, &theta),
+            rate.quantile(0.4, &canonical),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean.crps(1.7, theta),
-            rate.crps(1.7, canonical),
+            mean.crps(1.7, &theta),
+            rate.crps(1.7, &canonical),
             epsilon = 1.0e-12
         );
     }
@@ -194,18 +194,26 @@ mod tests {
         let family = ExponentialMean::new();
         let theta = ExponentialMeanTheta { mean: 0.5 };
 
-        assert!(family.nll(0.0, theta).is_finite());
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(-1.0, theta).is_infinite());
+        assert!(family.nll(0.0, &theta, &mut family.workspace()).is_finite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
         assert!(
             family
-                .nll(1.7, ExponentialMeanTheta { mean: 0.0 })
+                .nll(-1.0, &theta, &mut family.workspace())
                 .is_infinite()
         );
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert!(family.quantile(1.0, theta).is_infinite());
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert!(
+            family
+                .nll(
+                    1.7,
+                    &ExponentialMeanTheta { mean: 0.0 },
+                    &mut family.workspace()
+                )
+                .is_infinite()
+        );
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert!(family.quantile(1.0, &theta).is_infinite());
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -213,12 +221,12 @@ mod tests {
         let family = ExponentialRate::new();
 
         assert_relative_eq!(
-            family.crps(1.0, ExponentialRateTheta { rate: 2.0 }),
+            family.crps(1.0, &ExponentialRateTheta { rate: 2.0 }),
             0.385_335_283_236_612_7,
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            family.crps(0.0, ExponentialRateTheta { rate: 2.0 }),
+            family.crps(0.0, &ExponentialRateTheta { rate: 2.0 }),
             0.25,
             epsilon = 1.0e-12
         );
@@ -231,11 +239,11 @@ mod tests {
 
         let family = ExponentialMean::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, ExponentialMeanTheta { mean: 0.5 });
+        let sample = family.sample(&mut rng, &ExponentialMeanTheta { mean: 0.5 });
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(&mut rng, ExponentialMeanTheta { mean: 0.0 })
+                .sample(&mut rng, &ExponentialMeanTheta { mean: 0.0 })
                 .is_nan()
         );
     }

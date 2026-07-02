@@ -3,8 +3,9 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromTheta, Link, Log, Mu,
-    ObservationView, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
+    ScalarParams, Sigma,
 };
 #[cfg(feature = "rand")]
 use rand::RngExt;
@@ -120,38 +121,44 @@ where
 {
     type Eta = LaplaceEta;
     type Theta = LaplaceTheta;
-    type NllGradientEta = LaplaceEta;
+    type GradientEta = LaplaceEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for Laplace<MuLink, SigmaLink>
+impl<MuLink, SigmaLink> InitialEtaFromObservations<2> for Laplace<MuLink, SigmaLink>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -173,8 +180,8 @@ where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -193,8 +200,8 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !is_probability(p) || !Self::valid_theta(theta) {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !is_probability(p) || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -212,8 +219,8 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     #[allow(clippy::suboptimal_flops)]
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -232,8 +239,8 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !Self::valid_theta(theta) {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -304,16 +311,21 @@ mod tests {
             sigma: 0.8,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(f64::INFINITY, theta).is_infinite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(f64::INFINITY, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: f64::NAN,
                         sigma: theta.sigma,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -321,20 +333,22 @@ mod tests {
             family
                 .nll(
                     1.7,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: theta.mu,
                         sigma: 0.0,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
 
         let (nll, gradient) = family.nll_and_gradient_eta(
             1.7,
-            LaplaceEta {
+            &LaplaceEta {
                 mu: 0.4,
                 sigma: f64::NEG_INFINITY,
             },
+            &mut family.workspace(),
         );
         assert!(nll.is_infinite());
         assert!(gradient.mu.is_nan());
@@ -349,14 +363,14 @@ mod tests {
             sigma: 0.5,
         };
 
-        assert_relative_eq!(family.cdf(theta.mu, theta), 0.5);
+        assert_relative_eq!(family.cdf(theta.mu, &theta), 0.5);
         assert_relative_eq!(
-            family.cdf(theta.mu + theta.sigma, theta),
+            family.cdf(theta.mu + theta.sigma, &theta),
             1.0 - 0.5 / std::f64::consts::E,
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            family.cdf(theta.mu - theta.sigma, theta),
+            family.cdf(theta.mu - theta.sigma, &theta),
             0.5 / std::f64::consts::E,
             epsilon = 1.0e-12
         );
@@ -370,7 +384,7 @@ mod tests {
             family
                 .cdf(
                     f64::NAN,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
@@ -381,7 +395,7 @@ mod tests {
             family
                 .cdf(
                     0.0,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
@@ -398,20 +412,20 @@ mod tests {
             sigma: 0.5,
         };
 
-        assert_relative_eq!(family.quantile(0.5, theta), theta.mu, epsilon = 1.0e-12);
-        assert!(family.quantile(0.0, theta).is_infinite());
-        assert!(family.quantile(0.0, theta).is_sign_negative());
-        assert!(family.quantile(1.0, theta).is_infinite());
-        assert!(family.quantile(1.0, theta).is_sign_positive());
+        assert_relative_eq!(family.quantile(0.5, &theta), theta.mu, epsilon = 1.0e-12);
+        assert!(family.quantile(0.0, &theta).is_infinite());
+        assert!(family.quantile(0.0, &theta).is_sign_negative());
+        assert!(family.quantile(1.0, &theta).is_infinite());
+        assert!(family.quantile(1.0, &theta).is_sign_positive());
 
-        let y = family.quantile(0.25, theta);
-        assert_relative_eq!(family.cdf(y, theta), 0.25, epsilon = 1.0e-12);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        let y = family.quantile(0.25, &theta);
+        assert_relative_eq!(family.cdf(y, &theta), 0.25, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .quantile(
                     0.5,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
@@ -427,7 +441,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 1.0,
-                LaplaceTheta {
+                &LaplaceTheta {
                     mu: 0.0,
                     sigma: 2.0,
                 },
@@ -445,7 +459,7 @@ mod tests {
             family
                 .crps(
                     1.0,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0,
                     },
@@ -456,7 +470,7 @@ mod tests {
             family
                 .crps(
                     f64::NAN,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 1.0,
                     },
@@ -476,7 +490,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
@@ -487,7 +501,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    LaplaceTheta {
+                    &LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }

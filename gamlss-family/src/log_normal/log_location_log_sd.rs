@@ -1,6 +1,6 @@
 use gamlss_core::{
-    Family, InitialEtaFromTheta, Link, LogLocation, LogSd, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink,
+    Family, InitialEtaFromObservations, InitialEtaFromTheta, Link, LogLocation, LogSd,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams,
 };
 
 use crate::initial::{positive_floor, robust_location_scale, weighted_values};
@@ -110,39 +110,45 @@ where
 {
     type Eta = LogNormalLogLocationLogSdEta;
     type Theta = LogNormalLogLocationLogSdTheta;
-    type NllGradientEta = LogNormalLogLocationLogSdEta;
+    type GradientEta = LogNormalLogLocationLogSdEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(LogLocation, LogSd), (LocationLink, LogSdLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_log_location_log_sd(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_log_location_log_sd(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_log_location_log_sd(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<LocationLink, LogSdLink> ParameterizedFamily<2>
+impl<LocationLink, LogSdLink> InitialEtaFromObservations<2>
     for LogNormal<LogLocationLogSd, LocationLink, LogSdLink>
 where
     LocationLink: InitialEtaFromTheta<f64> + Link<f64>,
     LogSdLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (LogLocation, LogSd);
-    type Links = (LocationLink, LogSdLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,

@@ -103,18 +103,18 @@ mod tests {
         };
 
         assert_relative_eq!(
-            mean_cv.nll(1.7, mean_cv_theta),
-            mean_shape.nll(1.7, mean_shape_theta),
+            mean_cv.nll(1.7, &mean_cv_theta, &mut mean_cv.workspace()),
+            mean_shape.nll(1.7, &mean_shape_theta, &mut mean_shape.workspace()),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.cdf(1.7, mean_cv_theta),
-            mean_shape.cdf(1.7, mean_shape_theta),
+            mean_cv.cdf(1.7, &mean_cv_theta),
+            mean_shape.cdf(1.7, &mean_shape_theta),
             epsilon = 1.0e-12
         );
         assert_relative_eq!(
-            mean_cv.quantile(0.4, mean_cv_theta),
-            mean_shape.quantile(0.4, mean_shape_theta),
+            mean_cv.quantile(0.4, &mean_cv_theta),
+            mean_shape.quantile(0.4, &mean_shape_theta),
             epsilon = 1.0e-10
         );
     }
@@ -127,16 +127,21 @@ mod tests {
             shape: 0.8,
         };
 
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(0.0, theta).is_infinite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(0.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 0.0,
                         shape: theta.shape,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -150,8 +155,8 @@ mod tests {
             shape: 1.0,
         };
 
-        assert_relative_eq!(family.cdf(1.0, theta), 0.668_102, epsilon = 1.0e-6);
-        assert_relative_eq!(family.cdf(0.5, theta), 0.364_975, epsilon = 1.0e-6);
+        assert_relative_eq!(family.cdf(1.0, &theta), 0.668_102, epsilon = 1.0e-6);
+        assert_relative_eq!(family.cdf(0.5, &theta), 0.364_975, epsilon = 1.0e-6);
     }
 
     #[test]
@@ -162,7 +167,7 @@ mod tests {
         assert_eq!(
             family.cdf(
                 0.0,
-                InverseGaussianTheta {
+                &InverseGaussianTheta {
                     mu: 1.0,
                     shape: 1.0
                 }
@@ -172,7 +177,7 @@ mod tests {
         assert_eq!(
             family.cdf(
                 -1.0,
-                InverseGaussianTheta {
+                &InverseGaussianTheta {
                     mu: 1.0,
                     shape: 1.0
                 }
@@ -183,7 +188,7 @@ mod tests {
             family
                 .cdf(
                     f64::NAN,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 1.0,
                         shape: 1.0
                     }
@@ -194,7 +199,7 @@ mod tests {
             family
                 .cdf(
                     1.0,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 0.0,
                         shape: 1.0
                     }
@@ -208,7 +213,7 @@ mod tests {
         let family = InverseGaussianMuShape::new();
         let cdf = family.cdf(
             1.0,
-            InverseGaussianTheta {
+            &InverseGaussianTheta {
                 mu: 1.0,
                 shape: 1000.0,
             },
@@ -228,18 +233,18 @@ mod tests {
         };
 
         for p in [0.01, 0.1, 0.5, 0.9, 0.99] {
-            let y = family.quantile(p, theta);
-            assert_relative_eq!(family.cdf(y, theta), p, epsilon = 1.0e-10);
+            let y = family.quantile(p, &theta);
+            assert_relative_eq!(family.cdf(y, &theta), p, epsilon = 1.0e-10);
         }
 
-        assert_eq!(family.quantile(0.0, theta), 0.0);
-        assert_eq!(family.quantile(1.0, theta), f64::INFINITY);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        assert_eq!(family.quantile(0.0, &theta), 0.0);
+        assert_eq!(family.quantile(1.0, &theta), f64::INFINITY);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .quantile(
                     0.5,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 0.0,
                         shape: 1.0,
                     },
@@ -255,7 +260,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 1.0,
-                InverseGaussianTheta {
+                &InverseGaussianTheta {
                     mu: 1.0,
                     shape: 1.0,
                 },
@@ -266,7 +271,7 @@ mod tests {
         assert_relative_eq!(
             family.crps(
                 0.0,
-                InverseGaussianTheta {
+                &InverseGaussianTheta {
                     mu: 1.0,
                     shape: 1.0,
                 },
@@ -284,7 +289,7 @@ mod tests {
             family
                 .crps(
                     -1.0,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 1.0,
                         shape: 1.0,
                     },
@@ -295,7 +300,7 @@ mod tests {
             family
                 .crps(
                     1.0,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 0.0,
                         shape: 1.0,
                     },
@@ -311,7 +316,7 @@ mod tests {
         assert!(
             family.crps(
                 1.0,
-                InverseGaussianTheta {
+                &InverseGaussianTheta {
                     mu: 1.0,
                     shape: 1.0,
                 },
@@ -328,7 +333,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            InverseGaussianTheta {
+            &InverseGaussianTheta {
                 mu: 1.5,
                 shape: 0.8,
             },
@@ -339,7 +344,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    InverseGaussianTheta {
+                    &InverseGaussianTheta {
                         mu: 0.0,
                         shape: 1.0,
                     },

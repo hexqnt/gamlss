@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromTheta, Log, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink, Scale, Shape,
+    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    ObservationView, ParameterParts, PositiveLink, ScalarParams, Scale, Shape,
 };
 
 use crate::domain::{is_positive_finite, is_probability};
@@ -100,38 +100,44 @@ where
 {
     type Eta = LomaxEta;
     type Theta = LomaxTheta;
-    type NllGradientEta = LomaxEta;
+    type GradientEta = LomaxEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Shape, Scale), (ShapeLink, ScaleLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<ShapeLink, ScaleLink> ParameterizedFamily<2> for Lomax<ShapeLink, ScaleLink>
+impl<ShapeLink, ScaleLink> InitialEtaFromObservations<2> for Lomax<ShapeLink, ScaleLink>
 where
     ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Shape, Scale);
-    type Links = (ShapeLink, ScaleLink);
-
     #[allow(clippy::suboptimal_flops)]
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -165,8 +171,8 @@ where
     ShapeLink: PositiveLink<f64>,
     ScaleLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -182,8 +188,8 @@ where
     ShapeLink: PositiveLink<f64>,
     ScaleLink: PositiveLink<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !is_probability(p) || !Self::valid_theta(theta) {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !is_probability(p) || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -200,8 +206,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !Self::valid_theta(theta) {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -271,17 +277,22 @@ mod tests {
             scale: 0.8,
         };
 
-        assert!(family.nll(0.0, theta).is_finite());
-        assert!(family.nll(1.7, theta).is_finite());
-        assert!(family.nll(-1.0, theta).is_infinite());
+        assert!(family.nll(0.0, &theta, &mut family.workspace()).is_finite());
+        assert!(family.nll(1.7, &theta, &mut family.workspace()).is_finite());
+        assert!(
+            family
+                .nll(-1.0, &theta, &mut family.workspace())
+                .is_infinite()
+        );
         assert!(
             family
                 .nll(
                     1.7,
-                    LomaxTheta {
+                    &LomaxTheta {
                         shape: 0.0,
                         scale: theta.scale,
                     },
+                    &mut family.workspace(),
                 )
                 .is_infinite()
         );
@@ -297,10 +308,10 @@ mod tests {
         };
         let median = theta.scale * 2.0_f64.powf(1.0 / theta.shape) - theta.scale;
 
-        assert_relative_eq!(family.cdf(0.0, theta), 0.0, epsilon = 1.0e-12);
-        assert_relative_eq!(family.cdf(median, theta), 0.5, epsilon = 1.0e-12);
-        assert_eq!(family.cdf(-1.0, theta), 0.0);
-        assert!(family.cdf(f64::NAN, theta).is_nan());
+        assert_relative_eq!(family.cdf(0.0, &theta), 0.0, epsilon = 1.0e-12);
+        assert_relative_eq!(family.cdf(median, &theta), 0.5, epsilon = 1.0e-12);
+        assert_eq!(family.cdf(-1.0, &theta), 0.0);
+        assert!(family.cdf(f64::NAN, &theta).is_nan());
     }
 
     #[test]
@@ -311,17 +322,17 @@ mod tests {
             scale: 3.0,
         };
 
-        assert_relative_eq!(family.quantile(0.0, theta), 0.0, epsilon = 1.0e-12);
-        assert!(family.quantile(1.0, theta).is_infinite());
+        assert_relative_eq!(family.quantile(0.0, &theta), 0.0, epsilon = 1.0e-12);
+        assert!(family.quantile(1.0, &theta).is_infinite());
 
-        let y = family.quantile(0.75, theta);
-        assert_relative_eq!(family.cdf(y, theta), 0.75, epsilon = 1.0e-12);
-        assert!(family.quantile(f64::NAN, theta).is_nan());
+        let y = family.quantile(0.75, &theta);
+        assert_relative_eq!(family.cdf(y, &theta), 0.75, epsilon = 1.0e-12);
+        assert!(family.quantile(f64::NAN, &theta).is_nan());
         assert!(
             family
                 .quantile(
                     0.5,
-                    LomaxTheta {
+                    &LomaxTheta {
                         shape: 0.0,
                         scale: 3.0
                     }
@@ -339,7 +350,7 @@ mod tests {
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            LomaxTheta {
+            &LomaxTheta {
                 shape: 1.5,
                 scale: 0.8,
             },
@@ -349,7 +360,7 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    LomaxTheta {
+                    &LomaxTheta {
                         shape: 0.0,
                         scale: 0.8
                     }

@@ -17,7 +17,7 @@ where
     Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     P: FnMut(f64) -> Option<f64>,
 {
-    let mut values = Vec::new();
+    let mut values = Vec::with_capacity(obs.len());
     for row in 0..obs.len() {
         let weight = obs.weight_at(row);
         if weight <= 0.0 || !weight.is_finite() {

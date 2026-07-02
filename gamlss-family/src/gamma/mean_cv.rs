@@ -1,6 +1,6 @@
 use gamlss_core::{
-    Cv, Family, InitialEtaFromTheta, Log, Mean, ObservationView, ParameterParts,
-    ParameterizedFamily, PositiveLink,
+    Cv, Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean, ObservationView,
+    ParameterParts, PositiveLink, ScalarParams,
 };
 
 use crate::initial::positive_floor;
@@ -113,38 +113,44 @@ where
 {
     type Eta = GammaMeanCvEta;
     type Theta = GammaMeanCvTheta;
-    type NllGradientEta = GammaMeanCvEta;
+    type GradientEta = GammaMeanCvEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mean, Cv), (MeanLink, CvLink), 2>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         Self::nll_shape_rate(y, theta.shape_rate())
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(eta).shape_rate())
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_shape_rate(y, Self::theta_from_eta(*eta).shape_rate())
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MeanLink, CvLink> ParameterizedFamily<2> for Gamma<MeanCv, MeanLink, CvLink>
+impl<MeanLink, CvLink> InitialEtaFromObservations<2> for Gamma<MeanCv, MeanLink, CvLink>
 where
     MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
-    type Params = (Mean, Cv);
-    type Links = (MeanLink, CvLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,

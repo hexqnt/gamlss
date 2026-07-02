@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromTheta, Link, Mu, ObservationView,
-    ParameterParts, ParameterizedFamily, PositiveLink, Sigma, Tau,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Link,
+    Mu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -98,40 +98,46 @@ where
 {
     type Eta = StudentTMuSigmaTauEta;
     type Theta = StudentTMuSigmaTauTheta;
-    type NllGradientEta = StudentTMuSigmaTauEta;
+    type GradientEta = StudentTMuSigmaTauEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma, Tau), (MuLink, SigmaLink, TauLink), 3>;
 
     #[inline]
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
-        Self::theta_from_eta(eta)
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
     }
 
     #[inline]
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
-        Self::nll_theta(y, theta)
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
     }
 
     #[inline]
-    fn nll_eta(&self, y: f64, eta: Self::Eta) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(eta))
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        Self::nll_and_gradient_eta_values(y, eta)
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
     }
 }
 
-impl<MuLink, SigmaLink, TauLink> ParameterizedFamily<3>
+impl<MuLink, SigmaLink, TauLink> InitialEtaFromObservations<3>
     for StudentTDynamic<MuLink, SigmaLink, TauLink>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     TauLink: InitialEtaFromTheta<f64> + Link<f64>,
 {
-    type Params = (Mu, Sigma, Tau);
-    type Links = (MuLink, SigmaLink, TauLink);
-
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -159,8 +165,8 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !valid_dynamic_theta(theta) {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !valid_dynamic_theta(*theta) {
             return f64::NAN;
         }
 
@@ -174,8 +180,8 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64 {
-        if !valid_dynamic_theta(theta) {
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !valid_dynamic_theta(*theta) {
             return f64::NAN;
         }
 
@@ -191,8 +197,8 @@ where
     SigmaLink: PositiveLink<f64>,
     TauLink: Link<f64>,
 {
-    fn crps(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        if !y.is_finite() || !valid_dynamic_theta(theta) {
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !valid_dynamic_theta(*theta) {
             return f64::NAN;
         }
 
@@ -212,8 +218,8 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64 {
-        if !valid_dynamic_theta(theta) {
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !valid_dynamic_theta(*theta) {
             return f64::NAN;
         }
 

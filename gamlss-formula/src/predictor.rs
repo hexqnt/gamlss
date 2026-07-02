@@ -38,16 +38,19 @@ impl FormulaPredictorBlock {
 
     fn monotone_eta(segment: &MonotoneSegment, row: usize, beta: &[f64]) -> f64 {
         debug_assert_eq!(beta.len(), segment.range.len());
+        debug_assert!(row < segment.values.len());
+        debug_assert!(!beta.is_empty());
+        debug_assert_eq!(segment.basis.n_basis() + 1, beta.len());
 
         let sign = monotone_sign(segment.direction);
-        beta[0]
-            + segment
-                .basis
-                .evaluate(segment.values[row])
-                .iter()
-                .zip(&beta[1..])
-                .map(|(basis, beta)| sign * Softplus::inverse(*beta) * basis)
-                .sum::<f64>()
+        let beta_tail = &beta[1..];
+        let mut eta = beta[0];
+        segment
+            .basis
+            .for_each_basis(segment.values[row], |index, basis| {
+                eta = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, eta);
+            });
+        eta
     }
 
     fn add_monotone_gradient(
@@ -59,21 +62,60 @@ impl FormulaPredictorBlock {
     ) {
         debug_assert_eq!(beta.len(), segment.range.len());
         debug_assert_eq!(grad.len(), segment.range.len());
+        debug_assert!(!beta.is_empty());
+        debug_assert_eq!(segment.basis.n_basis() + 1, beta.len());
+        debug_assert_eq!(scores.len(), segment.values.len());
 
         let sign = monotone_sign(segment.direction);
-        for (row, score) in scores.iter().copied().enumerate() {
-            let score = multiplier.map_or(score, |multiplier| score * multiplier[row]);
-            grad[0] += score;
+        let (intercept_grad, grad_tail) = grad
+            .split_first_mut()
+            .expect("monotone segment gradient has an intercept coefficient");
+        let beta_tail = &beta[1..];
+        match multiplier {
+            Some(multiplier) => {
+                debug_assert_eq!(multiplier.len(), scores.len());
+                for (row, (score, value)) in scores
+                    .iter()
+                    .copied()
+                    .zip(segment.values.iter().copied())
+                    .enumerate()
+                {
+                    if score == 0.0 {
+                        continue;
+                    }
 
-            #[allow(clippy::suboptimal_flops)]
-            for (index, basis) in segment
-                .basis
-                .evaluate(segment.values[row])
-                .iter()
-                .enumerate()
-            {
-                grad[index + 1] +=
-                    score * sign * basis * Softplus::derivative_inverse(beta[index + 1]);
+                    let score = score * multiplier[row];
+                    if score == 0.0 {
+                        continue;
+                    }
+
+                    add_monotone_gradient_row(
+                        &segment.basis,
+                        value,
+                        score,
+                        sign,
+                        beta_tail,
+                        intercept_grad,
+                        grad_tail,
+                    );
+                }
+            }
+            None => {
+                for (score, value) in scores.iter().copied().zip(segment.values.iter().copied()) {
+                    if score == 0.0 {
+                        continue;
+                    }
+
+                    add_monotone_gradient_row(
+                        &segment.basis,
+                        value,
+                        score,
+                        sign,
+                        beta_tail,
+                        intercept_grad,
+                        grad_tail,
+                    );
+                }
             }
         }
     }
@@ -199,6 +241,25 @@ pub struct MonotoneSegment {
     pub(crate) values: Vec<f64>,
     pub(crate) basis: ISplineBasis,
     pub(crate) direction: MonotoneDirection,
+}
+
+#[allow(clippy::suboptimal_flops)]
+fn add_monotone_gradient_row(
+    basis: &ISplineBasis,
+    value: f64,
+    score: f64,
+    sign: f64,
+    beta_tail: &[f64],
+    intercept_grad: &mut f64,
+    grad_tail: &mut [f64],
+) {
+    debug_assert_eq!(beta_tail.len(), grad_tail.len());
+
+    *intercept_grad += score;
+    basis.for_each_basis(value, |index, basis_value| {
+        grad_tail[index] +=
+            score * sign * basis_value * Softplus::derivative_inverse(beta_tail[index]);
+    });
 }
 
 const fn monotone_sign(direction: MonotoneDirection) -> f64 {

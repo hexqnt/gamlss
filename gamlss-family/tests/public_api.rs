@@ -17,268 +17,217 @@ use gamlss_family::{
     ZipTotalMeanZeroProbabilityTheta,
 };
 
+#[allow(clippy::needless_pass_by_value)]
+fn finite_nll<F>(family: F, y: f64, theta: F::Theta) -> bool
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+{
+    let mut workspace = family.workspace();
+    family.nll(y, &theta, &mut workspace).is_finite()
+}
+
 #[test]
 fn semantic_parameterization_aliases_construct_without_type_annotations() {
-    assert!(
-        GammaMeanCv::new()
-            .nll(1.2, GammaMeanCvTheta { mean: 1.0, cv: 0.5 })
-            .is_finite()
-    );
-    assert!(
-        GammaMeanShape::new()
-            .nll(
-                1.2,
-                GammaMeanShapeTheta {
-                    mean: 1.0,
-                    shape: 4.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        GammaShapeRate::new()
-            .nll(
-                1.2,
-                GammaShapeRateTheta {
-                    shape: 4.0,
-                    rate: 4.0,
-                },
-            )
-            .is_finite()
-    );
+    assert!(finite_nll(
+        GammaMeanCv::new(),
+        1.2,
+        GammaMeanCvTheta { mean: 1.0, cv: 0.5 }
+    ));
+    assert!(finite_nll(
+        GammaMeanShape::new(),
+        1.2,
+        GammaMeanShapeTheta {
+            mean: 1.0,
+            shape: 4.0,
+        }
+    ));
+    assert!(finite_nll(
+        GammaShapeRate::new(),
+        1.2,
+        GammaShapeRateTheta {
+            shape: 4.0,
+            rate: 4.0,
+        }
+    ));
 
-    assert!(
-        ExponentialMean::new()
-            .nll(1.2, ExponentialMeanTheta { mean: 1.0 })
-            .is_finite()
-    );
-    assert!(
-        ExponentialRate::new()
-            .nll(1.2, ExponentialRateTheta { rate: 1.0 })
-            .is_finite()
-    );
+    assert!(finite_nll(
+        ExponentialMean::new(),
+        1.2,
+        ExponentialMeanTheta { mean: 1.0 }
+    ));
+    assert!(finite_nll(
+        ExponentialRate::new(),
+        1.2,
+        ExponentialRateTheta { rate: 1.0 }
+    ));
 
-    assert!(
-        LogNormalMeanLogSd::new()
-            .nll(
-                1.2,
-                LogNormalMeanLogSdTheta {
-                    mean: 1.0,
-                    log_sd: 0.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        LogNormalMeanCv::new()
-            .nll(1.2, LogNormalMeanCvTheta { mean: 1.0, cv: 0.5 },)
-            .is_finite()
-    );
-    assert!(
-        LogNormalMedianLogSd::new()
-            .nll(
-                1.2,
-                LogNormalMedianLogSdTheta {
-                    median: 1.0,
-                    log_sd: 0.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        LogNormalLogLocationLogSd::new()
-            .nll(
-                1.2,
-                LogNormalLogLocationLogSdTheta {
-                    log_location: 0.0,
-                    log_sd: 0.5,
-                },
-            )
-            .is_finite()
-    );
+    assert!(finite_nll(
+        LogNormalMeanLogSd::new(),
+        1.2,
+        LogNormalMeanLogSdTheta {
+            mean: 1.0,
+            log_sd: 0.5,
+        }
+    ));
+    assert!(finite_nll(
+        LogNormalMeanCv::new(),
+        1.2,
+        LogNormalMeanCvTheta { mean: 1.0, cv: 0.5 },
+    ));
+    assert!(finite_nll(
+        LogNormalMedianLogSd::new(),
+        1.2,
+        LogNormalMedianLogSdTheta {
+            median: 1.0,
+            log_sd: 0.5,
+        }
+    ));
+    assert!(finite_nll(
+        LogNormalLogLocationLogSd::new(),
+        1.2,
+        LogNormalLogLocationLogSdTheta {
+            log_location: 0.0,
+            log_sd: 0.5,
+        }
+    ));
 
-    assert!(
-        WeibullMeanShape::new()
-            .nll(
-                1.2,
-                WeibullMeanShapeTheta {
-                    mean: 1.0,
-                    shape: 1.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        WeibullScaleShape::new()
-            .nll(
-                1.2,
-                WeibullScaleShapeTheta {
-                    scale: 1.0,
-                    shape: 1.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        TweedieMeanDispersionPower::new()
-            .nll(
-                1.2,
-                TweedieTheta {
-                    mean: 1.0,
-                    dispersion: 0.5,
-                    power: 1.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        TweedieMeanCvPower::new()
-            .nll(
-                1.2,
-                TweedieMeanCvPowerTheta {
-                    mean: 1.0,
-                    cv: 0.5,
-                    power: 1.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        GeneralizedGammaScaleSigmaNu::new()
-            .nll(
-                1.2,
-                GeneralizedGammaTheta {
-                    mu: 1.0,
-                    sigma: 0.5,
-                    nu: 1.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        StudentTMuSigmaTau::new()
-            .nll(
-                1.2,
-                StudentTMuSigmaTauTheta {
-                    mu: 0.0,
-                    sigma: 1.0,
-                    tau: 5.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        StudentTMuSdTau::new()
-            .nll(
-                1.2,
-                StudentTMuSdTauTheta {
-                    mu: 0.0,
-                    sigma: 1.0,
-                    tau: 5.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        SkewNormalMeanSdNu::new()
-            .nll(
-                1.2,
-                SkewNormalMeanSdTheta {
-                    mean: 0.0,
-                    sigma: 1.0,
-                    nu: 0.5,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        SkewStudentTMeanSdNuTau::new()
-            .nll(
-                1.2,
-                SkewStudentTMeanSdTheta {
-                    mean: 0.0,
-                    sigma: 1.0,
-                    nu: 0.5,
-                    tau: 5.0,
-                },
-            )
-            .is_finite()
-    );
+    assert!(finite_nll(
+        WeibullMeanShape::new(),
+        1.2,
+        WeibullMeanShapeTheta {
+            mean: 1.0,
+            shape: 1.5,
+        }
+    ));
+    assert!(finite_nll(
+        WeibullScaleShape::new(),
+        1.2,
+        WeibullScaleShapeTheta {
+            scale: 1.0,
+            shape: 1.5,
+        }
+    ));
+    assert!(finite_nll(
+        TweedieMeanDispersionPower::new(),
+        1.2,
+        TweedieTheta {
+            mean: 1.0,
+            dispersion: 0.5,
+            power: 1.5,
+        }
+    ));
+    assert!(finite_nll(
+        TweedieMeanCvPower::new(),
+        1.2,
+        TweedieMeanCvPowerTheta {
+            mean: 1.0,
+            cv: 0.5,
+            power: 1.5,
+        }
+    ));
+    assert!(finite_nll(
+        GeneralizedGammaScaleSigmaNu::new(),
+        1.2,
+        GeneralizedGammaTheta {
+            mu: 1.0,
+            sigma: 0.5,
+            nu: 1.0,
+        }
+    ));
+    assert!(finite_nll(
+        StudentTMuSigmaTau::new(),
+        1.2,
+        StudentTMuSigmaTauTheta {
+            mu: 0.0,
+            sigma: 1.0,
+            tau: 5.0,
+        }
+    ));
+    assert!(finite_nll(
+        StudentTMuSdTau::new(),
+        1.2,
+        StudentTMuSdTauTheta {
+            mu: 0.0,
+            sigma: 1.0,
+            tau: 5.0,
+        }
+    ));
+    assert!(finite_nll(
+        SkewNormalMeanSdNu::new(),
+        1.2,
+        SkewNormalMeanSdTheta {
+            mean: 0.0,
+            sigma: 1.0,
+            nu: 0.5,
+        }
+    ));
+    assert!(finite_nll(
+        SkewStudentTMeanSdNuTau::new(),
+        1.2,
+        SkewStudentTMeanSdTheta {
+            mean: 0.0,
+            sigma: 1.0,
+            nu: 0.5,
+            tau: 5.0,
+        }
+    ));
 }
 
 #[test]
 fn existing_mean_style_aliases_construct_without_type_annotations() {
-    assert!(
-        BetaMeanPrecision::new()
-            .nll(
-                0.4,
-                gamlss_family::BetaTheta {
-                    mu: 0.4,
-                    precision: 5.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        NegativeBinomialMeanSize::new()
-            .nll(
-                2.0,
-                NegativeBinomialTheta {
-                    mu: 3.0,
-                    shape: 4.0,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        NegativeBinomialMeanDispersion::new()
-            .nll(
-                2.0,
-                NegativeBinomialMeanDispersionTheta {
-                    mean: 3.0,
-                    dispersion: 0.25,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        InverseGaussianMeanCv::new()
-            .nll(1.2, InverseGaussianMeanCvTheta { mean: 1.0, cv: 0.5 })
-            .is_finite()
-    );
-    assert!(
-        ZipTotalMeanZeroProbability::new()
-            .nll(
-                2.0,
-                ZipTotalMeanZeroProbabilityTheta {
-                    total_mean: 2.0,
-                    zero_probability: 0.2,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        ZagaTotalMeanCvZeroProbability::new()
-            .nll(
-                1.2,
-                ZagaTotalMeanCvZeroProbabilityTheta {
-                    total_mean: 1.0,
-                    cv: 0.5,
-                    zero_probability: 0.2,
-                },
-            )
-            .is_finite()
-    );
-    assert!(
-        ZinbTotalMeanSizeZeroProbability::new()
-            .nll(
-                2.0,
-                ZinbTotalMeanSizeZeroProbabilityTheta {
-                    total_mean: 2.0,
-                    size: 4.0,
-                    zero_probability: 0.2,
-                },
-            )
-            .is_finite()
-    );
+    assert!(finite_nll(
+        BetaMeanPrecision::new(),
+        0.4,
+        gamlss_family::BetaTheta {
+            mu: 0.4,
+            precision: 5.0,
+        }
+    ));
+    assert!(finite_nll(
+        NegativeBinomialMeanSize::new(),
+        2.0,
+        NegativeBinomialTheta {
+            mu: 3.0,
+            shape: 4.0,
+        }
+    ));
+    assert!(finite_nll(
+        NegativeBinomialMeanDispersion::new(),
+        2.0,
+        NegativeBinomialMeanDispersionTheta {
+            mean: 3.0,
+            dispersion: 0.25,
+        }
+    ));
+    assert!(finite_nll(
+        InverseGaussianMeanCv::new(),
+        1.2,
+        InverseGaussianMeanCvTheta { mean: 1.0, cv: 0.5 }
+    ));
+    assert!(finite_nll(
+        ZipTotalMeanZeroProbability::new(),
+        2.0,
+        ZipTotalMeanZeroProbabilityTheta {
+            total_mean: 2.0,
+            zero_probability: 0.2,
+        }
+    ));
+    assert!(finite_nll(
+        ZagaTotalMeanCvZeroProbability::new(),
+        1.2,
+        ZagaTotalMeanCvZeroProbabilityTheta {
+            total_mean: 1.0,
+            cv: 0.5,
+            zero_probability: 0.2,
+        }
+    ));
+    assert!(finite_nll(
+        ZinbTotalMeanSizeZeroProbability::new(),
+        2.0,
+        ZinbTotalMeanSizeZeroProbabilityTheta {
+            total_mean: 2.0,
+            size: 4.0,
+            zero_probability: 0.2,
+        }
+    ));
 }

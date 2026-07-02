@@ -77,21 +77,22 @@ impl MonotoneISplineDesign {
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
+        let beta_tail = &beta[1..];
+        let mut value = 0.0;
         self.basis
-            .evaluate_derivative(self.x[row])
-            .iter()
-            .zip(&beta[1..])
-            .map(|(basis, beta)| sign * Softplus::inverse(*beta) * basis)
-            .sum()
+            .for_each_derivative_basis(self.x[row], |index, basis| {
+                value = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, value);
+            });
+        value
     }
 
     #[allow(clippy::suboptimal_flops)]
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;
-        for (index, basis) in self.basis.evaluate(self.x[row]).into_iter().enumerate() {
+        self.basis.for_each_basis(self.x[row], |index, basis| {
             grad[index + 1] += score * sign * basis * Softplus::derivative_inverse(beta[index + 1]);
-        }
+        });
     }
 }
 
@@ -109,14 +110,12 @@ impl PredictorBlock for MonotoneISplineDesign {
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
-        beta[0]
-            + self
-                .basis
-                .evaluate(self.x[row])
-                .iter()
-                .zip(&beta[1..])
-                .map(|(basis, beta)| sign * Softplus::inverse(*beta) * basis)
-                .sum::<f64>()
+        let beta_tail = &beta[1..];
+        let mut eta = beta[0];
+        self.basis.for_each_basis(self.x[row], |index, basis| {
+            eta = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, eta);
+        });
+        eta
     }
 
     fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {

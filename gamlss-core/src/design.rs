@@ -198,13 +198,19 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(weights.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, weight) in weights.iter().copied().enumerate() {
+        if self.ncols == 0 {
+            return;
+        }
+
+        for (weight, row_values) in weights
+            .iter()
+            .copied()
+            .zip(self.values.chunks_exact(self.ncols))
+        {
             if weight == 0.0 {
                 continue;
             }
 
-            let offset = row * self.ncols;
-            let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
                 *out_value = x.mul_add(weight, *out_value);
             }
@@ -219,10 +225,10 @@ impl DesignMatrix for DenseDesign {
         }
 
         #[allow(clippy::float_cmp)]
-        let has_intercept = (0..self.nrows).all(|row| {
-            let first_value = self.values[row * self.ncols];
-            first_value == 1.0
-        });
+        let has_intercept = self
+            .values
+            .chunks_exact(self.ncols)
+            .all(|row_values| row_values[0] == 1.0);
         if !has_intercept {
             return false;
         }
@@ -248,7 +254,16 @@ impl DesignMatrix for DenseDesign {
         debug_assert_eq!(weights.len(), self.nrows);
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, weight) in weights.iter().copied().enumerate() {
+        if self.ncols == 0 {
+            return;
+        }
+
+        for (row, (weight, row_values)) in weights
+            .iter()
+            .copied()
+            .zip(self.values.chunks_exact(self.ncols))
+            .enumerate()
+        {
             if weight == 0.0 {
                 continue;
             }
@@ -258,8 +273,6 @@ impl DesignMatrix for DenseDesign {
                 continue;
             }
 
-            let offset = row * self.ncols;
-            let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
                 *out_value = x.mul_add(scaled_weight, *out_value);
             }
@@ -383,9 +396,8 @@ pub trait DesignMatrix {
             }
             unit_beta[k] = 1.0;
 
-            for row in 0..nrows {
-                let weight = weights[row];
-                w_xk[row] = if weight == 0.0 {
+            for ((row, weight), out_value) in weights.iter().copied().enumerate().zip(&mut w_xk) {
+                *out_value = if weight == 0.0 {
                     0.0
                 } else {
                     self.dot_row(row, &unit_beta) * weight
@@ -459,7 +471,16 @@ fn add_dense_weighted_gram_by<M>(
     debug_assert_eq!(values.len(), nrows * ncols);
     debug_assert_eq!(out.len(), ncols * ncols);
 
-    for (row, weight) in weights.iter().copied().enumerate() {
+    if ncols == 0 {
+        return;
+    }
+
+    for (row, (weight, row_values)) in weights
+        .iter()
+        .copied()
+        .zip(values.chunks_exact(ncols))
+        .enumerate()
+    {
         if weight == 0.0 {
             continue;
         }
@@ -469,8 +490,6 @@ fn add_dense_weighted_gram_by<M>(
             continue;
         }
 
-        let row_offset = row * ncols;
-        let row_values = &values[row_offset..row_offset + ncols];
         for (j, x_j) in row_values.iter().copied().enumerate() {
             let xw_j = x_j * scaled_weight;
             for (k, x_k) in row_values.iter().copied().enumerate().skip(j) {

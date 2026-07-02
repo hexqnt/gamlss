@@ -2,8 +2,7 @@
 //!
 //! `UserNormal` intentionally duplicates the normal law to keep the formulas
 //! familiar. A real custom family follows the same shape:
-//! - choose typed parameter markers and link functions through
-//!   `ParameterizedFamily`;
+//! - choose typed parameter markers and link functions through `ParamSpec`;
 //! - convert link-scale predictors `Eta` to natural parameters `Theta`;
 //! - return scalar negative log-likelihood and its NLL gradient on the link scale.
 
@@ -12,8 +11,9 @@
 use std::marker::PhantomData;
 
 use gamlss::core::{
-    DenseDesign, Family, Gamlss, HasCdf, Identity, Link, Log, Mu, NoPenalty, Objective,
-    ParameterBlock, ParameterBlocks, ParameterParts, ParameterizedFamily, PositiveLink, Sigma,
+    DenseDesign, Family, Gamlss, HasCdf, Identity, InitialEtaFromObservations, Link, Log, Mu,
+    NoPenalty, Objective, ParameterBlock, ParameterBlocks, ParameterParts, PositiveLink,
+    ScalarParams, Sigma,
 };
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -42,17 +42,21 @@ where
 {
     type Eta = UserNormalEta;
     type Theta = UserNormalTheta;
-    type NllGradientEta = UserNormalEta;
+    type GradientEta = UserNormalEta;
     type Observation<'obs> = f64;
+    type Workspace = ();
+    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
-    fn theta(&self, eta: Self::Eta) -> Self::Theta {
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
         UserNormalTheta {
             mu: MuLink::inverse(eta.mu),
             sigma: SigmaLink::inverse(eta.sigma),
         }
     }
 
-    fn nll(&self, y: f64, theta: Self::Theta) -> f64 {
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
         {
             return f64::INFINITY;
@@ -63,9 +67,14 @@ where
         HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
     }
 
-    fn nll_and_gradient_eta(&self, y: f64, eta: Self::Eta) -> (f64, Self::NllGradientEta) {
-        let theta = self.theta(eta);
-        let nll = self.nll(y, theta);
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = self.theta(eta, workspace);
+        let nll = self.nll(y, &theta, workspace);
         if !nll.is_finite() {
             return (
                 nll,
@@ -90,21 +99,12 @@ where
     }
 }
 
-impl<MuLink, SigmaLink> ParameterizedFamily<2> for UserNormal<MuLink, SigmaLink>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Params = (Mu, Sigma);
-    type Links = (MuLink, SigmaLink);
-}
-
 impl<MuLink, SigmaLink> HasCdf for UserNormal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
 {
-    fn cdf(&self, y: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
         {
             return f64::NAN;
@@ -113,6 +113,13 @@ where
         let z = (y - theta.mu) / (theta.sigma * std::f64::consts::SQRT_2);
         f64::midpoint(1.0, erf_approx(z))
     }
+}
+
+impl<MuLink, SigmaLink> InitialEtaFromObservations<2> for UserNormal<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -192,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .exp();
     let median_cdf = family.cdf(
         mu_hat,
-        UserNormalTheta {
+        &UserNormalTheta {
             mu: mu_hat,
             sigma: sigma_hat,
         },
