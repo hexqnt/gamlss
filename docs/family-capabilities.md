@@ -43,6 +43,21 @@ evaluations for `K` parameters.
 | `Zinb`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `Zip`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 
+## Multivariate families
+
+Multivariate families are enabled with the `multivariate` feature. They are
+named by construction: product, elliptical, or simplex. Dimension-specific
+public aliases are intentionally deferred until the const-generics
+specialization policy is settled.
+
+| Family                    | NLL | Gradient | Gradient kind | CDF | Marginal CDF | PDF | Quantile | CRPS | Sampling |
+| ------------------------- | --- | -------- | ------------- | --- | ------------ | --- | -------- | ---- | -------- |
+| `IndependentVec`          | ✓   | ✓        | component     | ✓   | ✓            | ✓   | ✗        | ✗    | ✓        |
+| `MvNormalCholesky`        | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
+| `DynMvNormalCholesky`     | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
+| `MvStudentTCholesky`      | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
+| `DirichletMeanPrecision`  | ✓   | ✓        | analytic      | ✗   | ✗            | ✓   | ✗        | ✗    | ✓        |
+
 ## Analytic gradient replacement queue
 
 Finite-difference families are supported but slower training paths. They use

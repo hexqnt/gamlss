@@ -1,6 +1,7 @@
 //! Multivariate distribution families.
 
 pub use independent::IndependentVec;
+pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
 
 /// Cholesky helpers.
 pub mod cholesky;
@@ -10,3 +11,7 @@ pub mod independent;
 pub mod matrix;
 /// Multivariate normal distributions.
 pub mod normal;
+/// Simplex and compositional distributions.
+pub mod simplex;
+/// Multivariate Student-t distributions.
+pub mod student_t;

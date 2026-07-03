@@ -17,6 +17,13 @@ use gamlss_family::{
     ZipTotalMeanZeroProbabilityTheta,
 };
 
+#[cfg(feature = "multivariate")]
+use gamlss_family::{
+    DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+    FixedLowerTriangular, MvStudentTCholeskyDefault, MvStudentTCholeskyEta,
+    MvStudentTCholeskyTheta,
+};
+
 #[allow(clippy::needless_pass_by_value)]
 fn finite_nll<F>(family: F, y: f64, theta: F::Theta) -> bool
 where
@@ -247,4 +254,57 @@ fn univariate_namespace_exposes_distribution_modules() {
         1.2,
         gamlss_family::univariate::gamma::GammaMeanCvTheta { mean: 1.0, cv: 0.5 }
     ));
+}
+
+#[cfg(feature = "multivariate")]
+#[test]
+fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
+    let dirichlet = DirichletMeanPrecision::<3>::new();
+    let dirichlet_eta = DirichletMeanPrecisionEta::new([0.0, 0.5, 0.0], 2.0_f64.ln());
+    let mut workspace = ();
+    let theta = dirichlet.theta(&dirichlet_eta, &mut workspace);
+    assert!(
+        dirichlet
+            .nll([0.2, 0.3, 0.5], &theta, &mut workspace)
+            .is_finite()
+    );
+    assert!(
+        dirichlet
+            .nll(
+                [0.2, 0.3, 0.5],
+                &DirichletMeanPrecisionTheta::new([0.2, 0.3, 0.5], 5.0),
+                &mut workspace
+            )
+            .is_finite()
+    );
+
+    let student = MvStudentTCholeskyDefault::<3>::new();
+    let cholesky =
+        FixedLowerTriangular::from_lower_rows([[1.0, 0.0, 0.0], [0.2, 1.1, 0.0], [0.1, -0.3, 0.9]]);
+    let eta = MvStudentTCholeskyEta::new([0.0, 0.0, 0.0], cholesky, 1.0);
+    let mut workspace = ();
+    let theta = student.theta(&eta, &mut workspace);
+    assert!(
+        student
+            .nll([0.1, -0.2, 0.3], &theta, &mut workspace)
+            .is_finite()
+    );
+    assert!(
+        student
+            .nll(
+                [0.1, -0.2, 0.3],
+                &MvStudentTCholeskyTheta::new([0.0, 0.0, 0.0], cholesky, 5.0),
+                &mut workspace
+            )
+            .is_finite()
+    );
+}
+
+#[cfg(feature = "multivariate")]
+#[test]
+fn multivariate_prelude_exposes_new_generic_families() {
+    use gamlss_family::prelude::*;
+
+    let _ = DirichletMeanPrecision::<4>::new();
+    let _ = MvStudentTCholeskyDefault::<4>::new();
 }

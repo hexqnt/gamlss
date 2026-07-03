@@ -2,14 +2,11 @@
 
 Target transform layer for GAMLSS modeling.
 
-> **Status:** Actively developed. Public API, internals, numerical behavior, and
-> crate structure may still change before a stable 1.0 release.
+> **Status:** Actively developed. Public API, internals, numerical behavior, and crate structure may still change before a stable 1.0 release.
 
-This crate contains target preprocessing transforms with persisted state and
-domain-aware inverse transforms.
+This crate contains target preprocessing transforms with persisted state and domain-aware inverse transforms.
 
-Use it when composing lower-level preprocessing pipelines around typed GAMLSS
-models.
+Use it when composing lower-level preprocessing pipelines around typed GAMLSS models.
 
 ## Built-in transforms
 
@@ -30,9 +27,6 @@ models.
 | `QuantileUniform`       | finite real values                     | sorted unique values and empirical probabilities | inverse clamps to the fitted target range                        |
 | `QuantileNormal`        | finite real values                     | sorted unique values and empirical probabilities | normal-scale inverse clamps through the fitted probability range |
 
-Fitted `BoxCox` and `YeoJohnson` estimate lambda with a deterministic
-profile-likelihood search on `[-5, 5]` and do not depend on an optimizer crate.
+Fitted `BoxCox` and `YeoJohnson` estimate lambda with a deterministic profile-likelihood search on `[-5, 5]` and do not depend on an optimizer crate.
 
-`QuantileUniform` and `QuantileNormal` clamp new values outside the fitted
-range to the fitted boundary probabilities. Their inverse transforms clamp
-probabilities back to the fitted target range.
+`QuantileUniform` and `QuantileNormal` clamp new values outside the fitted range to the fitted boundary probabilities. Their inverse transforms clamp probabilities back to the fitted target range.

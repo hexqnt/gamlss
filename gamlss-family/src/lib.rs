@@ -9,6 +9,14 @@ pub use multivariate::normal::{
     DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
     MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
 };
+#[cfg(feature = "multivariate")]
+pub use multivariate::student_t::{
+    MvStudentTCholesky, MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+};
+#[cfg(feature = "multivariate")]
+pub use multivariate::{
+    DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+};
 pub use univariate::{
     Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta, BernoulliProbability,
     BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta, Exponential, ExponentialMean,
@@ -65,9 +73,12 @@ pub mod univariate;
 pub mod prelude {
     #[cfg(feature = "multivariate")]
     pub use crate::{
+        DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
         DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
         DynMvNormalCholeskyTheta, FixedLowerTriangular, IndependentVec, MvNormalCholesky,
-        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
+        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta, MvStudentTCholesky,
+        MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+        PackedLowerTriangular,
     };
 
     pub use crate::{

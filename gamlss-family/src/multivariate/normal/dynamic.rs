@@ -545,6 +545,26 @@ impl DynMvNormalCholeskyTheta {
     pub fn cholesky_entry_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
         self.cholesky.get_mut(row, col)
     }
+
+    /// Returns one covariance entry from `L L'`.
+    #[must_use]
+    pub fn covariance(&self, row: usize, col: usize) -> Option<f64> {
+        if row >= self.mu.len() || col >= self.mu.len() {
+            return None;
+        }
+        let limit = row.min(col);
+        Some(
+            (0..=limit)
+                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
+                .sum(),
+        )
+    }
+
+    /// Returns the marginal scale of one component.
+    #[must_use]
+    pub fn marginal_scale(&self, component: usize) -> Option<f64> {
+        self.covariance(component, component).map(f64::sqrt)
+    }
 }
 
 #[cfg(test)]
@@ -635,6 +655,10 @@ mod tests {
         );
         assert_eq!(theta.cholesky_entry(1, 0), Some(3.0));
         assert_eq!(theta.cholesky_entry(2, 0), None);
+        assert_eq!(theta.covariance(0, 0), Some(4.0));
+        assert_eq!(theta.covariance(1, 0), Some(6.0));
+        assert_eq!(theta.marginal_scale(1), Some(5.0));
+        assert_eq!(theta.covariance(2, 0), None);
         assert_relative_eq!(family.marginal_cdf(0, 0.0, &theta), 0.5, epsilon = 1.0e-12);
         assert_relative_eq!(
             family.marginal_cdf(1, 6.0, &theta),

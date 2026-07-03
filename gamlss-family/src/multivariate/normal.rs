@@ -17,7 +17,12 @@ mod dynamic;
 mod fixed;
 pub(crate) mod kernel;
 
-/// Multivariate normal with a lower-triangular Cholesky scale factor.
+/// Generic multivariate normal with a lower-triangular Cholesky scale factor.
+///
+/// This is the primary dimension-generic covariance parameterization. The
+/// natural-scale covariance is `L L'`, where `L` is the lower-triangular
+/// Cholesky scale factor. Diagonal entries are constrained positive by the
+/// diagonal link, while off-diagonal entries remain unconstrained.
 pub type MvNormalCholeskyDefault<const D: usize> = MvNormalCholesky<D, Identity, Log, Identity>;
 
 /// Runtime-dimensional multivariate normal with default links.
