@@ -66,7 +66,7 @@ where
 
     #[inline]
     fn valid_theta(theta: NormalTheta) -> bool {
-        is_finite_location_scale(theta.mu, theta.sigma)
+        normal_valid_theta(theta)
     }
 
     /// Negative log-likelihood for one observation on the natural scale.
@@ -74,15 +74,8 @@ where
     /// Returns `INFINITY` for non-finite observation/location or non-positive
     /// sigma.
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: NormalTheta) -> f64 {
-        if !y.is_finite() || !Self::valid_theta(theta) {
-            return f64::INFINITY;
-        }
-
-        let residual = y - theta.mu;
-        let z = residual / theta.sigma;
-        HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
+        normal_nll_theta(y, theta)
     }
 
     /// Computes NLL and gradient w.r.t. eta for one observation.
@@ -92,7 +85,7 @@ where
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (nll, gradient_theta) = normal_nll_gradient_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
@@ -103,14 +96,9 @@ where
             );
         }
 
-        let residual = y - theta.mu;
-        let sigma2 = theta.sigma * theta.sigma;
-        let d_nll_d_mu = (theta.mu - y) / sigma2;
-        let d_nll_d_sigma = (1.0 / theta.sigma) - (residual * residual / (sigma2 * theta.sigma));
-
         let gradient_eta = NormalEta {
-            mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
-            sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+            mu: gradient_theta.mu * MuLink::derivative_inverse(eta.mu),
+            sigma: gradient_theta.sigma * SigmaLink::derivative_inverse(eta.sigma),
         };
 
         (nll, gradient_eta)
@@ -315,6 +303,59 @@ pub struct NormalTheta {
     pub mu: f64,
     /// Positive scale parameter.
     pub sigma: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct NormalThetaGradient {
+    pub(crate) mu: f64,
+    pub(crate) sigma: f64,
+}
+
+#[inline]
+pub(crate) fn normal_valid_theta(theta: NormalTheta) -> bool {
+    is_finite_location_scale(theta.mu, theta.sigma)
+}
+
+/// Negative log-likelihood for one normal observation on the natural scale.
+///
+/// Returns `INFINITY` for non-finite observations or invalid natural
+/// parameters.
+#[inline]
+#[allow(clippy::suboptimal_flops)]
+pub(crate) fn normal_nll_theta(y: f64, theta: NormalTheta) -> f64 {
+    if !y.is_finite() || !normal_valid_theta(theta) {
+        return f64::INFINITY;
+    }
+
+    let residual = y - theta.mu;
+    let z = residual / theta.sigma;
+    HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
+}
+
+/// Negative log-likelihood and gradient with respect to natural normal
+/// parameters.
+#[inline]
+#[allow(clippy::suboptimal_flops)]
+pub(crate) fn normal_nll_gradient_theta(y: f64, theta: NormalTheta) -> (f64, NormalThetaGradient) {
+    let nll = normal_nll_theta(y, theta);
+    if !nll.is_finite() {
+        return (
+            nll,
+            NormalThetaGradient {
+                mu: f64::NAN,
+                sigma: f64::NAN,
+            },
+        );
+    }
+
+    let residual = y - theta.mu;
+    let sigma2 = theta.sigma * theta.sigma;
+    let gradient = NormalThetaGradient {
+        mu: (theta.mu - y) / sigma2,
+        sigma: (1.0 / theta.sigma) - (residual * residual / (sigma2 * theta.sigma)),
+    };
+
+    (nll, gradient)
 }
 
 /// Creates a normal GAMLSS model from a response, two design matrices and

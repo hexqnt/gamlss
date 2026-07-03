@@ -7,7 +7,9 @@ pub use multivariate::IndependentVec;
 pub use multivariate::normal::{
     DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
     DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
-    MvNormalCholeskyEta, MvNormalCholeskyTheta, PackedLowerTriangular,
+    MvNormalCholeskyEta, MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr,
+    MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
+    MvNormalMeanStdPartialCorrTheta, PackedLowerTriangular, PackedPartialCorr,
 };
 #[cfg(feature = "multivariate")]
 pub use multivariate::student_t::{
@@ -76,9 +78,11 @@ pub mod prelude {
         DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
         DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
         DynMvNormalCholeskyTheta, FixedLowerTriangular, IndependentVec, MvNormalCholesky,
-        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta, MvStudentTCholesky,
+        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta,
+        MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+        MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta, MvStudentTCholesky,
         MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
-        PackedLowerTriangular,
+        PackedLowerTriangular, PackedPartialCorr,
     };
 
     pub use crate::{

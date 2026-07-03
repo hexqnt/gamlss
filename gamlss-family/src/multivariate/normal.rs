@@ -12,10 +12,15 @@ pub use dynamic::{
 pub use fixed::{
     FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta,
 };
+pub use mean_std_partial_corr::{
+    MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
+    MvNormalMeanStdPartialCorrTheta, PackedPartialCorr,
+};
 
 mod dynamic;
 mod fixed;
 pub(crate) mod kernel;
+mod mean_std_partial_corr;
 
 /// Generic multivariate normal with a lower-triangular Cholesky scale factor.
 ///

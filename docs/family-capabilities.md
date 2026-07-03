@@ -54,6 +54,7 @@ specialization policy is settled.
 | ------------------------- | --- | -------- | ------------- | --- | ------------ | --- | -------- | ---- | -------- |
 | `IndependentVec`          | ✓   | ✓        | component     | ✓   | ✓            | ✓   | ✗        | ✗    | ✓        |
 | `MvNormalCholesky`        | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
+| `MvNormalMeanStdPartialCorr` | ✓ | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
 | `DynMvNormalCholesky`     | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
 | `MvStudentTCholesky`      | ✓   | ✓        | analytic      | ✗   | ✓            | ✓   | ✗        | ✗    | ✓        |
 | `DirichletMeanPrecision`  | ✓   | ✓        | analytic      | ✗   | ✗            | ✓   | ✗        | ✗    | ✓        |
