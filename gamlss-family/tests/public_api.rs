@@ -231,3 +231,20 @@ fn existing_mean_style_aliases_construct_without_type_annotations() {
         }
     ));
 }
+
+#[test]
+fn univariate_namespace_exposes_distribution_modules() {
+    assert!(finite_nll(
+        gamlss_family::univariate::normal::NormalMuSigma::new(),
+        0.25,
+        gamlss_family::univariate::normal::NormalTheta {
+            mu: 0.0,
+            sigma: 1.0,
+        }
+    ));
+    assert!(finite_nll(
+        gamlss_family::univariate::gamma::GammaMeanCv::new(),
+        1.2,
+        gamlss_family::univariate::gamma::GammaMeanCvTheta { mean: 1.0, cv: 0.5 }
+    ));
+}

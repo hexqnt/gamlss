@@ -4,7 +4,7 @@ use gamlss_core::{Log, Logit, ParameterParts, PositiveLink, UnitIntervalLink};
 
 use gamlss_special::{is_nonnegative_integer, ln_gamma, log_add_exp};
 
-use crate::poisson::{Poisson, PoissonTheta};
+use super::poisson::{Poisson, PoissonTheta};
 
 pub use component_mean_zero_probability::{
     ComponentMeanZeroProbability, ZipComponentMeanZeroProbability,

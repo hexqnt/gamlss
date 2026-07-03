@@ -9,4 +9,11 @@ in Rust.
 This crate contains distribution-specific building blocks used by typed GAMLSS
 models: family types, likelihoods, scores, and related helpers.
 
+The public module tree separates scalar-response and vector-response families:
+
+* `univariate` contains scalar distribution families and their
+  parameterizations.
+* `multivariate` contains vector-valued distribution families and supporting
+  parameter storage helpers. It is enabled with the `multivariate` feature.
+
 Use it when composing lower-level models or adding new family integrations.
