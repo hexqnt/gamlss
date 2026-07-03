@@ -1,6 +1,6 @@
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
-use crate::local::{LocalBasis, open_uniform_local_basis};
+use crate::local::{LocalBasis, open_uniform_local_basis, open_uniform_local_basis_derivative};
 use crate::row_basis::SplineRowBasis;
 use crate::{SplineError, SplineOrder};
 
@@ -220,8 +220,13 @@ impl OpenUniformSplineDesign {
     }
 
     #[inline]
-    fn basis_for_unit(&self, u: f64) -> LocalBasis {
-        self.basis.local_basis_for_unit(u)
+    fn derivative_basis_for_unit(&self, u: f64) -> LocalBasis {
+        open_uniform_local_basis_derivative(
+            u,
+            self.basis.order,
+            self.basis.n_basis,
+            self.basis.n_intervals,
+        )
     }
 
     /// Derivative of the predictor contribution with respect to the original
@@ -230,12 +235,8 @@ impl OpenUniformSplineDesign {
     #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         let span = self.basis.span();
-        let h = 1.0e-6_f64.max(span.abs() * 1.0e-6);
         let u = (self.x[row] - self.basis.min) / span;
-        let du = h / span;
-        let plus = self.basis_for_unit(u + du).dot(beta);
-        let minus = self.basis_for_unit(u - du).dot(beta);
-        (plus - minus) / (2.0 * h)
+        self.derivative_basis_for_unit(u).dot(beta) / span
     }
 }
 

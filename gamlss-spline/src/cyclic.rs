@@ -1,6 +1,6 @@
 use gamlss_core::{PredictorBlock, RowMultiplier};
 
-use crate::local::{LocalBasis, cyclic_local_basis};
+use crate::local::{LocalBasis, cyclic_local_basis, cyclic_local_basis_derivative};
 use crate::row_basis::SplineRowBasis;
 use crate::{SplineError, SplineOrder};
 
@@ -104,11 +104,7 @@ impl CyclicSplineDesign {
     #[must_use]
     #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        let h = 1.0e-6;
-        let phi = self.phi[row];
-        let plus = cyclic_local_basis(phi + h, self.spec.order, self.spec.n_basis).dot(beta);
-        let minus = cyclic_local_basis(phi - h, self.spec.order, self.spec.n_basis).dot(beta);
-        (plus - minus) / (2.0 * h)
+        cyclic_local_basis_derivative(self.phi[row], self.spec.order, self.spec.n_basis).dot(beta)
     }
 }
 

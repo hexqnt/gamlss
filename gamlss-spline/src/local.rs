@@ -12,6 +12,16 @@ pub struct LocalBasis {
 }
 
 impl LocalBasis {
+    #[inline]
+    fn push_nonzero(&mut self, index: usize, weight: f64) {
+        if weight != 0.0 {
+            debug_assert!(self.len < self.indices.len());
+            self.indices[self.len] = index;
+            self.weights[self.len] = weight;
+            self.len += 1;
+        }
+    }
+
     /// Visits non-zero elements of the local basis.
     pub(crate) fn for_each(self, mut f: impl FnMut(usize, f64)) {
         for (&index, &weight) in self.indices[..self.len]
@@ -94,6 +104,33 @@ pub fn open_uniform_local_basis(
     basis
 }
 
+/// Computes the derivative of the local open-uniform basis with respect to
+/// normalized coordinate `u`.
+pub fn open_uniform_local_basis_derivative(
+    u: f64,
+    order: SplineOrder,
+    n_basis: usize,
+    n_intervals: f64,
+) -> LocalBasis {
+    let degree = order.degree();
+
+    if u <= 0.0 {
+        return edge_extrapolation_basis_derivative(degree, n_basis, n_intervals, false);
+    }
+    if u >= 1.0 {
+        return edge_extrapolation_basis_derivative(degree, n_basis, n_intervals, true);
+    }
+
+    let span = open_uniform_span(u, n_basis, degree);
+    let start = span - degree;
+    let mut basis = LocalBasis::default();
+    for index in start..=span {
+        let weight = open_uniform_basis_derivative_value(index, degree, u, n_basis, degree);
+        basis.push_nonzero(index, weight);
+    }
+    basis
+}
+
 /// Computes the local basis of a cyclic spline for phase `phi`.
 ///
 /// `phi` is reduced to `[0, 1)` via `rem_euclid`.
@@ -103,9 +140,7 @@ pub fn open_uniform_local_basis(
     clippy::cast_sign_loss
 )]
 pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
-    let x = phi.rem_euclid(1.0) * n_basis as f64;
-    let cell = x.floor() as usize;
-    let u = x - cell as f64;
+    let (cell, u) = cyclic_cell_and_u(phi, n_basis);
     let weights = spline_weights(order, u);
     let len = order.degree() + 1;
     let offset = if order == SplineOrder::Cubic {
@@ -122,6 +157,41 @@ pub fn cyclic_local_basis(phi: f64, order: SplineOrder, n_basis: usize) -> Local
         basis.weights[idx] = weight;
     }
     basis
+}
+
+/// Computes the derivative of the local cyclic basis with respect to phase
+/// `phi`.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+pub fn cyclic_local_basis_derivative(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
+    let (cell, u) = cyclic_cell_and_u(phi, n_basis);
+    let weights = spline_weight_derivatives(order, u);
+    let len = order.degree() + 1;
+    let offset = if order == SplineOrder::Cubic {
+        n_basis - 1
+    } else {
+        0
+    };
+    let scale = n_basis as f64;
+    let mut basis = LocalBasis::default();
+    for (idx, weight) in weights.iter().copied().enumerate().take(len) {
+        basis.push_nonzero((cell + offset + idx) % n_basis, scale * weight);
+    }
+    basis
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn cyclic_cell_and_u(phi: f64, n_basis: usize) -> (usize, f64) {
+    let x = phi.rem_euclid(1.0) * n_basis as f64;
+    let cell = x.floor() as usize;
+    (cell, x - cell as f64)
 }
 
 /// Linear extrapolation of the spline beyond the data range boundaries.
@@ -157,6 +227,31 @@ fn edge_extrapolation_basis(
                 0.0,
                 0.0,
             ],
+            len: 2,
+        }
+    }
+}
+
+/// Derivative of the linear extrapolation basis with respect to normalized
+/// coordinate `u`.
+#[allow(clippy::cast_precision_loss)]
+fn edge_extrapolation_basis_derivative(
+    degree: usize,
+    n_basis: usize,
+    n_intervals: f64,
+    right: bool,
+) -> LocalBasis {
+    let slope_scale = degree as f64 * n_intervals;
+    if right {
+        LocalBasis {
+            indices: [n_basis - 2, n_basis - 1, 0, 0],
+            weights: [-slope_scale, slope_scale, 0.0, 0.0],
+            len: 2,
+        }
+    } else {
+        LocalBasis {
+            indices: [0, 1, 0, 0],
+            weights: [-slope_scale, slope_scale, 0.0, 0.0],
             len: 2,
         }
     }
@@ -209,6 +304,74 @@ fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -
     weights
 }
 
+#[allow(clippy::cast_precision_loss)]
+fn open_uniform_basis_derivative_value(
+    index: usize,
+    degree: usize,
+    u: f64,
+    n_basis: usize,
+    spline_degree: usize,
+) -> f64 {
+    debug_assert!(degree > 0);
+
+    let mut value = 0.0;
+    let left_denom = open_uniform_knot(index + degree, n_basis, spline_degree)
+        - open_uniform_knot(index, n_basis, spline_degree);
+    if left_denom > 0.0 {
+        value = (degree as f64 / left_denom).mul_add(
+            open_uniform_basis_value(index, degree - 1, u, n_basis, spline_degree),
+            value,
+        );
+    }
+
+    let right_denom = open_uniform_knot(index + degree + 1, n_basis, spline_degree)
+        - open_uniform_knot(index + 1, n_basis, spline_degree);
+    if right_denom > 0.0 {
+        value = (degree as f64 / right_denom).mul_add(
+            -open_uniform_basis_value(index + 1, degree - 1, u, n_basis, spline_degree),
+            value,
+        );
+    }
+
+    value
+}
+
+fn open_uniform_basis_value(
+    index: usize,
+    degree: usize,
+    u: f64,
+    n_basis: usize,
+    spline_degree: usize,
+) -> f64 {
+    if degree == 0 {
+        let left = open_uniform_knot(index, n_basis, spline_degree);
+        let right = open_uniform_knot(index + 1, n_basis, spline_degree);
+        return f64::from(left <= u && u < right);
+    }
+
+    let mut value = 0.0;
+    let left_denom = open_uniform_knot(index + degree, n_basis, spline_degree)
+        - open_uniform_knot(index, n_basis, spline_degree);
+    if left_denom > 0.0 {
+        value = ((u - open_uniform_knot(index, n_basis, spline_degree)) / left_denom).mul_add(
+            open_uniform_basis_value(index, degree - 1, u, n_basis, spline_degree),
+            value,
+        );
+    }
+
+    let right_denom = open_uniform_knot(index + degree + 1, n_basis, spline_degree)
+        - open_uniform_knot(index + 1, n_basis, spline_degree);
+    if right_denom > 0.0 {
+        value = ((open_uniform_knot(index + degree + 1, n_basis, spline_degree) - u) / right_denom)
+            .mul_add(
+                open_uniform_basis_value(index + 1, degree - 1, u, n_basis, spline_degree),
+                value,
+            );
+    }
+
+    value
+}
+
 /// Returns the normalized knot position for an open-uniform spline.
 ///
 /// Knots are uniformly distributed between 0 and 1 with repeated boundary
@@ -221,6 +384,24 @@ fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
         1.0
     } else {
         (index - degree) as f64 / (n_basis - degree) as f64
+    }
+}
+
+/// Local spline weight derivatives with respect to parameter `u`.
+#[allow(clippy::suboptimal_flops)]
+fn spline_weight_derivatives(order: SplineOrder, u: f64) -> [f64; 4] {
+    match order {
+        SplineOrder::Linear => [-1.0, 1.0, 0.0, 0.0],
+        SplineOrder::Quadratic => [u - 1.0, 1.0 - 2.0 * u, u, 0.0],
+        SplineOrder::Cubic => {
+            let u2 = u * u;
+            [
+                -(1.0 - u) * (1.0 - u) / 2.0,
+                1.5 * u2 - 2.0 * u,
+                -1.5 * u2 + u + 0.5,
+                u2 / 2.0,
+            ]
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Spline bases, spline design matrices and penalties.
 
+pub use basis::SplineBasis1d;
 pub use bspline::{BSplineBasis, pspline_design};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
 pub use error::{FourierError, SplineError};
@@ -16,10 +17,11 @@ pub use penalty::{
     PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
 };
 pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
-pub use row_basis::SplineRowBasis;
+pub use row_basis::{CsrParts, SplineRowBasis, SplineRowBasisExt, TripletParts};
 pub use tensor::TensorSplineDesign;
 pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
 
+pub mod basis;
 pub mod bspline;
 pub mod cyclic;
 pub mod error;
@@ -40,13 +42,14 @@ pub mod truncated_power;
 /// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
-        BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
+        BSplineBasis, CsrParts, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
         DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
         ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection, MonotoneISplineDesign,
         NaturalCubicSplineBasis, NaturalCubicSplineDesign, OpenUniformSplineBasis,
         OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty, SplineError,
-        SplineOrder, SplineRowBasis, TensorSplineDesign, TruncatedPowerBasis, TruncatedPowerDesign,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+        SplineBasis1d, SplineError, SplineOrder, SplineRowBasis, SplineRowBasisExt,
+        TensorSplineDesign, TripletParts, TruncatedPowerBasis, TruncatedPowerDesign,
         pspline_design,
     };
 }
@@ -63,8 +66,9 @@ mod tests {
         DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
         MSplineBasis, MonotoneDirection, MonotoneISplineDesign, NaturalCubicSplineBasis,
         OpenUniformSplineBasis, OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty, SplineError,
-        SplineOrder, TensorSplineDesign, TruncatedPowerBasis,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+        SplineBasis1d, SplineError, SplineOrder, SplineRowBasisExt, TensorSplineDesign,
+        TruncatedPowerBasis,
     };
 
     #[test]
@@ -256,6 +260,107 @@ mod tests {
         assert_row_basis_matches_evaluate(&natural.design(&x).unwrap(), |row| {
             natural.evaluate(x[row])
         });
+    }
+
+    #[test]
+    fn row_basis_ext_exports_dense_triplets_and_csr() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 0.5, 1.0], 0.0, 1.0, 5, SplineOrder::Cubic)
+                .unwrap();
+        let dense = design.to_row_major_values().unwrap();
+        let dense_design = design.to_dense_design().unwrap();
+        let (rows, cols, values) = design.to_triplets();
+        let (row_offsets, csr_cols, csr_values) = design.to_csr_parts().unwrap();
+
+        assert_eq!(dense.len(), design.nrows() * design.nparams());
+        assert_eq!(dense_design.values(), dense);
+        assert_eq!(row_offsets.len(), design.nrows() + 1);
+        assert_eq!(cols, csr_cols);
+        assert_eq!(values, csr_values);
+        assert_eq!(rows.len(), values.len());
+
+        for ((row, col), value) in rows.iter().zip(&cols).zip(&values) {
+            assert_relative_eq!(
+                dense[row * design.nparams() + col],
+                *value,
+                epsilon = 1.0e-12
+            );
+        }
+    }
+
+    #[test]
+    fn row_basis_ext_rejects_wrong_dense_output_length() {
+        let design =
+            OpenUniformSplineDesign::with_range(&[0.0, 1.0], 0.0, 1.0, 4, SplineOrder::Cubic)
+                .unwrap();
+        let err = design.fill_row_major(&mut [0.0; 7]).unwrap_err();
+
+        assert_eq!(
+            err,
+            SplineError::Model(ModelError::DesignSize {
+                expected_values: 8,
+                actual_values: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn spline_basis_1d_matches_existing_evaluation_methods() {
+        let x = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let bspline = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let open = OpenUniformSplineBasis::from_data(&x, 6, SplineOrder::Cubic).unwrap();
+        let mspline = MSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let ispline = ISplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
+        let natural = NaturalCubicSplineBasis::new(vec![0.0, 0.5, 1.0]).unwrap();
+        let truncated =
+            TruncatedPowerBasis::uniform_from_data(&x, 2, SplineOrder::Cubic, true).unwrap();
+
+        assert_eq!(
+            SplineBasis1d::evaluate(&bspline, 0.4).unwrap(),
+            bspline.evaluate(0.4)
+        );
+
+        let open_values = SplineBasis1d::evaluate(&open, 0.4).unwrap();
+        let mut open_visitor_values = vec![0.0; open.n_basis()];
+        open.for_each_value_basis(0.4, |index, weight| {
+            open_visitor_values[index] = weight;
+        })
+        .unwrap();
+        assert_eq!(open_values, open_visitor_values);
+
+        assert_eq!(
+            SplineBasis1d::evaluate(&mspline, 0.4).unwrap(),
+            mspline.evaluate(0.4)
+        );
+        assert_eq!(
+            SplineBasis1d::evaluate(&ispline, 0.4).unwrap(),
+            ispline.evaluate(0.4)
+        );
+        assert_eq!(
+            SplineBasis1d::evaluate(&natural, 0.4).unwrap(),
+            natural.evaluate(0.4)
+        );
+        assert_eq!(
+            SplineBasis1d::evaluate(&truncated, 0.4).unwrap(),
+            truncated.evaluate(0.4)
+        );
+    }
+
+    #[test]
+    fn spline_basis_1d_rejects_non_finite_input_and_wrong_output_length() {
+        let basis = OpenUniformSplineBasis::new(0.0, 1.0, 4, SplineOrder::Cubic).unwrap();
+
+        assert_eq!(
+            SplineBasis1d::evaluate(&basis, f64::NAN).unwrap_err(),
+            SplineError::NonFiniteValue
+        );
+        assert_eq!(
+            SplineBasis1d::evaluate_into(&basis, 0.5, &mut [0.0; 3]).unwrap_err(),
+            SplineError::Model(ModelError::DesignSize {
+                expected_values: 4,
+                actual_values: 3,
+            })
+        );
     }
 
     #[test]
