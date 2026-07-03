@@ -124,8 +124,7 @@ impl HasExpectedInformation<2> for DependentConstraintFamily {
 
 impl HasDeviance for DependentConstraintFamily {
     fn deviance(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        let mut workspace = self.workspace();
-        2.0 * self.nll(observation, theta, &mut workspace)
+        2.0 * self.nll(observation, theta, &mut ())
     }
 }
 
@@ -356,12 +355,11 @@ fn link_domain_marker_traits_remain_root_reexports() {
 
 #[test]
 fn public_api_supports_default_log_density_helper() {
-    let mut workspace = DependentConstraintFamily.workspace();
-    let theta = DependentConstraintFamily.theta(&(2.0, 0.0), &mut workspace);
+    let theta = DependentConstraintFamily.theta(&(2.0, 0.0), &mut ());
 
     assert_eq!(
         DependentConstraintFamily.log_density(&[1.0, 3.0], &theta),
-        -DependentConstraintFamily.nll(&[1.0, 3.0], &theta, &mut workspace)
+        -DependentConstraintFamily.nll(&[1.0, 3.0], &theta, &mut ())
     );
     assert_eq!(DependentConstraintFamily.density(&[1.0, 3.0], &theta), 1.0);
 }
@@ -424,10 +422,9 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     assert_eq!(diagnostics.penalty, 0.0);
     assert_eq!(diagnostics.nonfinite_gradient_count, 0);
 
-    let mut family_workspace = DependentConstraintFamily.workspace();
     let eta = (2.0, 0.0);
-    let (nll, gradient, diagonal_fisher) = DependentConstraintFamily
-        .nll_gradient_and_diagonal_fisher_eta(&[1.0, 3.0], &eta, &mut family_workspace);
+    let (nll, gradient, diagonal_fisher) =
+        DependentConstraintFamily.nll_gradient_and_diagonal_fisher_eta(&[1.0, 3.0], &eta, &mut ());
 
     assert_eq!(nll, 0.0);
     assert_eq!(gradient.part(0), 0.0);
@@ -435,7 +432,7 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     assert_eq!(diagonal_fisher, (1.0, 1.0));
 
     let (nll, gradient, information) = DependentConstraintFamily
-        .nll_gradient_and_expected_information_eta(&[1.0, 3.0], &eta, &mut family_workspace);
+        .nll_gradient_and_expected_information_eta(&[1.0, 3.0], &eta, &mut ());
 
     assert_eq!(nll, 0.0);
     assert_eq!(gradient.part(0), 0.0);
@@ -455,8 +452,7 @@ fn public_api_supports_deviance_and_initial_eta_extension_traits() {
     assert_eq!(initial_eta, (2.0, 0.0));
     assert_eq!(
         {
-            let mut workspace = DependentConstraintFamily.workspace();
-            let theta = DependentConstraintFamily.theta(&initial_eta, &mut workspace);
+            let theta = DependentConstraintFamily.theta(&initial_eta, &mut ());
             DependentConstraintFamily.deviance(&[1.0, 3.0], &theta)
         },
         0.0

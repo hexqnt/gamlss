@@ -2622,7 +2622,7 @@ mod tests {
             theta: &Self::Theta,
             _workspace: &mut Self::Workspace,
         ) -> f64 {
-            let residual = Self::linear_prediction(&theta) - observation[0];
+            let residual = Self::linear_prediction(theta) - observation[0];
             0.5 * residual * residual
         }
 
@@ -2632,7 +2632,7 @@ mod tests {
             eta: &Self::Eta,
             _workspace: &mut Self::Workspace,
         ) -> (f64, Self::GradientEta) {
-            let residual = Self::linear_prediction(&eta) - observation[0];
+            let residual = Self::linear_prediction(eta) - observation[0];
             (
                 self.nll(observation, eta, _workspace),
                 (

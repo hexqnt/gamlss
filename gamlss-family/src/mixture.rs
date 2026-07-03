@@ -281,15 +281,14 @@ mod tests {
         let mut workspace = family.workspace();
         let nll = family.nll_eta(y, &eta, &mut workspace);
 
-        let mut normal_workspace = NormalMuSigma::new().workspace();
         let normal = NormalMuSigma::new();
         let weights = [
             eta.logits[0].exp() / (eta.logits[0].exp() + 1.0),
             1.0 / (eta.logits[0].exp() + 1.0),
         ];
         let terms = [
-            weights[0].ln() - normal.nll_eta(y, &eta.components[0], &mut normal_workspace),
-            weights[1].ln() - normal.nll_eta(y, &eta.components[1], &mut normal_workspace),
+            weights[0].ln() - normal.nll_eta(y, &eta.components[0], &mut ()),
+            weights[1].ln() - normal.nll_eta(y, &eta.components[1], &mut ()),
         ];
         let manual = -(terms[0].max(terms[1])
             + ((terms[0] - terms[0].max(terms[1])).exp()
@@ -308,7 +307,7 @@ mod tests {
         let (_, gradient) = family.nll_and_gradient_eta(y, &eta, &mut workspace);
 
         let fd_logit = finite_difference(
-            &family,
+            family,
             &eta,
             y,
             |probe, value| {
@@ -320,7 +319,7 @@ mod tests {
         assert_relative_eq!(gradient.logits[1], 0.0, epsilon = 1.0e-12);
 
         let fd_mu0 = finite_difference(
-            &family,
+            family,
             &eta,
             y,
             |probe, value| {
@@ -352,7 +351,7 @@ mod tests {
     }
 
     fn finite_difference(
-        family: &Mixture<NormalMuSigma, 2>,
+        family: Mixture<NormalMuSigma, 2>,
         eta: &MixtureEta<NormalEta, 2>,
         y: f64,
         mut set: impl FnMut(&mut MixtureEta<NormalEta, 2>, f64),
