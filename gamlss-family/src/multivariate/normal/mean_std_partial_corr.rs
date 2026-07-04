@@ -10,7 +10,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link, Log, ModelError, PositiveLink,
+    Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link, LocationScalePartialCorr,
+    LocationScalePartialCorrSpec, Log, ModelError, Mu, PartialCorrelation, PositiveLink, Sigma,
 };
 use gamlss_special::unit_normal_cdf;
 
@@ -230,7 +231,7 @@ where
     type GradientEta = MvNormalMeanStdPartialCorrEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec = ();
+    type ParamSpec = LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -267,6 +268,55 @@ where
         _workspace: &mut Self::Workspace,
     ) -> (f64, Self::GradientEta) {
         Self::nll_and_gradient_eta_values(observation, eta)
+    }
+}
+
+impl<const D: usize, MuLink, SigmaLink>
+    LocationScalePartialCorrSpec<MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>, D>
+    for LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    type LocationParameter = Mu;
+    type ScaleParameter = Sigma;
+    type PartialCorrelationParameter = PartialCorrelation;
+
+    fn eta_from_location_scale_partial_corr(
+        location: [f64; D],
+        scale: [f64; D],
+        partial_corr: [[f64; D]; D],
+    ) -> MvNormalMeanStdPartialCorrEta<D> {
+        let values = (0..D)
+            .flat_map(|row| (0..row).map(move |col| partial_corr[row][col]))
+            .collect();
+        MvNormalMeanStdPartialCorrEta::new(
+            location,
+            scale,
+            PackedPartialCorr::try_new(values).expect("packed strict-lower length matches D"),
+        )
+    }
+
+    fn location_gradient_part(
+        gradient: &MvNormalMeanStdPartialCorrEta<D>,
+        component: usize,
+    ) -> f64 {
+        gradient.mu[component]
+    }
+
+    fn scale_gradient_part(gradient: &MvNormalMeanStdPartialCorrEta<D>, component: usize) -> f64 {
+        gradient.sigma[component]
+    }
+
+    fn partial_corr_gradient_part(
+        gradient: &MvNormalMeanStdPartialCorrEta<D>,
+        row: usize,
+        col: usize,
+    ) -> f64 {
+        gradient
+            .partial_corr
+            .get(row, col)
+            .expect("valid strict-lower partial-correlation index")
     }
 }
 
@@ -622,7 +672,11 @@ where
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasMarginalCdf};
+    use gamlss_core::{
+        DenseDesign, Family, Gamlss, HasMarginalCdf, LinearPredictorBlock, Mu, NoPenalty,
+        ParameterBlocks, PartialCorrelation, Sigma, StrictLowerTriangularParameterBlock,
+        VectorParameterBlock,
+    };
 
     use super::{
         MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta, PackedPartialCorr,
@@ -769,5 +823,57 @@ mod tests {
         let theta = family.theta(&eta, &mut family.workspace());
         assert_relative_eq!(family.marginal_cdf(0, 0.0, &theta), 0.5, epsilon = 1.0e-12);
         assert_relative_eq!(theta.covariance(2, 2).unwrap(), 16.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn compiled_blocks_are_fit_ready() {
+        let y = [[0.2, -0.3], [1.0, 0.4], [-0.5, 0.8]];
+        let n = y.len();
+        let mu = VectorParameterBlock::<Mu, 2, _, _>::new(
+            [
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let sigma = VectorParameterBlock::<Sigma, 2, _, _>::new(
+            [
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let rho = StrictLowerTriangularParameterBlock::<PartialCorrelation, 2, _, _>::new(
+            vec![LinearPredictorBlock::new(DenseDesign::intercept(n))],
+            NoPenalty,
+            99,
+        );
+        let blocks = ParameterBlocks::new((mu, sigma, rho));
+        let model = Gamlss::try_new_with_observations(
+            MvNormalMeanStdPartialCorrDefault::<2>::new(),
+            blocks,
+            y.as_slice(),
+        )
+        .unwrap();
+        let beta = vec![0.1, -0.2, 0.0, 0.3, 0.15];
+        let eta = model.predict_eta_row(&beta, 0).unwrap();
+
+        assert_eq!(model.nparams(), 5);
+        assert_relative_eq!(eta.mu[0], 0.1);
+        assert_relative_eq!(eta.sigma[1], 0.3);
+        assert_relative_eq!(eta.partial_corr.get(1, 0).unwrap(), 0.15);
+
+        let mut gradient = vec![0.0; beta.len()];
+        model.try_value_gradient_into(&beta, &mut gradient).unwrap();
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += 1.0e-6;
+            let mut minus = beta.clone();
+            minus[index] -= 1.0e-6;
+            let fd = (model.try_value(&plus).unwrap() - model.try_value(&minus).unwrap()) / 2.0e-6;
+            assert_relative_eq!(gradient[index], fd, epsilon = 1.0e-6);
+        }
     }
 }

@@ -86,6 +86,40 @@ impl<F, PVector, PLower, const D: usize> ParamSpec<F> for LocationCholesky<PVect
 {
 }
 
+/// Location vector, marginal scale vector, and strict-lower partial-correlation shape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocationScalePartialCorr<PVector, PScale, PCorr, const D: usize> {
+    marker: PhantomData<(PVector, PScale, PCorr)>,
+}
+
+impl<F, PVector, PScale, PCorr, const D: usize> ParamSpec<F>
+    for LocationScalePartialCorr<PVector, PScale, PCorr, D>
+where
+    F: Family,
+{
+}
+
+/// Baseline-softmax simplex mean plus scalar precision shape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MeanPrecisionSimplex<PMean, PPrecision, const D: usize> {
+    marker: PhantomData<(PMean, PPrecision)>,
+}
+
+impl<F, PMean, PPrecision, const D: usize> ParamSpec<F>
+    for MeanPrecisionSimplex<PMean, PPrecision, D>
+where
+    F: Family,
+{
+}
+
+/// Product of two parameter-shape specifications.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProductSpec<First, Second> {
+    marker: PhantomData<(First, Second)>,
+}
+
+impl<F, First, Second> ParamSpec<F> for ProductSpec<First, Second> where F: Family {}
+
 /// Baseline-softmax simplex parameter-shape specification.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SimplexWeights<P, const C: usize> {
@@ -244,6 +278,125 @@ where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
         ([0.0; D], [[0.0; D]; D])
+    }
+}
+
+/// Shape contract for `mu`, `sigma`, and strict-lower partial-correlation predictors.
+pub trait LocationScalePartialCorrSpec<F, const D: usize>: ParamSpec<F>
+where
+    F: Family,
+{
+    /// Parameter role represented by the location vector block.
+    type LocationParameter: ParameterName;
+    /// Parameter role represented by the marginal scale vector block.
+    type ScaleParameter: ParameterName;
+    /// Parameter role represented by the strict-lower partial-correlation block.
+    type PartialCorrelationParameter: ParameterName;
+
+    /// Assembles link-scale predictors from structured scalar parts.
+    fn eta_from_location_scale_partial_corr(
+        location: [f64; D],
+        scale: [f64; D],
+        partial_corr: [[f64; D]; D],
+    ) -> F::Eta;
+
+    /// Returns one location-vector gradient component.
+    fn location_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+
+    /// Returns one scale-vector gradient component.
+    fn scale_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+
+    /// Returns one strict-lower partial-correlation gradient entry.
+    fn partial_corr_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
+}
+
+/// Shape contract for baseline-softmax simplex logits plus scalar precision.
+pub trait MeanPrecisionSimplexSpec<F, const D: usize>: ParamSpec<F>
+where
+    F: Family,
+{
+    /// Parameter role represented by the simplex mean logits.
+    type MeanParameter: ParameterName;
+    /// Parameter role represented by the scalar precision block.
+    type PrecisionParameter: ParameterName;
+    /// Link used by the scalar precision block.
+    type PrecisionLink;
+
+    /// Assembles link-scale predictors from `D - 1` free logits and scalar precision.
+    fn eta_from_simplex_logits_precision(logits: [f64; D], precision: f64) -> F::Eta;
+
+    /// Returns one free-logit gradient component.
+    fn simplex_logit_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+
+    /// Returns the scalar precision gradient component.
+    fn precision_gradient_part(gradient: &F::GradientEta) -> f64;
+}
+
+/// Shape contract for a location-Cholesky block product with one scalar block.
+pub trait LocationCholeskyScalarSpec<F, const D: usize>: ParamSpec<F>
+where
+    F: Family,
+{
+    /// Parameter role represented by the location vector block.
+    type VectorParameter: ParameterName;
+    /// Parameter role represented by the lower-triangular block.
+    type LowerTriangularParameter: ParameterName;
+    /// Parameter role represented by the scalar block.
+    type ScalarParameter: ParameterName;
+    /// Link used by the scalar block.
+    type ScalarLink;
+
+    /// Assembles link-scale predictors from structured scalar parts.
+    fn eta_from_vector_lower_scalar(vector: [f64; D], lower: [[f64; D]; D], scalar: f64) -> F::Eta;
+
+    /// Returns one vector-component gradient.
+    fn vector_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+
+    /// Returns one lower-triangular gradient entry.
+    fn lower_triangular_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
+
+    /// Returns the scalar gradient.
+    fn scalar_gradient_part(gradient: &F::GradientEta) -> f64;
+}
+
+/// Shape contract for repeated scalar-parameter component specs.
+pub trait RepeatedScalarParamSpec<F, const D: usize, const K: usize>: ParamSpec<F>
+where
+    F: Family,
+    Self::ComponentFamily: Family,
+    <Self::ComponentFamily as Family>::Eta: ParameterParts<K>,
+    <Self::ComponentFamily as Family>::GradientEta: ParameterParts<K>,
+{
+    /// Scalar component family repeated by the outer family.
+    type ComponentFamily: Family;
+    /// Component parameter roles in model-block order.
+    type Params;
+    /// Component links in model-block order.
+    type Links;
+
+    /// Returns the shared component family.
+    fn component_family(family: &F) -> &Self::ComponentFamily;
+
+    /// Assembles outer-family link-scale predictors from component predictors.
+    fn eta_from_components(components: [<Self::ComponentFamily as Family>::Eta; D]) -> F::Eta;
+
+    /// Returns one component gradient from the outer-family gradient value.
+    fn gradient_component(
+        gradient: &F::GradientEta,
+        component: usize,
+    ) -> &<Self::ComponentFamily as Family>::GradientEta;
+
+    /// Sample-aware initial predictors for one repeated component.
+    fn initial_component_eta_from_observations<'obs, Obs>(
+        _family: &F,
+        _obs: &'obs Obs,
+        _component: usize,
+    ) -> <Self::ComponentFamily as Family>::Eta
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+        Self::ComponentFamily: InitialEtaFromObservations<K>,
+    {
+        <Self::ComponentFamily as Family>::Eta::from_array([0.0; K])
     }
 }
 

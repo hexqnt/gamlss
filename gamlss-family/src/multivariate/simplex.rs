@@ -4,7 +4,10 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, FixedDimensionalFamily, Log, PositiveLink};
+use gamlss_core::{
+    Family, FixedDimensionalFamily, Log, Mean, MeanPrecisionSimplex, MeanPrecisionSimplexSpec,
+    PositiveLink, Precision,
+};
 use gamlss_special::{digamma, ln_gamma};
 
 const SIMPLEX_TOLERANCE: f64 = 1.0e-8;
@@ -110,7 +113,7 @@ where
     type GradientEta = DirichletMeanPrecisionEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec = ();
+    type ParamSpec = MeanPrecisionSimplex<Mean, Precision, D>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -147,6 +150,35 @@ where
         _workspace: &mut Self::Workspace,
     ) -> (f64, Self::GradientEta) {
         Self::nll_and_gradient_eta_values(observation, eta)
+    }
+}
+
+impl<const D: usize, PrecisionLink>
+    MeanPrecisionSimplexSpec<DirichletMeanPrecision<D, PrecisionLink>, D>
+    for MeanPrecisionSimplex<Mean, Precision, D>
+where
+    PrecisionLink: PositiveLink<f64>,
+{
+    type MeanParameter = Mean;
+    type PrecisionParameter = Precision;
+    type PrecisionLink = PrecisionLink;
+
+    fn eta_from_simplex_logits_precision(
+        logits: [f64; D],
+        precision: f64,
+    ) -> DirichletMeanPrecisionEta<D> {
+        DirichletMeanPrecisionEta::new(logits, precision)
+    }
+
+    fn simplex_logit_gradient_part(
+        gradient: &DirichletMeanPrecisionEta<D>,
+        component: usize,
+    ) -> f64 {
+        gradient.logits[component]
+    }
+
+    fn precision_gradient_part(gradient: &DirichletMeanPrecisionEta<D>) -> f64 {
+        gradient.precision
     }
 }
 
@@ -272,7 +304,10 @@ fn softmax_baseline<const D: usize>(mut logits: [f64; D]) -> [f64; D] {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::Family;
+    use gamlss_core::{
+        DenseDesign, Family, Gamlss, LinearPredictorBlock, Mean, NoPenalty, ParameterBlock,
+        ParameterBlocks, Precision, SimplexLogitParameterBlock,
+    };
 
     use super::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
 
@@ -358,5 +393,49 @@ mod tests {
         assert!(nll.is_infinite());
         assert!(gradient.logits.iter().all(|value| value.is_nan()));
         assert!(gradient.precision.is_nan());
+    }
+
+    #[test]
+    fn compiled_blocks_are_fit_ready_with_baseline_logits() {
+        let y = [[0.2, 0.3, 0.5], [0.1, 0.7, 0.2], [0.4, 0.2, 0.4]];
+        let n = y.len();
+        let mean = SimplexLogitParameterBlock::<Mean, 3, _, _>::new(
+            vec![
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let precision = ParameterBlock::<Precision, gamlss_core::Log, _, _>::linear(
+            DenseDesign::intercept(n),
+            NoPenalty,
+            99,
+        );
+        let blocks = ParameterBlocks::new((mean, precision));
+        let model = Gamlss::try_new_with_observations(
+            DirichletMeanPrecision::<3>::new(),
+            blocks,
+            y.as_slice(),
+        )
+        .unwrap();
+        let beta = vec![0.2, -0.1, 2.0_f64.ln()];
+        let eta = model.predict_eta_row(&beta, 0).unwrap();
+
+        assert_eq!(model.nparams(), 3);
+        assert_relative_eq!(eta.logits[0], 0.2);
+        assert_relative_eq!(eta.logits[1], -0.1);
+        assert_relative_eq!(eta.logits[2], 0.0);
+
+        let mut gradient = vec![0.0; beta.len()];
+        model.try_value_gradient_into(&beta, &mut gradient).unwrap();
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += 1.0e-6;
+            let mut minus = beta.clone();
+            minus[index] -= 1.0e-6;
+            let fd = (model.try_value(&plus).unwrap() - model.try_value(&minus).unwrap()) / 2.0e-6;
+            assert_relative_eq!(gradient[index], fd, epsilon = 1.0e-6);
+        }
     }
 }

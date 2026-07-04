@@ -9,7 +9,9 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link, Log, LogPlus, PositiveLink,
+    CholeskyScale, Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link,
+    LocationCholesky, LocationCholeskyScalarSpec, Log, LogPlus, Mu, PositiveLink, ProductSpec,
+    ScalarParams, Tau,
 };
 use gamlss_special::{digamma, ln_gamma, student_t_cdf_standardized};
 
@@ -169,7 +171,8 @@ where
     type GradientEta = MvStudentTCholeskyEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec = ();
+    type ParamSpec =
+        ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -206,6 +209,50 @@ where
         _workspace: &mut Self::Workspace,
     ) -> (f64, Self::GradientEta) {
         Self::nll_and_gradient_eta_values(observation, *eta)
+    }
+}
+
+impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
+    LocationCholeskyScalarSpec<
+        MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>,
+        D,
+    > for ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>
+where
+    MuLink: Link<f64>,
+    DiagonalLink: PositiveLink<f64>,
+    OffDiagonalLink: Link<f64>,
+    TauLink: Link<f64>,
+{
+    type VectorParameter = Mu;
+    type LowerTriangularParameter = CholeskyScale;
+    type ScalarParameter = Tau;
+    type ScalarLink = TauLink;
+
+    fn eta_from_vector_lower_scalar(
+        vector: [f64; D],
+        lower: [[f64; D]; D],
+        scalar: f64,
+    ) -> MvStudentTCholeskyEta<D> {
+        MvStudentTCholeskyEta::new(vector, FixedLowerTriangular::from_lower_rows(lower), scalar)
+    }
+
+    fn vector_gradient_part(gradient: &MvStudentTCholeskyEta<D>, component: usize) -> f64 {
+        gradient.mu[component]
+    }
+
+    fn lower_triangular_gradient_part(
+        gradient: &MvStudentTCholeskyEta<D>,
+        row: usize,
+        col: usize,
+    ) -> f64 {
+        gradient
+            .cholesky
+            .get(row, col)
+            .expect("valid lower-triangular Cholesky index")
+    }
+
+    fn scalar_gradient_part(gradient: &MvStudentTCholeskyEta<D>) -> f64 {
+        gradient.tau
     }
 }
 
@@ -400,7 +447,11 @@ fn lower<const D: usize>(cholesky: &FixedLowerTriangular<D>, row: usize, col: us
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasMarginalCdf};
+    use gamlss_core::{
+        CholeskyScale, DenseDesign, Family, Gamlss, HasMarginalCdf, LinearPredictorBlock,
+        LowerTriangularParameterBlock, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Tau,
+        VectorParameterBlock,
+    };
 
     use super::{MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta};
     use crate::multivariate::normal::{
@@ -533,5 +584,58 @@ mod tests {
         );
         assert_relative_eq!(family.marginal_cdf(0, 0.0, &theta), 0.5, epsilon = 1.0e-12);
         assert_eq!(theta.scale_covariance(1, 1), Some(25.0));
+    }
+
+    #[test]
+    fn compiled_blocks_are_fit_ready() {
+        let y = [[0.2, -0.3], [1.0, 0.4], [-0.5, 0.8]];
+        let n = y.len();
+        let mu = VectorParameterBlock::<Mu, 2, _, _>::new(
+            [
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let cholesky = LowerTriangularParameterBlock::<CholeskyScale, 2, _, _>::new(
+            vec![
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            99,
+        );
+        let tau = ParameterBlock::<Tau, gamlss_core::LogPlus<2>, _, _>::linear(
+            DenseDesign::intercept(n),
+            NoPenalty,
+            99,
+        );
+        let blocks = ParameterBlocks::new((mu, cholesky, tau));
+        let model = Gamlss::try_new_with_observations(
+            MvStudentTCholeskyDefault::<2>::new(),
+            blocks,
+            y.as_slice(),
+        )
+        .unwrap();
+        let beta = vec![0.1, -0.2, 0.0, 0.2, -0.1, 1.0];
+        let eta = model.predict_eta_row(&beta, 0).unwrap();
+
+        assert_eq!(model.nparams(), 6);
+        assert_relative_eq!(eta.mu[0], 0.1);
+        assert_relative_eq!(eta.cholesky.get(1, 0).unwrap(), 0.2);
+        assert_relative_eq!(eta.tau, 1.0);
+
+        let mut gradient = vec![0.0; beta.len()];
+        model.try_value_gradient_into(&beta, &mut gradient).unwrap();
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += 1.0e-6;
+            let mut minus = beta.clone();
+            minus[index] -= 1.0e-6;
+            let fd = (model.try_value(&plus).unwrap() - model.try_value(&minus).unwrap()) / 2.0e-6;
+            assert_relative_eq!(gradient[index], fd, epsilon = 1.0e-6);
+        }
     }
 }

@@ -263,6 +263,14 @@ impl ParameterName for CholeskyScale {
     const NAME: &'static str = "cholesky";
 }
 
+/// Marker for strict-lower partial-correlation predictors.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PartialCorrelation;
+
+impl ParameterName for PartialCorrelation {
+    const NAME: &'static str = "partial_corr";
+}
+
 /// Typed coefficient block for a single distribution parameter.
 ///
 /// `P` specifies the parameter role, `L` specifies the link function, `X` holds
@@ -366,6 +374,11 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     }
 
     /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
     ///
     /// # Panics
     ///
@@ -502,6 +515,11 @@ impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty> {
     }
 
     /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
     ///
     /// # Panics
     ///
@@ -793,6 +811,412 @@ where
     }
 }
 
+/// Typed coefficient block for a packed strict-lower triangular matrix parameter.
+///
+/// Predictors are stored in row-major strict-lower order:
+/// `(1,0), (2,0), (2,1), (3,0), ...`. This matches partial-correlation
+/// parameterizations where diagonal entries are structural constants and must
+/// not receive predictors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrictLowerTriangularParameterBlock<P, const D: usize, X, Penalty> {
+    x: Vec<X>,
+    penalty: Penalty,
+    offset: usize,
+    len: usize,
+    entry_offsets: Vec<usize>,
+    marker: PhantomData<P>,
+}
+
+impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+    X: PredictorBlock,
+{
+    /// Creates a strict-lower block from packed row-major predictors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x.len()` is not `D * (D - 1) / 2` or if the sum of entry
+    /// predictor lengths does not fit in `usize`.
+    #[must_use]
+    pub fn new(x: Vec<X>, penalty: Penalty, offset: usize) -> Self {
+        Self::try_new(x, penalty, offset)
+            .expect("strict-lower block must have D * (D - 1) / 2 predictors")
+    }
+
+    /// Creates a strict-lower block from packed row-major predictors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] if `x.len()` is not `D * (D - 1) / 2`.
+    /// Returns [`ModelError::ArithmeticOverflow`] if the packed length or total
+    /// coefficient length does not fit in `usize`.
+    pub fn try_new(x: Vec<X>, penalty: Penalty, offset: usize) -> Result<Self, ModelError> {
+        let expected = strict_lower_triangular_len(D).ok_or(ModelError::ArithmeticOverflow {
+            context: "strict-lower predictor count",
+        })?;
+        if x.len() != expected {
+            return Err(ModelError::InvalidParameter {
+                parameter: P::NAME,
+                expected: "D * (D - 1) / 2 predictor blocks",
+            });
+        }
+
+        let mut entry_offsets = vec![0; expected];
+        let mut len: usize = 0;
+        for (index, predictor) in x.iter().enumerate() {
+            entry_offsets[index] = len;
+            len = len
+                .checked_add(predictor.nparams())
+                .ok_or(ModelError::ArithmeticOverflow {
+                    context: "strict-lower parameter block length",
+                })?;
+        }
+
+        Ok(Self {
+            x,
+            penalty,
+            offset,
+            len,
+            entry_offsets,
+            marker: PhantomData,
+        })
+    }
+}
+
+impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X, Penalty> {
+    /// Returns the packed strict-lower length for dimension `D`.
+    #[must_use]
+    #[inline]
+    pub const fn packed_len() -> Option<usize> {
+        strict_lower_triangular_len(D)
+    }
+
+    /// Returns the packed row-major strict-lower index for `(row, col)`.
+    #[must_use]
+    #[inline]
+    pub const fn packed_index(row: usize, col: usize) -> Option<usize> {
+        if col < row && row < D {
+            match row.checked_mul(row.saturating_sub(1)) {
+                Some(product) => match (product / 2).checked_add(col) {
+                    Some(index) => Some(index),
+                    None => None,
+                },
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Returns a copy of the block with a new offset.
+    #[must_use]
+    #[inline]
+    pub const fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Returns all packed strict-lower predictors.
+    #[must_use]
+    #[inline]
+    pub fn entries(&self) -> &[X] {
+        &self.x
+    }
+
+    /// Returns the predictor for strict-lower entry `(row, col)`.
+    #[must_use]
+    #[inline]
+    pub fn entry(&self, row: usize, col: usize) -> Option<&X> {
+        Self::packed_index(row, col).and_then(|index| self.x.get(index))
+    }
+
+    /// Penalty applied to the block's concatenated coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn penalty(&self) -> &Penalty {
+        &self.penalty
+    }
+
+    /// Coefficient range of the full strict-lower block.
+    #[must_use]
+    #[inline]
+    pub const fn range(&self) -> Range<usize> {
+        self.offset..self.end()
+    }
+
+    /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
+    #[must_use]
+    #[inline]
+    pub const fn end(&self) -> usize {
+        self.offset
+            .checked_add(self.len)
+            .expect("strict-lower parameter block range end must fit in usize")
+    }
+
+    /// Number of coefficients in the full strict-lower block.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// `true` if the block contains no coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Local coefficient range for one strict-lower entry.
+    #[must_use]
+    #[inline]
+    pub fn entry_local_range(&self, row: usize, col: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let index = Self::packed_index(row, col)?;
+        let start = *self.entry_offsets.get(index)?;
+        let len = self.x.get(index)?.nparams();
+        Some(start..start + len)
+    }
+
+    /// Absolute beta range for one strict-lower entry.
+    #[must_use]
+    #[inline]
+    pub fn entry_range(&self, row: usize, col: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let range = self.entry_local_range(row, col)?;
+        let start = self.offset.checked_add(range.start)?;
+        let end = self.offset.checked_add(range.end)?;
+        Some(start..end)
+    }
+}
+
+impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    /// Validates and returns the full block coefficient range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
+    /// in `usize`.
+    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+        let end = self
+            .offset
+            .checked_add(self.len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: self.offset,
+                len: self.len,
+            })?;
+        Ok(self.offset..end)
+    }
+}
+
+/// Typed coefficient block for `D - 1` baseline-softmax logits of a simplex parameter.
+///
+/// The last simplex logit is fixed to zero and is not represented by a
+/// predictor. This makes baseline-softmax models identifiable at the block
+/// layer instead of relying on family constructors to normalize an extra free
+/// coefficient.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimplexLogitParameterBlock<P, const D: usize, X, Penalty> {
+    x: Vec<X>,
+    penalty: Penalty,
+    offset: usize,
+    len: usize,
+    component_offsets: Vec<usize>,
+    marker: PhantomData<P>,
+}
+
+impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+    X: PredictorBlock,
+{
+    /// Creates a simplex-logit block from one predictor per free baseline logit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x.len()` is not `D - 1` or if the sum of component predictor
+    /// lengths does not fit in `usize`.
+    #[must_use]
+    pub fn new(x: Vec<X>, penalty: Penalty, offset: usize) -> Self {
+        Self::try_new(x, penalty, offset).expect("simplex-logit block must have D - 1 predictors")
+    }
+
+    /// Creates a simplex-logit block from one predictor per free baseline logit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] if `x.len()` is not `D - 1`.
+    /// Returns [`ModelError::ArithmeticOverflow`] if total coefficient length
+    /// does not fit in `usize`.
+    pub fn try_new(x: Vec<X>, penalty: Penalty, offset: usize) -> Result<Self, ModelError> {
+        let expected = D.checked_sub(1).ok_or(ModelError::InvalidParameter {
+            parameter: P::NAME,
+            expected: "D >= 1",
+        })?;
+        if x.len() != expected {
+            return Err(ModelError::InvalidParameter {
+                parameter: P::NAME,
+                expected: "D - 1 predictor blocks",
+            });
+        }
+
+        let mut component_offsets = vec![0; expected];
+        let mut len: usize = 0;
+        for (index, predictor) in x.iter().enumerate() {
+            component_offsets[index] = len;
+            len = len
+                .checked_add(predictor.nparams())
+                .ok_or(ModelError::ArithmeticOverflow {
+                    context: "simplex-logit parameter block length",
+                })?;
+        }
+
+        Ok(Self {
+            x,
+            penalty,
+            offset,
+            len,
+            component_offsets,
+            marker: PhantomData,
+        })
+    }
+}
+
+impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty> {
+    /// Number of free logits represented by the block.
+    #[must_use]
+    #[inline]
+    pub const fn free_len() -> Option<usize> {
+        D.checked_sub(1)
+    }
+
+    /// Returns a copy of the block with a new offset.
+    #[must_use]
+    #[inline]
+    pub const fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Returns all free-logit predictors.
+    #[must_use]
+    #[inline]
+    pub fn logits(&self) -> &[X] {
+        &self.x
+    }
+
+    /// Returns the predictor for a free logit component.
+    #[must_use]
+    #[inline]
+    pub fn logit(&self, component: usize) -> Option<&X> {
+        self.x.get(component)
+    }
+
+    /// Penalty applied to the block's concatenated coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn penalty(&self) -> &Penalty {
+        &self.penalty
+    }
+
+    /// Coefficient range of the full simplex-logit block.
+    #[must_use]
+    #[inline]
+    pub const fn range(&self) -> Range<usize> {
+        self.offset..self.end()
+    }
+
+    /// Index immediately after the last coefficient of the block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
+    /// recoverable validation.
+    #[must_use]
+    #[inline]
+    pub const fn end(&self) -> usize {
+        self.offset
+            .checked_add(self.len)
+            .expect("simplex-logit parameter block range end must fit in usize")
+    }
+
+    /// Number of coefficients in the full simplex-logit block.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// `true` if the block contains no coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Local coefficient range for one free logit.
+    #[must_use]
+    #[inline]
+    pub fn logit_local_range(&self, component: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let start = *self.component_offsets.get(component)?;
+        let len = self.x.get(component)?.nparams();
+        Some(start..start + len)
+    }
+
+    /// Absolute beta range for one free logit.
+    #[must_use]
+    #[inline]
+    pub fn logit_range(&self, component: usize) -> Option<Range<usize>>
+    where
+        X: PredictorBlock,
+    {
+        let range = self.logit_local_range(component)?;
+        let start = self.offset.checked_add(range.start)?;
+        let end = self.offset.checked_add(range.end)?;
+        Some(start..end)
+    }
+}
+
+impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    /// Validates and returns the full block coefficient range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
+    /// in `usize`.
+    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+        let end = self
+            .offset
+            .checked_add(self.len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: self.offset,
+                len: self.len,
+            })?;
+        Ok(self.offset..end)
+    }
+}
+
 /// Stable public name for a distribution parameter marker.
 pub trait ParameterName {
     /// Name used in parameter layouts and unpacked coefficient views.
@@ -824,6 +1248,16 @@ const fn lower_triangular_len(dimension: usize) -> Option<usize> {
             None => None,
         },
         None => None,
+    }
+}
+
+const fn strict_lower_triangular_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_sub(1) {
+        Some(previous) => match dimension.checked_mul(previous) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => Some(0),
     }
 }
 
@@ -972,6 +1406,129 @@ where
 
     fn assigned_name(&self) -> &'static str {
         P::NAME
+    }
+}
+
+impl<P, const D: usize, X, Penalty> OffsetAssignable
+    for StrictLowerTriangularParameterBlock<P, D, X, Penalty>
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<P, const D: usize, X, Penalty> TryOffsetAssignable
+    for StrictLowerTriangularParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.offset
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        P::NAME
+    }
+}
+
+impl<P, const D: usize, X, Penalty> OffsetAssignable
+    for SimplexLogitParameterBlock<P, D, X, Penalty>
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<P, const D: usize, X, Penalty> TryOffsetAssignable
+    for SimplexLogitParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    fn with_assigned_offset(self, offset: usize) -> Self {
+        self.with_offset(offset)
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.offset
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.len()
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        P::NAME
+    }
+}
+
+impl<B, const D: usize> OffsetAssignable for [B; D]
+where
+    B: OffsetAssignable,
+{
+    fn with_assigned_offset(self, start: usize) -> Self {
+        let mut offset = start;
+        self.map(|block| {
+            let block = block.with_assigned_offset(offset);
+            offset = offset
+                .checked_add(block.assigned_len())
+                .expect("repeated parameter block layout must fit in usize");
+            block
+        })
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.iter()
+            .map(OffsetAssignable::assigned_len)
+            .try_fold(0usize, usize::checked_add)
+            .expect("repeated parameter block length must fit in usize")
+    }
+}
+
+impl<B, const D: usize> TryOffsetAssignable for [B; D]
+where
+    B: TryOffsetAssignable,
+{
+    fn with_assigned_offset(self, start: usize) -> Self {
+        let mut offset = start;
+        self.map(|block| {
+            let block = block.with_assigned_offset(offset);
+            offset = offset
+                .checked_add(block.assigned_len())
+                .expect("repeated parameter block layout must fit in usize");
+            block
+        })
+    }
+
+    fn assigned_offset(&self) -> usize {
+        self.first().map_or(0, TryOffsetAssignable::assigned_offset)
+    }
+
+    fn assigned_len(&self) -> usize {
+        self.iter()
+            .map(TryOffsetAssignable::assigned_len)
+            .try_fold(0usize, usize::checked_add)
+            .expect("repeated parameter block length must fit in usize")
+    }
+
+    fn assigned_name(&self) -> &'static str {
+        self.first()
+            .map_or("repeated", TryOffsetAssignable::assigned_name)
     }
 }
 

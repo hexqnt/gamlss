@@ -1,6 +1,9 @@
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
-use gamlss_core::{Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf, Repeated};
+use gamlss_core::{
+    Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf, InitialEtaFromObservations,
+    ObservationView, ParameterParts, Repeated, RepeatedScalarParamSpec, ScalarParamSpec,
+};
 
 /// Independent fixed-size product of one scalar family.
 ///
@@ -156,6 +159,54 @@ impl<F, const D: usize> FixedDimensionalFamily<D> for IndependentVec<F, D> where
 {
 }
 
+impl<F, Spec, Params, Links, const D: usize, const K: usize>
+    RepeatedScalarParamSpec<IndependentVec<F, D>, D, K> for Repeated<Spec, D>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+    Spec: ScalarParamSpec<F, K, Params = Params, Links = Links>,
+    F::Eta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
+{
+    type ComponentFamily = F;
+    type Params = Params;
+    type Links = Links;
+
+    fn component_family(family: &IndependentVec<F, D>) -> &Self::ComponentFamily {
+        family.component()
+    }
+
+    fn eta_from_components(components: [F::Eta; D]) -> <IndependentVec<F, D> as Family>::Eta {
+        components
+    }
+
+    fn gradient_component(
+        gradient: &<IndependentVec<F, D> as Family>::GradientEta,
+        component: usize,
+    ) -> &F::GradientEta {
+        &gradient[component]
+    }
+
+    fn initial_component_eta_from_observations<'obs, Obs>(
+        family: &IndependentVec<F, D>,
+        obs: &'obs Obs,
+        component: usize,
+    ) -> F::Eta
+    where
+        Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
+        F: InitialEtaFromObservations<K>,
+    {
+        let mut values = Vec::with_capacity(obs.len());
+        let mut weights = Vec::with_capacity(obs.len());
+        for row in 0..obs.len() {
+            values.push(obs.observation_at(row)[component]);
+            weights.push(obs.weight_at(row));
+        }
+        family
+            .component()
+            .initial_eta_from_observations(&(values.as_slice(), weights.as_slice()))
+    }
+}
+
 impl<F, const D: usize> HasCdf for IndependentVec<F, D>
 where
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
@@ -201,7 +252,10 @@ where
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf, HasMarginalCdf};
+    use gamlss_core::{
+        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, Identity, InitialEtaFromObservations,
+        Log, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
+    };
 
     use super::IndependentVec;
     use crate::{NormalEta, NormalMuSigma, NormalTheta};
@@ -285,5 +339,59 @@ mod tests {
             scalar.cdf(1.5, &theta[1])
         );
         assert!(family.marginal_cdf(2, 1.5, &theta).is_nan());
+    }
+
+    #[test]
+    fn repeated_scalar_component_specs_are_fit_ready() {
+        let y = [[0.2, -0.3], [1.0, 0.4], [-0.5, 0.8]];
+        let n = y.len();
+        let mu = [
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+        ];
+        let sigma = [
+            ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+            ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+        ];
+        let blocks = ParameterBlocks::new((mu, sigma));
+        let model = Gamlss::try_new_with_observations(
+            IndependentVec::<NormalMuSigma, 2>::default(),
+            blocks,
+            y.as_slice(),
+        )
+        .unwrap();
+        let beta = vec![0.1, -0.2, 0.0, 0.3];
+        let eta = model.predict_eta_row(&beta, 0).unwrap();
+
+        assert_eq!(model.nparams(), 4);
+        assert_relative_eq!(eta[0].mu, 0.1);
+        assert_relative_eq!(eta[1].mu, -0.2);
+        assert_relative_eq!(eta[1].sigma, 0.3);
+
+        let scalar = NormalMuSigma::new();
+        let component_0 = [0.2, 1.0, -0.5];
+        let component_1 = [-0.3, 0.4, 0.8];
+        let expected_0 = scalar.initial_eta_from_observations(&component_0.as_slice());
+        let expected_1 = scalar.initial_eta_from_observations(&component_1.as_slice());
+        assert_eq!(
+            model.initial_parameters().unwrap(),
+            vec![
+                expected_0.mu,
+                expected_1.mu,
+                expected_0.sigma,
+                expected_1.sigma
+            ]
+        );
+
+        let mut gradient = vec![0.0; beta.len()];
+        model.try_value_gradient_into(&beta, &mut gradient).unwrap();
+        for index in 0..beta.len() {
+            let mut plus = beta.clone();
+            plus[index] += 1.0e-6;
+            let mut minus = beta.clone();
+            minus[index] -= 1.0e-6;
+            let fd = (model.try_value(&plus).unwrap() - model.try_value(&minus).unwrap()) / 2.0e-6;
+            assert_relative_eq!(gradient[index], fd, epsilon = 1.0e-6);
+        }
     }
 }
