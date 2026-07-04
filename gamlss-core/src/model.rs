@@ -12,8 +12,8 @@ use crate::{
 };
 
 pub use layout::{
-    ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPart, ParameterSlice,
-    TrainingDiagnostics, UnpackedParameters,
+    ParameterAxis, ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPath,
+    ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
 pub use observation::{FiniteScalarObservations, ObservationView};
 pub use workspace::{GradientWorkspace, ModelWorkspace};
@@ -1627,26 +1627,12 @@ where
             workspace.prepare_row_gradient(index, nobs);
         }
 
-        for component in 0..D {
-            let len = self
-                .0
-                .component_range(component)
-                .expect("validated vector component has a coefficient range")
-                .len();
-            let _ = workspace.local_gradient_mut(component, len);
-        }
-
-        for row in 0..D {
-            for col in 0..=row {
-                let len = self
-                    .1
-                    .entry_range(row, col)
-                    .expect("validated lower-triangular entry has a coefficient range")
-                    .len();
-                let _ =
-                    workspace.local_gradient_mut(lower_workspace_index::<PLower, D>(row, col), len);
-            }
-        }
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
 
         workspace
     }
@@ -1808,32 +1794,12 @@ where
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        let mut index = 0;
-        for component in 0..D {
-            let range = self
-                .0
-                .component_range(component)
-                .expect("validated vector component has a coefficient range");
-            visit(
-                index,
-                ParameterDescriptor::vector_component(PVector::NAME, component, range),
-            );
-            index += 1;
-        }
-
-        for row in 0..D {
-            for col in 0..=row {
-                let range = self
-                    .1
-                    .entry_range(row, col)
-                    .expect("validated lower-triangular entry has a coefficient range");
-                visit(
-                    index,
-                    ParameterDescriptor::lower_triangular_entry(PLower::NAME, row, col, range),
-                );
-                index += 1;
-            }
-        }
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
     }
 
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
@@ -1995,19 +1961,15 @@ where
         for index in 0..scalar_count {
             workspace.prepare_row_gradient(index, nobs);
         }
-        for component in 0..D {
-            let len = self.0.component_range(component).unwrap().len();
-            let _ = workspace.local_gradient_mut(component, len);
-            let len = self.1.component_range(component).unwrap().len();
-            let _ = workspace.local_gradient_mut(D + component, len);
-        }
-        for row in 0..D {
-            for col in 0..row {
-                let len = self.2.entry_range(row, col).unwrap().len();
-                let _ = workspace
-                    .local_gradient_mut(partial_corr_workspace_index::<PCorr, D>(row, col), len);
-            }
-        }
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_vector_parameter_streams(&self.1, D, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_strict_lower_triangular_parameter_streams(&self.2, D + D, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
         workspace
     }
 
@@ -2182,43 +2144,15 @@ where
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        let mut index = 0;
-        for component in 0..D {
-            visit(
-                index,
-                ParameterDescriptor::vector_component(
-                    PLocation::NAME,
-                    component,
-                    self.0.component_range(component).unwrap(),
-                ),
-            );
-            index += 1;
-        }
-        for component in 0..D {
-            visit(
-                index,
-                ParameterDescriptor::vector_component(
-                    PScale::NAME,
-                    component,
-                    self.1.component_range(component).unwrap(),
-                ),
-            );
-            index += 1;
-        }
-        for row in 0..D {
-            for col in 0..row {
-                visit(
-                    index,
-                    ParameterDescriptor::lower_triangular_entry(
-                        PCorr::NAME,
-                        row,
-                        col,
-                        self.2.entry_range(row, col).unwrap(),
-                    ),
-                );
-                index += 1;
-            }
-        }
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_vector_parameter_streams(&self.1, D, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_strict_lower_triangular_parameter_streams(&self.2, D + D, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
     }
 
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
@@ -2355,11 +2289,12 @@ where
         for index in 0..scalar_count {
             workspace.prepare_row_gradient(index, nobs);
         }
-        for component in 0..D.saturating_sub(1) {
-            let _ = workspace
-                .local_gradient_mut(component, self.0.logit_range(component).unwrap().len());
-        }
-        let _ = workspace.local_gradient_mut(D - 1, self.1.len());
+        visit_simplex_logit_parameter_streams(&self.0, 0, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_scalar_parameter_stream(&self.1, D - 1, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
         workspace
     }
 
@@ -2497,22 +2432,12 @@ where
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        let mut index = 0;
-        for component in 0..D.saturating_sub(1) {
-            visit(
-                index,
-                ParameterDescriptor::vector_component(
-                    PMean::NAME,
-                    component,
-                    self.0.logit_range(component).unwrap(),
-                ),
-            );
-            index += 1;
-        }
-        visit(
-            index,
-            ParameterDescriptor::whole(PPrecision::NAME, self.1.range()),
-        );
+        visit_simplex_logit_parameter_streams(&self.0, 0, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_scalar_parameter_stream(&self.1, D - 1, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
     }
 
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
@@ -2681,19 +2606,15 @@ where
         for index in 0..scalar_count {
             workspace.prepare_row_gradient(index, nobs);
         }
-        for component in 0..D {
-            let _ = workspace
-                .local_gradient_mut(component, self.0.component_range(component).unwrap().len());
-        }
-        for row in 0..D {
-            for col in 0..=row {
-                let _ = workspace.local_gradient_mut(
-                    lower_workspace_index::<PLower, D>(row, col),
-                    self.1.entry_range(row, col).unwrap().len(),
-                );
-            }
-        }
-        let _ = workspace.local_gradient_mut(scalar_count - 1, self.2.len());
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
+        visit_scalar_parameter_stream(&self.2, scalar_count - 1, |stream| {
+            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
+        });
         workspace
     }
 
@@ -2868,36 +2789,17 @@ where
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        let mut index = 0;
-        for component in 0..D {
-            visit(
-                index,
-                ParameterDescriptor::vector_component(
-                    PVector::NAME,
-                    component,
-                    self.0.component_range(component).unwrap(),
-                ),
-            );
-            index += 1;
-        }
-        for row in 0..D {
-            for col in 0..=row {
-                visit(
-                    index,
-                    ParameterDescriptor::lower_triangular_entry(
-                        PLower::NAME,
-                        row,
-                        col,
-                        self.1.entry_range(row, col).unwrap(),
-                    ),
-                );
-                index += 1;
-            }
-        }
-        visit(
-            index,
-            ParameterDescriptor::whole(PScalar::NAME, self.2.range()),
-        );
+        let scalar_index = D + LowerTriangularParameterBlock::<PLower, D, (), ()>::packed_len()
+            .expect("D * (D + 1) / 2 must fit");
+        visit_vector_parameter_streams(&self.0, 0, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
+        visit_scalar_parameter_stream(&self.2, scalar_index, |stream| {
+            visit(stream.index, stream.into_descriptor());
+        });
     }
 
     fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
@@ -3222,6 +3124,135 @@ where
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParameterStream {
+    index: usize,
+    role: &'static str,
+    path_axis: Option<ParameterAxis>,
+    range: Range<usize>,
+}
+
+impl ParameterStream {
+    fn into_descriptor(self) -> ParameterDescriptor {
+        ParameterDescriptor::new(
+            self.role,
+            self.path_axis
+                .map_or_else(ParameterPath::whole, ParameterPath::from_axis),
+            self.range,
+        )
+    }
+}
+
+fn visit_scalar_parameter_stream<P, L, X, Penalty, V>(
+    block: &ParameterBlock<P, L, X, Penalty>,
+    index: usize,
+    mut visit: V,
+) where
+    P: ParameterName,
+    V: FnMut(ParameterStream),
+{
+    visit(ParameterStream {
+        index,
+        role: P::NAME,
+        path_axis: None,
+        range: block.range(),
+    });
+}
+
+fn visit_vector_parameter_streams<P, const D: usize, X, Penalty, V>(
+    block: &VectorParameterBlock<P, D, X, Penalty>,
+    start_index: usize,
+    mut visit: V,
+) where
+    P: ParameterName,
+    X: PredictorBlock,
+    V: FnMut(ParameterStream),
+{
+    for component in 0..D {
+        visit(ParameterStream {
+            index: start_index + component,
+            role: P::NAME,
+            path_axis: Some(ParameterAxis::Vector { component }),
+            range: block
+                .component_range(component)
+                .expect("validated vector component has a coefficient range"),
+        });
+    }
+}
+
+fn visit_lower_triangular_parameter_streams<P, const D: usize, X, Penalty, V>(
+    block: &LowerTriangularParameterBlock<P, D, X, Penalty>,
+    start_index: usize,
+    mut visit: V,
+) where
+    P: ParameterName,
+    X: PredictorBlock,
+    V: FnMut(ParameterStream),
+{
+    for row in 0..D {
+        for col in 0..=row {
+            let packed_index =
+                LowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
+                    .expect("row and col are valid lower-triangular indices");
+            visit(ParameterStream {
+                index: start_index + packed_index,
+                role: P::NAME,
+                path_axis: Some(ParameterAxis::Lower { row, col }),
+                range: block
+                    .entry_range(row, col)
+                    .expect("validated lower-triangular entry has a coefficient range"),
+            });
+        }
+    }
+}
+
+fn visit_strict_lower_triangular_parameter_streams<P, const D: usize, X, Penalty, V>(
+    block: &StrictLowerTriangularParameterBlock<P, D, X, Penalty>,
+    start_index: usize,
+    mut visit: V,
+) where
+    P: ParameterName,
+    X: PredictorBlock,
+    V: FnMut(ParameterStream),
+{
+    for row in 0..D {
+        for col in 0..row {
+            let packed_index =
+                StrictLowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
+                    .expect("row and col are valid strict-lower indices");
+            visit(ParameterStream {
+                index: start_index + packed_index,
+                role: P::NAME,
+                path_axis: Some(ParameterAxis::StrictLower { row, col }),
+                range: block
+                    .entry_range(row, col)
+                    .expect("validated strict-lower entry has a coefficient range"),
+            });
+        }
+    }
+}
+
+fn visit_simplex_logit_parameter_streams<P, const D: usize, X, Penalty, V>(
+    block: &SimplexLogitParameterBlock<P, D, X, Penalty>,
+    start_index: usize,
+    mut visit: V,
+) where
+    P: ParameterName,
+    X: PredictorBlock,
+    V: FnMut(ParameterStream),
+{
+    for class in 0..D.saturating_sub(1) {
+        visit(ParameterStream {
+            index: start_index + class,
+            role: P::NAME,
+            path_axis: Some(ParameterAxis::SimplexLogit { class }),
+            range: block
+                .logit_range(class)
+                .expect("validated simplex logit has a coefficient range"),
+        });
+    }
+}
+
 const fn structured_scalar_count<P, const D: usize>() -> usize {
     D + LowerTriangularParameterBlock::<P, D, (), ()>::packed_len()
         .expect("D * (D + 1) / 2 must fit")
@@ -3527,6 +3558,18 @@ macro_rules! impl_gamlss_blocks {
             {
                 $(
                     visit($idx, <$param as ParameterName>::NAME, self.$idx.range());
+                )+
+            }
+
+            #[doc(hidden)]
+            fn visit_parameter_descriptors<V>(&self, mut visit: V)
+            where
+                V: FnMut(usize, ParameterDescriptor),
+            {
+                $(
+                    visit_scalar_parameter_stream(&self.$idx, $idx, |stream| {
+                        visit(stream.index, stream.into_descriptor());
+                    });
                 )+
             }
 
@@ -4033,7 +4076,7 @@ macro_rules! impl_repeated_scalar_gamlss_blocks {
                     $(
                         visit(
                             index,
-                            ParameterDescriptor::vector_component(
+                            ParameterDescriptor::component(
                                 <$param as ParameterName>::NAME,
                                 component,
                                 self.$idx[component].range(),
@@ -4255,9 +4298,9 @@ mod tests {
         HingeQuadraticPenalty, Identity, InitialEtaFromObservations, LinearFormBuilder,
         LinearPredictorBlock, LocationCholesky, LocationCholeskySpec,
         LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
-        ObservationView, OffsetBlock, ParameterBlock, ParameterBlocks, ParameterDescriptor,
-        ParameterLayout, ParameterName, ParameterPart, ParameterSlice, PredictorBlock,
-        RidgePenalty, ScalarParams, Sigma, SumBlock, Tau, VectorParameterBlock,
+        ObservationView, OffsetBlock, ParameterAxis, ParameterBlock, ParameterBlocks,
+        ParameterDescriptor, ParameterLayout, ParameterName, ParameterPath, ParameterSlice,
+        PredictorBlock, RidgePenalty, ScalarParams, Sigma, SumBlock, Tau, VectorParameterBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -4579,7 +4622,7 @@ mod tests {
 
         let mut parts = Vec::new();
         model.visit_parameter_descriptors(|index, descriptor| {
-            parts.push((index, descriptor.name, descriptor.part, descriptor.range));
+            parts.push((index, descriptor.role, descriptor.path, descriptor.range));
         });
         assert_eq!(
             parts,
@@ -4587,31 +4630,31 @@ mod tests {
                 (
                     0,
                     "mu",
-                    ParameterPart::VectorComponent { component: 0 },
+                    ParameterPath::new(vec![ParameterAxis::Vector { component: 0 }]),
                     0..1
                 ),
                 (
                     1,
                     "mu",
-                    ParameterPart::VectorComponent { component: 1 },
+                    ParameterPath::new(vec![ParameterAxis::Vector { component: 1 }]),
                     1..2
                 ),
                 (
                     2,
                     "cholesky",
-                    ParameterPart::LowerTriangularEntry { row: 0, col: 0 },
+                    ParameterPath::new(vec![ParameterAxis::Lower { row: 0, col: 0 }]),
                     2..3,
                 ),
                 (
                     3,
                     "cholesky",
-                    ParameterPart::LowerTriangularEntry { row: 1, col: 0 },
+                    ParameterPath::new(vec![ParameterAxis::Lower { row: 1, col: 0 }]),
                     3..4,
                 ),
                 (
                     4,
                     "cholesky",
-                    ParameterPart::LowerTriangularEntry { row: 1, col: 1 },
+                    ParameterPath::new(vec![ParameterAxis::Lower { row: 1, col: 1 }]),
                     4..5,
                 ),
             ]

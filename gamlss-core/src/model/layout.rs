@@ -2,36 +2,104 @@ use std::ops::Range;
 
 use crate::ParameterName;
 
-/// Structured position inside a distribution parameter.
+/// One axis in a nested distribution-parameter path.
 ///
-/// This is an extensibility descriptor for vector, matrix, and future
-/// structured parameter blocks. The existing [`ParameterLayout`] intentionally
-/// keeps its stable block-level view; APIs that need component-level
-/// introspection can attach this descriptor without overloading parameter names
-/// such as `"mu"` or `"cholesky"`.
+/// Paths describe structure inside a named distribution parameter without
+/// overloading the parameter role string. For example, a mixture component's
+/// Cholesky entry can be represented as `component[2] / lower[1, 0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParameterPart {
-    /// The descriptor refers to the whole named parameter block.
-    Whole,
+pub enum ParameterAxis {
+    /// Component inside a repeated, product, or mixture-shaped parameter.
+    Component {
+        /// Zero-based component index.
+        index: usize,
+    },
     /// One component of a vector-valued parameter.
-    VectorComponent {
+    Vector {
         /// Zero-based component index.
         component: usize,
     },
-    /// One entry of a lower-triangular matrix parameter.
-    LowerTriangularEntry {
+    /// One entry of a lower-triangular matrix parameter, including the diagonal.
+    Lower {
+        /// Zero-based row index.
+        row: usize,
+        /// Zero-based column index.
+        col: usize,
+    },
+    /// One entry of a strict-lower triangular matrix parameter.
+    StrictLower {
         /// Zero-based row index.
         row: usize,
         /// Zero-based column index.
         col: usize,
     },
     /// One entry of a dense matrix parameter.
-    MatrixEntry {
+    Matrix {
         /// Zero-based row index.
         row: usize,
         /// Zero-based column index.
         col: usize,
     },
+    /// One free baseline-softmax logit.
+    SimplexLogit {
+        /// Zero-based class index. The baseline class has no coefficient stream.
+        class: usize,
+    },
+    /// Named hyper-parameter or auxiliary structured axis.
+    Hyper {
+        /// Stable hyper-parameter axis name.
+        name: &'static str,
+    },
+}
+
+/// Nested position inside a distribution parameter.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParameterPath {
+    axes: Vec<ParameterAxis>,
+}
+
+impl ParameterPath {
+    /// Creates a path from nested axes.
+    #[must_use]
+    #[inline]
+    pub const fn new(axes: Vec<ParameterAxis>) -> Self {
+        Self { axes }
+    }
+
+    /// Creates an empty path referring to the whole named parameter role.
+    #[must_use]
+    #[inline]
+    pub const fn whole() -> Self {
+        Self { axes: Vec::new() }
+    }
+
+    /// Creates a one-axis path.
+    #[must_use]
+    #[inline]
+    pub fn from_axis(axis: ParameterAxis) -> Self {
+        Self { axes: vec![axis] }
+    }
+
+    /// Returns the nested axes in outer-to-inner order.
+    #[must_use]
+    #[inline]
+    pub fn axes(&self) -> &[ParameterAxis] {
+        &self.axes
+    }
+
+    /// Consumes the path and returns its axes.
+    #[must_use]
+    #[inline]
+    pub fn into_axes(self) -> Vec<ParameterAxis> {
+        self.axes
+    }
+
+    /// `true` when this path refers to the whole named parameter role.
+    #[must_use]
+    #[inline]
+    pub const fn is_whole(&self) -> bool {
+        self.axes.is_empty()
+    }
 }
 
 /// Named coefficient block inside the flat parameter vector.
@@ -48,76 +116,108 @@ pub struct ParameterSlice {
 
 /// Descriptor for a structured parameter or sub-parameter coefficient range.
 ///
-/// This type is deliberately separate from [`ParameterSlice`] so the current
-/// public layout API remains source-compatible while future structured
-/// multivariate blocks can expose component-level metadata.
+/// This type is deliberately separate from [`ParameterSlice`]: slices expose
+/// block-level coefficient layout, while descriptors can expose nested
+/// component-level metadata for multivariate, repeated, and mixture shapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterDescriptor {
-    /// Stable distribution parameter name, e.g. `"mu"` or `"cholesky"`.
-    pub name: &'static str,
-    /// Structured position inside the named parameter.
-    pub part: ParameterPart,
+    /// Stable distribution parameter role, e.g. `"mu"` or `"cholesky"`.
+    pub role: &'static str,
+    /// Nested structured position inside the named parameter role.
+    pub path: ParameterPath,
     /// Coefficient range for this part inside the full beta vector.
     pub range: Range<usize>,
 }
 
 impl ParameterDescriptor {
+    /// Creates a descriptor from an explicit nested path.
+    #[must_use]
+    #[inline]
+    pub const fn new(role: &'static str, path: ParameterPath, range: Range<usize>) -> Self {
+        Self { role, path, range }
+    }
+
     /// Creates a descriptor for a whole parameter block.
     #[must_use]
     #[inline]
-    pub const fn whole(name: &'static str, range: Range<usize>) -> Self {
-        Self {
-            name,
-            part: ParameterPart::Whole,
+    pub const fn whole(role: &'static str, range: Range<usize>) -> Self {
+        Self::new(role, ParameterPath::whole(), range)
+    }
+
+    /// Creates a descriptor for one repeated or mixture component.
+    #[must_use]
+    #[inline]
+    pub fn component(role: &'static str, index: usize, range: Range<usize>) -> Self {
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::Component { index }),
             range,
-        }
+        )
     }
 
     /// Creates a descriptor for one vector component.
     #[must_use]
     #[inline]
-    pub const fn vector_component(
-        name: &'static str,
-        component: usize,
-        range: Range<usize>,
-    ) -> Self {
-        Self {
-            name,
-            part: ParameterPart::VectorComponent { component },
+    pub fn vector_component(role: &'static str, component: usize, range: Range<usize>) -> Self {
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::Vector { component }),
             range,
-        }
+        )
     }
 
     /// Creates a descriptor for one lower-triangular matrix entry.
     #[must_use]
     #[inline]
-    pub const fn lower_triangular_entry(
-        name: &'static str,
+    pub fn lower_triangular_entry(
+        role: &'static str,
         row: usize,
         col: usize,
         range: Range<usize>,
     ) -> Self {
-        Self {
-            name,
-            part: ParameterPart::LowerTriangularEntry { row, col },
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::Lower { row, col }),
             range,
-        }
+        )
+    }
+
+    /// Creates a descriptor for one strict-lower triangular matrix entry.
+    #[must_use]
+    #[inline]
+    pub fn strict_lower_triangular_entry(
+        role: &'static str,
+        row: usize,
+        col: usize,
+        range: Range<usize>,
+    ) -> Self {
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::StrictLower { row, col }),
+            range,
+        )
     }
 
     /// Creates a descriptor for one dense matrix entry.
     #[must_use]
     #[inline]
-    pub const fn matrix_entry(
-        name: &'static str,
-        row: usize,
-        col: usize,
-        range: Range<usize>,
-    ) -> Self {
-        Self {
-            name,
-            part: ParameterPart::MatrixEntry { row, col },
+    pub fn matrix_entry(role: &'static str, row: usize, col: usize, range: Range<usize>) -> Self {
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::Matrix { row, col }),
             range,
-        }
+        )
+    }
+
+    /// Creates a descriptor for one free baseline-softmax logit.
+    #[must_use]
+    #[inline]
+    pub fn simplex_logit(role: &'static str, class: usize, range: Range<usize>) -> Self {
+        Self::new(
+            role,
+            ParameterPath::from_axis(ParameterAxis::SimplexLogit { class }),
+            range,
+        )
     }
 }
 

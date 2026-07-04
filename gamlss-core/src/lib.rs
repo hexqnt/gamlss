@@ -48,9 +48,9 @@ pub use link::{
 };
 pub use model::{
     FiniteScalarObservations, Gamlss, GamlssBlocks, GradientWorkspace, ObjectiveScale,
-    ObservationView, ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPart,
-    ParameterSlice, PredictionView, TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties,
-    WorkspaceGamlss,
+    ObservationView, ParameterAxis, ParameterCoefficients, ParameterDescriptor, ParameterLayout,
+    ParameterPath, ParameterSlice, PredictionView, TrainingDiagnostics, UnpackedParameters,
+    WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -106,8 +106,8 @@ pub mod prelude {
         Logit, LowerTriangularParameterBlock, MatrixPenalty, Mean, MeanPrecisionSimplex,
         MeanPrecisionSimplexSpec, Median, MixtureSpec, MixtureWeight, ModelError, Mu, NoPenalty,
         Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, OneProbability, ParamSpec,
-        ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterDescriptor,
-        ParameterLayout, ParameterName, ParameterPart, ParameterParts, ParameterSlice,
+        ParameterAxis, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterDescriptor,
+        ParameterLayout, ParameterName, ParameterParts, ParameterPath, ParameterSlice,
         PartialCorrelation, Penalty, PositiveLink, Power, Precision, PredictionView,
         PredictorBlock, Probability, ProductBlock, ProductSpec, Rate, Repeated,
         RepeatedScalarParamSpec, RidgePenalty, RowMultiplier, ScalarParamSpec, ScalarParams, Scale,

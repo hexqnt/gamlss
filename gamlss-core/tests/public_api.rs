@@ -10,10 +10,10 @@ use gamlss_core::{
     HasInitialEta, HasLogDensity, HasMarginalCdf, HasRosenblattTransform, Identity,
     InitialEtaFromObservations, LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit,
     LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
-    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterBlock, ParameterBlocks,
-    ParameterDescriptor, ParameterLayout, ParameterName, ParameterPart, ParameterParts,
-    ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ScalarParams, Sigma, Size,
-    Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
+    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
+    ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
+    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ScalarParams,
+    Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
     VectorParameterBlock, ZeroProbability,
 };
 
@@ -283,16 +283,28 @@ fn parameter_layout_helpers_remain_root_reexports() {
     );
 
     assert_eq!(
-        ParameterDescriptor::vector_component("mu", 1, 4..6).part,
-        ParameterPart::VectorComponent { component: 1 }
+        ParameterDescriptor::vector_component("mu", 1, 4..6).path,
+        ParameterPath::new(vec![ParameterAxis::Vector { component: 1 }])
     );
     assert_eq!(
-        ParameterDescriptor::lower_triangular_entry("cholesky", 2, 1, 6..7).part,
-        ParameterPart::LowerTriangularEntry { row: 2, col: 1 }
+        ParameterDescriptor::lower_triangular_entry("cholesky", 2, 1, 6..7).path,
+        ParameterPath::new(vec![ParameterAxis::Lower { row: 2, col: 1 }])
     );
     assert_eq!(
-        ParameterDescriptor::matrix_entry("loading", 3, 2, 7..9).part,
-        ParameterPart::MatrixEntry { row: 3, col: 2 }
+        ParameterDescriptor::matrix_entry("loading", 3, 2, 7..9).path,
+        ParameterPath::new(vec![ParameterAxis::Matrix { row: 3, col: 2 }])
+    );
+    assert_eq!(
+        ParameterDescriptor::strict_lower_triangular_entry("partial_corr", 2, 0, 9..10).path,
+        ParameterPath::new(vec![ParameterAxis::StrictLower { row: 2, col: 0 }])
+    );
+    assert_eq!(
+        ParameterDescriptor::simplex_logit("mixture_weight", 1, 10..11).path,
+        ParameterPath::new(vec![ParameterAxis::SimplexLogit { class: 1 }])
+    );
+    assert_eq!(
+        ParameterDescriptor::component("mu", 2, 11..12).path,
+        ParameterPath::new(vec![ParameterAxis::Component { index: 2 }])
     );
 }
 
