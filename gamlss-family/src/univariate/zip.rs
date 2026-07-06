@@ -74,10 +74,11 @@ where
     pub(super) fn gradient_component_theta(y: f64, theta: ZipTheta) -> ZipTheta {
         if y == 0.0 {
             let q0 = (-theta.mu).exp();
-            let p0 = (1.0 - theta.sigma).mul_add(q0, theta.sigma);
+            let one_minus_q0 = -(-theta.mu).exp_m1();
+            let p0 = theta.sigma.mul_add(one_minus_q0, q0);
             ZipTheta {
                 mu: (1.0 - theta.sigma) * q0 / p0,
-                sigma: -(1.0 - q0) / p0,
+                sigma: -one_minus_q0 / p0,
             }
         } else {
             ZipTheta {

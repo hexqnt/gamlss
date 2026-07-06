@@ -5,7 +5,7 @@ use gamlss_core::{
     Mean, ObservationView, ParameterParts, PositiveLink, ScalarParams,
 };
 
-use gamlss_special::{digamma, discrete_quantile, is_nonnegative_integer};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 
@@ -149,10 +149,10 @@ where
 
         let total = mean_size.shape + mean_size.mu;
         let d_mu = (y + mean_size.shape) / total - y / mean_size.mu;
-        let d_shape =
-            -digamma(y + mean_size.shape) + digamma(mean_size.shape) - mean_size.shape.ln() - 1.0
-                + total.ln()
-                + (y + mean_size.shape) / total;
+        let d_shape = NegativeBinomial::<Log, Log>::digamma_shape_difference(y, mean_size.shape)
+            + (mean_size.mu / mean_size.shape).ln_1p()
+            - 1.0
+            + (y + mean_size.shape) / total;
         let d_dispersion = d_shape * (-1.0 / (theta.dispersion * theta.dispersion));
 
         (

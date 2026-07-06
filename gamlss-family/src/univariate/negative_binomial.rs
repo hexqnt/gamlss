@@ -14,6 +14,7 @@ mod mean_dispersion;
 mod mean_size;
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
+const DIGAMMA_RECURRENCE_MAX_COUNT_F64: f64 = 1_024.0;
 
 /// Negative binomial family parameterized by positive mean and shape.
 ///
@@ -49,11 +50,17 @@ where
             return f64::INFINITY;
         }
 
-        let total = theta.shape + theta.mu;
-        -ln_gamma(y + theta.shape) + ln_gamma(theta.shape) + ln_gamma(y + 1.0)
-            - theta.shape * theta.shape.ln()
-            - y * theta.mu.ln()
-            + (y + theta.shape) * total.ln()
+        let count_log_ratio = if y == 0.0 {
+            0.0
+        } else {
+            y * (theta.shape / theta.mu).ln_1p()
+        };
+
+        -ln_gamma(y + theta.shape)
+            + ln_gamma(theta.shape)
+            + ln_gamma(y + 1.0)
+            + theta.shape * (theta.mu / theta.shape).ln_1p()
+            + count_log_ratio
     }
 
     #[inline]
@@ -129,6 +136,25 @@ where
         }
 
         log_sum.exp().clamp(0.0, 1.0)
+    }
+
+    #[inline]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    pub(super) fn digamma_shape_difference(y: f64, shape: f64) -> f64 {
+        if y <= DIGAMMA_RECURRENCE_MAX_COUNT_F64 {
+            let count = y as u64;
+            let mut sum = 0.0;
+            for offset in 0..count {
+                sum += 1.0 / (shape + offset as f64);
+            }
+            -sum
+        } else {
+            gamlss_special::digamma(shape) - gamlss_special::digamma(y + shape)
+        }
     }
 }
 

@@ -5,7 +5,7 @@ use gamlss_core::{
     ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape,
 };
 
-use gamlss_special::{digamma, discrete_quantile, is_nonnegative_integer};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 
@@ -71,9 +71,9 @@ where
 
         let total = theta.shape + theta.mu;
         let d_mu = (y + theta.shape) / total - y / theta.mu;
-        let d_shape = -digamma(y + theta.shape) + digamma(theta.shape) - theta.shape.ln() - 1.0
-            + total.ln()
-            + (y + theta.shape) / total;
+        let d_shape =
+            Self::digamma_shape_difference(y, theta.shape) + (theta.mu / theta.shape).ln_1p() - 1.0
+                + (y + theta.shape) / total;
         let gradient_eta = NegativeBinomialEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             shape: d_shape * ShapeLink::derivative_inverse(eta.shape),

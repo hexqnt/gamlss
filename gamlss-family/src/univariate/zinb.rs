@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use gamlss_special::{digamma, is_nonnegative_integer, ln_gamma, log_add_exp};
+use gamlss_special::{is_nonnegative_integer, ln_gamma, log_add_exp};
 
 use super::negative_binomial::{NegativeBinomial, NegativeBinomialTheta};
 
@@ -48,9 +48,17 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nb_log_pmf(y: f64, mu: f64, shape: f64) -> f64 {
-        ln_gamma(y + shape) - ln_gamma(shape) - ln_gamma(y + 1.0)
-            + shape * (shape / (shape + mu)).ln()
-            + y * (mu / (shape + mu)).ln()
+        let count_log_ratio = if y == 0.0 {
+            0.0
+        } else {
+            y * (shape / mu).ln_1p()
+        };
+
+        ln_gamma(y + shape)
+            - ln_gamma(shape)
+            - ln_gamma(y + 1.0)
+            - shape * (mu / shape).ln_1p()
+            - count_log_ratio
     }
 
     #[inline]
@@ -78,8 +86,9 @@ where
     fn negative_binomial_gradient_theta(y: f64, mu: f64, shape: f64) -> (f64, f64) {
         let total = shape + mu;
         let d_mu = (y + shape) / total - y / mu;
-        let d_shape = -digamma(y + shape) + digamma(shape) - shape.ln() - 1.0
-            + total.ln()
+        let d_shape = NegativeBinomial::<Log, Log>::digamma_shape_difference(y, shape)
+            + (mu / shape).ln_1p()
+            - 1.0
             + (y + shape) / total;
         (d_mu, d_shape)
     }
@@ -88,13 +97,15 @@ where
     pub(super) fn gradient_component_theta(y: f64, theta: ZinbTheta) -> ZinbTheta {
         let (d_mu, d_shape) = Self::negative_binomial_gradient_theta(y, theta.mu, theta.shape);
         if y == 0.0 {
-            let q0 = (theta.shape / (theta.shape + theta.mu)).powf(theta.shape);
-            let p0 = (1.0 - theta.nu).mul_add(q0, theta.nu);
+            let log_q0 = -theta.shape * (theta.mu / theta.shape).ln_1p();
+            let q0 = log_q0.exp();
+            let one_minus_q0 = -log_q0.exp_m1();
+            let p0 = theta.nu.mul_add(one_minus_q0, q0);
             let responsibility = (1.0 - theta.nu) * q0 / p0;
             ZinbTheta {
                 mu: responsibility * d_mu,
                 shape: responsibility * d_shape,
-                nu: -(1.0 - q0) / p0,
+                nu: -one_minus_q0 / p0,
             }
         } else {
             ZinbTheta {
