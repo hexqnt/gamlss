@@ -153,35 +153,6 @@ where
     }
 }
 
-impl<const D: usize, PrecisionLink>
-    MeanPrecisionSimplexSpec<DirichletMeanPrecision<D, PrecisionLink>, D>
-    for MeanPrecisionSimplex<Mean, Precision, D>
-where
-    PrecisionLink: PositiveLink<f64>,
-{
-    type MeanParameter = Mean;
-    type PrecisionParameter = Precision;
-    type PrecisionLink = PrecisionLink;
-
-    fn eta_from_simplex_logits_precision(
-        logits: [f64; D],
-        precision: f64,
-    ) -> DirichletMeanPrecisionEta<D> {
-        DirichletMeanPrecisionEta::new(logits, precision)
-    }
-
-    fn simplex_logit_gradient_part(
-        gradient: &DirichletMeanPrecisionEta<D>,
-        component: usize,
-    ) -> f64 {
-        gradient.logits[component]
-    }
-
-    fn precision_gradient_part(gradient: &DirichletMeanPrecisionEta<D>) -> f64 {
-        gradient.precision
-    }
-}
-
 impl<const D: usize, PrecisionLink> FixedDimensionalFamily<D>
     for DirichletMeanPrecision<D, PrecisionLink>
 where
@@ -263,6 +234,35 @@ impl<const D: usize> DirichletMeanPrecisionTheta<D> {
     #[inline]
     fn alpha_unchecked(&self, component: usize) -> f64 {
         self.mean[component] * self.precision
+    }
+}
+
+impl<const D: usize, PrecisionLink>
+    MeanPrecisionSimplexSpec<DirichletMeanPrecision<D, PrecisionLink>, D>
+    for MeanPrecisionSimplex<Mean, Precision, D>
+where
+    PrecisionLink: PositiveLink<f64>,
+{
+    type MeanParameter = Mean;
+    type PrecisionParameter = Precision;
+    type PrecisionLink = PrecisionLink;
+
+    fn eta_from_simplex_logits_precision(
+        logits: [f64; D],
+        precision: f64,
+    ) -> DirichletMeanPrecisionEta<D> {
+        DirichletMeanPrecisionEta::new(logits, precision)
+    }
+
+    fn simplex_logit_gradient_part(
+        gradient: &DirichletMeanPrecisionEta<D>,
+        component: usize,
+    ) -> f64 {
+        gradient.logits[component]
+    }
+
+    fn precision_gradient_part(gradient: &DirichletMeanPrecisionEta<D>) -> f64 {
+        gradient.precision
     }
 }
 

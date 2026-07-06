@@ -159,6 +159,48 @@ impl<F, const D: usize> FixedDimensionalFamily<D> for IndependentVec<F, D> where
 {
 }
 
+impl<F, const D: usize> HasCdf for IndependentVec<F, D>
+where
+    F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if D == 0 {
+            return f64::NAN;
+        }
+
+        y.iter()
+            .copied()
+            .enumerate()
+            .map(|(component, value)| self.component.cdf(value, &theta[component]))
+            .product()
+    }
+}
+
+impl<F, const D: usize> HasMarginalCdf for IndependentVec<F, D>
+where
+    F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
+{
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
+        if component < D {
+            self.component.cdf(y, &theta[component])
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, F, const D: usize> CanSimulate<Rng> for IndependentVec<F, D>
+where
+    F: for<'obs> Family<Observation<'obs> = f64> + CanSimulate<Rng>,
+{
+    type Sample = [F::Sample; D];
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
+        std::array::from_fn(|component| self.component.sample(rng, &theta[component]))
+    }
+}
+
 impl<F, Spec, Params, Links, const D: usize, const K: usize>
     RepeatedScalarParamSpec<IndependentVec<F, D>, D, K> for Repeated<Spec, D>
 where
@@ -204,48 +246,6 @@ where
         family
             .component()
             .initial_eta_from_observations(&(values.as_slice(), weights.as_slice()))
-    }
-}
-
-impl<F, const D: usize> HasCdf for IndependentVec<F, D>
-where
-    F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
-{
-    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if D == 0 {
-            return f64::NAN;
-        }
-
-        y.iter()
-            .copied()
-            .enumerate()
-            .map(|(component, value)| self.component.cdf(value, &theta[component]))
-            .product()
-    }
-}
-
-impl<F, const D: usize> HasMarginalCdf for IndependentVec<F, D>
-where
-    F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
-{
-    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
-        if component < D {
-            self.component.cdf(y, &theta[component])
-        } else {
-            f64::NAN
-        }
-    }
-}
-
-#[cfg(feature = "rand")]
-impl<Rng, F, const D: usize> CanSimulate<Rng> for IndependentVec<F, D>
-where
-    F: for<'obs> Family<Observation<'obs> = f64> + CanSimulate<Rng>,
-{
-    type Sample = [F::Sample; D];
-
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
-        std::array::from_fn(|component| self.component.sample(rng, &theta[component]))
     }
 }
 

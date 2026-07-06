@@ -271,55 +271,6 @@ where
     }
 }
 
-impl<const D: usize, MuLink, SigmaLink>
-    LocationScalePartialCorrSpec<MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>, D>
-    for LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type LocationParameter = Mu;
-    type ScaleParameter = Sigma;
-    type PartialCorrelationParameter = PartialCorrelation;
-
-    fn eta_from_location_scale_partial_corr(
-        location: [f64; D],
-        scale: [f64; D],
-        partial_corr: [[f64; D]; D],
-    ) -> MvNormalMeanStdPartialCorrEta<D> {
-        let values = (0..D)
-            .flat_map(|row| (0..row).map(move |col| partial_corr[row][col]))
-            .collect();
-        MvNormalMeanStdPartialCorrEta::new(
-            location,
-            scale,
-            PackedPartialCorr::try_new(values).expect("packed strict-lower length matches D"),
-        )
-    }
-
-    fn location_gradient_part(
-        gradient: &MvNormalMeanStdPartialCorrEta<D>,
-        component: usize,
-    ) -> f64 {
-        gradient.mu[component]
-    }
-
-    fn scale_gradient_part(gradient: &MvNormalMeanStdPartialCorrEta<D>, component: usize) -> f64 {
-        gradient.sigma[component]
-    }
-
-    fn partial_corr_gradient_part(
-        gradient: &MvNormalMeanStdPartialCorrEta<D>,
-        row: usize,
-        col: usize,
-    ) -> f64 {
-        gradient
-            .partial_corr
-            .get(row, col)
-            .expect("valid strict-lower partial-correlation index")
-    }
-}
-
 impl<const D: usize, MuLink, SigmaLink> FixedDimensionalFamily<D>
     for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
 where
@@ -415,6 +366,55 @@ impl<const D: usize> MvNormalMeanStdPartialCorrTheta<D> {
     #[must_use]
     pub fn covariance(&self, row: usize, col: usize) -> Option<f64> {
         covariance_from_cholesky(&self.scale_cholesky, row, col)
+    }
+}
+
+impl<const D: usize, MuLink, SigmaLink>
+    LocationScalePartialCorrSpec<MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>, D>
+    for LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    type LocationParameter = Mu;
+    type ScaleParameter = Sigma;
+    type PartialCorrelationParameter = PartialCorrelation;
+
+    fn eta_from_location_scale_partial_corr(
+        location: [f64; D],
+        scale: [f64; D],
+        partial_corr: [[f64; D]; D],
+    ) -> MvNormalMeanStdPartialCorrEta<D> {
+        let values = (0..D)
+            .flat_map(|row| (0..row).map(move |col| partial_corr[row][col]))
+            .collect();
+        MvNormalMeanStdPartialCorrEta::new(
+            location,
+            scale,
+            PackedPartialCorr::try_new(values).expect("packed strict-lower length matches D"),
+        )
+    }
+
+    fn location_gradient_part(
+        gradient: &MvNormalMeanStdPartialCorrEta<D>,
+        component: usize,
+    ) -> f64 {
+        gradient.mu[component]
+    }
+
+    fn scale_gradient_part(gradient: &MvNormalMeanStdPartialCorrEta<D>, component: usize) -> f64 {
+        gradient.sigma[component]
+    }
+
+    fn partial_corr_gradient_part(
+        gradient: &MvNormalMeanStdPartialCorrEta<D>,
+        row: usize,
+        col: usize,
+    ) -> f64 {
+        gradient
+            .partial_corr
+            .get(row, col)
+            .expect("valid strict-lower partial-correlation index")
     }
 }
 

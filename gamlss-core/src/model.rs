@@ -1250,6 +1250,25 @@ where
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParameterStream {
+    index: usize,
+    role: &'static str,
+    path_axis: Option<ParameterAxis>,
+    range: Range<usize>,
+}
+
+impl ParameterStream {
+    fn into_descriptor(self) -> ParameterDescriptor {
+        ParameterDescriptor::new(
+            self.role,
+            self.path_axis
+                .map_or_else(ParameterPath::whole, ParameterPath::from_axis),
+            self.range,
+        )
+    }
+}
+
 /// Tuple contract for a set of parameter blocks compatible with family `F`.
 ///
 /// Implementations are generated for typed tuples of [`ParameterBlock`]. The
@@ -3122,25 +3141,6 @@ where
         validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ParameterStream {
-    index: usize,
-    role: &'static str,
-    path_axis: Option<ParameterAxis>,
-    range: Range<usize>,
-}
-
-impl ParameterStream {
-    fn into_descriptor(self) -> ParameterDescriptor {
-        ParameterDescriptor::new(
-            self.role,
-            self.path_axis
-                .map_or_else(ParameterPath::whole, ParameterPath::from_axis),
-            self.range,
-        )
-    }
 }
 
 fn visit_scalar_parameter_stream<P, L, X, Penalty, V>(

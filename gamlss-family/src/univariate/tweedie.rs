@@ -6,28 +6,26 @@ use gamlss_core::{
     UnitIntervalLink,
 };
 
-use gamlss_special::{invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower};
+use gamlss_special::{
+    digamma, invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower,
+};
 
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
-use crate::numeric::finite_difference_gradient_eta;
 
 const MAX_SERIES_TERMS: usize = 2_000;
 const SERIES_EPSILON: f64 = 1.0e-13;
 
 /// Tweedie distribution parameterized by mean, dispersion, and power.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
 pub type TweedieMeanDispersionPower = Tweedie<Log, Log, Logit>;
 /// Tweedie distribution parameterized by mean, CV, and power.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
 pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
 /// Tweedie compound Poisson-gamma family for `1 < power < 2`.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, DispersionLink, PowerLink)>,
@@ -130,6 +128,117 @@ where
     }
 
     #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
+    fn positive_log_density_gradient_theta(
+        y: f64,
+        theta: TweedieTheta,
+        params: CompoundParams,
+    ) -> (f64, TweedieGradient) {
+        let mut log_sum = f64::NEG_INFINITY;
+        let mut gradient = TweedieGradient::ZERO;
+        let log_lambda = params.lambda.ln();
+        for n in 1..=MAX_SERIES_TERMS {
+            let n_f = n as f64;
+            let shape = n_f * params.alpha;
+            let log_weight = -params.lambda + n_f * log_lambda - ln_gamma(n_f + 1.0);
+            let log_gamma = shape * params.rate.ln() - ln_gamma(shape) + (shape - 1.0) * y.ln()
+                - params.rate * y;
+            let log_term = log_weight + log_gamma;
+            let term_gradient = Self::positive_log_term_gradient(n_f, y, theta, params);
+            let next = log_add_exp(log_sum, log_term);
+            let old_weight = if log_sum.is_finite() {
+                (log_sum - next).exp()
+            } else {
+                0.0
+            };
+            let term_weight = (log_term - next).exp();
+            gradient = gradient.blend_with(term_gradient, old_weight, term_weight);
+            if n > 5 && (next - log_sum).abs() <= SERIES_EPSILON {
+                return (next, gradient);
+            }
+            log_sum = next;
+        }
+
+        (log_sum, gradient)
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn positive_log_term_gradient(
+        n: f64,
+        y: f64,
+        theta: TweedieTheta,
+        params: CompoundParams,
+    ) -> TweedieGradient {
+        let mean = theta.mean;
+        let dispersion = theta.dispersion;
+        let power_minus_one = theta.power - 1.0;
+        let two_minus_power = 2.0 - theta.power;
+        let log_mean = mean.ln();
+        let shape = n * params.alpha;
+        let log_rate = params.rate.ln();
+        let y_log = y.ln();
+
+        let d_log_lambda_d_mean = two_minus_power / mean;
+        let d_lambda_d_mean = params.lambda * d_log_lambda_d_mean;
+        let d_log_rate_d_mean = -power_minus_one / mean;
+        let d_rate_d_mean = params.rate * d_log_rate_d_mean;
+
+        let d_log_lambda_d_dispersion = -1.0 / dispersion;
+        let d_lambda_d_dispersion = params.lambda * d_log_lambda_d_dispersion;
+        let d_log_rate_d_dispersion = -1.0 / dispersion;
+        let d_rate_d_dispersion = params.rate * d_log_rate_d_dispersion;
+
+        let d_log_lambda_d_power = -log_mean + 1.0 / two_minus_power;
+        let d_lambda_d_power = params.lambda * d_log_lambda_d_power;
+        let d_alpha_d_power = -1.0 / (power_minus_one * power_minus_one);
+        let d_shape_d_power = n * d_alpha_d_power;
+        let d_log_rate_d_power = -1.0 / power_minus_one - log_mean;
+        let d_rate_d_power = params.rate * d_log_rate_d_power;
+        let d_shape_factor = log_rate - digamma(shape) + y_log;
+
+        TweedieGradient {
+            mean: -d_lambda_d_mean + n * d_log_lambda_d_mean + shape * d_log_rate_d_mean
+                - y * d_rate_d_mean,
+            dispersion: -d_lambda_d_dispersion
+                + n * d_log_lambda_d_dispersion
+                + shape * d_log_rate_d_dispersion
+                - y * d_rate_d_dispersion,
+            power: -d_lambda_d_power
+                + n * d_log_lambda_d_power
+                + d_shape_d_power * d_shape_factor
+                + shape * d_log_rate_d_power
+                - y * d_rate_d_power,
+        }
+    }
+
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_and_gradient_theta(y: f64, theta: TweedieTheta) -> (f64, TweedieGradient) {
+        if y < 0.0 || !y.is_finite() {
+            return (f64::INFINITY, TweedieGradient::NAN);
+        }
+        let Some(params) = Self::compound(theta) else {
+            return (f64::INFINITY, TweedieGradient::NAN);
+        };
+        if y == 0.0 {
+            let two_minus_power = 2.0 - theta.power;
+            let gradient = TweedieGradient {
+                mean: params.lambda * two_minus_power / theta.mean,
+                dispersion: -params.lambda / theta.dispersion,
+                power: params.lambda * (-theta.mean.ln() + 1.0 / two_minus_power),
+            };
+            return (params.lambda, gradient);
+        }
+
+        let (log_density, log_density_gradient) =
+            Self::positive_log_density_gradient_theta(y, theta, params);
+        if !log_density.is_finite() {
+            return (f64::INFINITY, TweedieGradient::NAN);
+        }
+
+        (-log_density, -log_density_gradient)
+    }
+
+    #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn cdf_theta(y: f64, theta: TweedieTheta) -> f64 {
         if y < 0.0 {
             return 0.0;
@@ -182,15 +291,20 @@ where
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
-        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        let (nll, gradient) = Self::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
             return (nll, TweedieEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = finite_difference_gradient_eta::<_, TweedieEta, 3>(eta, |probe| {
-            Self::nll_theta(y, Self::theta_from_eta(probe))
-        });
-        (nll, TweedieEta::from_array(gradient))
+        (
+            nll,
+            TweedieEta {
+                mean: gradient.mean * MeanLink::derivative_inverse(eta.mean),
+                dispersion: gradient.dispersion
+                    * DispersionLink::derivative_inverse(eta.dispersion),
+                power: gradient.power * PowerLink::derivative_inverse(eta.power),
+            },
+        )
     }
 }
 
@@ -304,6 +418,48 @@ struct CompoundParams {
     rate: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TweedieGradient {
+    mean: f64,
+    dispersion: f64,
+    power: f64,
+}
+
+impl TweedieGradient {
+    const NAN: Self = Self {
+        mean: f64::NAN,
+        dispersion: f64::NAN,
+        power: f64::NAN,
+    };
+    const ZERO: Self = Self {
+        mean: 0.0,
+        dispersion: 0.0,
+        power: 0.0,
+    };
+
+    #[inline]
+    fn blend_with(self, term: Self, self_weight: f64, term_weight: f64) -> Self {
+        Self {
+            mean: self_weight.mul_add(self.mean, term_weight * term.mean),
+            dispersion: self_weight.mul_add(self.dispersion, term_weight * term.dispersion),
+            power: self_weight.mul_add(self.power, term_weight * term.power),
+        }
+    }
+}
+
+impl std::ops::Neg for TweedieGradient {
+    type Output = Self;
+
+    #[inline]
+    fn neg(self) -> Self::Output {
+        Self {
+            mean: -self.mean,
+            dispersion: -self.dispersion,
+            power: -self.power,
+        }
+    }
+}
+
 /// Predictors for Tweedie on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TweedieEta {
@@ -360,8 +516,7 @@ impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
 
 /// Tweedie compound Poisson-gamma family parameterized by mean, CV, and power.
 ///
-/// Its NLL gradient currently uses a finite-difference fallback and should be
-/// treated as a training slow path until an analytic gradient is added.
+/// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, CvLink, PowerLink)>,
@@ -396,16 +551,29 @@ where
         y: f64,
         eta: TweedieMeanCvPowerEta,
     ) -> (f64, TweedieMeanCvPowerEta) {
-        let nll = Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(eta).into());
+        let theta = Self::theta_from_eta(eta);
+        let dispersion_theta: TweedieTheta = theta.into();
+        let (nll, dispersion_gradient) =
+            Tweedie::<Log, Log, Logit>::nll_and_gradient_theta(y, dispersion_theta);
         if !nll.is_finite() {
             return (nll, TweedieMeanCvPowerEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient =
-            finite_difference_gradient_eta::<_, TweedieMeanCvPowerEta, 3>(eta, |probe| {
-                Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(probe).into())
-            });
-        (nll, TweedieMeanCvPowerEta::from_array(gradient))
+        let dispersion = dispersion_theta.dispersion;
+        let d_mean = dispersion_gradient.mean
+            + dispersion_gradient.dispersion * dispersion * (2.0 - theta.power) / theta.mean;
+        let d_cv = dispersion_gradient.dispersion * 2.0 * dispersion / theta.cv;
+        let d_power = (dispersion_gradient.dispersion * dispersion)
+            .mul_add(-theta.mean.ln(), dispersion_gradient.power);
+
+        (
+            nll,
+            TweedieMeanCvPowerEta {
+                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
+                cv: d_cv * CvLink::derivative_inverse(eta.cv),
+                power: d_power * PowerLink::derivative_inverse(eta.power),
+            },
+        )
     }
 }
 

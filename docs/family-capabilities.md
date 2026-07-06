@@ -24,7 +24,7 @@ evaluations for `K` parameters.
 | `Gev`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `Gumbel`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `InverseGaussian`     | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `JohnsonSu`           | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `JohnsonSu`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `Laplace`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `LogNormal`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Logistic`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
@@ -32,12 +32,12 @@ evaluations for `K` parameters.
 | `NegativeBinomial`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Normal`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Poisson`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `PowerExponential`    | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Shash`               | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `PowerExponential`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Shash`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `SkewNormal`          | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `SkewStudentT`        | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `StudentT`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Tweedie`             | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Tweedie`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `Weibull`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Zaga`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `Zinb`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
@@ -61,8 +61,4 @@ specialization policy is settled.
 
 ## Analytic gradient replacement queue
 
-Finite-difference families are supported but slower training paths. They use
-numerical eta-gradient approximations and should be replaced with analytic
-gradients as usage and benchmark results justify it. Prefer replacing them in
-this order: `Tweedie`, `SkewStudentT`, `JohnsonSu`, `Shash`, then
-`PowerExponential`.
+Finite-difference families are supported but slower training paths. They use numerical eta-gradient approximations and should be replaced with analytic gradients as usage and benchmark results justify it. The remaining univariate slow path is `SkewStudentT`: its location-scale parameterization is analytic for location, scale, and skewness, but the degrees-of-freedom component still uses finite differences because it requires differentiating the Student-t CDF with respect to degrees of freedom. The mean/SD parameterization currently uses a full finite-difference eta-gradient.

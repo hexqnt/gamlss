@@ -212,50 +212,6 @@ where
     }
 }
 
-impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
-    LocationCholeskyScalarSpec<
-        MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>,
-        D,
-    > for ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>
-where
-    MuLink: Link<f64>,
-    DiagonalLink: PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
-{
-    type VectorParameter = Mu;
-    type LowerTriangularParameter = CholeskyScale;
-    type ScalarParameter = Tau;
-    type ScalarLink = TauLink;
-
-    fn eta_from_vector_lower_scalar(
-        vector: [f64; D],
-        lower: [[f64; D]; D],
-        scalar: f64,
-    ) -> MvStudentTCholeskyEta<D> {
-        MvStudentTCholeskyEta::new(vector, FixedLowerTriangular::from_lower_rows(lower), scalar)
-    }
-
-    fn vector_gradient_part(gradient: &MvStudentTCholeskyEta<D>, component: usize) -> f64 {
-        gradient.mu[component]
-    }
-
-    fn lower_triangular_gradient_part(
-        gradient: &MvStudentTCholeskyEta<D>,
-        row: usize,
-        col: usize,
-    ) -> f64 {
-        gradient
-            .cholesky
-            .get(row, col)
-            .expect("valid lower-triangular Cholesky index")
-    }
-
-    fn scalar_gradient_part(gradient: &MvStudentTCholeskyEta<D>) -> f64 {
-        gradient.tau
-    }
-}
-
 impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> FixedDimensionalFamily<D>
     for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
 where
@@ -383,6 +339,50 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
     #[must_use]
     pub fn marginal_scale(&self, component: usize) -> Option<f64> {
         self.scale_covariance(component, component).map(f64::sqrt)
+    }
+}
+
+impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
+    LocationCholeskyScalarSpec<
+        MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>,
+        D,
+    > for ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>
+where
+    MuLink: Link<f64>,
+    DiagonalLink: PositiveLink<f64>,
+    OffDiagonalLink: Link<f64>,
+    TauLink: Link<f64>,
+{
+    type VectorParameter = Mu;
+    type LowerTriangularParameter = CholeskyScale;
+    type ScalarParameter = Tau;
+    type ScalarLink = TauLink;
+
+    fn eta_from_vector_lower_scalar(
+        vector: [f64; D],
+        lower: [[f64; D]; D],
+        scalar: f64,
+    ) -> MvStudentTCholeskyEta<D> {
+        MvStudentTCholeskyEta::new(vector, FixedLowerTriangular::from_lower_rows(lower), scalar)
+    }
+
+    fn vector_gradient_part(gradient: &MvStudentTCholeskyEta<D>, component: usize) -> f64 {
+        gradient.mu[component]
+    }
+
+    fn lower_triangular_gradient_part(
+        gradient: &MvStudentTCholeskyEta<D>,
+        row: usize,
+        col: usize,
+    ) -> f64 {
+        gradient
+            .cholesky
+            .get(row, col)
+            .expect("valid lower-triangular Cholesky index")
+    }
+
+    fn scalar_gradient_part(gradient: &MvStudentTCholeskyEta<D>) -> f64 {
+        gradient.tau
     }
 }
 

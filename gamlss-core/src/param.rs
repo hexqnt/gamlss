@@ -1477,6 +1477,11 @@ where
     }
 }
 
+trait OffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_len(&self) -> usize;
+}
+
 impl<B, const D: usize> OffsetAssignable for [B; D]
 where
     B: OffsetAssignable,
@@ -1498,6 +1503,13 @@ where
             .try_fold(0usize, usize::checked_add)
             .expect("repeated parameter block length must fit in usize")
     }
+}
+
+trait TryOffsetAssignable: Sized {
+    fn with_assigned_offset(self, offset: usize) -> Self;
+    fn assigned_offset(&self) -> usize;
+    fn assigned_len(&self) -> usize;
+    fn assigned_name(&self) -> &'static str;
 }
 
 impl<B, const D: usize> TryOffsetAssignable for [B; D]
@@ -1530,18 +1542,6 @@ where
         self.first()
             .map_or("repeated", TryOffsetAssignable::assigned_name)
     }
-}
-
-trait OffsetAssignable: Sized {
-    fn with_assigned_offset(self, offset: usize) -> Self;
-    fn assigned_len(&self) -> usize;
-}
-
-trait TryOffsetAssignable: Sized {
-    fn with_assigned_offset(self, offset: usize) -> Self;
-    fn assigned_offset(&self) -> usize;
-    fn assigned_len(&self) -> usize;
-    fn assigned_name(&self) -> &'static str;
 }
 
 impl_assign_offsets!(types = (B1); vars = (b1));
