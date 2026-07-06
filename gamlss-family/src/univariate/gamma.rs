@@ -4,7 +4,10 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
 
-use gamlss_special::{digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower};
+use gamlss_special::{
+    digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower,
+    regularized_gamma_upper,
+};
 
 use crate::initial::{LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary};
 
@@ -86,12 +89,15 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
             return f64::NAN;
         }
 
-        let f_shape = regularized_gamma_lower(theta.shape, theta.rate * y);
-        let f_next_shape = regularized_gamma_lower(theta.shape + 1.0, theta.rate * y);
+        let scaled_y = theta.rate * y;
+        let f_shape = regularized_gamma_lower(theta.shape, scaled_y);
+        let s_shape = regularized_gamma_upper(theta.shape, scaled_y);
+        let f_next_shape = regularized_gamma_lower(theta.shape + 1.0, scaled_y);
+        let s_next_shape = regularized_gamma_upper(theta.shape + 1.0, scaled_y);
         let mean = theta.shape / theta.rate;
         let beta_term = ln_beta(theta.shape + 0.5, 0.5).exp() / (std::f64::consts::PI * theta.rate);
 
-        y * (2.0 * f_shape - 1.0) - mean * (2.0 * f_next_shape - 1.0) - beta_term
+        y * (f_shape - s_shape) - mean * (f_next_shape - s_next_shape) - beta_term
     }
 
     #[inline]

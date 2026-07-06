@@ -8,7 +8,10 @@ use gamlss_core::{
     UnitIntervalLink,
 };
 
-use gamlss_special::{digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta};
+use gamlss_special::{
+    digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta,
+    regularized_beta_complement,
+};
 
 use crate::initial::{
     VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary, weighted_values,
@@ -261,8 +264,10 @@ where
             let cdf = self.cdf(x, theta);
             cdf * cdf
         });
+        let alpha = theta.mu * theta.precision;
+        let beta = (1.0 - theta.mu) * theta.precision;
         let right = integrate_finite(y, 1.0, |x| {
-            let survival = 1.0 - self.cdf(x, theta);
+            let survival = regularized_beta_complement(alpha, beta, x);
             survival * survival
         });
 

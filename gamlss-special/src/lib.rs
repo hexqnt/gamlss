@@ -10,6 +10,22 @@
 //! scale values where that convention is already part of the surrounding
 //! distribution code.
 
+const LANCZOS_SHIFT: f64 = 6.5;
+const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
+const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
+
+const LANCZOS_COEFFICIENTS: [f64; 9] = [
+    0.999_999_999_999_809_9,
+    676.520_368_121_885_1,
+    -1_259.139_216_722_402_8,
+    771.323_428_777_653_1,
+    -176.615_029_162_140_6,
+    12.507_343_278_686_905,
+    -0.138_571_095_265_720_12,
+    9.984_369_578_019_572e-6,
+    1.505_632_735_149_311_6e-7,
+];
+
 #[inline]
 fn is_probability(value: f64) -> bool {
     (0.0..=1.0).contains(&value) && value.is_finite()
@@ -55,6 +71,19 @@ fn polynomial_descending_with_implicit_leading_one(value: f64, coefficients: &[f
     })
 }
 
+#[inline]
+fn lanczos_sum(value: f64) -> f64 {
+    let shifted = value - 1.0;
+    let mut sum = LANCZOS_COEFFICIENTS[0];
+
+    #[allow(clippy::cast_precision_loss)]
+    for (index, coefficient) in LANCZOS_COEFFICIENTS.iter().copied().enumerate().skip(1) {
+        sum += coefficient / (shifted + index as f64);
+    }
+
+    sum
+}
+
 /// Natural logarithm of the absolute gamma function via the Lanczos approximation.
 ///
 /// Returns `NaN` at poles and for non-finite negative inputs. For positive
@@ -63,18 +92,6 @@ fn polynomial_descending_with_implicit_leading_one(value: f64, coefficients: &[f
 #[must_use]
 #[inline]
 pub fn ln_gamma(value: f64) -> f64 {
-    const COEFFICIENTS: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
-
     if value == f64::INFINITY {
         return f64::INFINITY;
     }
@@ -90,16 +107,36 @@ pub fn ln_gamma(value: f64) -> f64 {
         return std::f64::consts::PI.ln() - sin_pi.abs().ln() - ln_gamma(1.0 - value);
     }
 
-    let shifted = value - 1.0;
-    let mut x = COEFFICIENTS[0];
+    let x = lanczos_sum(value);
+    let t = value + LANCZOS_SHIFT;
 
-    #[allow(clippy::cast_precision_loss)]
-    for (index, coefficient) in COEFFICIENTS.iter().copied().enumerate().skip(1) {
-        x += coefficient / (shifted + index as f64);
+    (value - 0.5).mul_add(t.ln(), HALF_LOG_2_PI) - t + x.ln()
+}
+
+/// Difference `ln(Gamma(base + increment)) - ln(Gamma(base))` for positive arguments.
+///
+/// This avoids cancellation when `base` is large and `increment` is small, which is common in beta normalizing constants and gamma-ratio terms.
+#[must_use]
+#[inline]
+pub fn ln_gamma_delta(base: f64, increment: f64) -> f64 {
+    if base <= 0.0 || increment < 0.0 || !base.is_finite() || !increment.is_finite() {
+        return f64::NAN;
     }
-    let t = shifted + 7.5;
+    if increment == 0.0 {
+        return 0.0;
+    }
 
-    (shifted + 0.5).mul_add(t.ln(), 0.5 * (2.0 * std::f64::consts::PI).ln()) - t + x.ln()
+    let target = base + increment;
+    if !target.is_finite() {
+        return f64::INFINITY;
+    }
+    if base < 0.5 {
+        return ln_gamma(target) - ln_gamma(base);
+    }
+
+    let t = base + LANCZOS_SHIFT;
+    let log_power = increment.mul_add(t.ln(), (target - 0.5) * (increment / t).ln_1p());
+    log_power - increment + (lanczos_sum(target) / lanczos_sum(base)).ln()
 }
 
 /// Natural logarithm of the beta function for positive finite arguments.
@@ -110,7 +147,9 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
         return f64::NAN;
     }
 
-    ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
+    let small = a.min(b);
+    let large = a.max(b);
+    ln_gamma(small) - ln_gamma_delta(large, small)
 }
 
 /// Returns `true` for finite counts represented on the shared `f64` observation path.
@@ -165,14 +204,13 @@ pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
     }
 
     let max = log_left.max(log_right);
-    max + ((log_left - max).exp() + (log_right - max).exp()).ln()
+    max + (-(log_left - log_right).abs()).exp().ln_1p()
 }
 
 /// Standard normal log-density.
 #[must_use]
 #[inline]
 pub fn unit_normal_log_pdf(z: f64) -> f64 {
-    const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
     (0.5 * z).mul_add(-z, -HALF_LOG_2_PI)
 }
 
@@ -180,8 +218,7 @@ pub fn unit_normal_log_pdf(z: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_nll_constant(nu: f64) -> f64 {
-    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu)
-        - ln_gamma(f64::midpoint(nu, 1.0))
+    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) - ln_gamma_delta(0.5 * nu, 0.5)
 }
 
 /// Standard Student-t log-density.
@@ -244,40 +281,66 @@ pub fn digamma(value: f64) -> f64 {
     }
 
     let inv = 1.0 / x;
-    let inv2 = inv * inv;
-    0.5f64.mul_add(-inv, result + x.ln()) - inv2 / 12.0 + inv2 * inv2 / 120.0
-        - inv2 * inv2 * inv2 / 252.0
-        + inv2 * inv2 * inv2 * inv2 / 240.0
+    let inv_sq = inv * inv;
+    let inv_fourth = inv_sq * inv_sq;
+    let inv_sixth = inv_fourth * inv_sq;
+    let inv_eighth = inv_fourth * inv_fourth;
+    let inv_tenth = inv_eighth * inv_sq;
+    let inv_twelfth = inv_tenth * inv_sq;
+    0.5f64.mul_add(-inv, result + x.ln()) - inv_sq / 12.0 + inv_fourth / 120.0 - inv_sixth / 252.0
+        + inv_eighth / 240.0
+        - 5.0 * inv_tenth / 660.0
+        + 691.0 * inv_twelfth / 32_760.0
 }
 
 /// Regularized incomplete beta function `I_x(a, b)` for positive `a`, `b`.
 #[must_use]
 #[inline]
 pub fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
-    clamp_probability(regularized_beta_unchecked(a, b, x))
+    clamp_probability(regularized_beta_pair_unchecked(a, b, x).0)
+}
+
+/// Complement of the regularized incomplete beta function, `1 - I_x(a, b)`.
+///
+/// This avoids subtracting from one in the upper tail when the continued
+/// fraction can compute the complement directly.
+#[must_use]
+#[inline]
+pub fn regularized_beta_complement(a: f64, b: f64, x: f64) -> f64 {
+    clamp_probability(regularized_beta_pair_unchecked(a, b, x).1)
 }
 
 #[allow(clippy::suboptimal_flops)]
-fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
+fn regularized_beta_pair_unchecked(a: f64, b: f64, x: f64) -> (f64, f64) {
     if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
-        return f64::NAN;
+        return (f64::NAN, f64::NAN);
     }
     if x == 0.0 {
-        return 0.0;
+        return (0.0, 1.0);
     }
     #[allow(clippy::float_cmp)]
     if x == 1.0 {
-        return 1.0;
+        return (1.0, 0.0);
     }
 
-    let log_front = -ln_beta(a, b) + a * x.ln() + b * (1.0 - x).ln();
-    let front = log_front.exp();
-
-    if x < (a + 1.0) / (a + b + 2.0) {
+    let front = beta_front(a, b, x);
+    let term = if x < (a + 1.0) / (a + b + 2.0) {
         front * beta_continued_fraction(a, b, x) / a
     } else {
-        1.0 - front * beta_continued_fraction(b, a, 1.0 - x) / b
+        front * beta_continued_fraction(b, a, 1.0 - x) / b
+    };
+
+    if x < (a + 1.0) / (a + b + 2.0) {
+        (term, 1.0 - term)
+    } else {
+        (1.0 - term, term)
     }
+}
+
+#[inline]
+fn beta_front(a: f64, b: f64, x: f64) -> f64 {
+    b.mul_add((-x).ln_1p(), a.mul_add(x.ln(), -ln_beta(a, b)))
+        .exp()
 }
 
 /// Regularized lower incomplete gamma function `P(a, x)`.
@@ -285,6 +348,13 @@ fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
 #[inline]
 pub fn regularized_gamma_lower(a: f64, x: f64) -> f64 {
     clamp_probability(regularized_gamma_lower_unchecked(a, x))
+}
+
+/// Regularized upper incomplete gamma function `Q(a, x) = 1 - P(a, x)`.
+#[must_use]
+#[inline]
+pub fn regularized_gamma_upper(a: f64, x: f64) -> f64 {
+    clamp_probability(regularized_gamma_upper_unchecked(a, x))
 }
 
 fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
@@ -295,6 +365,10 @@ fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
         return 0.0;
     }
 
+    if use_gamma_saddlepoint(a, x) {
+        return gamma_saddlepoint_pair(a, x).0;
+    }
+
     if x < a + 1.0 {
         gamma_lower_series(a, x)
     } else {
@@ -302,8 +376,56 @@ fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
     }
 }
 
+fn regularized_gamma_upper_unchecked(a: f64, x: f64) -> f64 {
+    if a <= 0.0 || !a.is_finite() || x < 0.0 || !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+
+    if use_gamma_saddlepoint(a, x) {
+        return gamma_saddlepoint_pair(a, x).1;
+    }
+
+    if x < a + 1.0 {
+        1.0 - gamma_lower_series(a, x)
+    } else {
+        gamma_upper_continued_fraction(a, x)
+    }
+}
+
+#[inline]
+fn use_gamma_saddlepoint(a: f64, x: f64) -> bool {
+    const MIN_SHAPE: f64 = 50_000.0;
+    const MAX_CENTERED_DISTANCE: f64 = 10.0;
+
+    a >= MIN_SHAPE && (x - a).abs() <= MAX_CENTERED_DISTANCE * a.sqrt()
+}
+
+fn gamma_saddlepoint_pair(a: f64, x: f64) -> (f64, f64) {
+    let sqrt_a = a.sqrt();
+    let centered = (x - a) / sqrt_a;
+    if centered.abs() <= 1.0e-5 {
+        let central_correction = centered + 1.0 / (3.0 * sqrt_a);
+        let lower = INV_SQRT_2_PI.mul_add(central_correction, 0.5);
+        return (lower, 1.0 - lower);
+    }
+
+    let lambda = x / a;
+    let eta = lambda - 1.0 - lambda.ln();
+    if eta <= 0.0 {
+        return (0.5, 0.5);
+    }
+
+    let r = (2.0 * a * eta).sqrt().copysign(lambda - 1.0);
+    let correction = unit_normal_log_pdf(r).exp() * (1.0 / r - 1.0 / centered);
+    let lower = unit_normal_cdf(r) + correction;
+    (lower, 1.0 - lower)
+}
+
 fn gamma_lower_series(a: f64, x: f64) -> f64 {
-    const MAX_ITERATIONS: usize = 1_000;
+    const MAX_ITERATIONS: usize = 10_000;
     const EPSILON: f64 = 1.0e-14;
 
     let mut term = 1.0 / a;
@@ -735,7 +857,10 @@ pub fn unit_normal_cdf(z: f64) -> f64 {
     unit_normal_sf(-z)
 }
 
-fn unit_normal_sf(z: f64) -> f64 {
+/// Standard normal survival function `1 - Phi(z)`.
+#[must_use]
+#[inline]
+pub fn unit_normal_sf(z: f64) -> f64 {
     if z.is_nan() {
         return f64::NAN;
     }
@@ -747,6 +872,13 @@ fn unit_normal_sf(z: f64) -> f64 {
     }
 
     clamp_probability(0.5 * unit_normal_erfc(z * std::f64::consts::FRAC_1_SQRT_2))
+}
+
+/// Natural logarithm of the standard normal survival function.
+#[must_use]
+#[inline]
+pub fn unit_normal_log_sf(z: f64) -> f64 {
+    log_ndtr(-z)
 }
 
 fn unit_normal_erfc(x: f64) -> f64 {
@@ -848,6 +980,9 @@ pub fn log_ndtr(z: f64) -> f64 {
     if z <= -10.0 {
         return log_ndtr_left_tail(z);
     }
+    if z > 5.0 {
+        return (-unit_normal_sf(z)).ln_1p();
+    }
 
     unit_normal_cdf(z).ln()
 }
@@ -855,7 +990,14 @@ pub fn log_ndtr(z: f64) -> f64 {
 fn log_ndtr_left_tail(z: f64) -> f64 {
     let x = -z;
     let inv2 = 1.0 / (x * x);
-    let correction = polynomial_descending(
+    let correction = normal_left_tail_correction(inv2);
+
+    unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
+}
+
+#[inline]
+fn normal_left_tail_correction(inv2: f64) -> f64 {
+    polynomial_descending(
         inv2,
         &[
             -34_459_425.0,
@@ -869,9 +1011,7 @@ fn log_ndtr_left_tail(z: f64) -> f64 {
             -1.0,
             1.0,
         ],
-    );
-
-    unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
+    )
 }
 
 /// Standard normal Mills ratio `phi(z) / Phi(z)`.
@@ -891,6 +1031,12 @@ pub fn normal_mills_ratio(z: f64) -> f64 {
         return 0.0;
     }
 
+    if z <= -10.0 {
+        let x = -z;
+        let correction = normal_left_tail_correction(1.0 / (x * x));
+        return x / correction.max(f64::MIN_POSITIVE);
+    }
+
     let log_ratio = unit_normal_log_pdf(z) - log_ndtr(z);
     if log_ratio.is_nan() && z < 0.0 {
         // Both log terms may underflow to `-inf` for extreme finite left-tail
@@ -903,9 +1049,9 @@ pub fn normal_mills_ratio(z: f64) -> f64 {
 
 /// Owen's T function `T(h, a)`.
 ///
-/// This is primarily used for skew-normal CDF evaluation. The implementation
-/// uses adaptive Simpson integration, which is accurate enough for family
-/// helper APIs while keeping production dependencies unchanged.
+/// This is primarily used for skew-normal CDF evaluation. Arguments with
+/// `|a| > 1` are reduced by Owen's reciprocal identity, leaving adaptive
+/// Simpson integration on a bounded interval no wider than one.
 #[must_use]
 pub fn owens_t(h: f64, a: f64) -> f64 {
     if !h.is_finite() || !a.is_finite() {
@@ -917,8 +1063,8 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
 
     let sign = a.signum();
     let upper = a.abs();
-    if upper > 50.0 {
-        return sign * 0.5 * unit_normal_sf(h.abs());
+    if upper > 1.0 {
+        return sign * owens_t_reciprocal_reduction(h.abs(), upper);
     }
 
     let h2 = h * h;
@@ -928,6 +1074,19 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
         (-0.5 * h2 * (1.0 + x * x)).exp() / (1.0 + x * x)
     });
     sign * integral / (2.0 * std::f64::consts::PI)
+}
+
+fn owens_t_reciprocal_reduction(h: f64, a: f64) -> f64 {
+    let scaled_h = h * a;
+    let cdf_h = unit_normal_cdf(h);
+    let cdf_scaled = unit_normal_cdf(scaled_h);
+    let reduced = if scaled_h.is_finite() {
+        owens_t(scaled_h, 1.0 / a)
+    } else {
+        0.0
+    };
+    let value = cdf_h.mul_add(-cdf_scaled, f64::midpoint(cdf_h, cdf_scaled)) - reduced;
+    value.clamp(0.0, 0.25)
 }
 
 /// Standard normal quantile using Wichura's AS241 rational approximation.
