@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
     Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau, UnitIntervalLink,
@@ -339,6 +341,23 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> CanSimulate<Rng>
+    for Beinf<MuLink, SigmaLink, NuLink, TauLink>
+where
+    Rng: rand::Rng,
+    MuLink: UnitIntervalLink<f64>,
+    SigmaLink: UnitIntervalLink<f64>,
+    NuLink: PositiveLink<f64>,
+    TauLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        crate::simulation::sample_quantile(rng, self, theta)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BeinfParts {
     alpha: f64,
@@ -395,4 +414,44 @@ pub struct BeinfTheta {
     pub nu: f64,
     /// Positive one-mass odds relative to the beta component.
     pub tau: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{BeinfMuSigmaNuTau, BeinfTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn beinf_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = BeinfMuSigmaNuTau::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &BeinfTheta {
+                mu: 0.4,
+                sigma: 0.2,
+                nu: 0.3,
+                tau: 0.4,
+            },
+        );
+        assert!((0.0..=1.0).contains(&sample));
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &BeinfTheta {
+                        mu: 0.4,
+                        sigma: 0.0,
+                        nu: 0.3,
+                        tau: 0.4,
+                    }
+                )
+                .is_nan()
+        );
+    }
 }

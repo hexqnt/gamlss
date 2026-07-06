@@ -15,16 +15,16 @@ evaluations for `K` parameters.
 
 | Family                | NLL | Gradient | Gradient kind | CDF | PDF | Quantile | CRPS | Sampling |
 | --------------------- | --- | -------- | ------------- | --- | --- | -------- | ---- | -------- |
-| `Beinf`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Beinf`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Bernoulli`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Beta`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Exponential`         | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Gamma`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `GeneralizedGamma`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Gev`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Gumbel`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `GeneralizedGamma`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Gev`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Gumbel`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `InverseGaussian`     | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `JohnsonSu`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `JohnsonSu`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Laplace`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `LogNormal`           | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Logistic`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
@@ -32,16 +32,16 @@ evaluations for `K` parameters.
 | `NegativeBinomial`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Normal`              | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Poisson`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `PowerExponential`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Shash`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `SkewNormal`          | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `PowerExponential`    | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Shash`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `SkewNormal`          | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `SkewStudentT`        | ✓   | ✓        | finite-diff   | ✓   | ✓   | ✓        | ✗    | ✗        |
 | `StudentT`            | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Tweedie`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Tweedie`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 | `Weibull`             | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
-| `Zaga`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Zinb`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
-| `Zip`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✗        |
+| `Zaga`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Zinb`                | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
+| `Zip`                 | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✗    | ✓        |
 
 ## Multivariate families
 

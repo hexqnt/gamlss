@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Cv, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
     ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
@@ -264,5 +266,59 @@ where
         let rate = 1.0 / (theta.sigma * theta.sigma * theta.mu);
         let target = (p - theta.nu) / (1.0 - theta.nu);
         invert_positive_cdf(target, |y| regularized_gamma_lower(shape, rate * y))
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, CvLink, ZeroProbabilityLink> CanSimulate<Rng>
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Zaga::<Log, Log, Logit>::sample_component_theta(rng, theta.component())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn total_mean_zaga_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZagaTotalMeanCvZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &ZagaTotalMeanCvZeroProbabilityTheta {
+                total_mean: 1.5,
+                cv: 0.7,
+                zero_probability: 0.2,
+            },
+        );
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &ZagaTotalMeanCvZeroProbabilityTheta {
+                        total_mean: 1.5,
+                        cv: 0.0,
+                        zero_probability: 0.2,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

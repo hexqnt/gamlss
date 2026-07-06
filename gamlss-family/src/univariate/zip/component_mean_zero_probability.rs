@@ -1,3 +1,5 @@
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     ComponentMean, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
     Log, Logit, ObservationView, ParameterParts, PositiveLink, ScalarParams, UnitIntervalLink,
@@ -146,5 +148,56 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Self::cdf_theta(count as f64, *theta)
         })
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, ZeroProbabilityLink> CanSimulate<Rng>
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Self::sample_component_theta(rng, *theta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{ZipComponentMeanZeroProbability, ZipTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn zip_sampling_returns_counts_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZipComponentMeanZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &ZipTheta {
+                mu: 2.0,
+                sigma: 0.3,
+            },
+        );
+        assert!(sample >= 0.0 && sample.fract() == 0.0);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &ZipTheta {
+                        mu: 2.0,
+                        sigma: 1.0,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

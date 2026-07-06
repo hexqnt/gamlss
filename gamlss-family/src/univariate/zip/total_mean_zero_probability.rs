@@ -1,3 +1,5 @@
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
     ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
@@ -9,7 +11,7 @@ use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 
-use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
+use super::{ComponentMeanZeroProbability, MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 
 /// ZIP distribution parameterized by total mean and zero-inflation probability.
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;
@@ -164,5 +166,59 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Self::cdf_theta(count as f64, theta)
         })
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, ZeroProbabilityLink> CanSimulate<Rng>
+    for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Zip::<ComponentMeanZeroProbability, Log, Logit>::sample_component_theta(
+            rng,
+            theta.component(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn total_mean_zip_sampling_returns_counts_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZipTotalMeanZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &ZipTotalMeanZeroProbabilityTheta {
+                total_mean: 2.0,
+                zero_probability: 0.3,
+            },
+        );
+        assert!(sample >= 0.0 && sample.fract() == 0.0);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &ZipTotalMeanZeroProbabilityTheta {
+                        total_mean: 2.0,
+                        zero_probability: 1.0,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

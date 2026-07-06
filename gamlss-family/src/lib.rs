@@ -68,6 +68,8 @@ mod initial;
 #[cfg(feature = "multivariate")]
 pub mod multivariate;
 mod numeric;
+#[cfg(feature = "rand")]
+mod simulation;
 /// Univariate distributions.
 pub mod univariate;
 

@@ -141,6 +141,36 @@ where
         );
         (1.0 - theta.nu).mul_add(base_cdf, theta.nu).clamp(0.0, 1.0)
     }
+
+    #[cfg(feature = "rand")]
+    pub(super) fn sample_component_theta<Rng>(rng: &mut Rng, theta: ZinbTheta) -> f64
+    where
+        Rng: rand::Rng,
+    {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+            || theta.nu <= 0.0
+            || theta.nu >= 1.0
+            || !theta.nu.is_finite()
+        {
+            return f64::NAN;
+        }
+        if crate::simulation::open_unit(rng) <= theta.nu {
+            return 0.0;
+        }
+
+        let lambda = rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape)
+                .expect("validated ZINB gamma-poisson parameters must construct"),
+            rng,
+        );
+        rand_distr::Distribution::sample(
+            &rand_distr::Poisson::new(lambda).expect("validated ZINB poisson mean must construct"),
+            rng,
+        )
+    }
 }
 
 impl<MuLink, ShapeLink, NuLink> Default for Zinb<MuLink, ShapeLink, NuLink>

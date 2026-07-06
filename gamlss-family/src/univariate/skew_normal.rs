@@ -102,6 +102,23 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
     invert_real_cdf(p, |z| standard_cdf(z, nu)).mul_add(sigma, mu)
 }
 
+#[cfg(feature = "rand")]
+#[inline]
+fn sample_location_scale<Rng>(rng: &mut Rng, mu: f64, sigma: f64, nu: f64) -> f64
+where
+    Rng: rand::Rng,
+{
+    if !valid_location_scale(mu, sigma, nu) {
+        return f64::NAN;
+    }
+
+    let delta = nu / nu.hypot(1.0);
+    let u = crate::simulation::standard_normal(rng).abs();
+    let v = crate::simulation::standard_normal(rng);
+    let standardized = (1.0 - delta * delta).max(0.0).sqrt().mul_add(v, delta * u);
+    sigma.mul_add(standardized, mu)
+}
+
 #[inline]
 fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64) -> Option<(f64, f64)> {
     if !mean.is_finite() || sigma <= 0.0 || !sigma.is_finite() || !nu.is_finite() {

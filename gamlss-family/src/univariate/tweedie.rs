@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
     Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, ScalarParams,
@@ -289,6 +291,31 @@ where
         invert_positive_cdf(p, |y| Self::cdf_theta(y, theta))
     }
 
+    #[cfg(feature = "rand")]
+    fn sample_theta<Rng>(rng: &mut Rng, theta: TweedieTheta) -> f64
+    where
+        Rng: rand::Rng,
+    {
+        let Some(params) = Self::compound(theta) else {
+            return f64::NAN;
+        };
+
+        let count = rand_distr::Distribution::sample(
+            &rand_distr::Poisson::new(params.lambda)
+                .expect("validated Tweedie Poisson rate must construct"),
+            rng,
+        );
+        if count == 0.0 {
+            return 0.0;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(count * params.alpha, 1.0 / params.rate)
+                .expect("validated Tweedie gamma parameters must construct"),
+            rng,
+        )
+    }
+
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
         let (nll, gradient) = Self::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
@@ -408,6 +435,22 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         Self::quantile_theta(p, *theta)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, DispersionLink, PowerLink> CanSimulate<Rng>
+    for Tweedie<MeanLink, DispersionLink, PowerLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Self::sample_theta(rng, *theta)
     }
 }
 
@@ -678,6 +721,21 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, CvLink, PowerLink> CanSimulate<Rng> for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Tweedie::<Log, Log, Logit>::sample_theta(rng, (*theta).into())
+    }
+}
+
 /// Predictors for Tweedie mean/CV/power on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TweedieMeanCvPowerEta {
@@ -725,5 +783,75 @@ impl TweedieMeanCvPowerTheta {
     #[inline]
     fn dispersion(self) -> f64 {
         self.cv * self.cv * self.mean.powf(2.0 - self.power)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{
+        TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
+    };
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn tweedie_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = TweedieMeanDispersionPower::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &TweedieTheta {
+                mean: 2.0,
+                dispersion: 0.5,
+                power: 1.5,
+            },
+        );
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &TweedieTheta {
+                        mean: 2.0,
+                        dispersion: 0.5,
+                        power: 2.0,
+                    }
+                )
+                .is_nan()
+        );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn tweedie_cv_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = TweedieMeanCvPower::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &TweedieMeanCvPowerTheta {
+                mean: 2.0,
+                cv: 0.7,
+                power: 1.5,
+            },
+        );
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &TweedieMeanCvPowerTheta {
+                        mean: 2.0,
+                        cv: 0.7,
+                        power: 2.0,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

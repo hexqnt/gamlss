@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
@@ -252,6 +254,38 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng>
+    for PowerExponential<MuLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || theta.nu <= 0.0
+            || !theta.nu.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let radius = rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(1.0 / theta.nu, 1.0)
+                .expect("validated power exponential shape must construct"),
+            rng,
+        )
+        .powf(1.0 / theta.nu);
+        (crate::simulation::fair_sign(rng) * Self::scale_c(theta.nu) * theta.sigma)
+            .mul_add(radius, theta.mu)
+    }
+}
+
 /// Predictors for the power exponential family on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PowerExponentialEta {
@@ -293,4 +327,45 @@ pub struct PowerExponentialTheta {
     pub sigma: f64,
     /// Positive tail shape.
     pub nu: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{PowerExponentialMuSigmaNu, PowerExponentialTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn power_exponential_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = PowerExponentialMuSigmaNu::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &PowerExponentialTheta {
+                        mu: 0.4,
+                        sigma: 1.5,
+                        nu: 1.4,
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &PowerExponentialTheta {
+                        mu: 0.4,
+                        sigma: 0.0,
+                        nu: 1.4,
+                    }
+                )
+                .is_nan()
+        );
+    }
 }

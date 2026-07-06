@@ -3,10 +3,13 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
+    ScalarParams, Sigma,
 };
+use gamlss_special::exponential_integral_e1;
 
+use crate::constants::{EULER_MASCHERONI, LOG_2};
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 
@@ -192,6 +195,30 @@ where
     }
 }
 
+impl<MuLink, SigmaLink> HasCrps for Gumbel<MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
+            return f64::NAN;
+        }
+
+        let z = (y - theta.mu) / theta.sigma;
+        let exp_neg_z = (-z).exp();
+        let standard = if exp_neg_z == 0.0 {
+            z - EULER_MASCHERONI - LOG_2
+        } else {
+            2.0_f64.mul_add(
+                exponential_integral_e1(exp_neg_z),
+                EULER_MASCHERONI - z - LOG_2,
+            )
+        };
+        theta.sigma * standard.max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Gumbel<MuLink, SigmaLink>
 where
@@ -256,7 +283,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{GumbelMuSigma, GumbelTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -333,6 +360,61 @@ mod tests {
                 )
                 .is_nan()
         );
+    }
+
+    #[test]
+    fn gumbel_crps_matches_fixed_values() {
+        let family = GumbelMuSigma::new();
+        let theta = GumbelTheta {
+            mu: 0.4,
+            sigma: 1.5,
+        };
+
+        assert_relative_eq!(
+            family.crps(theta.mu, &theta),
+            0.484_254_529_698_942_9,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            family.crps(3.0, &theta),
+            1.202_013_180_764_635_3,
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn gumbel_crps_returns_nan_for_invalid_domains() {
+        let family = GumbelMuSigma::new();
+        let theta = GumbelTheta {
+            mu: 0.4,
+            sigma: 1.5,
+        };
+
+        assert!(family.crps(f64::NAN, &theta).is_nan());
+        assert!(
+            family
+                .crps(
+                    1.0,
+                    &GumbelTheta {
+                        mu: 0.4,
+                        sigma: 0.0
+                    }
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn gumbel_crps_is_nonnegative_for_valid_domains() {
+        let family = GumbelMuSigma::new();
+        let theta = GumbelTheta {
+            mu: 0.4,
+            sigma: 1.5,
+        };
+
+        assert!(family.crps(-10.0, &theta) >= 0.0);
+        assert!(family.crps(theta.mu, &theta) >= 0.0);
+        assert!(family.crps(10.0, &theta) >= 0.0);
     }
 
     #[cfg(feature = "rand")]

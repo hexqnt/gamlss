@@ -106,6 +106,29 @@ where
             .mul_add(base_cdf, theta.sigma)
             .clamp(0.0, 1.0)
     }
+
+    #[cfg(feature = "rand")]
+    pub(super) fn sample_component_theta<Rng>(rng: &mut Rng, theta: ZipTheta) -> f64
+    where
+        Rng: rand::Rng,
+    {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || theta.sigma >= 1.0
+            || !theta.sigma.is_finite()
+        {
+            return f64::NAN;
+        }
+        if crate::simulation::open_unit(rng) <= theta.sigma {
+            return 0.0;
+        }
+
+        rand_distr::Distribution::sample(
+            &rand_distr::Poisson::new(theta.mu).expect("validated ZIP mean must construct"),
+            rng,
+        )
+    }
 }
 
 impl<Param, MeanLink, ZeroProbabilityLink> Default for Zip<Param, MeanLink, ZeroProbabilityLink>

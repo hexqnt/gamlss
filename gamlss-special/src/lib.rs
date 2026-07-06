@@ -11,6 +11,7 @@
 //! distribution code.
 
 const LANCZOS_SHIFT: f64 = 6.5;
+const EULER_MASCHERONI: f64 = 0.577_215_664_901_532_9;
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
 const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
 
@@ -205,6 +206,84 @@ pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
 
     let max = log_left.max(log_right);
     max + (-(log_left - log_right).abs()).exp().ln_1p()
+}
+
+/// Exponential integral `E1(x) = integral_x^inf exp(-t) / t dt`.
+///
+/// Returns `NaN` for negative or `NaN` inputs, positive infinity at zero, and
+/// zero at positive infinity.
+#[must_use]
+pub fn exponential_integral_e1(x: f64) -> f64 {
+    if x < 0.0 || x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::INFINITY;
+    }
+    if x == f64::INFINITY {
+        return 0.0;
+    }
+
+    if x <= 1.0 {
+        exponential_integral_e1_series(x)
+    } else {
+        exponential_integral_e1_continued_fraction(x)
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn exponential_integral_e1_series(x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-16;
+
+    let mut factorial_term = -x;
+    let mut sum = factorial_term;
+    for iteration in 2..=MAX_ITERATIONS {
+        let k = iteration as f64;
+        factorial_term *= -x / k;
+        let term = factorial_term / k;
+        sum += term;
+        if term.abs() <= EPSILON * sum.abs().max(1.0) {
+            break;
+        }
+    }
+
+    -EULER_MASCHERONI - x.ln() - sum
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn exponential_integral_e1_continued_fraction(x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-14;
+    const TINY: f64 = 1.0e-300;
+
+    let mut b = x + 1.0;
+    let mut c = 1.0 / TINY;
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for iteration in 1..=MAX_ITERATIONS {
+        let i = iteration as f64;
+        let a = -(i * i);
+        b += 2.0;
+
+        d = a.mul_add(d, b);
+        if d.abs() < TINY {
+            d = TINY;
+        }
+        c = b + a / c;
+        if c.abs() < TINY {
+            c = TINY;
+        }
+        d = 1.0 / d;
+        let delta = c * d;
+        h *= delta;
+        if (delta - 1.0).abs() <= EPSILON {
+            break;
+        }
+    }
+
+    (-x).exp() * h
 }
 
 /// Standard normal log-density.
@@ -1180,5 +1259,39 @@ pub fn unit_normal_quantile(p: f64) -> f64 {
                 / polynomial_ascending_with_constant_one(r, &FAR_TAIL_DENOMINATOR)
         };
         if centered < 0.0 { -quantile } else { quantile }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+
+    use super::exponential_integral_e1;
+
+    #[test]
+    fn exponential_integral_e1_matches_reference_values() {
+        assert_relative_eq!(
+            exponential_integral_e1(0.1),
+            1.822_923_958_419_390_6,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            exponential_integral_e1(1.0),
+            0.219_383_934_395_520_29,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            exponential_integral_e1(10.0),
+            0.000_004_156_968_929_685_325,
+            epsilon = 1.0e-18
+        );
+    }
+
+    #[test]
+    fn exponential_integral_e1_handles_invalid_domains() {
+        assert!(exponential_integral_e1(-1.0).is_nan());
+        assert!(exponential_integral_e1(f64::NAN).is_nan());
+        assert!(exponential_integral_e1(0.0).is_infinite());
+        assert!(exponential_integral_e1(f64::INFINITY).abs() <= f64::EPSILON);
     }
 }

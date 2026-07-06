@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
@@ -264,6 +266,21 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng> for Gev<MuLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        crate::simulation::sample_quantile(rng, self, theta)
+    }
+}
+
 /// Predictors for GEV on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GevEta {
@@ -305,4 +322,43 @@ pub struct GevTheta {
     pub sigma: f64,
     /// Shape parameter.
     pub nu: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{GevMuSigmaShape, GevTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn gev_sampling_returns_supported_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = GevMuSigmaShape::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &GevTheta {
+                mu: 0.4,
+                sigma: 1.5,
+                nu: 0.2,
+            },
+        );
+        assert!(sample.is_finite());
+        assert!(sample >= 0.4 - 1.5 / 0.2);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &GevTheta {
+                        mu: 0.4,
+                        sigma: 0.0,
+                        nu: 0.2,
+                    }
+                )
+                .is_nan()
+        );
+    }
 }

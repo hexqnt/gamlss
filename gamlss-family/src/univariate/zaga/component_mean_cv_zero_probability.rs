@@ -1,3 +1,5 @@
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
     Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, UnitIntervalLink,
@@ -190,5 +192,58 @@ where
         let rate = 1.0 / (theta.sigma * theta.sigma * theta.mu);
         let target = (p - theta.nu) / (1.0 - theta.nu);
         invert_positive_cdf(target, |y| regularized_gamma_lower(shape, rate * y))
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng> for Zaga<MuLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    MuLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Self::sample_component_theta(rng, *theta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{ZagaMeanSigmaZeroProbability, ZagaTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn zaga_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZagaMeanSigmaZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &ZagaTheta {
+                mu: 1.5,
+                sigma: 0.7,
+                nu: 0.2,
+            },
+        );
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &ZagaTheta {
+                        mu: 1.5,
+                        sigma: 0.0,
+                        nu: 0.2,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

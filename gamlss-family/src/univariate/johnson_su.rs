@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau,
@@ -227,6 +229,36 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> CanSimulate<Rng>
+    for JohnsonSu<MuLink, SigmaLink, NuLink, TauLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || !theta.mu.is_finite()
+            || !theta.nu.is_finite()
+            || theta.tau <= 0.0
+            || !theta.tau.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let z = crate::simulation::standard_normal(rng);
+        theta
+            .sigma
+            .mul_add(((z - theta.nu) / theta.tau).sinh(), theta.mu)
+    }
+}
+
 /// Predictors for the Johnson SU family on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JohnsonSuEta {
@@ -274,4 +306,47 @@ pub struct JohnsonSuTheta {
     pub nu: f64,
     /// Positive tail parameter.
     pub tau: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{JohnsonSuMuSigmaNuTau, JohnsonSuTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn johnson_su_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = JohnsonSuMuSigmaNuTau::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &JohnsonSuTheta {
+                        mu: 0.4,
+                        sigma: 1.5,
+                        nu: -0.2,
+                        tau: 0.8,
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &JohnsonSuTheta {
+                        mu: 0.4,
+                        sigma: 0.0,
+                        nu: -0.2,
+                        tau: 0.8,
+                    }
+                )
+                .is_nan()
+        );
+    }
 }

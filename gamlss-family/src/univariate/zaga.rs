@@ -119,6 +119,33 @@ where
         let (shape, rate) = Self::gamma_shape_rate(theta);
         (theta.nu + (1.0 - theta.nu) * regularized_gamma_lower(shape, rate * y)).clamp(0.0, 1.0)
     }
+
+    #[cfg(feature = "rand")]
+    pub(super) fn sample_component_theta<Rng>(rng: &mut Rng, theta: ZagaTheta) -> f64
+    where
+        Rng: rand::Rng,
+    {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || theta.nu <= 0.0
+            || theta.nu >= 1.0
+            || !theta.nu.is_finite()
+        {
+            return f64::NAN;
+        }
+        if crate::simulation::open_unit(rng) <= theta.nu {
+            return 0.0;
+        }
+
+        let (shape, rate) = Self::gamma_shape_rate(theta);
+        rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(shape, 1.0 / rate)
+                .expect("validated ZAGA gamma parameters must construct"),
+            rng,
+        )
+    }
 }
 
 impl<MuLink, SigmaLink, NuLink> Default for Zaga<MuLink, SigmaLink, NuLink>

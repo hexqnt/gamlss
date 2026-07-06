@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mean, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
@@ -225,6 +227,31 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, SigmaLink, NuLink> CanSimulate<Rng>
+    for SkewNormalMeanSd<MeanLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        super::sample_location_scale(
+            rng,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+        )
+    }
+}
+
 /// Predictors for mean/SD skew-normal on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkewNormalMeanSdEta {
@@ -277,5 +304,46 @@ impl SkewNormalMeanSdTheta {
             sigma,
             nu: self.nu,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{SkewNormalMeanSdNu, SkewNormalMeanSdTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn mean_sd_skew_normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = SkewNormalMeanSdNu::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &SkewNormalMeanSdTheta {
+                        mean: 0.4,
+                        sigma: 1.5,
+                        nu: 2.0,
+                    }
+                )
+                .is_finite()
+        );
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &SkewNormalMeanSdTheta {
+                        mean: 0.4,
+                        sigma: 0.0,
+                        nu: 2.0,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

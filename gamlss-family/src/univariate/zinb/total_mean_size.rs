@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
     ObservationView, ParameterParts, PositiveLink, ScalarParams, Size, TotalMean, UnitIntervalLink,
@@ -259,5 +261,59 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Zinb::<Log, Log, Logit>::cdf_theta(count as f64, theta)
         })
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, SizeLink, ZeroProbabilityLink> CanSimulate<Rng>
+    for ZinbTotalMeanSize<MeanLink, SizeLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        Zinb::<Log, Log, Logit>::sample_component_theta(rng, theta.component())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn total_mean_zinb_sampling_returns_counts_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZinbTotalMeanSizeZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &ZinbTotalMeanSizeZeroProbabilityTheta {
+                total_mean: 2.0,
+                size: 1.5,
+                zero_probability: 0.3,
+            },
+        );
+        assert!(sample >= 0.0 && sample.fract() == 0.0);
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &ZinbTotalMeanSizeZeroProbabilityTheta {
+                        total_mean: 2.0,
+                        size: 0.0,
+                        zero_probability: 0.3,
+                    }
+                )
+                .is_nan()
+        );
     }
 }

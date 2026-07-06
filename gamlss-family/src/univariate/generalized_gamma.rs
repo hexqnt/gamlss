@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+#[cfg(feature = "rand")]
+use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Scale, Sigma,
@@ -255,6 +257,43 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, ScaleLink, SigmaLink, NuLink> CanSimulate<Rng>
+    for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    type Sample = f64;
+
+    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || !theta.nu.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        if theta.nu.abs() < NU_EPSILON {
+            let z = crate::simulation::standard_normal(rng);
+            return theta.mu * (theta.sigma * z).exp();
+        }
+
+        let abs_nu = theta.nu.abs();
+        let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
+        let z = rand_distr::Distribution::sample(
+            &rand_distr::Gamma::new(k, 1.0 / k)
+                .expect("validated generalized gamma parameters must construct"),
+            rng,
+        );
+        theta.mu * z.powf(1.0 / theta.nu)
+    }
+}
+
 /// Predictors for generalized gamma on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneralizedGammaEta {
@@ -306,4 +345,51 @@ pub struct GeneralizedGammaTheta {
     pub sigma: f64,
     /// Shape parameter; `nu = 0` is the log-normal limit.
     pub nu: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::CanSimulate;
+
+    use super::{GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn generalized_gamma_sampling_returns_positive_values_and_nan_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family.sample(
+            &mut rng,
+            &GeneralizedGammaTheta {
+                mu: 1.5,
+                sigma: 0.7,
+                nu: 0.8,
+            },
+        );
+        assert!(sample > 0.0 && sample.is_finite());
+        let log_normal_limit = family.sample(
+            &mut rng,
+            &GeneralizedGammaTheta {
+                mu: 1.5,
+                sigma: 0.7,
+                nu: 0.0,
+            },
+        );
+        assert!(log_normal_limit > 0.0 && log_normal_limit.is_finite());
+        assert!(
+            family
+                .sample(
+                    &mut rng,
+                    &GeneralizedGammaTheta {
+                        mu: 1.5,
+                        sigma: 0.0,
+                        nu: 0.8,
+                    }
+                )
+                .is_nan()
+        );
+    }
 }
