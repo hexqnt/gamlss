@@ -91,7 +91,8 @@ impl MonotoneISplineDesign {
         let sign = self.direction.sign();
         grad[0] += score;
         self.basis.for_each_basis(self.x[row], |index, basis| {
-            grad[index + 1] += score * sign * basis * Softplus::derivative_inverse(beta[index + 1]);
+            let scale = score * sign * Softplus::derivative_inverse(beta[index + 1]);
+            grad[index + 1] = scale.mul_add(basis, grad[index + 1]);
         });
     }
 }

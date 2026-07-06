@@ -110,10 +110,9 @@ impl FourierDesign {
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn add_row_gradient(&self, row: usize, score: f64, grad: &mut [f64]) {
         self.for_each_basis_at(row, |index, basis| {
-            grad[index] += score * basis;
+            grad[index] = score.mul_add(basis, grad[index]);
         });
     }
 }
@@ -148,14 +147,13 @@ impl PredictorBlock for FourierDesign {
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.nparams);
 
         let mut value = 0.0;
         self.for_each_basis_at(row, |index, basis| {
-            value += beta[index] * basis;
+            value = beta[index].mul_add(basis, value);
         });
         value
     }

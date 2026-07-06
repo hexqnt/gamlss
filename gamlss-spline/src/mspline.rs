@@ -124,11 +124,42 @@ impl MSplineBasis {
         }
     }
 
+    /// Evaluates first derivatives of all basis functions at `x`.
+    #[must_use]
+    pub fn evaluate_derivative(&self, x: f64) -> Vec<f64> {
+        let mut values = vec![0.0; self.n_basis];
+        self.evaluate_derivative_into(x, &mut values);
+        values
+    }
+
+    /// Writes first derivatives of all basis functions at `x` into `out`.
+    ///
+    /// `out.len()` must equal [`Self::n_basis`].
+    #[inline]
+    pub fn evaluate_derivative_into(&self, x: f64, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), self.n_basis);
+
+        for (index, value) in out.iter_mut().enumerate() {
+            *value = self.evaluate_derivative_one(index, x);
+        }
+    }
+
     /// Visits non-zero basis-function values at `x` without allocating.
     #[inline]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
         for index in 0..self.n_basis {
             let weight = self.evaluate_one(index, x);
+            if weight != 0.0 {
+                f(index, weight);
+            }
+        }
+    }
+
+    /// Visits non-zero first derivatives at `x` without allocating.
+    #[inline]
+    pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
+        for index in 0..self.n_basis {
+            let weight = self.evaluate_derivative_one(index, x);
             if weight != 0.0 {
                 f(index, weight);
             }
@@ -146,6 +177,24 @@ impl MSplineBasis {
         }
         (self.degree + 1) as f64 * bspline_value(&self.knots, self.n_basis, index, self.degree, x)
             / denom
+    }
+
+    /// Evaluates the first derivative of one basis function at `x`.
+    #[must_use]
+    #[inline]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn evaluate_derivative_one(&self, index: usize, x: f64) -> f64 {
+        if self.degree == 0 {
+            return 0.0;
+        }
+
+        let denom = self.knots[index + self.degree + 1] - self.knots[index];
+        if denom <= 0.0 {
+            return 0.0;
+        }
+
+        let scale = (self.degree + 1) as f64 / denom;
+        scale * bspline_derivative_value(&self.knots, self.n_basis, index, self.degree, x)
     }
 }
 
@@ -185,19 +234,19 @@ impl MSplineDesign {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
 
-        let h = 1.0e-6;
-        let x = self.x[row];
-        let plus = self.dot_at(x + h, beta);
-        let minus = self.dot_at(x - h, beta);
-        (plus - minus) / (2.0 * h)
+        let mut value = 0.0;
+        self.basis
+            .for_each_derivative_basis(self.x[row], |index, weight| {
+                value = weight.mul_add(beta[index], value);
+            });
+        value
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.basis.for_each_basis(x, |index, weight| {
-            value += beta[index] * weight;
+            value = beta[index].mul_add(weight, value);
         });
         value
     }
@@ -240,7 +289,6 @@ impl PredictorBlock for MSplineDesign {
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.x.len());
         debug_assert_eq!(grad.len(), self.basis.n_basis());
@@ -250,7 +298,7 @@ impl PredictorBlock for MSplineDesign {
                 continue;
             }
             self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * weight;
+                grad[index] = score.mul_add(weight, grad[index]);
             });
         }
     }
@@ -295,6 +343,35 @@ impl PredictorBlock for MSplineDesign {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
+fn bspline_derivative_value(
+    knots: &[f64],
+    n_basis: usize,
+    index: usize,
+    degree: usize,
+    x: f64,
+) -> f64 {
+    debug_assert!(degree > 0);
+
+    let degree_f64 = degree as f64;
+    let mut value = 0.0;
+    let left_denom = knots[index + degree] - knots[index];
+    if left_denom > 0.0 {
+        value = (degree_f64 / left_denom)
+            .mul_add(bspline_value(knots, n_basis, index, degree - 1, x), value);
+    }
+
+    let right_denom = knots[index + degree + 1] - knots[index + 1];
+    if right_denom > 0.0 {
+        value = (-degree_f64 / right_denom).mul_add(
+            bspline_value(knots, n_basis, index + 1, degree - 1, x),
+            value,
+        );
+    }
+
+    value
+}
+
 #[allow(clippy::suboptimal_flops)]
 pub(crate) fn bspline_value(
     knots: &[f64],
@@ -318,14 +395,16 @@ pub(crate) fn bspline_value(
         let mut value = 0.0;
         let left_denom = knots[index + degree] - knots[index];
         if left_denom > 0.0 {
-            value += (x - knots[index]) / left_denom
-                * bspline_value(knots, n_basis, index, degree - 1, x);
+            value = ((x - knots[index]) / left_denom)
+                .mul_add(bspline_value(knots, n_basis, index, degree - 1, x), value);
         }
 
         let right_denom = knots[index + degree + 1] - knots[index + 1];
         if right_denom > 0.0 {
-            value += (knots[index + degree + 1] - x) / right_denom
-                * bspline_value(knots, n_basis, index + 1, degree - 1, x);
+            value = ((knots[index + degree + 1] - x) / right_denom).mul_add(
+                bspline_value(knots, n_basis, index + 1, degree - 1, x),
+                value,
+            );
         }
         value
     }

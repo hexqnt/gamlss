@@ -33,21 +33,19 @@ impl LocalBasis {
     }
 
     /// Dot product of the basis with coefficients.
-    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn dot(self, beta: &[f64]) -> f64 {
         let mut value = 0.0;
         self.for_each(|index, weight| {
-            value += beta[index] * weight;
+            value = beta[index].mul_add(weight, value);
         });
         value
     }
 
     /// Adds `scale * weights[i]` into `out[indices[i]]` for each non-zero
     /// element of the basis.
-    #[allow(clippy::suboptimal_flops)]
     pub(crate) fn add_scaled(self, scale: f64, out: &mut [f64]) {
         self.for_each(|index, weight| {
-            out[index] += scale * weight;
+            out[index] = scale.mul_add(weight, out[index]);
         });
     }
 
@@ -61,10 +59,9 @@ impl LocalBasis {
         for (local_j, (&j, &weight_j)) in indices.iter().zip(weights).enumerate() {
             let scaled_j = scale * weight_j;
             for (&k, &weight_k) in indices[local_j..].iter().zip(&weights[local_j..]) {
-                let delta = scaled_j * weight_k;
-                out[j * nparams + k] += delta;
+                out[j * nparams + k] = scaled_j.mul_add(weight_k, out[j * nparams + k]);
                 if k != j {
-                    out[k * nparams + j] += delta;
+                    out[k * nparams + j] = scaled_j.mul_add(weight_k, out[k * nparams + j]);
                 }
             }
         }

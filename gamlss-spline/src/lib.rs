@@ -100,6 +100,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_lambda_difference_penalties_are_noops() {
+        let beta = vec![f64::INFINITY, f64::NAN, f64::NEG_INFINITY];
+
+        assert_zero_lambda_penalty_is_noop(&DifferencePenalty::new_unchecked(0.0, 2), &beta);
+        assert_zero_lambda_penalty_is_noop(&CyclicDifferencePenalty::new_unchecked(0.0, 2), &beta);
+    }
+
+    #[test]
     fn difference_penalty_matrix_matches_gradient_convention() {
         let penalty = DifferencePenalty::new_unchecked(0.7, 2);
         let beta = vec![0.2, -0.4, 0.9, 1.1, -0.3];
@@ -235,6 +243,8 @@ mod tests {
         buffer.resize(m.n_basis(), 0.0);
         m.evaluate_into(0.4, &mut buffer);
         assert_eq!(buffer, m.evaluate(0.4));
+        m.evaluate_derivative_into(0.4, &mut buffer);
+        assert_eq!(buffer, m.evaluate_derivative(0.4));
 
         buffer.resize(i.n_basis(), 0.0);
         i.evaluate_into(0.4, &mut buffer);
@@ -1019,6 +1029,14 @@ mod tests {
             &natural_beta,
         );
 
+        let m_basis = MSplineBasis::open_uniform_from_data(&[0.0, 1.0], 6, 3).unwrap();
+        assert_eta_derivative_matches_coordinate_difference(
+            |points| m_basis.design(points).unwrap(),
+            super::mspline::MSplineDesign::eta_derivative_row,
+            &x,
+            &beta,
+        );
+
         let truncated = TruncatedPowerBasis::new(vec![0.3, 0.7], SplineOrder::Cubic, true)
             .unwrap()
             .design(&x)
@@ -1128,6 +1146,17 @@ mod tests {
 
         let point = 0.43;
         let eps = 1.0e-6;
+        for basis_index in 0..m.n_basis() {
+            let finite = (m.evaluate(point + eps)[basis_index]
+                - m.evaluate(point - eps)[basis_index])
+                / (2.0 * eps);
+            assert_relative_eq!(
+                m.evaluate_derivative(point)[basis_index],
+                finite,
+                epsilon = 1.0e-5
+            );
+        }
+
         for basis_index in 0..i.n_basis() {
             let finite = (i.evaluate(point + eps)[basis_index]
                 - i.evaluate(point - eps)[basis_index])
@@ -1184,6 +1213,17 @@ mod tests {
 
             assert_relative_eq!(grad[index], finite_difference, epsilon = 1.0e-6);
         }
+    }
+
+    fn assert_zero_lambda_penalty_is_noop<P>(penalty: &P, beta: &[f64])
+    where
+        P: Penalty,
+    {
+        let mut grad = vec![1.0, -2.0, 3.0];
+
+        assert_relative_eq!(penalty.value(beta), 0.0, epsilon = 0.0);
+        penalty.add_gradient(beta, &mut grad);
+        assert_eq!(grad, vec![1.0, -2.0, 3.0]);
     }
 
     fn assert_nonnegative_partition_of_unity(values: &[f64]) {

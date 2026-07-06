@@ -116,20 +116,18 @@ where
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.nrows);
         debug_assert_eq!(beta.len(), self.nparams);
 
         let mut value = 0.0;
         self.for_each_row_basis(row, |index, weight| {
-            value += beta[index] * weight;
+            value = beta[index].mul_add(weight, value);
         });
         value
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
     fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(scores.len(), self.nrows);
         debug_assert_eq!(grad.len(), self.nparams);
@@ -139,7 +137,7 @@ where
                 continue;
             }
             self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * weight;
+                grad[index] = score.mul_add(weight, grad[index]);
             });
         }
     }

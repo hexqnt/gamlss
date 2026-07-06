@@ -4,6 +4,8 @@ const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
 const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
 const EXPECTED_DIFFERENCE_ORDER_FOR_DIM: &str = "> 0 and < dimension";
 const EXPECTED_DIFFERENCE_COEFFICIENTS: &str = "consistent with difference penalty order";
+const FIRST_DIFFERENCE_COEFFICIENTS: [f64; 2] = [-1.0, 1.0];
+const SECOND_DIFFERENCE_COEFFICIENTS: [f64; 3] = [1.0, -2.0, 1.0];
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -609,6 +611,9 @@ fn non_cyclic_difference_at(coefficients: &[f64], beta_window: &[f64]) -> f64 {
 }
 
 fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if lambda == 0.0 {
+        return 0.0;
+    }
     if beta.is_empty() || beta.len() < coefficients.len() {
         return 0.0;
     }
@@ -631,7 +636,16 @@ fn add_cyclic_difference_penalty_gradient(
 ) {
     debug_assert_eq!(beta.len(), grad.len());
 
-    if beta.is_empty() || beta.len() < coefficients.len() {
+    if lambda == 0.0 || beta.is_empty() || beta.len() < coefficients.len() {
+        return;
+    }
+
+    if coefficients == FIRST_DIFFERENCE_COEFFICIENTS {
+        add_cyclic_first_difference_penalty_gradient(lambda, beta, grad);
+        return;
+    }
+    if coefficients == SECOND_DIFFERENCE_COEFFICIENTS {
+        add_cyclic_second_difference_penalty_gradient(lambda, beta, grad);
         return;
     }
 
@@ -668,6 +682,9 @@ fn add_cyclic_difference_penalty_matrix(
 }
 
 fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if lambda == 0.0 {
+        return 0.0;
+    }
     if beta.len() < coefficients.len() {
         return 0.0;
     }
@@ -691,7 +708,16 @@ fn add_difference_penalty_gradient(
 ) {
     debug_assert_eq!(beta.len(), grad.len());
 
-    if beta.len() < coefficients.len() {
+    if lambda == 0.0 || beta.len() < coefficients.len() {
+        return;
+    }
+
+    if coefficients == FIRST_DIFFERENCE_COEFFICIENTS {
+        add_first_difference_penalty_gradient(lambda, beta, grad);
+        return;
+    }
+    if coefficients == SECOND_DIFFERENCE_COEFFICIENTS {
+        add_second_difference_penalty_gradient(lambda, beta, grad);
         return;
     }
 
@@ -705,6 +731,93 @@ fn add_difference_penalty_gradient(
             let index = start + offset;
             grad[index] = (2.0 * scale * diff).mul_add(coefficient, grad[index]);
         }
+    }
+}
+
+fn add_cyclic_first_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 2);
+
+    let len = beta.len();
+    let scale = 2.0 * normalized_scale(lambda, len);
+    let last = len - 1;
+    for index in 0..len {
+        let previous = if index == 0 {
+            beta[last]
+        } else {
+            beta[index - 1]
+        };
+        let next = if index == last {
+            beta[0]
+        } else {
+            beta[index + 1]
+        };
+        let left = beta[index] - previous;
+        let right = next - beta[index];
+        grad[index] = scale.mul_add(left - right, grad[index]);
+    }
+}
+
+fn add_cyclic_second_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 3);
+
+    let len = beta.len();
+    let scale = 2.0 * normalized_scale(lambda, len);
+    let middle_scale = -2.0 * scale;
+    for start in 0..len {
+        let middle = wrap_offset(start, 1, len);
+        let right = wrap_offset(start, 2, len);
+        let diff = (beta[right] - beta[middle]) - (beta[middle] - beta[start]);
+        grad[start] = scale.mul_add(diff, grad[start]);
+        grad[middle] = middle_scale.mul_add(diff, grad[middle]);
+        grad[right] = scale.mul_add(diff, grad[right]);
+    }
+}
+
+fn add_first_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 2);
+
+    let len = beta.len();
+    let n_differences = len - 1;
+    let scale = 2.0 * normalized_scale(lambda, n_differences);
+    let last = len - 1;
+
+    grad[0] = scale.mul_add(beta[0] - beta[1], grad[0]);
+    for index in 1..last {
+        let left = beta[index] - beta[index - 1];
+        let right = beta[index + 1] - beta[index];
+        grad[index] = scale.mul_add(left - right, grad[index]);
+    }
+    grad[last] = scale.mul_add(beta[last] - beta[last - 1], grad[last]);
+}
+
+fn add_second_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 3);
+
+    let n_differences = beta.len() - 2;
+    let scale = 2.0 * normalized_scale(lambda, n_differences);
+    let middle_scale = -2.0 * scale;
+
+    for start in 0..n_differences {
+        let middle = start + 1;
+        let right = start + 2;
+        let diff = (beta[right] - beta[middle]) - (beta[middle] - beta[start]);
+        grad[start] = scale.mul_add(diff, grad[start]);
+        grad[middle] = middle_scale.mul_add(diff, grad[middle]);
+        grad[right] = scale.mul_add(diff, grad[right]);
+    }
+}
+
+#[inline]
+const fn wrap_offset(index: usize, offset: usize, len: usize) -> usize {
+    let wrapped = index + offset;
+    if wrapped >= len {
+        wrapped - len
+    } else {
+        wrapped
     }
 }
 
