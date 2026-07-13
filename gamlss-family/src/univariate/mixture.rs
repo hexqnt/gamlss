@@ -71,6 +71,9 @@ where
         }
 
         let terms: [f64; C] = std::array::from_fn(|index| {
+            if theta.weights[index] == 0.0 {
+                return f64::NEG_INFINITY;
+            }
             let nll = self.component.nll(
                 observation.clone(),
                 &theta.components[index],
@@ -91,14 +94,17 @@ where
             return f64::INFINITY;
         }
 
-        let weights = softmax_baseline(eta.logits);
+        let log_weights = log_softmax_baseline(eta.logits);
         let terms: [f64; C] = std::array::from_fn(|index| {
+            if log_weights[index] == f64::NEG_INFINITY {
+                return f64::NEG_INFINITY;
+            }
             let nll = self.component.nll_eta(
                 observation.clone(),
                 &eta.components[index],
                 &mut workspace.components[index],
             );
-            weights[index].ln() - nll
+            log_weights[index] - nll
         });
         -log_sum_exp(&terms)
     }
@@ -223,29 +229,33 @@ pub struct MixtureWorkspace<W, const C: usize> {
     components: [W; C],
 }
 
-fn softmax_baseline<const C: usize>(mut logits: [f64; C]) -> [f64; C] {
+fn softmax_baseline<const C: usize>(logits: [f64; C]) -> [f64; C] {
+    log_softmax_baseline(logits).map(f64::exp)
+}
+
+fn log_softmax_baseline<const C: usize>(mut logits: [f64; C]) -> [f64; C] {
     if C == 0 {
         return logits;
     }
     logits[C - 1] = 0.0;
     let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut sum = 0.0;
-    let mut weights = [0.0; C];
-    for (weight, logit) in weights.iter_mut().zip(logits) {
-        *weight = (logit - max).exp();
-        sum += *weight;
+    for logit in logits {
+        sum += (logit - max).exp();
     }
-    for weight in &mut weights {
-        *weight /= sum;
-    }
-    weights
+    let log_normalizer = max + sum.ln();
+    logits.map(|logit| logit - log_normalizer)
 }
 
 fn valid_weights(weights: &[f64]) -> bool {
+    let sum = weights.iter().sum::<f64>();
+    let tolerance = 16.0 * f64::EPSILON * weights.iter().fold(0.0, |count, _| count + 1.0);
     weights
         .iter()
-        .all(|weight| weight.is_finite() && *weight > 0.0)
-        && weights.iter().sum::<f64>().is_finite()
+        .all(|weight| weight.is_finite() && *weight >= 0.0)
+        && sum.is_finite()
+        && sum > 0.0
+        && (sum - 1.0).abs() <= tolerance
 }
 
 fn log_sum_exp(values: &[f64]) -> f64 {
@@ -265,8 +275,8 @@ mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::Family;
 
-    use super::{Mixture, MixtureEta};
-    use crate::{NormalEta, NormalMuSigma};
+    use super::{Mixture, MixtureEta, MixtureTheta};
+    use crate::{NormalEta, NormalMuSigma, NormalTheta};
 
     #[test]
     fn rejects_less_than_two_components() {
@@ -296,6 +306,65 @@ mod tests {
             .ln());
 
         assert_relative_eq!(nll, manual, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn natural_weights_must_be_a_simplex_and_allow_zero_weight_components() {
+        let family = Mixture::<_, 2>::try_new(NormalMuSigma::new()).unwrap();
+        let valid_component = NormalTheta {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+        let invalid_component = NormalTheta {
+            mu: f64::NAN,
+            sigma: f64::NAN,
+        };
+        let unnormalized = MixtureTheta {
+            weights: [1.0, 1.0],
+            components: [valid_component, invalid_component],
+        };
+        let zero_weight = MixtureTheta {
+            weights: [1.0, 0.0],
+            components: [valid_component, invalid_component],
+        };
+
+        assert!(
+            family
+                .nll(0.25, &unnormalized, &mut family.workspace())
+                .is_infinite()
+        );
+        assert!(
+            family
+                .nll(0.25, &zero_weight, &mut family.workspace())
+                .is_finite()
+        );
+    }
+
+    #[test]
+    fn extreme_logits_preserve_natural_scale_nll_parity() {
+        let family = Mixture::<_, 2>::try_new(NormalMuSigma::new()).unwrap();
+        let eta = MixtureEta::new(
+            [1_000.0, 0.0],
+            [
+                NormalEta {
+                    mu: 0.0,
+                    sigma: 0.0,
+                },
+                NormalEta {
+                    mu: 2.0,
+                    sigma: 0.0,
+                },
+            ],
+        );
+        let theta = family.theta(&eta, &mut family.workspace());
+
+        assert!((theta.weights[0] - 1.0).abs() <= f64::EPSILON);
+        assert!(theta.weights[1].abs() <= f64::EPSILON);
+        assert_relative_eq!(
+            family.nll_eta(0.25, &eta, &mut family.workspace()),
+            family.nll(0.25, &theta, &mut family.workspace()),
+            epsilon = 1.0e-12
+        );
     }
 
     #[test]

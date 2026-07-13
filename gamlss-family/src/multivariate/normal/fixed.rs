@@ -74,8 +74,12 @@ impl<const D: usize> FixedLowerTriangular<D> {
     /// Returns a lower-triangular entry, or `None` for invalid/upper entries.
     #[must_use]
     #[inline]
-    pub fn get(&self, row: usize, col: usize) -> Option<f64> {
-        (row < D && col <= row).then_some(self.values[row][col])
+    pub const fn get(&self, row: usize, col: usize) -> Option<f64> {
+        if row < D && col <= row {
+            Some(self.values[row][col])
+        } else {
+            None
+        }
     }
 
     /// Sets a lower-triangular entry.
@@ -616,6 +620,16 @@ mod tests {
     #[test]
     fn marker_trait_is_implemented() {
         assert_fixed_dimensional_family::<MvNormalCholeskyDefault<3>, 3>();
+    }
+
+    #[test]
+    fn lower_triangular_get_is_panic_free_for_invalid_indices() {
+        let matrix = FixedLowerTriangular::<2>::zeros();
+
+        assert_eq!(matrix.get(2, 0), None);
+        assert_eq!(matrix.get(0, 1), None);
+        assert_eq!(matrix.get(usize::MAX, 0), None);
+        assert_eq!(FixedLowerTriangular::<0>::zeros().get(0, 0), None);
     }
 
     #[test]

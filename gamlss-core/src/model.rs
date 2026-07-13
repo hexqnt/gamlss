@@ -3291,6 +3291,26 @@ fn repeated_parameter_array_range<P, L, X, Penalty, const D: usize>(
     }
 }
 
+fn validate_contiguous_repeated_parameter_ranges<P, L, X, Penalty, const D: usize>(
+    parameter: &'static str,
+    blocks: &[ParameterBlock<P, L, X, Penalty>; D],
+) -> Result<(), ModelError>
+where
+    P: ParameterName,
+{
+    for pair in blocks.windows(2) {
+        let previous = pair[0].try_range()?;
+        let current = pair[1].try_range()?;
+        if previous.end != current.start {
+            return Err(ModelError::InvalidParameter {
+                parameter,
+                expected: "ordered, contiguous coefficient ranges for repeated components",
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Macro that generates a [`GamlssBlocks`] implementation for tuple parameter
 /// blocks.
 ///
@@ -3816,6 +3836,12 @@ macro_rules! impl_repeated_scalar_gamlss_blocks {
                     }
                 )+
                 validate_non_overlapping_ranges(&ranges)?;
+                $(
+                    validate_contiguous_repeated_parameter_ranges(
+                        <$param as ParameterName>::NAME,
+                        &self.$idx,
+                    )?;
+                )+
 
                 Ok(())
             }

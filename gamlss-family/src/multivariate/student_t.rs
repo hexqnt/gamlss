@@ -258,7 +258,9 @@ where
             return [f64::NAN; D];
         }
         let normal = rand_distr::StandardNormal;
-        let chi_squared = rand_distr::ChiSquared::new(theta.tau).unwrap();
+        let Ok(chi_squared) = rand_distr::ChiSquared::new(theta.tau) else {
+            return [f64::NAN; D];
+        };
         let scale = (theta.tau / rand_distr::Distribution::sample(&chi_squared, rng)).sqrt();
         let mut z = [0.0; D];
         for value in &mut z {
