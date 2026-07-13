@@ -111,6 +111,8 @@ where
     #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
     fn positive_log_density(y: f64, params: CompoundParams) -> f64 {
         let mut log_sum = f64::NEG_INFINITY;
+        let mut previous_log_term = f64::NEG_INFINITY;
+        let mut past_mode = false;
         let log_lambda = params.lambda.ln();
         for n in 1..=MAX_SERIES_TERMS {
             let n_f = n as f64;
@@ -119,14 +121,16 @@ where
             let log_gamma = shape * params.rate.ln() - ln_gamma(shape) + (shape - 1.0) * y.ln()
                 - params.rate * y;
             let log_term = log_weight + log_gamma;
+            past_mode |= log_term <= previous_log_term;
             let next = log_add_exp(log_sum, log_term);
-            if n > 5 && (next - log_sum).abs() <= SERIES_EPSILON {
+            if n > 5 && past_mode && (next - log_sum).abs() <= SERIES_EPSILON {
                 return next;
             }
             log_sum = next;
+            previous_log_term = log_term;
         }
 
-        log_sum
+        f64::NAN
     }
 
     #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
@@ -137,6 +141,8 @@ where
     ) -> (f64, TweedieGradient) {
         let mut log_sum = f64::NEG_INFINITY;
         let mut gradient = TweedieGradient::ZERO;
+        let mut previous_log_term = f64::NEG_INFINITY;
+        let mut past_mode = false;
         let log_lambda = params.lambda.ln();
         for n in 1..=MAX_SERIES_TERMS {
             let n_f = n as f64;
@@ -145,6 +151,7 @@ where
             let log_gamma = shape * params.rate.ln() - ln_gamma(shape) + (shape - 1.0) * y.ln()
                 - params.rate * y;
             let log_term = log_weight + log_gamma;
+            past_mode |= log_term <= previous_log_term;
             let term_gradient = Self::positive_log_term_gradient(n_f, y, theta, params);
             let next = log_add_exp(log_sum, log_term);
             let old_weight = if log_sum.is_finite() {
@@ -154,13 +161,14 @@ where
             };
             let term_weight = (log_term - next).exp();
             gradient = gradient.blend_with(term_gradient, old_weight, term_weight);
-            if n > 5 && (next - log_sum).abs() <= SERIES_EPSILON {
+            if n > 5 && past_mode && (next - log_sum).abs() <= SERIES_EPSILON {
                 return (next, gradient);
             }
             log_sum = next;
+            previous_log_term = log_term;
         }
 
-        (log_sum, gradient)
+        (f64::NAN, TweedieGradient::NAN)
     }
 
     #[inline]
@@ -251,25 +259,31 @@ where
         let Some(params) = Self::compound(theta) else {
             return f64::NAN;
         };
-        let p0 = (-params.lambda).exp();
+        let log_p0 = -params.lambda;
         if y == 0.0 {
-            return p0;
+            return log_p0.exp();
         }
 
-        let mut cdf = p0;
+        let mut log_cdf = log_p0;
+        let mut previous_log_term = log_p0;
+        let mut past_mode = false;
         let log_lambda = params.lambda.ln();
         for n in 1..=MAX_SERIES_TERMS {
             let n_f = n as f64;
             let shape = n_f * params.alpha;
             let log_weight = -params.lambda + n_f * log_lambda - ln_gamma(n_f + 1.0);
-            let term = log_weight.exp() * regularized_gamma_lower(shape, params.rate * y);
-            cdf += term;
-            if n > 5 && term.abs() <= SERIES_EPSILON * cdf.abs().max(1.0) {
-                break;
+            let gamma_cdf = regularized_gamma_lower(shape, params.rate * y);
+            let log_term = log_weight + gamma_cdf.ln();
+            past_mode |= log_term <= previous_log_term;
+            let next = log_add_exp(log_cdf, log_term);
+            if n > 5 && past_mode && (next - log_cdf).abs() <= SERIES_EPSILON {
+                return next.exp().clamp(0.0, 1.0);
             }
+            log_cdf = next;
+            previous_log_term = log_term;
         }
 
-        cdf.clamp(0.0, 1.0)
+        f64::NAN
     }
 
     #[inline]
@@ -790,10 +804,25 @@ impl TweedieMeanCvPowerTheta {
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{
         TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
     };
+
+    #[test]
+    fn tweedie_cdf_does_not_stop_on_underflow_before_the_poisson_mode() {
+        let family = TweedieMeanDispersionPower::new();
+        let theta = TweedieTheta {
+            mean: 1.0,
+            dispersion: 0.002,
+            power: 1.5,
+        };
+
+        let cdf = family.cdf(1.0, &theta);
+        assert!(cdf > 0.45 && cdf < 0.55, "large-lambda CDF was {cdf}");
+        assert!(family.nll(1.0, &theta, &mut family.workspace()).is_finite());
+    }
 
     #[cfg(feature = "rand")]
     #[test]

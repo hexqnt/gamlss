@@ -480,7 +480,7 @@ impl ParameterParts<1> for f64 {
 impl ParameterParts<2> for (f64, f64) {
     #[inline]
     fn from_array(values: [f64; 2]) -> Self {
-        (values[0], values[1])
+        values.into()
     }
 
     #[inline]
@@ -496,7 +496,7 @@ impl ParameterParts<2> for (f64, f64) {
 impl ParameterParts<3> for (f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 3]) -> Self {
-        (values[0], values[1], values[2])
+        values.into()
     }
 
     #[inline]
@@ -513,7 +513,7 @@ impl ParameterParts<3> for (f64, f64, f64) {
 impl ParameterParts<4> for (f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 4]) -> Self {
-        (values[0], values[1], values[2], values[3])
+        values.into()
     }
 
     #[inline]
@@ -531,7 +531,7 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
 impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 5]) -> Self {
-        (values[0], values[1], values[2], values[3], values[4])
+        values.into()
     }
 
     #[inline]
@@ -550,9 +550,7 @@ impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
 impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 6]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5],
-        )
+        values.into()
     }
 
     #[inline]
@@ -572,9 +570,7 @@ impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
 impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 7]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5], values[6],
-        )
+        values.into()
     }
 
     #[inline]
@@ -595,9 +591,7 @@ impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
 impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 8]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
-        )
+        values.into()
     }
 
     #[inline]

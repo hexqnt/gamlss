@@ -8,7 +8,8 @@ use gamlss_core::{
 };
 
 use gamlss_special::{
-    digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, unit_normal_cdf,
+    digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
+    unit_normal_cdf, unit_normal_log_pdf,
 };
 
 use crate::constants::HALF_LOG_2_PI;
@@ -67,8 +68,11 @@ where
         if theta.nu.abs() < NU_EPSILON {
             let log_ratio = (y / theta.mu).ln();
             let z = log_ratio / theta.sigma;
-            let d_nu = Self::log_normal_limit_nu_score(log_ratio, theta.sigma);
-            return y.ln() + theta.sigma.ln() + HALF_LOG_2_PI + 0.5 * z * z + theta.nu * d_nu;
+            let (linear, quadratic) = Self::log_normal_limit_terms(log_ratio, theta.sigma);
+            return theta.nu.mul_add(
+                theta.nu.mul_add(quadratic, linear),
+                y.ln() + theta.sigma.ln() + HALF_LOG_2_PI + 0.5 * z * z,
+            );
         }
 
         let abs_nu = theta.nu.abs();
@@ -78,19 +82,39 @@ where
     }
 
     #[inline]
-    fn log_normal_limit_nu_score(log_ratio: f64, sigma: f64) -> f64 {
-        log_ratio * log_ratio * log_ratio / (6.0 * sigma * sigma) + sigma * sigma / 12.0
+    fn log_normal_limit_terms(log_ratio: f64, sigma: f64) -> (f64, f64) {
+        let log_ratio_squared = log_ratio * log_ratio;
+        (
+            log_ratio_squared * log_ratio / (6.0 * sigma * sigma),
+            log_ratio_squared * log_ratio_squared / (24.0 * sigma * sigma) + sigma * sigma / 12.0,
+        )
     }
 
     #[inline]
     fn gradient_theta(y: f64, theta: GeneralizedGammaTheta) -> GeneralizedGammaTheta {
         let log_ratio = (y / theta.mu).ln();
         if theta.nu.abs() < NU_EPSILON {
+            let sigma_squared = theta.sigma * theta.sigma;
+            let log_ratio_squared = log_ratio * log_ratio;
+            let (linear, quadratic) = Self::log_normal_limit_terms(log_ratio, theta.sigma);
+            let d_nll_d_log_ratio = log_ratio / sigma_squared
+                + theta.nu * log_ratio_squared / (2.0 * sigma_squared)
+                + theta.nu * theta.nu * log_ratio_squared * log_ratio / (6.0 * sigma_squared);
+            let d_linear_d_sigma =
+                -log_ratio_squared * log_ratio / (3.0 * theta.sigma * sigma_squared);
+            let d_quadratic_d_sigma = -log_ratio_squared * log_ratio_squared
+                / (12.0 * theta.sigma * sigma_squared)
+                + theta.sigma / 6.0;
             return GeneralizedGammaTheta {
-                mu: -log_ratio / (theta.mu * theta.sigma * theta.sigma),
-                sigma: 1.0 / theta.sigma
-                    - log_ratio * log_ratio / (theta.sigma * theta.sigma * theta.sigma),
-                nu: Self::log_normal_limit_nu_score(log_ratio, theta.sigma),
+                mu: -d_nll_d_log_ratio / theta.mu,
+                sigma: (theta.nu * theta.nu).mul_add(
+                    d_quadratic_d_sigma,
+                    theta.nu.mul_add(
+                        d_linear_d_sigma,
+                        1.0 / theta.sigma - log_ratio_squared / (theta.sigma * sigma_squared),
+                    ),
+                ),
+                nu: (2.0 * theta.nu).mul_add(quadratic, linear),
             };
         }
 
@@ -226,14 +250,20 @@ where
             return 0.0;
         }
         if theta.nu.abs() < NU_EPSILON {
-            return unit_normal_cdf((y / theta.mu).ln() / theta.sigma);
+            let z = (y / theta.mu).ln() / theta.sigma;
+            let correction =
+                theta.nu * theta.sigma * z.mul_add(z, 2.0) * unit_normal_log_pdf(z).exp() / 6.0;
+            return (unit_normal_cdf(z) + correction).clamp(0.0, 1.0);
         }
 
         let abs_nu = theta.nu.abs();
         let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
         let x = k * (y / theta.mu).powf(theta.nu);
-        let p = regularized_gamma_lower(k, x);
-        if theta.nu > 0.0 { p } else { 1.0 - p }
+        if theta.nu > 0.0 {
+            regularized_gamma_lower(k, x)
+        } else {
+            regularized_gamma_upper(k, x)
+        }
     }
 }
 
@@ -349,10 +379,57 @@ pub struct GeneralizedGammaTheta {
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::{Family, HasCdf};
 
     use super::{GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta};
+    use crate::test_support::assert_gradient_matches_finite_difference_with_tolerance;
+
+    #[test]
+    fn generalized_gamma_preserves_small_lower_tail_for_negative_shape() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let cdf = family.cdf(
+            0.01,
+            &GeneralizedGammaTheta {
+                mu: 1.0,
+                sigma: 1.0,
+                nu: -1.0,
+            },
+        );
+
+        assert!(cdf > 0.0);
+        assert_relative_eq!(cdf, (-100.0_f64).exp(), epsilon = 1.0e-55);
+    }
+
+    #[test]
+    fn log_normal_limit_gradient_matches_the_approximated_nll() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        assert_gradient_matches_finite_difference_with_tolerance::<_, 3>(
+            &family,
+            2.0,
+            [0.1, -0.3, 5.0e-5],
+            1.0e-6,
+            2.0e-7,
+        );
+    }
+
+    #[test]
+    fn log_normal_limit_shape_score_has_zero_expectation_at_the_log_location() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let (_, gradient) = family.nll_and_gradient_eta(
+            1.0,
+            &super::GeneralizedGammaEta {
+                mu: 0.0,
+                sigma: 0.0,
+                nu: 0.0,
+            },
+            &mut family.workspace(),
+        );
+
+        assert_relative_eq!(gradient.nu, 0.0, epsilon = f64::EPSILON);
+    }
 
     #[cfg(feature = "rand")]
     #[test]

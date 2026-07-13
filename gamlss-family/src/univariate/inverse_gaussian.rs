@@ -221,6 +221,7 @@ mod tests {
 
         assert!(cdf.is_finite());
         assert!((0.0..=1.0).contains(&cdf));
+        assert!(cdf > 0.506 && cdf < 0.507, "extreme-ratio CDF was {cdf}");
     }
 
     #[test]

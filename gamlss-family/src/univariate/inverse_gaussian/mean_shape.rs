@@ -5,7 +5,9 @@ use gamlss_core::{
     ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape,
 };
 
-use gamlss_special::{integrate_finite, invert_positive_cdf, unit_normal_cdf};
+use gamlss_special::{
+    integrate_finite, invert_positive_cdf, unit_normal_cdf, unit_normal_log_sf, unit_normal_sf,
+};
 
 use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
@@ -183,14 +185,10 @@ where
 
         let scale = (theta.shape / y).sqrt();
         let ratio = y / theta.mu;
-        let first = unit_normal_cdf(scale * (ratio - 1.0));
+        let first_argument = scale * (ratio - 1.0);
+        let first = unit_normal_cdf(first_argument);
         let log_multiplier = 2.0 * theta.shape / theta.mu;
-        let tail = unit_normal_cdf(-scale * (ratio + 1.0));
-        let second = if tail == 0.0 {
-            0.0
-        } else {
-            (log_multiplier + tail.ln()).exp()
-        };
+        let second = (log_multiplier + unit_normal_log_sf(scale * (ratio + 1.0))).exp();
 
         (first + second).clamp(0.0, 1.0)
     }
@@ -242,7 +240,12 @@ where
 
             let one_minus_u = 1.0 - u;
             let x = y + u / one_minus_u;
-            let survival = 1.0 - self.cdf(x, theta);
+            let scale = (theta.shape / x).sqrt();
+            let ratio = x / theta.mu;
+            let first_survival = unit_normal_sf(scale * (ratio - 1.0));
+            let second =
+                (2.0 * theta.shape / theta.mu + unit_normal_log_sf(scale * (ratio + 1.0))).exp();
+            let survival = (first_survival - second).max(0.0);
             survival * survival / (one_minus_u * one_minus_u)
         });
 

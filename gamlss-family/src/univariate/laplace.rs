@@ -1,5 +1,8 @@
 use std::marker::PhantomData;
 
+use crate::constants::LOG_2;
+use crate::domain::{is_finite_location_scale, is_probability};
+use crate::initial::{robust_location_scale, weighted_values};
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
@@ -7,12 +10,6 @@ use gamlss_core::{
     InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
     ScalarParams, Sigma,
 };
-#[cfg(feature = "rand")]
-use rand::RngExt;
-
-use crate::constants::LOG_2;
-use crate::domain::{is_finite_location_scale, is_probability};
-use crate::initial::{robust_location_scale, weighted_values};
 
 /// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type LaplaceMuSigma = Laplace<Identity, Log>;
@@ -244,7 +241,7 @@ where
             return f64::NAN;
         }
 
-        let centered = rng.random::<f64>() - 0.5;
+        let centered = crate::simulation::open_unit(rng) - 0.5;
         let tail_probability: f64 = 1.0 - 2.0 * centered.abs();
         theta.mu - theta.sigma * centered.signum() * tail_probability.ln()
     }

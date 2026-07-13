@@ -134,6 +134,16 @@ fn student_t_standard_crps_constant(nu: f64) -> f64 {
 
 #[allow(clippy::suboptimal_flops)]
 pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
+    if nu <= 1.0
+        || !nu.is_finite()
+        || !y.is_finite()
+        || !theta.mu.is_finite()
+        || theta.sigma <= 0.0
+        || !theta.sigma.is_finite()
+    {
+        return f64::NAN;
+    }
+
     let z = (y - theta.mu) / theta.sigma;
     let cdf = student_t_standard_cdf(nu, z);
     let density = student_t_standard_density(nu, z);
@@ -399,6 +409,18 @@ mod tests {
                     &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+        assert!(
+            StudentTMuSigmaTau::new()
+                .crps(
+                    1.0,
+                    &StudentTMuSigmaTauTheta {
+                        mu: 0.0,
+                        sigma: 1.0,
+                        tau: 0.5,
                     },
                 )
                 .is_nan()

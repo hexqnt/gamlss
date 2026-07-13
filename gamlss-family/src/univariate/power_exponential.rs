@@ -7,7 +7,9 @@ use gamlss_core::{
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
 };
 
-use gamlss_special::{digamma, invert_real_cdf, ln_gamma, regularized_gamma_lower};
+use gamlss_special::{
+    digamma, invert_real_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
+};
 
 use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
@@ -225,10 +227,10 @@ where
 
         let c = Self::scale_c(theta.nu);
         let z = (y - theta.mu) / (c * theta.sigma);
-        let p = regularized_gamma_lower(1.0 / theta.nu, z.abs().powf(theta.nu));
         if z < 0.0 {
-            0.5 * (1.0 - p)
+            0.5 * regularized_gamma_upper(1.0 / theta.nu, z.abs().powf(theta.nu))
         } else {
+            let p = regularized_gamma_lower(1.0 / theta.nu, z.powf(theta.nu));
             f64::midpoint(1.0, p)
         }
     }
@@ -333,8 +335,25 @@ pub struct PowerExponentialTheta {
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::HasCdf;
 
     use super::{PowerExponentialMuSigmaNu, PowerExponentialTheta};
+
+    #[test]
+    fn power_exponential_preserves_far_left_tail_probability() {
+        let family = PowerExponentialMuSigmaNu::new();
+        let cdf = family.cdf(
+            -10.0,
+            &PowerExponentialTheta {
+                mu: 0.0,
+                sigma: 1.0,
+                nu: 2.0,
+            },
+        );
+
+        assert!(cdf > 0.0);
+        assert!(cdf < 1.0e-20);
+    }
 
     #[cfg(feature = "rand")]
     #[test]

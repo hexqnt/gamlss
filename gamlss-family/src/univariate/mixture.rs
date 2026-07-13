@@ -135,7 +135,8 @@ where
             );
         }
 
-        let weights = softmax_baseline(eta.logits);
+        let log_weights = log_softmax_baseline(eta.logits);
+        let weights = log_weights.map(f64::exp);
         let mut component_nll = [0.0; C];
         let component_gradients: [F::GradientEta; C] = std::array::from_fn(|index| {
             let (nll, gradient) = self.component.nll_and_gradient_eta(
@@ -148,7 +149,7 @@ where
         });
 
         let terms: [f64; C] =
-            std::array::from_fn(|index| weights[index].ln() - component_nll[index]);
+            std::array::from_fn(|index| log_weights[index] - component_nll[index]);
         let log_mix = log_sum_exp(&terms);
         let nll = -log_mix;
         let responsibilities = terms.map(|term| (term - log_mix).exp());
@@ -276,7 +277,7 @@ mod tests {
     use gamlss_core::Family;
 
     use super::{Mixture, MixtureEta, MixtureTheta};
-    use crate::{NormalEta, NormalMuSigma, NormalTheta};
+    use crate::{ExponentialRate, ExponentialRateEta, NormalEta, NormalMuSigma, NormalTheta};
 
     #[test]
     fn rejects_less_than_two_components() {
@@ -365,6 +366,25 @@ mod tests {
             family.nll(0.25, &theta, &mut family.workspace()),
             epsilon = 1.0e-12
         );
+    }
+
+    #[test]
+    fn eta_gradient_keeps_underflowed_log_weight_when_likelihood_compensates_for_it() {
+        let family = Mixture::<_, 2>::try_new(ExponentialRate::new()).unwrap();
+        let eta = MixtureEta::new(
+            [-750.0, 0.0],
+            [
+                ExponentialRateEta { rate: 100.0 },
+                ExponentialRateEta { rate: -700.0 },
+            ],
+        );
+
+        let expected = family.nll_eta(0.0, &eta, &mut family.workspace());
+        let (actual, gradient) = family.nll_and_gradient_eta(0.0, &eta, &mut family.workspace());
+
+        assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+        assert!(gradient.components[0].responsibility > 0.999);
+        assert!(gradient.logits[0] < -0.999);
     }
 
     #[test]

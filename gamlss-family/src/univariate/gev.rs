@@ -82,6 +82,8 @@ where
         if theta.nu.abs() < XI_EPSILON {
             let exp_neg_z = (-z).exp();
             let d_z = 1.0 - exp_neg_z;
+            let d_score_d_z = (0.5 * z * z).mul_add(-exp_neg_z, z.mul_add(exp_neg_z - 1.0, 1.0));
+            let d_z = theta.nu.mul_add(d_score_d_z, d_z);
             return GevTheta {
                 mu: -d_z / theta.sigma,
                 sigma: z.mul_add(-d_z, 1.0) / theta.sigma,

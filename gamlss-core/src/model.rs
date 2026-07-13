@@ -5734,7 +5734,7 @@ mod tests {
 
         fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
             let targets = [y, 1.0, 2.0, 3.0, 4.0];
-            let values = [theta.0, theta.1, theta.2, theta.3, theta.4];
+            let values: [f64; 5] = (*theta).into();
             0.5 * values
                 .iter()
                 .zip(targets)
