@@ -5,33 +5,6 @@ pub(super) trait LowerTriangularMatrix {
     fn lower(&self, row: usize, col: usize) -> f64;
 }
 
-pub(super) const fn cholesky_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_add(1) {
-        Some(next) => match dimension.checked_mul(next) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => None,
-    }
-}
-
-pub(super) const fn packed_index(row: usize, col: usize) -> Option<usize> {
-    if col <= row {
-        match row.checked_add(1) {
-            Some(next) => match row.checked_mul(next) {
-                Some(product) => match (product / 2).checked_add(col) {
-                    Some(index) => Some(index),
-                    None => None,
-                },
-                None => None,
-            },
-            None => None,
-        }
-    } else {
-        None
-    }
-}
-
 pub(super) fn cholesky_score(
     row: usize,
     col: usize,

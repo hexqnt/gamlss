@@ -16,6 +16,7 @@ The primary entry point for users is the `gamlss` crate:
 The workspace also publishes separate crates for finer control over APIs and dependencies:
 
 - `gamlss-core` — type-driven core abstractions for links, parameter blocks, objectives, and compiled models.
+- `gamlss-bayes` — normalized coefficient priors and summed-likelihood posterior potentials, without a sampler backend.
 - `gamlss-family` — distributions, likelihoods, and score helpers.
 - `gamlss-diagnostics` — post-fit PIT/CDF diagnostics, normalized quantile residuals, and CRPS summaries for supported families.
 - `gamlss-special` — special functions and shared numerical helpers for likelihood, CDF, and quantile code.
@@ -23,12 +24,14 @@ The workspace also publishes separate crates for finer control over APIs and dep
 - `gamlss-transform` — target preprocessing transforms.
 - `gamlss-formula` — experimental optional formula/builder layer that compiles runtime specifications into typed models. It covers curated high-level workflows and is not expected to mirror every family, link, or parameterization available in the low-level crates.
 
-For most use cases, depending on `gamlss` is enough; the other crates are pulled in transitively. If you want a stricter low-level surface without the experimental formula layer, use `default-features = false` or depend on the individual crates directly.
+For most use cases, depending on `gamlss` is enough. Bayesian support is opt-in through the `bayes` feature; individual workspace crates remain available when tighter dependency and API control is preferable. If you want a stricter low-level surface without the experimental formula layer, use `default-features = false` or depend on the individual crates directly.
 
 ## Cargo features
 
 - `formula` is enabled by default and re-exports the experimental `gamlss-formula` namespace from the facade crate.
+- `bayes` opt-in re-exports `gamlss-bayes` as `gamlss::bayes` and adds its common types to `gamlss::prelude`.
 - `rand` enables the sampling API in `gamlss-family` through the facade crate: `rand = ["gamlss-family/rand"]`.
+- `multivariate` enables fixed- and runtime-dimensional multivariate families.
 
 ## Running tests
 
@@ -100,24 +103,24 @@ These tables summarize what the library can model today, grouped by modeling reg
 
 | Area                         | Status | What it means for modeling                                                                                             |
 | ---------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Joint response distributions | 🗓️     | Future support for modeling vector-valued responses with joint distributions rather than independent scalar responses.  |
-| Dependence modeling          | 🗓️     | Future support for covariance, correlation, copula, or other dependence structures between response dimensions.         |
-| Multivariate diagnostics     | 🗓️     | Future support for diagnostics appropriate to joint distributions and conditional dependence, not only marginal checks. |
+| Joint response distributions | ✅     | Fixed and dynamic multivariate Normal, multivariate Student-t, Dirichlet, and independent products use structured observations and parameters. |
+| Dependence modeling          | ✅/🧩  | Cholesky and marginal-scale/partial-correlation covariance models are fit-ready; copulas and factor covariance remain future slices. |
+| Multivariate diagnostics     | ✅/🧩  | Explicit marginal PIT, observation dimension, conditional CDF, and Rosenblatt capabilities exist; coverage varies by family. |
 
 ### Mixture models
 
 | Area                          | Status | What it means for modeling                                                                                    |
 | ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| Finite mixture families       | 🗓️     | Future support for mixture distributions with multiple latent components.                                      |
-| Component-specific predictors | 🗓️     | Future support for modeling component parameters with their own predictors, links, covariates, and penalties. |
-| Mixing weights                | 🗓️     | Future support for mixture probabilities as modeled quantities, including covariate-dependent weights.        |
+| Finite mixture families       | ✅     | Homogeneous fixed-size mixtures compose any `CompilableFamily`, including multivariate Normal components. |
+| Component-specific predictors | ✅     | `Repeated<ComponentShape, C>` gives each component its own typed predictors and penalties; `Broadcast` expresses an explicit shared owner. |
+| Mixing weights                | ✅     | Baseline-softmax weight predictors support covariate-dependent gating and analytical responsibility gradients. |
 
 ### Bayesian GAMLSS
 
 | Area                              | Status | What it means for modeling                                                                                           |
 | --------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| Priors over distributional models | 🗓️     | Future support for priors over coefficients, smooth terms, penalties, and distribution parameters.                   |
-| Posterior inference              | 🗓️     | Future support for Bayesian inference over GAMLSS parameters rather than point-estimate-only objective optimization. |
-| Posterior predictive diagnostics  | 🗓️     | Future support for posterior predictive summaries and uncertainty-aware distribution diagnostics.                    |
+| Priors over distributional models | ✅/🧩  | `gamlss-bayes` provides a proper normalized diagonal Gaussian prior on predictor coefficients; transformed and smoothing priors remain explicit future work. |
+| Posterior inference              | 🧩     | `PosteriorPotential` exposes summed unpenalized likelihood plus analytical prior gradient to external HMC/VI backends; no sampler is bundled. |
+| Posterior predictive diagnostics  | 🧩     | Pointwise log-likelihood and fallible simulation foundations are available; chain-level summaries remain backend work. |
 
 Fitting loops and optimizer integrations are intentionally outside the core API today; provide or adapt an optimizer against the objective and gradient traits.

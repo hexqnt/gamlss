@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau,
+    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
 
 use gamlss_special::{student_t_cdf_standardized, student_t_log_pdf_standardized};
@@ -120,6 +120,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink, NuLink, TauLink> for SkewStudentT<MuLink, SigmaLink, NuLink, TauLink>;
+    parameters = (Mu, Sigma, Nu, Tau);
+    arity = 4;
+);
+
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for SkewStudentT<MuLink, SigmaLink, NuLink, TauLink>
 where
     MuLink: Link<f64>,
@@ -132,7 +138,6 @@ where
     type GradientEta = SkewStudentTEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma, Nu, Tau), (MuLink, SigmaLink, NuLink, TauLink), 4>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

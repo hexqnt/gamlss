@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, Size, TotalMean, UnitIntervalLink,
+    ObservationView, ParameterParts, PositiveLink, Size, TotalMean, UnitIntervalLink,
     ZeroProbability,
 };
 
@@ -119,6 +119,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, SizeLink, ZeroProbabilityLink> for ZinbTotalMeanSize<MeanLink, SizeLink, ZeroProbabilityLink>;
+    parameters = (TotalMean, Size, ZeroProbability);
+    arity = 3;
+);
+
 impl<MeanLink, SizeLink, ZeroProbabilityLink> Family
     for ZinbTotalMeanSize<MeanLink, SizeLink, ZeroProbabilityLink>
 where
@@ -131,11 +137,6 @@ where
     type GradientEta = ZinbTotalMeanSizeZeroProbabilityEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<
-        (TotalMean, Size, ZeroProbability),
-        (MeanLink, SizeLink, ZeroProbabilityLink),
-        3,
-    >;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -285,6 +286,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]

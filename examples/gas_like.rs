@@ -23,7 +23,7 @@ use gamlss::core::Objective;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use gamlss::core::{
         ClampedLog, DenseDesign, Gamlss, Identity, LinearPredictorBlock, Mu, NoPenalty,
-        ParameterBlock, Sigma, SumBlock,
+        ParameterBlock, ParameterBlocks, Sigma, SumBlock,
     };
     use gamlss::family::Normal;
     use gamlss::spline::{
@@ -51,8 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ParameterBlock links the predictor, link and penalty. The offset specifies
     // the block's position in the flat parameter vector θ — compile-time concatenation.
-    let mu = ParameterBlock::<Mu, Identity, _, _>::new(mu_predictor, NoPenalty, 0);
-    let sigma = ParameterBlock::<Sigma, ClampedLog<-12, 12>, _, _>::new(
+    let mu = ParameterBlock::<Mu, _, _>::new(mu_predictor, NoPenalty, 0);
+    let sigma = ParameterBlock::<Sigma, _, _>::new(
         sigma_predictor,
         PreparedCyclicDifferencePenalty::try_new(0.05, 2)?, // λ=0.05, d=2 — smoothing second differences
         mu.len(),                                           // σ parameters follow μ parameters in θ
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // offsets do not overlap). The model type is fully inferred by the compiler.
     let model = Gamlss::try_new(
         Normal::<Identity, ClampedLog<-12, 12>>::new(),
-        (mu, sigma),
+        ParameterBlocks::new((mu, sigma)),
         &data.y,
     )?;
 

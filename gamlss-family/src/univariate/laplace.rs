@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::constants::LOG_2;
-use crate::domain::{is_finite_location_scale, is_probability};
-use crate::initial::{robust_location_scale, weighted_values};
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
-    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
-    ScalarParams, Sigma,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+
+use crate::constants::LOG_2;
+use crate::domain::{is_finite_location_scale, is_probability};
+use crate::initial::{robust_location_scale, weighted_values};
 
 /// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type LaplaceMuSigma = Laplace<Identity, Log>;
@@ -111,6 +111,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink> for Laplace<MuLink, SigmaLink>;
+    parameters = (Mu, Sigma);
+    arity = 2;
+);
+
 impl<MuLink, SigmaLink> Family for Laplace<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -121,7 +127,6 @@ where
     type GradientEta = LaplaceEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau,
+    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
 
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
@@ -137,6 +137,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink, NuLink, TauLink> for Shash<MuLink, SigmaLink, NuLink, TauLink>;
+    parameters = (Mu, Sigma, Nu, Tau);
+    arity = 4;
+);
+
 impl<MuLink, SigmaLink, NuLink, TauLink> Family for Shash<MuLink, SigmaLink, NuLink, TauLink>
 where
     MuLink: Link<f64>,
@@ -149,7 +155,6 @@ where
     type GradientEta = ShashEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma, Nu, Tau), (MuLink, SigmaLink, NuLink, TauLink), 4>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -339,6 +344,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ShashMuSigmaNuTau, ShashTheta};
 
     #[cfg(feature = "rand")]

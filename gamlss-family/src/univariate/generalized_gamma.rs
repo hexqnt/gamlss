@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Scale, Sigma,
+    Log, Nu, ObservationView, ParameterParts, PositiveLink, Scale, Sigma,
 };
 
 use gamlss_special::{
@@ -162,6 +162,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<ScaleLink, SigmaLink, NuLink> for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>;
+    parameters = (Scale, Sigma, Nu);
+    arity = 3;
+);
+
 impl<ScaleLink, SigmaLink, NuLink> Family for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
     ScaleLink: PositiveLink<f64>,
@@ -173,7 +179,6 @@ where
     type GradientEta = GeneralizedGammaEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Scale, Sigma, Nu), (ScaleLink, SigmaLink, NuLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

@@ -1,6 +1,5 @@
 use gamlss_core::{
-    Cv, Gamlss, Identity, Log, LogSd, Logit, Mean, Mu, ParameterBlock, ParameterBlocks, Precision,
-    Shape, Sigma,
+    Cv, Gamlss, LogSd, Mean, Mu, ParameterBlock, ParameterBlocks, Precision, Shape, Sigma,
 };
 use gamlss_family::{
     BetaMeanPrecision, GammaMeanCv, InverseGaussianMuShape, LogNormalMeanLogSd, NormalMuSigma,
@@ -17,20 +16,20 @@ use crate::{
 };
 
 /// Formula block type used by supported family specs.
-pub type FormulaBlock<P, L> = ParameterBlock<P, L, FormulaPredictorBlock, FormulaPenalty>;
+pub type FormulaBlock<P> = ParameterBlock<P, FormulaPredictorBlock, FormulaPenalty>;
 
 /// Blocks for a normal formula model.
-pub type NormalBlocks = (FormulaBlock<Mu, Identity>, FormulaBlock<Sigma, Log>);
+pub type NormalBlocks = ParameterBlocks<(FormulaBlock<Mu>, FormulaBlock<Sigma>)>;
 /// Blocks for a gamma formula model.
-pub type GammaBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Cv, Log>);
+pub type GammaBlocks = ParameterBlocks<(FormulaBlock<Mean>, FormulaBlock<Cv>)>;
 /// Blocks for a log-normal formula model.
-pub type LogNormalBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<LogSd, Log>);
+pub type LogNormalBlocks = ParameterBlocks<(FormulaBlock<Mean>, FormulaBlock<LogSd>)>;
 /// Blocks for a Weibull formula model.
-pub type WeibullBlocks = (FormulaBlock<Mean, Log>, FormulaBlock<Shape, Log>);
+pub type WeibullBlocks = ParameterBlocks<(FormulaBlock<Mean>, FormulaBlock<Shape>)>;
 /// Blocks for an inverse Gaussian formula model.
-pub type InverseGaussianBlocks = (FormulaBlock<Mu, Log>, FormulaBlock<Shape, Log>);
+pub type InverseGaussianBlocks = ParameterBlocks<(FormulaBlock<Mu>, FormulaBlock<Shape>)>;
 /// Blocks for a beta formula model.
-pub type BetaBlocks = (FormulaBlock<Mu, Logit>, FormulaBlock<Precision, Log>);
+pub type BetaBlocks = ParameterBlocks<(FormulaBlock<Mu>, FormulaBlock<Precision>)>;
 
 /// Compiled normal formula model.
 pub type CompiledNormal<'a> = Gamlss<NormalMuSigma, NormalBlocks, NumericResponse<'a>>;
@@ -64,8 +63,8 @@ macro_rules! define_spec {
         $(#[$meta:meta])*
         $spec:ident, $built:ident, $compiled:ident, $blocks:ident, $family:ty;
         family_name = $family_name:literal, domain = $domain:expr;
-        first = $first_field:ident, $first_method:ident, $first_name:literal, $first_param:ty, $first_link:ty;
-        second = $second_field:ident, $second_method:ident, $second_name:literal, $second_param:ty, $second_link:ty
+        first = $first_field:ident, $first_method:ident, $first_name:literal, $first_param:ty;
+        second = $second_field:ident, $second_method:ident, $second_name:literal, $second_param:ty
     ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq)]
@@ -148,12 +147,12 @@ macro_rules! define_spec {
                 let first_build = fit_terms($first_name, self.$first_field.clone(), data)?;
                 let second_build = fit_terms($second_name, self.$second_field.clone(), data)?;
 
-                let first = ParameterBlock::<$first_param, $first_link, _, _>::from_predictor(
+                let first = ParameterBlock::<$first_param, _, _>::from_predictor(
                     first_build.predictor,
                     first_build.penalty,
                     0,
                 );
-                let second = ParameterBlock::<$second_param, $second_link, _, _>::from_predictor(
+                let second = ParameterBlock::<$second_param, _, _>::from_predictor(
                     second_build.predictor,
                     second_build.penalty,
                     0,
@@ -192,12 +191,12 @@ macro_rules! define_spec {
                 let first_x = predictor_from_fitted_terms($first_name, first_terms, data)?;
                 let second_x = predictor_from_fitted_terms($second_name, second_terms, data)?;
 
-                let first = ParameterBlock::<$first_param, $first_link, _, _>::from_predictor(
+                let first = ParameterBlock::<$first_param, _, _>::from_predictor(
                     first_x,
                     prediction_penalty(first_terms),
                     0,
                 );
-                let second = ParameterBlock::<$second_param, $second_link, _, _>::from_predictor(
+                let second = ParameterBlock::<$second_param, _, _>::from_predictor(
                     second_x,
                     prediction_penalty(second_terms),
                     0,
@@ -262,48 +261,48 @@ define_spec!(
     /// Typed normal model specification.
     NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, NormalMuSigma;
     family_name = "normal", domain = ResponseDomain::Finite;
-    first = mu_terms, mu, "mu", Mu, Identity;
-    second = sigma_terms, sigma, "sigma", Sigma, Log
+    first = mu_terms, mu, "mu", Mu;
+    second = sigma_terms, sigma, "sigma", Sigma
 );
 
 define_spec!(
     /// Typed gamma model specification.
     GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, GammaMeanCv;
     family_name = "gamma", domain = ResponseDomain::Positive;
-    first = mean_terms, mean, "mean", Mean, Log;
-    second = cv_terms, cv, "cv", Cv, Log
+    first = mean_terms, mean, "mean", Mean;
+    second = cv_terms, cv, "cv", Cv
 );
 
 define_spec!(
     /// Typed log-normal model specification.
     LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, LogNormalMeanLogSd;
     family_name = "log-normal", domain = ResponseDomain::Positive;
-    first = mean_terms, mean, "mean", Mean, Log;
-    second = log_sd_terms, log_sd, "log_sd", LogSd, Log
+    first = mean_terms, mean, "mean", Mean;
+    second = log_sd_terms, log_sd, "log_sd", LogSd
 );
 
 define_spec!(
     /// Typed Weibull model specification.
     WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, WeibullMeanShape;
     family_name = "weibull", domain = ResponseDomain::Positive;
-    first = mean_terms, mean, "mean", Mean, Log;
-    second = shape_terms, shape, "shape", Shape, Log
+    first = mean_terms, mean, "mean", Mean;
+    second = shape_terms, shape, "shape", Shape
 );
 
 define_spec!(
     /// Typed inverse Gaussian model specification.
     InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, InverseGaussianMuShape;
     family_name = "inverse Gaussian", domain = ResponseDomain::Positive;
-    first = mu_terms, mu, "mu", Mu, Log;
-    second = shape_terms, shape, "shape", Shape, Log
+    first = mu_terms, mu, "mu", Mu;
+    second = shape_terms, shape, "shape", Shape
 );
 
 define_spec!(
     /// Typed beta model specification.
     BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, BetaMeanPrecision;
     family_name = "beta", domain = ResponseDomain::Unit;
-    first = mu_terms, mu, "mu", Mu, Logit;
-    second = precision_terms, precision, "precision", Precision, Log
+    first = mu_terms, mu, "mu", Mu;
+    second = precision_terms, precision, "precision", Precision
 );
 
 /// Entry point namespace for typed model specifications.

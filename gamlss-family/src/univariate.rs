@@ -32,9 +32,6 @@ pub use log_normal::{
 };
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
-pub use mixture::{
-    Mixture, MixtureEta, MixtureGradient, MixtureTheta, MixtureWorkspace, ResponsibleGradient,
-};
 pub use negative_binomial::{
     NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
     NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
@@ -111,8 +108,6 @@ pub mod log_normal;
 pub mod logistic;
 /// Lomax distribution.
 pub mod lomax;
-/// Homogeneous fixed-size mixture distributions.
-pub mod mixture;
 /// Negative binomial distribution.
 pub mod negative_binomial;
 /// Normal distribution.

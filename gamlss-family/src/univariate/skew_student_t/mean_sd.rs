@@ -2,8 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, LogPlus, Mean, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
-    Tau,
+    Log, LogPlus, Mean, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -106,6 +105,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, SigmaLink, NuLink, TauLink> for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>;
+    parameters = (Mean, Sigma, Nu, Tau);
+    arity = 4;
+);
+
 impl<MeanLink, SigmaLink, NuLink, TauLink> Family
     for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
 where
@@ -119,8 +124,6 @@ where
     type GradientEta = SkewStudentTMeanSdEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec =
-        ScalarParams<(Mean, Sigma, Nu, Tau), (MeanLink, SigmaLink, NuLink, TauLink), 4>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

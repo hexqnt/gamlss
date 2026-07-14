@@ -10,9 +10,11 @@ use crate::{DesignMatrix, LinearPredictorBlock, ModelError, PredictorBlock};
 /// constructors that accept explicit offsets remain available for advanced
 /// layouts and integration code.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ParameterBlocks;
+pub struct ParameterBlocks<B = ()> {
+    blocks: B,
+}
 
-impl ParameterBlocks {
+impl<Blocks> ParameterBlocks<Blocks> {
     /// Assigns sequential offsets starting at zero.
     ///
     /// # Panics
@@ -20,10 +22,9 @@ impl ParameterBlocks {
     /// Panics if the sequential layout does not fit in `usize`. Use
     /// [`Self::try_new`] when block sizes may come from unchecked external
     /// input.
-    #[allow(clippy::new_ret_no_self)]
     #[must_use]
     #[inline]
-    pub fn new<Blocks>(blocks: Blocks) -> Blocks
+    pub fn new(blocks: Blocks) -> Self
     where
         Blocks: AssignParameterOffsets,
     {
@@ -39,11 +40,13 @@ impl ParameterBlocks {
     /// external input.
     #[must_use]
     #[inline]
-    pub fn with_start<Blocks>(start: usize, blocks: Blocks) -> Blocks
+    pub fn with_start(start: usize, blocks: Blocks) -> Self
     where
         Blocks: AssignParameterOffsets,
     {
-        blocks.assign_offsets(start)
+        Self {
+            blocks: blocks.assign_offsets(start),
+        }
     }
 
     /// Assigns sequential offsets starting at zero.
@@ -52,9 +55,8 @@ impl ParameterBlocks {
     ///
     /// Returns [`ModelError::BlockRangeOverflow`] if any assigned block range
     /// would not fit in `usize`.
-    #[allow(clippy::new_ret_no_self)]
     #[inline]
-    pub fn try_new<Blocks>(blocks: Blocks) -> Result<Blocks, ModelError>
+    pub fn try_new(blocks: Blocks) -> Result<Self, ModelError>
     where
         Blocks: TryAssignParameterOffsets,
     {
@@ -68,11 +70,37 @@ impl ParameterBlocks {
     /// Returns [`ModelError::BlockRangeOverflow`] if any assigned block range
     /// would not fit in `usize`.
     #[inline]
-    pub fn try_with_start<Blocks>(start: usize, blocks: Blocks) -> Result<Blocks, ModelError>
+    pub fn try_with_start(start: usize, blocks: Blocks) -> Result<Self, ModelError>
     where
         Blocks: TryAssignParameterOffsets,
     {
-        blocks.try_assign_offsets(start)
+        Ok(Self {
+            blocks: blocks.try_assign_offsets(start)?,
+        })
+    }
+}
+
+impl<B> ParameterBlocks<B> {
+    /// Wraps an already assigned low-level block tree without changing offsets.
+    ///
+    /// Prefer [`ParameterBlocks::new`] for ordinary model construction. This
+    /// constructor is intended for integrations and validation tests that need
+    /// to preserve explicit coefficient ranges.
+    #[must_use]
+    pub const fn from_assigned(blocks: B) -> Self {
+        Self { blocks }
+    }
+
+    /// Borrows the statically typed block tree.
+    #[must_use]
+    pub const fn as_inner(&self) -> &B {
+        &self.blocks
+    }
+
+    /// Consumes the container and returns its statically typed block tree.
+    #[must_use]
+    pub fn into_inner(self) -> B {
+        self.blocks
     }
 }
 
@@ -273,20 +301,20 @@ impl ParameterName for PartialCorrelation {
 
 /// Typed coefficient block for a single distribution parameter.
 ///
-/// `P` specifies the parameter role, `L` specifies the link function, `X` holds
-/// the predictor block, and `Penalty` adds regularization. The block stores its
+/// `P` specifies the parameter role, `X` holds the predictor block, and
+/// `Penalty` adds regularization. Links are owned by the family. The block stores its
 /// coefficient range within the common beta vector; use [`Self::range`] and
 /// [`Self::len`] to inspect that layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParameterBlock<P, L, X, Penalty> {
+pub struct ParameterBlock<P, X, Penalty> {
     x: X,
     penalty: Penalty,
     offset: usize,
     len: usize,
-    marker: PhantomData<(P, L)>,
+    marker: PhantomData<P>,
 }
 
-impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty>
+impl<P, X, Penalty> ParameterBlock<P, X, Penalty>
 where
     X: PredictorBlock,
 {
@@ -309,7 +337,7 @@ where
     }
 }
 
-impl<P, L, X, Penalty> ParameterBlock<P, L, LinearPredictorBlock<X>, Penalty>
+impl<P, X, Penalty> ParameterBlock<P, LinearPredictorBlock<X>, Penalty>
 where
     X: DesignMatrix,
 {
@@ -321,7 +349,7 @@ where
     }
 }
 
-impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
+impl<P, X, Penalty> ParameterBlock<P, X, Penalty> {
     #[inline]
     const fn from_len(x: X, penalty: Penalty, offset: usize, len: usize) -> Self {
         Self {
@@ -407,7 +435,7 @@ impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty> {
     }
 }
 
-impl<P, L, X, Penalty> ParameterBlock<P, L, X, Penalty>
+impl<P, X, Penalty> ParameterBlock<P, X, Penalty>
 where
     P: ParameterName,
 {
@@ -1223,7 +1251,8 @@ pub trait ParameterName {
     const NAME: &'static str;
 }
 
-/// Tuple contract implemented for typed parameter block tuples up to arity 8.
+/// Contract implemented for typed parameter block tuples up to arity 8 and
+/// repeated block arrays.
 pub trait AssignParameterOffsets: Sized {
     /// Returns `self` with sequential offsets starting at `start`.
     #[must_use]
@@ -1310,10 +1339,73 @@ macro_rules! impl_assign_offsets {
                 Ok(($($var,)+))
             }
         }
+
+        impl<$($block,)+> OffsetAssignable for ($($block,)+)
+        where
+            $($block: OffsetAssignable,)+
+        {
+            #[inline]
+            fn with_assigned_offset(self, offset: usize) -> Self {
+                AssignParameterOffsets::assign_offsets(self, offset)
+            }
+
+            #[inline]
+            fn assigned_len(&self) -> usize {
+                let ($($var,)+) = self;
+                let mut len = 0usize;
+                $(
+                    len = len
+                        .checked_add($var.assigned_len())
+                        .expect("parameter block tuple length must fit in usize");
+                )+
+                len
+            }
+        }
+
+        impl<$($block,)+> TryOffsetAssignable for ($($block,)+)
+        where
+            $($block: TryOffsetAssignable,)+
+        {
+            #[inline]
+            fn with_assigned_offset(self, start: usize) -> Self {
+                let ($($var,)+) = self;
+                let mut offset = start;
+                $(
+                    let $var = $var.with_assigned_offset(offset);
+                    offset = offset
+                        .checked_add($var.assigned_len())
+                        .expect("parameter block tuple layout must fit in usize");
+                )+
+                let _ = offset;
+                ($($var,)+)
+            }
+
+            #[inline]
+            fn assigned_offset(&self) -> usize {
+                self.0.assigned_offset()
+            }
+
+            #[inline]
+            fn assigned_len(&self) -> usize {
+                let ($($var,)+) = self;
+                let mut len = 0usize;
+                $(
+                    len = len
+                        .checked_add($var.assigned_len())
+                        .expect("parameter block tuple length must fit in usize");
+                )+
+                len
+            }
+
+            #[inline]
+            fn assigned_name(&self) -> &'static str {
+                self.0.assigned_name()
+            }
+        }
     };
 }
 
-impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
+impl<P, X, Penalty> OffsetAssignable for ParameterBlock<P, X, Penalty> {
     fn with_assigned_offset(self, offset: usize) -> Self {
         self.with_offset(offset)
     }
@@ -1323,7 +1415,7 @@ impl<P, L, X, Penalty> OffsetAssignable for ParameterBlock<P, L, X, Penalty> {
     }
 }
 
-impl<P, L, X, Penalty> TryOffsetAssignable for ParameterBlock<P, L, X, Penalty>
+impl<P, X, Penalty> TryOffsetAssignable for ParameterBlock<P, X, Penalty>
 where
     P: ParameterName,
 {
@@ -1477,6 +1569,37 @@ where
     }
 }
 
+impl<B, const D: usize> AssignParameterOffsets for [B; D]
+where
+    B: OffsetAssignable,
+{
+    #[inline]
+    fn assign_offsets(self, start: usize) -> Self {
+        self.with_assigned_offset(start)
+    }
+}
+
+impl<B, const D: usize> TryAssignParameterOffsets for [B; D]
+where
+    B: TryOffsetAssignable,
+{
+    #[inline]
+    fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError> {
+        let mut offset = start;
+        for block in &self {
+            let len = block.assigned_len();
+            offset = offset
+                .checked_add(len)
+                .ok_or_else(|| ModelError::BlockRangeOverflow {
+                    parameter: block.assigned_name(),
+                    offset,
+                    len,
+                })?;
+        }
+        Ok(self.with_assigned_offset(start))
+    }
+}
+
 trait OffsetAssignable: Sized {
     fn with_assigned_offset(self, offset: usize) -> Self;
     fn assigned_len(&self) -> usize;
@@ -1561,7 +1684,7 @@ impl_assign_offsets!(
 
 #[cfg(test)]
 mod tests {
-    use crate::{DenseDesign, Identity, LinearPredictorBlock, NoPenalty};
+    use crate::{DenseDesign, LinearPredictorBlock, NoPenalty};
 
     use super::{
         Mu, Nu, ParameterBlock, ParameterBlocks, Precision, Rate, Scale, Shape, Sigma, Tau,
@@ -1569,31 +1692,31 @@ mod tests {
 
     #[test]
     fn parameter_blocks_assign_offsets_for_one_block() {
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+        let mu = ParameterBlock::<Mu, _, _>::linear(
             DenseDesign::from_rows(&[[1.0, 2.0]]),
             NoPenalty,
             99,
         );
 
-        let (mu,) = ParameterBlocks::new((mu,));
+        let (mu,) = ParameterBlocks::new((mu,)).into_inner();
 
         assert_eq!(mu.range(), 0..2);
     }
 
     #[test]
     fn parameter_blocks_assign_offsets_for_two_blocks() {
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+        let mu = ParameterBlock::<Mu, _, _>::linear(
             DenseDesign::from_rows(&[[1.0, 2.0]]),
             NoPenalty,
             99,
         );
-        let sigma = ParameterBlock::<Sigma, Identity, _, _>::linear(
+        let sigma = ParameterBlock::<Sigma, _, _>::linear(
             DenseDesign::from_rows(&[[1.0, 2.0, 3.0]]),
             NoPenalty,
             99,
         );
 
-        let (mu, sigma) = ParameterBlocks::new((mu, sigma));
+        let (mu, sigma) = ParameterBlocks::new((mu, sigma)).into_inner();
 
         assert_eq!(mu.range(), 0..2);
         assert_eq!(sigma.range(), 2..5);
@@ -1612,7 +1735,7 @@ mod tests {
             intercept_block::<Precision>(),
         );
 
-        let (b1, b2, b3, b4, b5, b6, b7, b8) = ParameterBlocks::with_start(10, blocks);
+        let (b1, b2, b3, b4, b5, b6, b7, b8) = ParameterBlocks::with_start(10, blocks).into_inner();
 
         assert_eq!(b1.range(), 10..11);
         assert_eq!(b2.range(), 11..12);
@@ -1626,7 +1749,7 @@ mod tests {
 
     #[test]
     fn parameter_block_try_range_reports_overflow() {
-        let block = ParameterBlock::<Mu, Identity, _, _>::linear(
+        let block = ParameterBlock::<Mu, _, _>::linear(
             DenseDesign::from_rows(&[[1.0, 2.0]]),
             NoPenalty,
             usize::MAX,
@@ -1644,7 +1767,7 @@ mod tests {
 
     #[test]
     fn parameter_blocks_try_with_start_reports_layout_overflow() {
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
+        let mu = ParameterBlock::<Mu, _, _>::linear(
             DenseDesign::from_rows(&[[1.0, 2.0]]),
             NoPenalty,
             99,
@@ -1660,8 +1783,7 @@ mod tests {
         );
     }
 
-    fn intercept_block<P>()
-    -> ParameterBlock<P, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty> {
+    fn intercept_block<P>() -> ParameterBlock<P, LinearPredictorBlock<DenseDesign>, NoPenalty> {
         ParameterBlock::linear(DenseDesign::intercept(1), NoPenalty, 99)
     }
 }

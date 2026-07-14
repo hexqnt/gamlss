@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mean, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
+    Log, Mean, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -122,6 +122,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, SigmaLink, NuLink> for SkewNormalMeanSd<MeanLink, SigmaLink, NuLink>;
+    parameters = (Mean, Sigma, Nu);
+    arity = 3;
+);
+
 impl<MeanLink, SigmaLink, NuLink> Family for SkewNormalMeanSd<MeanLink, SigmaLink, NuLink>
 where
     MeanLink: Link<f64>,
@@ -133,7 +139,6 @@ where
     type GradientEta = SkewNormalMeanSdEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean, Sigma, Nu), (MeanLink, SigmaLink, NuLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -312,6 +317,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{SkewNormalMeanSdNu, SkewNormalMeanSdTheta};
 
     #[cfg(feature = "rand")]

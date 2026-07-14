@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Mu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, Tau,
+    Mu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -90,6 +90,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink, TauLink> for StudentTDynamic<MuLink, SigmaLink, TauLink>;
+    parameters = (Mu, Sigma, Tau);
+    arity = 3;
+);
+
 impl<MuLink, SigmaLink, TauLink> Family for StudentTDynamic<MuLink, SigmaLink, TauLink>
 where
     MuLink: Link<f64>,
@@ -101,7 +107,6 @@ where
     type GradientEta = StudentTMuSigmaTauEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma, Tau), (MuLink, SigmaLink, TauLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

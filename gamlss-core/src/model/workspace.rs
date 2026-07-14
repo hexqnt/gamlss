@@ -60,6 +60,8 @@ pub struct GradientWorkspace {
     row_gradients: Vec<Vec<f64>>,
     local_gradients: Vec<Vec<f64>>,
     penalty_gradient: Vec<f64>,
+    dynamic_values: Vec<f64>,
+    dynamic_scores: Vec<f64>,
 }
 
 impl GradientWorkspace {
@@ -123,5 +125,20 @@ impl GradientWorkspace {
         self.penalty_gradient.resize(len, 0.0);
         self.penalty_gradient.fill(0.0);
         &mut self.penalty_gradient
+    }
+
+    /// Returns reusable flat eta and score buffers for runtime-dimensional families.
+    pub fn dynamic_buffers_mut(&mut self, len: usize) -> (&mut [f64], &mut [f64]) {
+        self.dynamic_values.resize(len, 0.0);
+        self.dynamic_scores.resize(len, 0.0);
+        self.dynamic_scores.fill(0.0);
+        (&mut self.dynamic_values, &mut self.dynamic_scores)
+    }
+
+    /// Copies runtime-family scores into per-coordinate row buffers.
+    pub fn store_dynamic_scores(&mut self, row: usize, weight: f64) {
+        for (index, score) in self.dynamic_scores.iter().copied().enumerate() {
+            self.row_gradients[index][row] = weight * score;
+        }
     }
 }

@@ -10,15 +10,16 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link, LocationScalePartialCorr,
-    LocationScalePartialCorrSpec, Log, ModelError, Mu, PartialCorrelation, PositiveLink, Sigma,
+    CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf, HasObservationDimension,
+    Identity, InitialEtaFromTheta, Link, Log, ModelError, Mu, ObservationView, PartialCorrelation,
+    PositiveLink, Sigma,
+    shape::{Product, StrictLower, Vector},
 };
 use gamlss_special::unit_normal_cdf;
 
-use crate::constants::HALF_LOG_2_PI;
-use crate::univariate::normal::{NormalTheta, normal_nll_gradient_theta, normal_nll_theta};
+use crate::multivariate::matrix::FixedLowerTriangular;
 
-use super::{FixedLowerTriangular, kernel};
+use super::kernel;
 
 /// Default-link `D R D` multivariate normal parameterization.
 pub type MvNormalMeanStdPartialCorrDefault<const D: usize> =
@@ -29,9 +30,9 @@ pub type MvNormalMeanStdPartialCorrDefault<const D: usize> =
 /// Packed order is `(1,0), (2,0), (2,1), (3,0), ...`. Values are kept on the
 /// predictor scale by [`MvNormalMeanStdPartialCorrEta`]; the family maps them
 /// with `tanh` before building the correlation Cholesky factor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PackedPartialCorr<const D: usize> {
-    values: Vec<f64>,
+    values: [[f64; D]; D],
 }
 
 impl<const D: usize> PackedPartialCorr<D> {
@@ -42,27 +43,55 @@ impl<const D: usize> PackedPartialCorr<D> {
     /// Returns [`ModelError::InvalidParameter`] when `values.len()` is not
     /// `D * (D - 1) / 2`.
     pub fn try_new(values: Vec<f64>) -> Result<Self, ModelError> {
-        if values.len() != Self::len() {
+        let expected = Self::checked_len().ok_or(ModelError::ArithmeticOverflow {
+            context: "strict-lower partial-correlation storage length",
+        })?;
+        if values.len() != expected {
             return Err(ModelError::InvalidParameter {
                 parameter: "partial_corr",
                 expected: "D * (D - 1) / 2 strict-lower values",
             });
         }
-        Ok(Self { values })
+        let mut out = [[0.0; D]; D];
+        let mut values = values.into_iter();
+        for (row, row_values) in out.iter_mut().enumerate().skip(1) {
+            for value in row_values.iter_mut().take(row) {
+                let Some(packed_value) = values.next() else {
+                    return Err(ModelError::InvalidParameter {
+                        parameter: "partial_corr",
+                        expected: "D * (D - 1) / 2 strict-lower values",
+                    });
+                };
+                *value = packed_value;
+            }
+        }
+        Ok(Self { values: out })
     }
 
     /// Creates zero-valued packed storage.
     #[must_use]
-    pub fn zeros() -> Self {
+    pub const fn zeros() -> Self {
         Self {
-            values: vec![0.0; Self::len()],
+            values: [[0.0; D]; D],
+        }
+    }
+
+    /// Checked expected packed length for dimension `D`.
+    #[must_use]
+    pub const fn checked_len() -> Option<usize> {
+        match D.checked_mul(D.saturating_sub(1)) {
+            Some(product) => Some(product / 2),
+            None => None,
         }
     }
 
     /// Expected packed length for dimension `D`.
     #[must_use]
     pub const fn len() -> usize {
-        D.saturating_mul(D.saturating_sub(1)) / 2
+        match Self::checked_len() {
+            Some(len) => len,
+            None => usize::MAX,
+        }
     }
 
     /// Returns true when there are no strict-lower entries.
@@ -71,43 +100,35 @@ impl<const D: usize> PackedPartialCorr<D> {
         Self::len() == 0
     }
 
-    /// Packed values.
-    #[must_use]
+    /// Visits packed values in row-major strict-lower order.
     #[inline]
-    pub fn values(&self) -> &[f64] {
-        &self.values
-    }
-
-    /// Mutable packed values.
-    #[must_use]
-    #[inline]
-    pub fn values_mut(&mut self) -> &mut [f64] {
-        &mut self.values
+    pub fn iter(&self) -> impl Iterator<Item = f64> + '_ {
+        self.values
+            .iter()
+            .enumerate()
+            .skip(1)
+            .flat_map(|(row, values)| values[..row].iter().copied())
     }
 
     /// Returns a strict-lower entry, or `None` for invalid/diagonal/upper indices.
     #[must_use]
     pub fn get(&self, row: usize, col: usize) -> Option<f64> {
-        Self::packed_index(row, col).and_then(|index| self.values.get(index).copied())
+        (row < D && col < row).then(|| self.values[row][col])
     }
 
     /// Returns a mutable strict-lower entry, or `None` for invalid/diagonal/upper indices.
     #[must_use]
-    pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
-        Self::packed_index(row, col).and_then(|index| self.values.get_mut(index))
-    }
-
-    const fn packed_index(row: usize, col: usize) -> Option<usize> {
+    pub const fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut f64> {
         if row < D && col < row {
-            Some(row * (row - 1) / 2 + col)
+            Some(&mut self.values[row][col])
         } else {
             None
         }
     }
 
     #[inline]
-    fn lower(&self, row: usize, col: usize) -> f64 {
-        self.values[Self::packed_index(row, col).expect("valid strict-lower index")]
+    const fn lower(&self, row: usize, col: usize) -> f64 {
+        self.values[row][col]
     }
 }
 
@@ -129,9 +150,14 @@ where
     SigmaLink: PositiveLink<f64>,
 {
     /// Creates a stateless family value.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the compile-time dimension is zero.
     #[must_use]
     #[inline]
     pub const fn new() -> Self {
+        assert!(D > 0, "multivariate normal dimension must be positive");
         Self {
             marker: PhantomData,
         }
@@ -151,13 +177,13 @@ where
         let correlation_cholesky = correlation_cholesky_from_partial(&partial_corr);
         let scale_cholesky = scale_cholesky_from_correlation(&sigma, &correlation_cholesky);
 
-        MvNormalMeanStdPartialCorrTheta {
+        MvNormalMeanStdPartialCorrTheta::from_canonical_parts(
             mu,
             sigma,
             partial_corr,
             correlation_cholesky,
             scale_cholesky,
-        }
+        )
     }
 
     fn nan_eta() -> MvNormalMeanStdPartialCorrEta<D> {
@@ -165,14 +191,8 @@ where
     }
 
     fn nll_theta(observation: [f64; D], theta: &MvNormalMeanStdPartialCorrTheta<D>) -> f64 {
-        match D {
-            1 => univariate_nll(observation, theta),
-            2 => bivariate_nll(observation, theta),
-            _ => {
-                let mut z = [0.0; D];
-                kernel::nll(D, &observation, &theta.mu, &theta.scale_cholesky, &mut z)
-            }
-        }
+        let mut z = [0.0; D];
+        kernel::nll(D, &observation, &theta.mu, &theta.scale_cholesky, &mut z)
     }
 
     fn nll_and_gradient_eta_values(
@@ -180,11 +200,7 @@ where
         eta: &MvNormalMeanStdPartialCorrEta<D>,
     ) -> (f64, MvNormalMeanStdPartialCorrEta<D>) {
         let theta = Self::theta_from_eta(eta);
-        match D {
-            1 => univariate_nll_and_gradient_eta::<D, MuLink, SigmaLink>(observation, eta, &theta),
-            2 => bivariate_nll_and_gradient_eta::<D, MuLink, SigmaLink>(observation, eta, &theta),
-            _ => Self::generic_nll_and_gradient_eta_values(observation, eta, &theta),
-        }
+        Self::generic_nll_and_gradient_eta_values(observation, eta, &theta)
     }
 
     fn generic_nll_and_gradient_eta_values(
@@ -213,8 +229,8 @@ where
 
 impl<const D: usize, MuLink, SigmaLink> Default for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
 where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -231,7 +247,6 @@ where
     type GradientEta = MvNormalMeanStdPartialCorrEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec = LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -279,6 +294,17 @@ where
 {
 }
 
+impl<const D: usize, MuLink, SigmaLink> HasObservationDimension
+    for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    fn observation_dimension(&self) -> usize {
+        D
+    }
+}
+
 impl<const D: usize, MuLink, SigmaLink> HasMarginalCdf
     for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
 where
@@ -322,6 +348,123 @@ where
     }
 }
 
+impl<const D: usize, MuLink, SigmaLink> CompilableFamily
+    for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
+where
+    MuLink: InitialEtaFromTheta<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Shape =
+        Product<Product<Vector<Mu, D>, Vector<Sigma, D>>, StrictLower<PartialCorrelation, D>>;
+
+    fn eta_from_shape(
+        values: (([f64; D], [f64; D]), [[f64; D]; D]),
+    ) -> MvNormalMeanStdPartialCorrEta<D> {
+        let mut partial_corr = PackedPartialCorr::zeros();
+        for row in 1..D {
+            for col in 0..row {
+                *partial_corr
+                    .get_mut(row, col)
+                    .expect("valid strict-lower index") = values.1[row][col];
+            }
+        }
+        MvNormalMeanStdPartialCorrEta::new(values.0.0, values.0.1, partial_corr)
+    }
+
+    fn gradient_to_shape(
+        gradient: &MvNormalMeanStdPartialCorrEta<D>,
+    ) -> (([f64; D], [f64; D]), [[f64; D]; D]) {
+        let partial_corr = std::array::from_fn(|row| {
+            std::array::from_fn(|col| gradient.partial_corr.get(row, col).unwrap_or(0.0))
+        });
+        ((gradient.mu, gradient.sigma), partial_corr)
+    }
+
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> (([f64; D], [f64; D]), [[f64; D]; D])
+    where
+        Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
+    {
+        let mut weight_sum = 0.0;
+        let mut means = [0.0; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            if weight > 0.0 && value.iter().all(|entry| entry.is_finite()) {
+                weight_sum += weight;
+                for component in 0..D {
+                    means[component] += weight * value[component];
+                }
+            }
+        }
+        if weight_sum > 0.0 {
+            for mean in &mut means {
+                *mean /= weight_sum;
+            }
+        }
+
+        let mut covariance = [[0.0; D]; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            if weight > 0.0 && value.iter().all(|entry| entry.is_finite()) {
+                for i in 0..D {
+                    for j in 0..=i {
+                        covariance[i][j] += weight * (value[i] - means[i]) * (value[j] - means[j]);
+                    }
+                }
+            }
+        }
+        if weight_sum > 0.0 {
+            for i in 0..D {
+                for j in 0..=i {
+                    covariance[i][j] /= weight_sum;
+                    covariance[j][i] = covariance[i][j];
+                }
+            }
+        }
+        let sigma = std::array::from_fn(|index| covariance[index][index].sqrt().max(1.0e-6));
+        let mut correlation = [[0.0; D]; D];
+        for i in 0..D {
+            correlation[i][i] = 1.0;
+            for j in 0..i {
+                let empirical = covariance[i][j] / (sigma[i] * sigma[j]);
+                correlation[i][j] = 0.8 * empirical.clamp(-0.99, 0.99);
+                correlation[j][i] = correlation[i][j];
+            }
+        }
+        let mut cholesky = [[0.0; D]; D];
+        for row in 0..D {
+            for col in 0..=row {
+                let correction = (0..col)
+                    .map(|k| cholesky[row][k] * cholesky[col][k])
+                    .sum::<f64>();
+                cholesky[row][col] = if row == col {
+                    (correlation[row][row] - correction).max(1.0e-8).sqrt()
+                } else {
+                    (correlation[row][col] - correction) / cholesky[col][col]
+                };
+            }
+        }
+        let mut partial_eta = [[0.0; D]; D];
+        for row in 1..D {
+            let mut prefix = 1.0;
+            for col in 0..row {
+                let partial = (cholesky[row][col] / prefix).clamp(-0.95, 0.95);
+                partial_eta[row][col] = partial.atanh();
+                prefix *= (1.0 - partial * partial).sqrt();
+            }
+        }
+
+        (
+            (
+                means.map(MuLink::initial_eta_from_theta),
+                sigma.map(SigmaLink::initial_eta_from_theta),
+            ),
+            partial_eta,
+        )
+    }
+}
+
 /// Link-scale predictors for `D R D` multivariate normal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MvNormalMeanStdPartialCorrEta<const D: usize> {
@@ -350,18 +493,126 @@ impl<const D: usize> MvNormalMeanStdPartialCorrEta<D> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MvNormalMeanStdPartialCorrTheta<const D: usize> {
     /// Mean vector.
-    pub mu: [f64; D],
+    mu: [f64; D],
     /// Positive marginal standard deviations.
-    pub sigma: [f64; D],
+    sigma: [f64; D],
     /// Strict-lower partial correlations on `(-1, 1)`.
-    pub partial_corr: PackedPartialCorr<D>,
+    partial_corr: PackedPartialCorr<D>,
     /// Correlation Cholesky factor.
-    pub correlation_cholesky: FixedLowerTriangular<D>,
+    correlation_cholesky: FixedLowerTriangular<D>,
     /// Scale Cholesky factor for `Sigma = D R D`.
-    pub scale_cholesky: FixedLowerTriangular<D>,
+    scale_cholesky: FixedLowerTriangular<D>,
 }
 
 impl<const D: usize> MvNormalMeanStdPartialCorrTheta<D> {
+    /// Creates a valid natural-scale state from its canonical parameters.
+    ///
+    /// Derived correlation and scale Cholesky factors are built internally, so
+    /// likelihood, marginal and simulation methods always observe the same
+    /// covariance geometry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `D == 0`, a canonical
+    /// value is non-finite, a standard deviation is not positive, or a partial
+    /// correlation is outside `(-1, 1)`.
+    pub fn try_new(
+        mu: [f64; D],
+        sigma: [f64; D],
+        partial_corr: PackedPartialCorr<D>,
+    ) -> Result<Self, ModelError> {
+        if D == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "at least one response component",
+            });
+        }
+        if !mu.iter().all(|value| value.is_finite()) {
+            return Err(ModelError::InvalidParameter {
+                parameter: "mu",
+                expected: "finite",
+            });
+        }
+        if !sigma.iter().all(|value| value.is_finite() && *value > 0.0) {
+            return Err(ModelError::InvalidParameter {
+                parameter: "sigma",
+                expected: "finite and > 0",
+            });
+        }
+        if !partial_corr
+            .iter()
+            .all(|value| value.is_finite() && value.abs() < 1.0)
+        {
+            return Err(ModelError::InvalidParameter {
+                parameter: "partial_corr",
+                expected: "finite and strictly between -1 and 1",
+            });
+        }
+
+        let correlation_cholesky = correlation_cholesky_from_partial(&partial_corr);
+        let scale_cholesky = scale_cholesky_from_correlation(&sigma, &correlation_cholesky);
+        let theta = Self::from_canonical_parts(
+            mu,
+            sigma,
+            partial_corr,
+            correlation_cholesky,
+            scale_cholesky,
+        );
+        if !kernel::valid_theta(D, &theta.mu, &theta.scale_cholesky) {
+            return Err(ModelError::InvalidParameter {
+                parameter: "partial_corr",
+                expected: "a representable positive-definite correlation geometry",
+            });
+        }
+        Ok(theta)
+    }
+
+    const fn from_canonical_parts(
+        mu: [f64; D],
+        sigma: [f64; D],
+        partial_corr: PackedPartialCorr<D>,
+        correlation_cholesky: FixedLowerTriangular<D>,
+        scale_cholesky: FixedLowerTriangular<D>,
+    ) -> Self {
+        Self {
+            mu,
+            sigma,
+            partial_corr,
+            correlation_cholesky,
+            scale_cholesky,
+        }
+    }
+
+    /// Mean vector.
+    #[must_use]
+    pub const fn mu(&self) -> &[f64; D] {
+        &self.mu
+    }
+
+    /// Marginal standard deviations.
+    #[must_use]
+    pub const fn sigma(&self) -> &[f64; D] {
+        &self.sigma
+    }
+
+    /// Canonical strict-lower partial correlations.
+    #[must_use]
+    pub const fn partial_corr(&self) -> &PackedPartialCorr<D> {
+        &self.partial_corr
+    }
+
+    /// Derived correlation Cholesky factor.
+    #[must_use]
+    pub const fn correlation_cholesky(&self) -> &FixedLowerTriangular<D> {
+        &self.correlation_cholesky
+    }
+
+    /// Derived scale Cholesky factor for `Sigma = D R D`.
+    #[must_use]
+    pub const fn scale_cholesky(&self) -> &FixedLowerTriangular<D> {
+        &self.scale_cholesky
+    }
+
     /// Returns one covariance entry from `D R D`.
     #[must_use]
     pub fn covariance(&self, row: usize, col: usize) -> Option<f64> {
@@ -369,59 +620,33 @@ impl<const D: usize> MvNormalMeanStdPartialCorrTheta<D> {
     }
 }
 
-impl<const D: usize, MuLink, SigmaLink>
-    LocationScalePartialCorrSpec<MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>, D>
-    for LocationScalePartialCorr<Mu, Sigma, PartialCorrelation, D>
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type LocationParameter = Mu;
-    type ScaleParameter = Sigma;
-    type PartialCorrelationParameter = PartialCorrelation;
-
-    fn eta_from_location_scale_partial_corr(
-        location: [f64; D],
-        scale: [f64; D],
-        partial_corr: [[f64; D]; D],
-    ) -> MvNormalMeanStdPartialCorrEta<D> {
-        let values = (0..D)
-            .flat_map(|row| (0..row).map(move |col| partial_corr[row][col]))
-            .collect();
-        MvNormalMeanStdPartialCorrEta::new(
-            location,
-            scale,
-            PackedPartialCorr::try_new(values).expect("packed strict-lower length matches D"),
-        )
+fn partial_corr_from_eta<const D: usize>(eta: &PackedPartialCorr<D>) -> PackedPartialCorr<D> {
+    let mut out = PackedPartialCorr::zeros();
+    for row in 1..D {
+        for col in 0..row {
+            *out.get_mut(row, col).expect("valid strict-lower index") =
+                stable_partial_corr(eta.lower(row, col)).0;
+        }
     }
-
-    fn location_gradient_part(
-        gradient: &MvNormalMeanStdPartialCorrEta<D>,
-        component: usize,
-    ) -> f64 {
-        gradient.mu[component]
-    }
-
-    fn scale_gradient_part(gradient: &MvNormalMeanStdPartialCorrEta<D>, component: usize) -> f64 {
-        gradient.sigma[component]
-    }
-
-    fn partial_corr_gradient_part(
-        gradient: &MvNormalMeanStdPartialCorrEta<D>,
-        row: usize,
-        col: usize,
-    ) -> f64 {
-        gradient
-            .partial_corr
-            .get(row, col)
-            .expect("valid strict-lower partial-correlation index")
-    }
+    out
 }
 
-fn partial_corr_from_eta<const D: usize>(eta: &PackedPartialCorr<D>) -> PackedPartialCorr<D> {
-    PackedPartialCorr {
-        values: eta.values.iter().map(|value| value.tanh()).collect(),
+fn stable_partial_corr(eta: f64) -> (f64, f64, f64) {
+    if !eta.is_finite() {
+        return (f64::NAN, f64::NAN, f64::NAN);
     }
+    let interior = f64::from_bits(1.0_f64.to_bits() - 1);
+    let limit = interior.atanh();
+    let transformed = eta.clamp(-limit, limit);
+    let partial_corr = transformed.tanh();
+    let one_minus_p2 = (1.0 - partial_corr) * (1.0 + partial_corr);
+    let sech = one_minus_p2.sqrt();
+    let derivative = if eta.abs() <= limit {
+        one_minus_p2
+    } else {
+        0.0
+    };
+    (partial_corr, sech, derivative)
 }
 
 fn correlation_cholesky_from_partial<const D: usize>(
@@ -434,7 +659,7 @@ fn correlation_cholesky_from_partial<const D: usize>(
             let p = partial_corr.lower(row, col);
             out.set_lower(row, col, p * prefix)
                 .expect("valid lower index");
-            prefix *= (1.0 - p * p).sqrt();
+            prefix *= ((1.0 - p) * (1.0 + p)).sqrt();
         }
         out.set_lower(row, row, prefix).expect("valid lower index");
     }
@@ -480,7 +705,6 @@ fn valid_theta<const D: usize>(theta: &MvNormalMeanStdPartialCorrTheta<D>) -> bo
             .all(|value| value.is_finite() && *value > 0.0)
         && theta
             .partial_corr
-            .values
             .iter()
             .all(|value| value.is_finite() && value.abs() < 1.0)
         && kernel::valid_theta(D, &theta.mu, &theta.scale_cholesky)
@@ -491,7 +715,7 @@ fn nan_eta<const D: usize>() -> MvNormalMeanStdPartialCorrEta<D> {
         mu: [f64::NAN; D],
         sigma: [f64::NAN; D],
         partial_corr: PackedPartialCorr {
-            values: vec![f64::NAN; PackedPartialCorr::<D>::len()],
+            values: [[f64::NAN; D]; D],
         },
     }
 }
@@ -516,157 +740,48 @@ where
 {
     let mut gradient = zero_eta();
 
-    let mut cholesky_score = [[0.0; D]; D];
+    let mut correlation_score = [[0.0; D]; D];
     for row in 0..D {
         for col in 0..=row {
-            cholesky_score[row][col] =
-                kernel::cholesky_score(row, col, z[col], a, &theta.scale_cholesky);
+            correlation_score[row][col] = -theta.sigma[row] * a[row] * z[col];
+            if row == col {
+                correlation_score[row][col] += 1.0 / theta.correlation_cholesky.lower(row, row);
+            }
         }
         gradient.mu[row] = -a[row] * MuLink::derivative_inverse(eta.mu[row]);
-        gradient.sigma[row] = (0..=row)
-            .map(|col| cholesky_score[row][col] * theta.correlation_cholesky.lower(row, col))
-            .sum::<f64>()
-            * SigmaLink::derivative_inverse(eta.sigma[row]);
+        let residual_score = (0..=row)
+            .map(|col| -a[row] * z[col] * theta.correlation_cholesky.lower(row, col))
+            .sum::<f64>();
+        gradient.sigma[row] = SigmaLink::derivative_log_inverse(eta.sigma[row])
+            + residual_score * SigmaLink::derivative_inverse(eta.sigma[row]);
     }
 
     for row in 1..D {
+        let mut prefixes = [1.0; D];
+        let mut prefix = 1.0;
         for k in 0..row {
-            let p = theta.partial_corr.lower(row, k);
-            let one_minus_p2 = 1.0 - p * p;
-            let prefix_k = row_prefix(&theta.partial_corr, row, k);
-            let mut d_nll_d_p = cholesky_score[row][k] * theta.sigma[row] * prefix_k;
-            for col in (k + 1)..=row {
-                d_nll_d_p += cholesky_score[row][col]
-                    * theta.sigma[row]
-                    * theta.correlation_cholesky.lower(row, col)
-                    * (-p / one_minus_p2);
-            }
+            prefixes[k] = prefix;
+            prefix *= stable_partial_corr(eta.partial_corr.lower(row, k)).1;
+        }
+        let mut later_adjoint =
+            correlation_score[row][row] * theta.correlation_cholesky.lower(row, row);
+        for k in (0..row).rev() {
+            let (partial_corr, _, derivative) = stable_partial_corr(eta.partial_corr.lower(row, k));
+            let direct = correlation_score[row][k] * prefixes[k] * derivative;
+            let log_sech_derivative = if derivative == 0.0 {
+                0.0
+            } else {
+                -partial_corr
+            };
             *gradient
                 .partial_corr
                 .get_mut(row, k)
-                .expect("valid strict-lower index") = d_nll_d_p * one_minus_p2;
+                .expect("valid strict-lower index") = direct + log_sech_derivative * later_adjoint;
+            later_adjoint += correlation_score[row][k] * theta.correlation_cholesky.lower(row, k);
         }
     }
 
     gradient
-}
-
-fn row_prefix<const D: usize>(
-    partial_corr: &PackedPartialCorr<D>,
-    row: usize,
-    before_col: usize,
-) -> f64 {
-    (0..before_col)
-        .map(|col| {
-            let p = partial_corr.lower(row, col);
-            (1.0 - p * p).sqrt()
-        })
-        .product()
-}
-
-fn univariate_nll<const D: usize>(
-    observation: [f64; D],
-    theta: &MvNormalMeanStdPartialCorrTheta<D>,
-) -> f64 {
-    if D != 1 {
-        return f64::INFINITY;
-    }
-    normal_nll_theta(
-        observation[0],
-        NormalTheta {
-            mu: theta.mu[0],
-            sigma: theta.sigma[0],
-        },
-    )
-}
-
-fn univariate_nll_and_gradient_eta<const D: usize, MuLink, SigmaLink>(
-    observation: [f64; D],
-    eta: &MvNormalMeanStdPartialCorrEta<D>,
-    theta: &MvNormalMeanStdPartialCorrTheta<D>,
-) -> (f64, MvNormalMeanStdPartialCorrEta<D>)
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    if D != 1 {
-        return (f64::INFINITY, nan_eta());
-    }
-
-    let (nll, gradient_theta) = normal_nll_gradient_theta(
-        observation[0],
-        NormalTheta {
-            mu: theta.mu[0],
-            sigma: theta.sigma[0],
-        },
-    );
-    if !nll.is_finite() {
-        return (nll, nan_eta());
-    }
-
-    let mut gradient = zero_eta();
-    gradient.mu[0] = gradient_theta.mu * MuLink::derivative_inverse(eta.mu[0]);
-    gradient.sigma[0] = gradient_theta.sigma * SigmaLink::derivative_inverse(eta.sigma[0]);
-    (nll, gradient)
-}
-
-fn bivariate_nll<const D: usize>(
-    observation: [f64; D],
-    theta: &MvNormalMeanStdPartialCorrTheta<D>,
-) -> f64 {
-    if D != 2 || !valid_theta(theta) || !observation.iter().all(|value| value.is_finite()) {
-        return f64::INFINITY;
-    }
-    let x0 = (observation[0] - theta.mu[0]) / theta.sigma[0];
-    let x1 = (observation[1] - theta.mu[1]) / theta.sigma[1];
-    let rho = theta.partial_corr.lower(1, 0);
-    let one_minus_rho2 = 1.0 - rho * rho;
-    let q = x0 * x0 - 2.0 * rho * x0 * x1 + x1 * x1;
-    2.0 * HALF_LOG_2_PI
-        + theta.sigma[0].ln()
-        + theta.sigma[1].ln()
-        + 0.5 * one_minus_rho2.ln()
-        + 0.5 * q / one_minus_rho2
-}
-
-fn bivariate_nll_and_gradient_eta<const D: usize, MuLink, SigmaLink>(
-    observation: [f64; D],
-    eta: &MvNormalMeanStdPartialCorrEta<D>,
-    theta: &MvNormalMeanStdPartialCorrTheta<D>,
-) -> (f64, MvNormalMeanStdPartialCorrEta<D>)
-where
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    let nll = bivariate_nll(observation, theta);
-    if !nll.is_finite() {
-        return (nll, nan_eta());
-    }
-
-    let x0 = (observation[0] - theta.mu[0]) / theta.sigma[0];
-    let x1 = (observation[1] - theta.mu[1]) / theta.sigma[1];
-    let rho = theta.partial_corr.lower(1, 0);
-    let one_minus_rho2 = 1.0 - rho * rho;
-    let q = x0 * x0 - 2.0 * rho * x0 * x1 + x1 * x1;
-
-    let mut gradient = zero_eta();
-    gradient.mu[0] =
-        (rho * x1 - x0) / (theta.sigma[0] * one_minus_rho2) * MuLink::derivative_inverse(eta.mu[0]);
-    gradient.mu[1] =
-        (rho * x0 - x1) / (theta.sigma[1] * one_minus_rho2) * MuLink::derivative_inverse(eta.mu[1]);
-    gradient.sigma[0] = (1.0 / theta.sigma[0]
-        - x0 * (x0 - rho * x1) / (theta.sigma[0] * one_minus_rho2))
-        * SigmaLink::derivative_inverse(eta.sigma[0]);
-    gradient.sigma[1] = (1.0 / theta.sigma[1]
-        - x1 * (x1 - rho * x0) / (theta.sigma[1] * one_minus_rho2))
-        * SigmaLink::derivative_inverse(eta.sigma[1]);
-    let d_nll_d_rho =
-        -rho / one_minus_rho2 - x0 * x1 / one_minus_rho2 + rho * q / one_minus_rho2.powi(2);
-    *gradient
-        .partial_corr
-        .get_mut(1, 0)
-        .expect("valid strict-lower index") = d_nll_d_rho * one_minus_rho2;
-    (nll, gradient)
 }
 
 #[cfg(test)]
@@ -681,9 +796,8 @@ mod tests {
     use super::{
         MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta, PackedPartialCorr,
     };
-    use crate::multivariate::normal::{
-        FixedLowerTriangular, MvNormalCholeskyDefault, MvNormalCholeskyTheta,
-    };
+    use crate::multivariate::matrix::FixedLowerTriangular;
+    use crate::multivariate::normal::{MvNormalCholeskyDefault, MvNormalCholeskyTheta};
     use crate::{NormalMuSigma, NormalTheta};
 
     fn assert_gradient_matches_finite_difference<const D: usize>(
@@ -745,6 +859,59 @@ mod tests {
     }
 
     #[test]
+    fn natural_theta_is_built_from_one_canonical_geometry() {
+        let partial_corr = PackedPartialCorr::try_new(vec![0.25]).unwrap();
+        let theta = super::MvNormalMeanStdPartialCorrTheta::<2>::try_new(
+            [0.4, -0.3],
+            [0.8, 1.2],
+            partial_corr,
+        )
+        .unwrap();
+
+        assert_relative_eq!(theta.mu()[0], 0.4);
+        assert_relative_eq!(theta.mu()[1], -0.3);
+        assert_relative_eq!(theta.sigma()[0], 0.8);
+        assert_relative_eq!(theta.sigma()[1], 1.2);
+        assert_eq!(theta.partial_corr().get(1, 0), Some(0.25));
+        assert_relative_eq!(
+            theta.correlation_cholesky().get(1, 0).unwrap(),
+            0.25,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            theta.scale_cholesky().get(1, 0).unwrap(),
+            0.3,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(theta.covariance(1, 0).unwrap(), 0.24, epsilon = 1.0e-12);
+
+        assert!(
+            super::MvNormalMeanStdPartialCorrTheta::<0>::try_new(
+                [],
+                [],
+                PackedPartialCorr::zeros(),
+            )
+            .is_err()
+        );
+        assert!(
+            super::MvNormalMeanStdPartialCorrTheta::<2>::try_new(
+                [0.0, 0.0],
+                [1.0, 0.0],
+                PackedPartialCorr::try_new(vec![0.0]).unwrap(),
+            )
+            .is_err()
+        );
+        assert!(
+            super::MvNormalMeanStdPartialCorrTheta::<2>::try_new(
+                [0.0, 0.0],
+                [1.0, 1.0],
+                PackedPartialCorr::try_new(vec![1.0]).unwrap(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn d2_fast_path_matches_cholesky_form() {
         let drd = MvNormalMeanStdPartialCorrDefault::<2>::new();
         let rho_eta = 0.25_f64.atanh();
@@ -755,13 +922,14 @@ mod tests {
         );
         let theta = drd.theta(&eta, &mut drd.workspace());
         let cholesky = MvNormalCholeskyDefault::<2>::new();
-        let cholesky_theta = MvNormalCholeskyTheta::new(
+        let cholesky_theta = MvNormalCholeskyTheta::try_new(
             [0.4, -0.3],
             FixedLowerTriangular::from_lower_rows([
                 [0.8, 0.0],
                 [1.2 * 0.25, 1.2 * (1.0 - 0.25_f64.powi(2)).sqrt()],
             ]),
-        );
+        )
+        .unwrap();
         assert_relative_eq!(
             drd.nll([1.1, -0.7], &theta, &mut drd.workspace()),
             cholesky.nll([1.1, -0.7], &cholesky_theta, &mut cholesky.workspace()),
@@ -810,6 +978,26 @@ mod tests {
                 PackedPartialCorr::try_new(vec![0.2, -0.1, 0.3]).unwrap(),
             ),
         );
+    }
+
+    #[test]
+    fn extreme_finite_partial_correlation_eta_stays_valid_and_finite() {
+        let family = MvNormalMeanStdPartialCorrDefault::<2>::new();
+        for eta_value in [-100.0, -20.0, 20.0, 100.0] {
+            let eta = MvNormalMeanStdPartialCorrEta::new(
+                [0.0, 0.0],
+                [0.0, 0.0],
+                PackedPartialCorr::try_new(vec![eta_value]).unwrap(),
+            );
+            let theta = family.theta(&eta, &mut family.workspace());
+            let (nll, gradient) =
+                family.nll_and_gradient_eta([0.0, 0.0], &eta, &mut family.workspace());
+
+            assert!(theta.partial_corr().get(1, 0).unwrap().abs() < 1.0);
+            assert!(theta.correlation_cholesky().get(1, 1).unwrap() > 0.0);
+            assert!(nll.is_finite());
+            assert!(gradient.partial_corr.get(1, 0).unwrap().is_finite());
+        }
     }
 
     #[test]

@@ -153,6 +153,57 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
     ln_gamma(small) - ln_gamma_delta(large, small)
 }
 
+/// Logarithm of the multivariate beta function.
+///
+/// The sequential beta identity avoids subtracting one large `ln_gamma(sum)`
+/// from a separately accumulated sum of large gamma terms.
+#[must_use]
+pub fn ln_multivariate_beta(alpha: &[f64]) -> f64 {
+    if alpha.len() < 2
+        || alpha
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return f64::NAN;
+    }
+
+    let mut prefix = alpha[0];
+    let mut value = 0.0;
+    for component in alpha.iter().copied().skip(1) {
+        value += ln_beta(prefix, component);
+        prefix += component;
+        if !prefix.is_finite() {
+            return f64::NAN;
+        }
+    }
+    value
+}
+
+/// Baseline softmax with a representable strictly-positive result.
+///
+/// The final logit is fixed to zero. Finite logit differences that would make
+/// `exp` underflow are saturated at the smallest normal exponent, preserving
+/// the interior-simplex invariant in `f64`.
+#[must_use]
+pub fn baseline_softmax<const D: usize>(mut logits: [f64; D]) -> [f64; D] {
+    if D == 0 || logits.iter().any(|value| !value.is_finite()) {
+        return [f64::NAN; D];
+    }
+    logits[D - 1] = 0.0;
+    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min_exponent = f64::MIN_POSITIVE.ln();
+    let mut weights = [0.0; D];
+    let mut sum = 0.0;
+    for (weight, logit) in weights.iter_mut().zip(logits) {
+        *weight = (logit - max).max(min_exponent).exp();
+        sum += *weight;
+    }
+    for weight in &mut weights {
+        *weight /= sum;
+    }
+    weights
+}
+
 /// Returns `true` for finite counts represented on the shared `f64` observation path.
 #[must_use]
 #[inline]

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, Scale, Shape,
+    ObservationView, ParameterParts, PositiveLink, Scale, Shape,
 };
 
 use crate::domain::{is_positive_finite, is_probability};
@@ -93,6 +93,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<ShapeLink, ScaleLink> for Lomax<ShapeLink, ScaleLink>;
+    parameters = (Shape, Scale);
+    arity = 2;
+);
+
 impl<ShapeLink, ScaleLink> Family for Lomax<ShapeLink, ScaleLink>
 where
     ShapeLink: PositiveLink<f64>,
@@ -103,7 +109,6 @@ where
     type GradientEta = LomaxEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Shape, Scale), (ShapeLink, ScaleLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

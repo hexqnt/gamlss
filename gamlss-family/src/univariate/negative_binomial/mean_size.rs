@@ -2,7 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape,
+    ObservationView, ParameterParts, PositiveLink, Shape,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -83,6 +83,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, ShapeLink> for NegativeBinomial<MuLink, ShapeLink>;
+    parameters = (Mu, Shape);
+    arity = 2;
+);
+
 impl<MuLink, ShapeLink> Family for NegativeBinomial<MuLink, ShapeLink>
 where
     MuLink: PositiveLink<f64>,
@@ -93,7 +99,6 @@ where
     type GradientEta = NegativeBinomialEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Shape), (MuLink, ShapeLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
-    Mu, ObservationView, ParameterParts, ScalarParams, UnitIntervalLink,
+    Mu, ObservationView, ParameterParts, UnitIntervalLink,
 };
 
 use crate::initial::probability_floor;
@@ -89,6 +89,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink> for Bernoulli<MuLink>;
+    parameters = (Mu,);
+    arity = 1;
+);
+
 impl<MuLink> Family for Bernoulli<MuLink>
 where
     MuLink: UnitIntervalLink<f64>,
@@ -98,7 +104,6 @@ where
     type GradientEta = BernoulliEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu,), (MuLink,), 1>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

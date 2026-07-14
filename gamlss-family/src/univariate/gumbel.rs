@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
-    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
-    ScalarParams, Sigma,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 use gamlss_special::exponential_integral_e1;
 
@@ -97,6 +96,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink> for Gumbel<MuLink, SigmaLink>;
+    parameters = (Mu, Sigma);
+    arity = 2;
+);
+
 impl<MuLink, SigmaLink> Family for Gumbel<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -107,7 +112,6 @@ where
     type GradientEta = GumbelEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

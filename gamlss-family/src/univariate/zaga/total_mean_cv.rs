@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Cv, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
-    ZeroProbability,
+    ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
 };
 
 use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
@@ -115,6 +114,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, CvLink, ZeroProbabilityLink> for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>;
+    parameters = (TotalMean, Cv, ZeroProbability);
+    arity = 3;
+);
+
 impl<MeanLink, CvLink, ZeroProbabilityLink> Family
     for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
 where
@@ -127,8 +132,6 @@ where
     type GradientEta = ZagaTotalMeanCvZeroProbabilityEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec =
-        ScalarParams<(TotalMean, Cv, ZeroProbability), (MeanLink, CvLink, ZeroProbabilityLink), 3>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -290,6 +293,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]

@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
-    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink,
-    ScalarParams, Sigma,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 
 use crate::domain::{is_finite_location_scale, is_probability};
@@ -116,6 +115,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink> for Logistic<MuLink, SigmaLink>;
+    parameters = (Mu, Sigma);
+    arity = 2;
+);
+
 impl<MuLink, SigmaLink> Family for Logistic<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -126,7 +131,6 @@ where
     type GradientEta = LogisticEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, PositiveLink, ScalarParams, Shape,
+    ParameterParts, PositiveLink, Shape,
 };
 
 use super::{Gamma, GammaShapeRateTheta};
@@ -101,6 +101,12 @@ impl From<GammaMeanShapeTheta> for GammaShapeRateTheta {
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, ShapeLink> for Gamma<MeanShape, MeanLink, ShapeLink>;
+    parameters = (Mean, Shape);
+    arity = 2;
+);
+
 impl<MeanLink, ShapeLink> Family for Gamma<MeanShape, MeanLink, ShapeLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -111,7 +117,6 @@ where
     type GradientEta = GammaMeanShapeEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean, Shape), (MeanLink, ShapeLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

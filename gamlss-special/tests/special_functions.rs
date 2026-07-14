@@ -6,11 +6,11 @@
 use approx::assert_relative_eq;
 use gamlss_special::{
     digamma, discrete_quantile, included_count, integrate_finite, invert_bounded_cdf,
-    invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma, ln_gamma_delta, log_add_exp, log_ndtr,
-    normal_mills_ratio, owens_t, regularized_beta, regularized_beta_complement,
-    regularized_gamma_lower, regularized_gamma_upper, student_t_cdf_standardized,
-    student_t_log_pdf_standardized, student_t_nll_constant, unit_normal_cdf, unit_normal_log_sf,
-    unit_normal_quantile, unit_normal_sf,
+    invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma, ln_gamma_delta, ln_multivariate_beta,
+    log_add_exp, log_ndtr, normal_mills_ratio, owens_t, regularized_beta,
+    regularized_beta_complement, regularized_gamma_lower, regularized_gamma_upper,
+    student_t_cdf_standardized, student_t_log_pdf_standardized, student_t_nll_constant,
+    unit_normal_cdf, unit_normal_log_sf, unit_normal_quantile, unit_normal_sf,
 };
 use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
@@ -41,6 +41,15 @@ fn ln_gamma_matches_known_constants() {
         epsilon = 1.0e-12
     );
     assert_relative_eq!(ln_gamma(5.0), 24.0_f64.ln(), epsilon = 1.0e-12);
+}
+
+#[test]
+fn multivariate_log_beta_matches_gamma_definition() {
+    let alpha = [2.0, 3.0, 5.0];
+    let expected = alpha.iter().copied().map(ln_gamma).sum::<f64>() - ln_gamma(10.0);
+    assert_relative_eq!(ln_multivariate_beta(&alpha), expected, epsilon = 1.0e-13);
+    assert!(ln_multivariate_beta(&[1.0]).is_nan());
+    assert!(ln_multivariate_beta(&[1.0, 0.0]).is_nan());
 }
 
 #[test]

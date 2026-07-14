@@ -2,7 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape,
+    ObservationView, ParameterParts, PositiveLink, Shape,
 };
 
 use gamlss_special::{
@@ -96,6 +96,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, ShapeLink> for InverseGaussian<MuLink, ShapeLink>;
+    parameters = (Mu, Shape);
+    arity = 2;
+);
+
 impl<MuLink, ShapeLink> Family for InverseGaussian<MuLink, ShapeLink>
 where
     MuLink: PositiveLink<f64>,
@@ -106,7 +112,6 @@ where
     type GradientEta = InverseGaussianEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Shape), (MuLink, ShapeLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

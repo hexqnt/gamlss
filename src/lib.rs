@@ -6,11 +6,15 @@
 //! The primary approach is a low-level typed API through [`core`], [`family`],
 //! [`spline`] and [`transform`].
 //!
-//! When the `formula` feature is enabled, the [`formula`] namespace is also
+//! When the `formula` feature is enabled, the `formula` namespace is also
 //! available. This layer is an experimental optional convenience API: it compiles
 //! curated high-level builder specifications into typed core models, but is not
 //! the primary API and does not promise to cover all distributions, links and
 //! parameterizations from the low-level crates.
+//!
+//! The `bayes` feature enables normalized coefficient priors and posterior
+//! potentials through the `bayes` namespace. It is intentionally disabled by
+//! default so non-Bayesian users do not acquire that API surface.
 //!
 //! The `rand` feature enables the sampling API in [`family`] and corresponds to
 //! the `gamlss-family/rand` feature.
@@ -26,7 +30,9 @@
 //!   [`core::Gamlss::try_new_weighted`];
 //! - prediction API for training rows and compatible prediction blocks;
 //! - post-fit diagnostics namespace via [`diagnostics`];
-//! - experimental formula builders via [`formula::ModelSpec`] when the
+//! - optional normalized coefficient priors and posterior potentials with the
+//!   `bayes` feature;
+//! - experimental formula builders via `formula::ModelSpec` when the
 //!   `formula` feature is enabled.
 //!
 //! # Example
@@ -38,12 +44,12 @@
 //! let weights = [1.0, 0.5, 1.0];
 //!
 //! let blocks = ParameterBlocks::try_new((
-//!     ParameterBlock::<Mu, Identity, _, _>::linear(
+//!     ParameterBlock::<Mu, _, _>::linear(
 //!         DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]]),
 //!         NoPenalty,
 //!         0,
 //!     ),
-//!     ParameterBlock::<Sigma, Log, _, _>::linear(
+//!     ParameterBlock::<Sigma, _, _>::linear(
 //!         DenseDesign::intercept(y.len()),
 //!         NoPenalty,
 //!         0,
@@ -65,6 +71,9 @@
 //!
 #![doc = include_str!("../docs/project-structure.md")]
 
+/// Lightweight Bayesian potentials and normalized coefficient priors.
+#[cfg(feature = "bayes")]
+pub use gamlss_bayes as bayes;
 /// Typed core abstractions.
 pub use gamlss_core as core;
 /// Post-fit diagnostics utilities.
@@ -84,6 +93,8 @@ pub use gamlss_formula as formula;
 
 /// Most commonly used imports.
 pub mod prelude {
+    #[cfg(feature = "bayes")]
+    pub use gamlss_bayes::prelude::*;
     pub use gamlss_core::prelude::*;
     pub use gamlss_diagnostics::prelude::*;
     pub use gamlss_family::prelude::*;

@@ -6,16 +6,17 @@
 
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
-    CholeskyScale, Family, FixedDimensionalFamily, HasMarginalCdf, Identity, Link,
-    LocationCholesky, LocationCholeskyScalarSpec, Log, LogPlus, Mu, PositiveLink, ProductSpec,
-    ScalarParams, Tau,
+    CholeskyScale, CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf,
+    HasObservationDimension, Identity, InitialEtaFromTheta, Link, Log, LogPlus, ModelError, Mu,
+    ObservationView, PositiveLink, Tau,
+    shape::{Lower, Product, Scalar, Vector},
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{digamma, ln_gamma, student_t_cdf_standardized};
 
-use crate::multivariate::normal::FixedLowerTriangular;
+use crate::multivariate::matrix::FixedLowerTriangular;
 
 /// Default-link generic multivariate Student-t with Cholesky scale.
 pub type MvStudentTCholeskyDefault<const D: usize> =
@@ -42,9 +43,14 @@ where
     TauLink: Link<f64>,
 {
     /// Creates a stateless family value.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the compile-time dimension is zero.
     #[must_use]
     #[inline]
     pub const fn new() -> Self {
+        assert!(D > 0, "multivariate Student-t dimension must be positive");
         Self {
             marker: PhantomData,
         }
@@ -69,11 +75,7 @@ where
                     .expect("valid lower index");
             }
         }
-        MvStudentTCholeskyTheta {
-            mu,
-            cholesky,
-            tau: TauLink::inverse(eta.tau),
-        }
+        MvStudentTCholeskyTheta::from_parts_unchecked(mu, cholesky, TauLink::inverse(eta.tau))
     }
 
     fn nll_theta(observation: [f64; D], theta: MvStudentTCholeskyTheta<D>) -> f64 {
@@ -119,14 +121,19 @@ where
 
         for row in 0..D {
             for col in 0..=row {
-                let mut d_nll_d_l = -robust_weight * a[row] * z[col];
-                if row == col {
-                    d_nll_d_l += 1.0 / lower(&theta.cholesky, row, row);
-                    d_nll_d_l *= DiagonalLink::derivative_inverse(lower(&eta.cholesky, row, col));
+                let eta_value = lower(&eta.cholesky, row, col);
+                let d_nll_d_l = if row == col {
+                    DiagonalLink::derivative_log_inverse(eta_value)
+                        - robust_weight
+                            * a[row]
+                            * z[col]
+                            * DiagonalLink::derivative_inverse(eta_value)
                 } else {
-                    d_nll_d_l *=
-                        OffDiagonalLink::derivative_inverse(lower(&eta.cholesky, row, col));
-                }
+                    -robust_weight
+                        * a[row]
+                        * z[col]
+                        * OffDiagonalLink::derivative_inverse(eta_value)
+                };
                 gradient
                     .cholesky
                     .set_lower(row, col, d_nll_d_l)
@@ -148,10 +155,10 @@ where
 impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> Default
     for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
 where
-    MuLink: Link<f64>,
-    DiagonalLink: PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    MuLink: InitialEtaFromTheta<f64>,
+    DiagonalLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    OffDiagonalLink: InitialEtaFromTheta<f64>,
+    TauLink: InitialEtaFromTheta<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -171,8 +178,6 @@ where
     type GradientEta = MvStudentTCholeskyEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec =
-        ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -222,6 +227,19 @@ where
 {
 }
 
+impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> HasObservationDimension
+    for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
+where
+    MuLink: Link<f64>,
+    DiagonalLink: PositiveLink<f64>,
+    OffDiagonalLink: Link<f64>,
+    TauLink: Link<f64>,
+{
+    fn observation_dimension(&self) -> usize {
+        D
+    }
+}
+
 impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> HasMarginalCdf
     for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
 where
@@ -242,7 +260,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> CanSimulate<Rng>
+impl<Rng, const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> TrySimulate<Rng>
     for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
 where
     Rng: rand::Rng,
@@ -253,13 +271,21 @@ where
 {
     type Sample = [f64; D];
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
         if !valid_theta(theta) {
-            return [f64::NAN; D];
+            return Err(SimulationError::InvalidParameters(
+                "multivariate Student-t theta",
+            ));
         }
         let normal = rand_distr::StandardNormal;
         let Ok(chi_squared) = rand_distr::ChiSquared::new(theta.tau) else {
-            return [f64::NAN; D];
+            return Err(SimulationError::BackendRejected(
+                "Student-t degrees of freedom",
+            ));
         };
         let scale = (theta.tau / rand_distr::Distribution::sample(&chi_squared, rng)).sqrt();
         let mut z = [0.0; D];
@@ -272,7 +298,81 @@ where
                 out[row] += scale * theta.cholesky.get(row, col).unwrap() * z[col];
             }
         }
-        out
+        Ok(out)
+    }
+}
+
+impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink> CompilableFamily
+    for MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
+where
+    MuLink: InitialEtaFromTheta<f64>,
+    DiagonalLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    OffDiagonalLink: InitialEtaFromTheta<f64>,
+    TauLink: InitialEtaFromTheta<f64>,
+{
+    type Shape = Product<Product<Vector<Mu, D>, Lower<CholeskyScale, D>>, Scalar<Tau>>;
+
+    fn eta_from_shape(values: (([f64; D], [[f64; D]; D]), f64)) -> MvStudentTCholeskyEta<D> {
+        MvStudentTCholeskyEta::new(
+            values.0.0,
+            FixedLowerTriangular::from_lower_rows(values.0.1),
+            values.1,
+        )
+    }
+
+    fn gradient_to_shape(gradient: &MvStudentTCholeskyEta<D>) -> (([f64; D], [[f64; D]; D]), f64) {
+        let lower = std::array::from_fn(|row| {
+            std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
+        });
+        ((gradient.mu, lower), gradient.tau)
+    }
+
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> (([f64; D], [[f64; D]; D]), f64)
+    where
+        Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
+    {
+        let mut weights = [0.0; D];
+        let mut means = [0.0; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            for component in 0..D {
+                if weight > 0.0 && value[component].is_finite() {
+                    weights[component] += weight;
+                    means[component] += weight * value[component];
+                }
+            }
+        }
+        for component in 0..D {
+            if weights[component] > 0.0 {
+                means[component] /= weights[component];
+            }
+        }
+        let mut variances = [0.0; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            for component in 0..D {
+                if weight > 0.0 && value[component].is_finite() {
+                    variances[component] += weight * (value[component] - means[component]).powi(2);
+                }
+            }
+        }
+        let mut lower = [[OffDiagonalLink::initial_eta_from_theta(0.0); D]; D];
+        for component in 0..D {
+            let scale = if weights[component] > 0.0 {
+                (variances[component] / weights[component])
+                    .sqrt()
+                    .max(1.0e-6)
+            } else {
+                1.0
+            };
+            lower[component][component] = DiagonalLink::initial_eta_from_theta(scale);
+        }
+        (
+            (means.map(MuLink::initial_eta_from_theta), lower),
+            TauLink::initial_eta_from_theta(10.0),
+        )
     }
 }
 
@@ -300,19 +400,65 @@ impl<const D: usize> MvStudentTCholeskyEta<D> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MvStudentTCholeskyTheta<const D: usize> {
     /// Location vector.
-    pub mu: [f64; D],
+    mu: [f64; D],
     /// Lower-triangular Cholesky scale factor.
-    pub cholesky: FixedLowerTriangular<D>,
+    cholesky: FixedLowerTriangular<D>,
     /// Shared degrees of freedom.
-    pub tau: f64,
+    tau: f64,
 }
 
 impl<const D: usize> MvStudentTCholeskyTheta<D> {
-    /// Creates natural-scale parameters.
+    /// Creates checked natural-scale parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] unless the dimension is
+    /// positive, all entries are finite, every Cholesky diagonal entry is
+    /// strictly positive, and `tau` is finite and positive.
+    #[inline]
+    pub fn try_new(
+        mu: [f64; D],
+        cholesky: FixedLowerTriangular<D>,
+        tau: f64,
+    ) -> Result<Self, ModelError> {
+        let theta = Self { mu, cholesky, tau };
+        if !valid_theta(&theta) {
+            return Err(ModelError::InvalidParameter {
+                parameter: "multivariate Student-t theta",
+                expected: "positive dimension, finite values, positive Cholesky diagonal, and positive tau",
+            });
+        }
+        Ok(theta)
+    }
+
+    #[inline]
+    const fn from_parts_unchecked(
+        mu: [f64; D],
+        cholesky: FixedLowerTriangular<D>,
+        tau: f64,
+    ) -> Self {
+        Self { mu, cholesky, tau }
+    }
+
+    /// Location vector.
     #[must_use]
     #[inline]
-    pub const fn new(mu: [f64; D], cholesky: FixedLowerTriangular<D>, tau: f64) -> Self {
-        Self { mu, cholesky, tau }
+    pub const fn mu(&self) -> &[f64; D] {
+        &self.mu
+    }
+
+    /// Lower-triangular Cholesky scale factor.
+    #[must_use]
+    #[inline]
+    pub const fn cholesky(&self) -> &FixedLowerTriangular<D> {
+        &self.cholesky
+    }
+
+    /// Shared degrees of freedom.
+    #[must_use]
+    #[inline]
+    pub const fn tau(&self) -> f64 {
+        self.tau
     }
 
     /// Returns one covariance-scale entry from `L L'`.
@@ -324,15 +470,7 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
         let limit = row.min(col);
         Some(
             (0..=limit)
-                .map(|index| {
-                    let Some(row_value) = self.cholesky.get(row, index) else {
-                        return f64::NAN;
-                    };
-                    let Some(col_value) = self.cholesky.get(col, index) else {
-                        return f64::NAN;
-                    };
-                    row_value * col_value
-                })
+                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
                 .sum(),
         )
     }
@@ -341,50 +479,6 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
     #[must_use]
     pub fn marginal_scale(&self, component: usize) -> Option<f64> {
         self.scale_covariance(component, component).map(f64::sqrt)
-    }
-}
-
-impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink, TauLink>
-    LocationCholeskyScalarSpec<
-        MvStudentTCholesky<D, MuLink, DiagonalLink, OffDiagonalLink, TauLink>,
-        D,
-    > for ProductSpec<LocationCholesky<Mu, CholeskyScale, D>, ScalarParams<(Tau,), (TauLink,), 1>>
-where
-    MuLink: Link<f64>,
-    DiagonalLink: PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
-{
-    type VectorParameter = Mu;
-    type LowerTriangularParameter = CholeskyScale;
-    type ScalarParameter = Tau;
-    type ScalarLink = TauLink;
-
-    fn eta_from_vector_lower_scalar(
-        vector: [f64; D],
-        lower: [[f64; D]; D],
-        scalar: f64,
-    ) -> MvStudentTCholeskyEta<D> {
-        MvStudentTCholeskyEta::new(vector, FixedLowerTriangular::from_lower_rows(lower), scalar)
-    }
-
-    fn vector_gradient_part(gradient: &MvStudentTCholeskyEta<D>, component: usize) -> f64 {
-        gradient.mu[component]
-    }
-
-    fn lower_triangular_gradient_part(
-        gradient: &MvStudentTCholeskyEta<D>,
-        row: usize,
-        col: usize,
-    ) -> f64 {
-        gradient
-            .cholesky
-            .get(row, col)
-            .expect("valid lower-triangular Cholesky index")
-    }
-
-    fn scalar_gradient_part(gradient: &MvStudentTCholeskyEta<D>) -> f64 {
-        gradient.tau
     }
 }
 
@@ -456,20 +550,20 @@ mod tests {
     };
 
     use super::{MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta};
-    use crate::multivariate::normal::{
-        FixedLowerTriangular, MvNormalCholeskyDefault, MvNormalCholeskyTheta,
-    };
+    use crate::multivariate::matrix::FixedLowerTriangular;
+    use crate::multivariate::normal::{MvNormalCholeskyDefault, MvNormalCholeskyTheta};
     use crate::{StudentTMuSigmaTau, StudentTMuSigmaTauTheta};
 
     #[test]
     fn one_dimensional_case_matches_scalar_student_t() {
         let mv = MvStudentTCholeskyDefault::<1>::new();
         let scalar = StudentTMuSigmaTau::new();
-        let theta = MvStudentTCholeskyTheta::new(
+        let theta = MvStudentTCholeskyTheta::try_new(
             [0.4],
             FixedLowerTriangular::from_lower_rows([[0.8]]),
             5.0,
-        );
+        )
+        .unwrap();
         let scalar_theta = StudentTMuSigmaTauTheta {
             mu: 0.4,
             sigma: 0.8,
@@ -488,8 +582,8 @@ mod tests {
         let normal = MvNormalCholeskyDefault::<2>::new();
         let cholesky = FixedLowerTriangular::from_lower_rows([[1.2, 0.0], [0.3, 0.9]]);
         let y = [0.7, -0.2];
-        let student_theta = MvStudentTCholeskyTheta::new([0.1, -0.5], cholesky, 1.0e8);
-        let normal_theta = MvNormalCholeskyTheta::new([0.1, -0.5], cholesky);
+        let student_theta = MvStudentTCholeskyTheta::try_new([0.1, -0.5], cholesky, 1.0e8).unwrap();
+        let normal_theta = MvNormalCholeskyTheta::try_new([0.1, -0.5], cholesky).unwrap();
         assert_relative_eq!(
             student.nll(y, &student_theta, &mut student.workspace()),
             normal.nll(y, &normal_theta, &mut normal.workspace()),
@@ -554,7 +648,26 @@ mod tests {
     #[test]
     fn invalid_domains_are_rejected() {
         let family = MvStudentTCholeskyDefault::<2>::new();
-        let invalid_theta = MvStudentTCholeskyTheta::new(
+        assert!(
+            MvStudentTCholeskyTheta::try_new(
+                [0.0, 0.0],
+                FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.0, 0.0]]),
+                5.0,
+            )
+            .is_err()
+        );
+        assert!(
+            MvStudentTCholeskyTheta::try_new(
+                [f64::NAN, 0.0],
+                FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.0, 1.0]]),
+                5.0,
+            )
+            .is_err()
+        );
+        assert!(
+            MvStudentTCholeskyTheta::<0>::try_new([], FixedLowerTriangular::zeros(), 5.0,).is_err()
+        );
+        let invalid_theta = MvStudentTCholeskyTheta::from_parts_unchecked(
             [0.0, 0.0],
             FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.0, 0.0]]),
             5.0,
@@ -564,7 +677,15 @@ mod tests {
                 .nll([0.0, 0.0], &invalid_theta, &mut family.workspace())
                 .is_infinite()
         );
-        let invalid_tau = MvStudentTCholeskyTheta::new(
+        assert!(
+            MvStudentTCholeskyTheta::try_new(
+                [0.0, 0.0],
+                FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.0, 1.0]]),
+                0.0,
+            )
+            .is_err()
+        );
+        let invalid_tau = MvStudentTCholeskyTheta::from_parts_unchecked(
             [0.0, 0.0],
             FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.0, 1.0]]),
             0.0,
@@ -579,11 +700,12 @@ mod tests {
     #[test]
     fn marginal_cdf_uses_component_scale() {
         let family = MvStudentTCholeskyDefault::<2>::new();
-        let theta = MvStudentTCholeskyTheta::new(
+        let theta = MvStudentTCholeskyTheta::try_new(
             [0.0, 1.0],
             FixedLowerTriangular::from_lower_rows([[2.0, 0.0], [3.0, 4.0]]),
             7.0,
-        );
+        )
+        .unwrap();
         assert_relative_eq!(family.marginal_cdf(0, 0.0, &theta), 0.5, epsilon = 1.0e-12);
         assert_eq!(theta.scale_covariance(1, 1), Some(25.0));
     }
@@ -609,11 +731,7 @@ mod tests {
             NoPenalty,
             99,
         );
-        let tau = ParameterBlock::<Tau, gamlss_core::LogPlus<2>, _, _>::linear(
-            DenseDesign::intercept(n),
-            NoPenalty,
-            99,
-        );
+        let tau = ParameterBlock::<Tau, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99);
         let blocks = ParameterBlocks::new((mu, cholesky, tau));
         let model = Gamlss::try_new_with_observations(
             MvStudentTCholeskyDefault::<2>::new(),

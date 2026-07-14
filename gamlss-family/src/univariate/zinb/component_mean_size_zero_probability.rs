@@ -2,7 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
-    Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Shape, UnitIntervalLink,
+    Nu, ObservationView, ParameterParts, PositiveLink, Shape, UnitIntervalLink,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -83,6 +83,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, ShapeLink, NuLink> for Zinb<MuLink, ShapeLink, NuLink>;
+    parameters = (Mu, Shape, Nu);
+    arity = 3;
+);
+
 impl<MuLink, ShapeLink, NuLink> Family for Zinb<MuLink, ShapeLink, NuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -94,7 +100,6 @@ where
     type GradientEta = ZinbEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Shape, Nu), (MuLink, ShapeLink, NuLink), 3>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -214,6 +219,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZinbMeanSizeZeroProbability, ZinbTheta};
 
     #[cfg(feature = "rand")]

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    Mean, ObservationView, ParameterParts, PositiveLink, ScalarParams,
+    Mean, ObservationView, ParameterParts, PositiveLink,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -104,6 +104,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, DispersionLink> for NegativeBinomialDispersion<MeanLink, DispersionLink>;
+    parameters = (Mean, Dispersion);
+    arity = 2;
+);
+
 impl<MeanLink, DispersionLink> Family for NegativeBinomialDispersion<MeanLink, DispersionLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -114,7 +120,6 @@ where
     type GradientEta = NegativeBinomialMeanDispersionEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean, Dispersion), (MeanLink, DispersionLink), 2>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 

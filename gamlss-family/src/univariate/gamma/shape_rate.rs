@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, ObservationView, ParameterParts,
-    PositiveLink, Rate, ScalarParams, Shape,
+    PositiveLink, Rate, Shape,
 };
 
 use crate::initial::positive_floor;
@@ -87,6 +87,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<ShapeLink, RateLink> for Gamma<ShapeRate, ShapeLink, RateLink>;
+    parameters = (Shape, Rate);
+    arity = 2;
+);
+
 impl<ShapeLink, RateLink> Family for Gamma<ShapeRate, ShapeLink, RateLink>
 where
     ShapeLink: PositiveLink<f64>,
@@ -97,7 +103,6 @@ where
     type GradientEta = GammaShapeRateEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Shape, Rate), (ShapeLink, RateLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

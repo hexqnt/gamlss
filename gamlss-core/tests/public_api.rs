@@ -7,13 +7,13 @@ use gamlss_core::{
     CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion,
     Family, FiniteScalarObservations, FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf,
     HasConditionalCdf, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
-    HasInitialEta, HasLogDensity, HasMarginalCdf, HasRosenblattTransform, Identity,
+    HasInitialEta, HasLogDensity, HasMarginalCdf, HasObservationDimension, HasRosenblattTransform,
     InitialEtaFromObservations, LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit,
     LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
     Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
     ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
-    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ScalarParams,
-    Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
+    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, Sigma, Size,
+    Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
     VectorParameterBlock, ZeroProbability,
 };
 
@@ -47,13 +47,18 @@ impl DependentConstraintFamily {
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl for DependentConstraintFamily;
+    parameters = (Mu, Nu);
+    arity = 2;
+);
+
 impl Family for DependentConstraintFamily {
     type Eta = (f64, f64);
     type Theta = (f64, f64);
     type GradientEta = (f64, f64);
     type Observation<'obs> = &'obs [f64];
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Nu), (Identity, Identity), 2>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -138,9 +143,50 @@ impl HasCdf for DependentConstraintFamily {
     }
 }
 
-impl HasConditionalCdf for DependentConstraintFamily {}
+impl HasObservationDimension for DependentConstraintFamily {
+    fn observation_dimension(&self) -> usize {
+        2
+    }
+}
 
-impl HasRosenblattTransform for DependentConstraintFamily {}
+impl HasConditionalCdf for DependentConstraintFamily {
+    fn conditional_cdf(
+        &self,
+        component: usize,
+        y: f64,
+        _preceding: &[f64],
+        theta: &Self::Theta,
+    ) -> f64 {
+        if component < 2 && y <= theta.0 {
+            1.0
+        } else if component < 2 {
+            0.0
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+impl HasRosenblattTransform for DependentConstraintFamily {
+    fn rosenblatt_into(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        out: &mut [f64],
+    ) -> Result<(), gamlss_core::ModelError> {
+        if out.len() != 2 {
+            return Err(gamlss_core::ModelError::ResponseLength {
+                expected: 2,
+                actual: out.len(),
+            });
+        }
+        for component in 0..2 {
+            out[component] =
+                self.conditional_cdf(component, observation[component], observation, theta);
+        }
+        Ok(())
+    }
+}
 
 impl FixedDimensionalFamily<2> for DependentConstraintFamily {}
 
@@ -159,7 +205,6 @@ impl Family for ScalarCdfFamily {
     type GradientEta = f64;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -346,7 +391,7 @@ fn structured_parameter_blocks_remain_root_reexports() {
         99,
     );
 
-    let (vector, lower) = ParameterBlocks::new((vector, lower));
+    let (vector, lower) = ParameterBlocks::new((vector, lower)).into_inner();
 
     assert_eq!(vector.range(), 0..2);
     assert_eq!(vector.component_range(1), Some(1..2));
@@ -386,7 +431,7 @@ fn cdf_contract_accepts_family_observations_and_scalar_marginals() {
 }
 
 #[test]
-fn multivariate_cdf_marker_traits_remain_root_reexports() {
+fn multivariate_cdf_capability_traits_remain_root_reexports() {
     fn assert_conditional_cdf<F: HasConditionalCdf>() {}
     fn assert_rosenblatt_transform<F: HasRosenblattTransform>() {}
     fn assert_fixed_dimensional<F: FixedDimensionalFamily<2>>() {}
@@ -401,18 +446,14 @@ fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information(
     let obs = BorrowedRows {
         rows: vec![vec![1.0, 3.0], vec![2.0, 4.0]],
     };
-    let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
-        DenseDesign::intercept(obs.len()),
-        NoPenalty,
-        0,
-    );
-    let nu = ParameterBlock::<Nu, Identity, _, _>::linear(
-        DenseDesign::intercept(obs.len()),
-        NoPenalty,
-        1,
-    );
-    let mut model = Gamlss::try_new_with_observations(DependentConstraintFamily, (mu, nu), obs)
-        .expect("borrowed observation view should compile into a model");
+    let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(obs.len()), NoPenalty, 0);
+    let nu = ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(obs.len()), NoPenalty, 1);
+    let mut model = Gamlss::try_new_with_observations(
+        DependentConstraintFamily,
+        ParameterBlocks::from_assigned((mu, nu)),
+        obs,
+    )
+    .expect("borrowed observation view should compile into a model");
     let beta = vec![2.0, 0.0];
     let mut grad = vec![0.0; 2];
 

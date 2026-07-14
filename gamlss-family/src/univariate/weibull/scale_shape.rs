@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, ObservationView, ParameterParts,
-    PositiveLink, ScalarParams, Scale, Shape,
+    PositiveLink, Scale, Shape,
 };
 
 use super::Weibull;
@@ -87,6 +87,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<ScaleLink, ShapeLink> for Weibull<ScaleShape, ScaleLink, ShapeLink>;
+    parameters = (Scale, Shape);
+    arity = 2;
+);
+
 impl<ScaleLink, ShapeLink> Family for Weibull<ScaleShape, ScaleLink, ShapeLink>
 where
     ScaleLink: PositiveLink<f64>,
@@ -97,7 +103,6 @@ where
     type GradientEta = WeibullScaleShapeEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Scale, Shape), (ScaleLink, ShapeLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

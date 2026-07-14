@@ -1,16 +1,12 @@
 use std::ops::Range;
 
 use crate::{
-    BlockObjective, Family, GlobalPenalty, LowerTriangularParameterBlock, ModelError, Objective,
-    ParameterBlock, ParameterName, ParameterParts, Penalty, PredictorBlock,
-    SimplexLogitParameterBlock, StrictLowerTriangularParameterBlock, VectorParameterBlock,
-    family::{
-        InitialEtaFromObservations, LocationCholeskyScalarSpec, LocationCholeskySpec,
-        LocationScalePartialCorrSpec, MeanPrecisionSimplexSpec, RepeatedScalarParamSpec,
-        ScalarParamSpec,
-    },
+    BlockObjective, CompilableFamily, Family, GlobalPenalty, ModelError, Objective,
+    ParameterBlocks, ParameterName,
 };
+use executor::ShapeBlocks;
 
+pub use dynamic::DynamicParameterBlocks;
 pub use layout::{
     ParameterAxis, ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPath,
     ParameterSlice, TrainingDiagnostics, UnpackedParameters,
@@ -18,9 +14,15 @@ pub use layout::{
 pub use observation::{FiniteScalarObservations, ObservationView};
 pub use workspace::{GradientWorkspace, ModelWorkspace};
 
+mod dynamic;
+mod executor;
 mod layout;
 mod observation;
 mod workspace;
+
+mod sealed {
+    pub trait Sealed {}
+}
 
 /// Scaling convention for the likelihood part of a compiled objective.
 ///
@@ -157,7 +159,7 @@ where
         let nobs = obs.len();
         obs.validate()?;
         let weight_sum = observation_weight_sum(&obs);
-        blocks.validate(nobs)?;
+        blocks.validate_for(&family, nobs)?;
         blocks.try_len()?;
         Ok(Self {
             family,
@@ -310,7 +312,7 @@ where
     ///
     /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
     /// contain a parameter named `P::NAME`. When blocks are constructed through
-    /// the typed [`ParameterBlock`] API this cannot happen in practice — the
+    /// the typed [`crate::ParameterBlock`] API this cannot happen in practice — the
     /// compiler guarantees that `ParameterBlock<Mu, …>` registers itself as
     /// `"mu"`.
     pub fn block_objective_for<P>(
@@ -638,6 +640,93 @@ where
         let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
         let penalty = self.blocks.penalty_value(beta);
         Ok(self.likelihood_multiplier() * train_nll + penalty)
+    }
+
+    /// Returns the summed weighted negative log-likelihood without penalties.
+    pub fn try_likelihood_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+        Ok(self.blocks.train_nll(&self.family, &self.obs, beta))
+    }
+
+    /// Computes summed weighted NLL and its coefficient gradient without penalties.
+    pub fn try_likelihood_value_gradient_into(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) -> Result<f64, ModelError> {
+        let mut workspace = self.gradient_workspace();
+        self.try_likelihood_value_gradient_into_workspace(beta, grad, &mut workspace)
+    }
+
+    /// Workspace-reusing variant of [`Self::try_likelihood_value_gradient_into`].
+    pub fn try_likelihood_value_gradient_into_workspace(
+        &self,
+        beta: &[f64],
+        grad: &mut [f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<f64, ModelError> {
+        validate_beta_and_gradient_len(self.nparams(), beta, grad)?;
+        grad.fill(0.0);
+        let value = {
+            let (family_workspace, gradient_workspace) = workspace.parts_mut();
+            self.blocks.value_gradient_into_workspace(
+                &self.family,
+                &self.obs,
+                beta,
+                grad,
+                family_workspace,
+                gradient_workspace,
+            )
+        };
+        let penalty = self.blocks.penalty_value(beta);
+        let penalty_grad = workspace
+            .gradient_mut()
+            .penalty_gradient_mut(self.nparams());
+        self.blocks.add_penalty_gradient(beta, penalty_grad);
+        for (value, penalty_value) in grad.iter_mut().zip(penalty_grad.iter().copied()) {
+            *value -= penalty_value;
+        }
+        Ok(value - penalty)
+    }
+
+    /// Writes raw per-observation negative log-likelihood contributions.
+    pub fn try_pointwise_nll_into(&self, beta: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl(beta, out, false)
+    }
+
+    /// Writes observation-weighted per-observation NLL contributions.
+    pub fn try_weighted_pointwise_nll_into(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl(beta, out, true)
+    }
+
+    /// Writes raw per-observation log-likelihood contributions.
+    pub fn try_pointwise_log_likelihood_into(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl(beta, out, false)?;
+        for value in out.iter_mut() {
+            *value = -*value;
+        }
+        Ok(())
+    }
+
+    fn try_pointwise_nll_impl(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        weighted: bool,
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+        validate_output_len(self.nobs(), out.len())?;
+        self.blocks
+            .pointwise_nll_into(&self.family, &self.obs, beta, weighted, out);
+        Ok(())
     }
 
     /// Validates beta/grad sizes and writes the gradient.
@@ -1179,7 +1268,7 @@ where
 
 /// Objective wrapper that adds penalties depending on the full beta vector.
 ///
-/// Unlike [`Penalty`], which acts locally on a single block,
+/// Unlike [`crate::Penalty`], which acts locally on a single block,
 /// [`GlobalPenalty`] allows coupling of several blocks (e.g., centering or
 /// LASSO-like penalties).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1250,33 +1339,12 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ParameterStream {
-    index: usize,
-    role: &'static str,
-    path_axis: Option<ParameterAxis>,
-    range: Range<usize>,
-}
-
-impl ParameterStream {
-    fn into_descriptor(self) -> ParameterDescriptor {
-        ParameterDescriptor::new(
-            self.role,
-            self.path_axis
-                .map_or_else(ParameterPath::whole, ParameterPath::from_axis),
-            self.range,
-        )
-    }
-}
-
 /// Tuple contract for a set of parameter blocks compatible with family `F`.
 ///
-/// Implementations are generated for typed tuples of [`ParameterBlock`]. The
-/// model validates observation count, predictor row counts and coefficient
-/// ranges before hot-path evaluation; generated methods may then assume
-/// compatible row counts, finite non-negative weights and non-overlapping block
-/// ranges.
-pub trait GamlssBlocks<F>
+/// Built-in implementations use [`ParameterBlocks`] around a static block tree.
+/// The model validates observation count, predictor row counts and coefficient
+/// ranges before hot-path evaluation.
+pub trait GamlssBlocks<F>: sealed::Sealed
 where
     F: Family,
 {
@@ -1302,6 +1370,10 @@ where
     /// Validates that the blocks are compatible with the observation count
     /// `nobs`.
     fn validate(&self, nobs: usize) -> Result<(), ModelError>;
+    /// Validates blocks together with runtime family configuration.
+    fn validate_for(&self, _family: &F, nobs: usize) -> Result<(), ModelError> {
+        self.validate(nobs)
+    }
     /// Weighted negative log-likelihood without penalties.
     ///
     /// `obs` has already been validated by the model constructor. Each scalar
@@ -1310,6 +1382,29 @@ where
     fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Writes raw or weighted per-observation NLL contributions.
+    fn pointwise_nll_into<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        weighted: bool,
+        out: &mut [f64],
+    ) where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let mut workspace = family.workspace();
+        for (row, value) in out.iter_mut().enumerate() {
+            let weight = obs.weight_at(row);
+            if weighted && weight == 0.0 {
+                *value = 0.0;
+                continue;
+            }
+            let eta = self.eta_row(beta, row);
+            let nll = family.nll_eta(obs.observation_at(row), &eta, &mut workspace);
+            *value = if weighted { weight * nll } else { nll };
+        }
+    }
     /// Additive predictors on the link scale for one row.
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
     where
@@ -1488,58 +1583,36 @@ where
     }
 }
 
-impl<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower> GamlssBlocks<F>
-    for (
-        VectorParameterBlock<PVector, D, XVector, PenVector>,
-        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
-    )
+impl<F, B> GamlssBlocks<F> for ParameterBlocks<B>
 where
-    F: Family,
-    F::ParamSpec:
-        LocationCholeskySpec<F, D, VectorParameter = PVector, LowerTriangularParameter = PLower>,
-    PVector: ParameterName,
-    PLower: ParameterName,
-    XVector: PredictorBlock,
-    XLower: PredictorBlock,
-    PenVector: Penalty,
-    PenLower: Penalty,
+    F: CompilableFamily,
+    B: ShapeBlocks<F::Shape>,
 {
     fn nrows(&self) -> usize {
-        self.0.component(0).map_or(0, PredictorBlock::nrows)
+        self.as_inner().nrows().unwrap_or(0)
     }
 
     fn len(&self) -> usize {
         <Self as GamlssBlocks<F>>::try_len(self)
-            .expect("validated structured parameter block layout must fit in usize")
+            .expect("validated static parameter tree length must fit in usize")
     }
 
     fn try_len(&self) -> Result<usize, ModelError> {
-        Ok(self.0.try_range()?.end.max(self.1.try_range()?.end))
+        self.as_inner().try_len()
     }
 
     fn validate(&self, nobs: usize) -> Result<(), ModelError> {
-        if D == 0 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "dimension",
-                expected: "positive",
-            });
-        }
+        self.as_inner().validate(nobs)?;
+        let mut ranges = Vec::with_capacity(self.as_inner().leaf_count());
+        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
+            ranges.push((descriptor.role, descriptor.range));
+        });
+        validate_non_overlapping_ranges(&ranges)
+    }
 
-        validate_vector_parameter_block::<PVector, D, _, _>(&self.0, nobs)?;
-        validate_lower_triangular_parameter_block::<PLower, D, _, _>(&self.1, nobs)?;
-        self.0.penalty().validate_dim(self.0.len())?;
-        self.1.penalty().validate_dim(self.1.len())?;
-
-        let vector = self.0.try_range()?;
-        let lower = self.1.try_range()?;
-        if ranges_overlap(vector, lower) {
-            return Err(ModelError::BlockOverlap {
-                first: PVector::NAME,
-                second: PLower::NAME,
-            });
-        }
-
-        Ok(())
+    fn validate_for(&self, family: &F, nobs: usize) -> Result<(), ModelError> {
+        family.validate_compiled()?;
+        <Self as GamlssBlocks<F>>::validate(self, nobs)
     }
 
     fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
@@ -1553,12 +1626,10 @@ where
             if weight == 0.0 {
                 continue;
             }
-            let observation = obs.observation_at(row);
+            let values = self.as_inner().values_row(beta, row);
+            let eta = F::eta_from_shape(values);
             loss = weight.mul_add(
-                {
-                    let eta = structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row);
-                    family.nll_eta(observation, &eta, &mut family_workspace)
-                },
+                family.nll_eta(obs.observation_at(row), &eta, &mut family_workspace),
                 loss,
             );
         }
@@ -1566,20 +1637,19 @@ where
     }
 
     fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
-        structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row)
+        F::eta_from_shape(self.as_inner().values_row(beta, row))
     }
 
     fn penalty_value(&self, beta: &[f64]) -> f64 {
-        self.0.penalty().value(&beta[self.0.range()])
-            + self.1.penalty().value(&beta[self.1.range()])
+        self.as_inner().penalty_value(beta)
     }
 
     fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
-            .expect("validated structured parameter block layout must fit in usize")
+        self.try_initial_parameters(family, obs)
+            .expect("validated static parameter tree length must fit in usize")
     }
 
     fn try_initial_parameters<'obs, Obs>(
@@ -1590,69 +1660,22 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        let (vector_eta, lower_eta) =
-            <F::ParamSpec as LocationCholeskySpec<F, D>>::initial_vector_lower_from_observations(
-                family, obs,
-            );
         let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
-
-        for (component, value) in vector_eta.iter().copied().enumerate() {
-            if value.is_finite() {
-                let predictor = self
-                    .0
-                    .component(component)
-                    .expect("validated vector block has D components");
-                let range = self
-                    .0
-                    .component_range(component)
-                    .expect("validated vector component has a coefficient range");
-                predictor.set_constant_start(value, &mut beta[range]);
-            }
-        }
-
-        for (row, row_values) in lower_eta.iter().enumerate() {
-            for (col, value) in row_values.iter().copied().take(row + 1).enumerate() {
-                if value.is_finite() {
-                    let predictor = self
-                        .1
-                        .entry(row, col)
-                        .expect("validated lower-triangular block has this entry");
-                    let range = self
-                        .1
-                        .entry_range(row, col)
-                        .expect("validated lower-triangular entry has a coefficient range");
-                    predictor.set_constant_start(value, &mut beta[range]);
-                }
-            }
-        }
-
+        let values = family.initial_shape(obs);
+        self.as_inner().set_initial(&values, &mut beta);
         Ok(beta)
     }
 
     fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
+        self.as_inner().add_penalty_gradient(beta, grad);
     }
 
     fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let scalar_count = structured_scalar_count::<PLower, D>();
         let mut workspace = GradientWorkspace::new();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, nobs);
-        }
-
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-
+        workspace.prepare(self.as_inner().leaf_count());
+        let mut cursor = 0;
+        self.as_inner()
+            .prepare_workspace(nobs, &mut workspace, &mut cursor);
         workspace
     }
 
@@ -1668,1169 +1691,74 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        let scalar_count = structured_scalar_count::<PLower, D>();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, obs.len());
-        }
-
+        workspace.prepare(self.as_inner().leaf_count());
+        let mut cursor = 0;
+        self.as_inner()
+            .prepare_workspace(obs.len(), workspace, &mut cursor);
         let mut loss = 0.0;
-        for row_index in 0..obs.len() {
-            let weight = obs.weight_at(row_index);
-            if weight == 0.0 {
-                for index in 0..scalar_count {
-                    workspace.set_row_gradient(index, row_index, 0.0);
-                }
-                continue;
-            }
 
-            let observation = obs.observation_at(row_index);
-            let eta = structured_eta_row::<F, D, _, _, _, _, _, _>(self, beta, row_index);
-            let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, family_workspace);
-            loss = weight.mul_add(nll, loss);
-
-            for component in 0..D {
-                workspace.set_row_gradient(
-                    component,
-                    row_index,
-                    weight
-                        * <F::ParamSpec as LocationCholeskySpec<F, D>>::vector_gradient_part(
-                            &gradient, component,
-                        ),
-                );
-            }
-            for row in 0..D {
-                for col in 0..=row {
-                    workspace.set_row_gradient(
-                        lower_workspace_index::<PLower, D>(row, col),
-                        row_index,
-                        weight
-                            * <F::ParamSpec as LocationCholeskySpec<F, D>>::lower_triangular_gradient_part(
-                                &gradient, row, col,
-                            ),
-                    );
-                }
-            }
-        }
-
-        for component in 0..D {
-            let predictor = self
-                .0
-                .component(component)
-                .expect("validated vector block has D components");
-            let range = self
-                .0
-                .component_range(component)
-                .expect("validated vector component has a coefficient range");
-            let (row_gradient, local_gradient) =
-                workspace.row_gradient_and_local_gradient_mut(component, range.len());
-            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-            add_into(&mut grad[range], local_gradient);
-        }
-
-        for row in 0..D {
-            for col in 0..=row {
-                let predictor = self
-                    .1
-                    .entry(row, col)
-                    .expect("validated lower-triangular block has this entry");
-                let range = self
-                    .1
-                    .entry_range(row, col)
-                    .expect("validated lower-triangular entry has a coefficient range");
-                let (row_gradient, local_gradient) = workspace.row_gradient_and_local_gradient_mut(
-                    lower_workspace_index::<PLower, D>(row, col),
-                    range.len(),
-                );
-                predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-                add_into(&mut grad[range], local_gradient);
-            }
-        }
-
-        loss += self.0.penalty().value(&beta[self.0.range()]);
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        loss += self.1.penalty().value(&beta[self.1.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-
-        loss
-    }
-
-    fn block_ranges(&self) -> Vec<Range<usize>> {
-        vec![self.0.range(), self.1.range()]
-    }
-
-    fn parameter_layout(&self) -> ParameterLayout {
-        ParameterLayout::new(vec![
-            ParameterSlice {
-                name: PVector::NAME,
-                range: self.0.range(),
-            },
-            ParameterSlice {
-                name: PLower::NAME,
-                range: self.1.range(),
-            },
-        ])
-    }
-
-    fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-        let mut descriptors = Vec::with_capacity(structured_scalar_count::<PLower, D>());
-        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
-            descriptors.push(descriptor);
-        });
-        descriptors
-    }
-
-    fn parameter_slice_count(&self) -> usize {
-        2
-    }
-
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        match index {
-            0 => name == PVector::NAME && range == self.0.range(),
-            1 => name == PLower::NAME && range == self.1.range(),
-            _ => false,
-        }
-    }
-
-    fn visit_parameter_slices<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        visit(0, PVector::NAME, self.0.range());
-        visit(1, PLower::NAME, self.1.range());
-    }
-
-    fn visit_parameter_descriptors<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, ParameterDescriptor),
-    {
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-    }
-
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        other.parameter_slice_count() == 2
-            && other.parameter_slice_matches(0, PVector::NAME, self.0.range())
-            && other.parameter_slice_matches(1, PLower::NAME, self.1.range())
-    }
-}
-
-impl<
-    F,
-    const D: usize,
-    PLocation,
-    PScale,
-    PCorr,
-    XLocation,
-    XScale,
-    XCorr,
-    PenLocation,
-    PenScale,
-    PenCorr,
-> GamlssBlocks<F>
-    for (
-        VectorParameterBlock<PLocation, D, XLocation, PenLocation>,
-        VectorParameterBlock<PScale, D, XScale, PenScale>,
-        StrictLowerTriangularParameterBlock<PCorr, D, XCorr, PenCorr>,
-    )
-where
-    F: Family,
-    F::ParamSpec: LocationScalePartialCorrSpec<
-            F,
-            D,
-            LocationParameter = PLocation,
-            ScaleParameter = PScale,
-            PartialCorrelationParameter = PCorr,
-        >,
-    PLocation: ParameterName,
-    PScale: ParameterName,
-    PCorr: ParameterName,
-    XLocation: PredictorBlock,
-    XScale: PredictorBlock,
-    XCorr: PredictorBlock,
-    PenLocation: Penalty,
-    PenScale: Penalty,
-    PenCorr: Penalty,
-{
-    fn nrows(&self) -> usize {
-        self.0.component(0).map_or(0, PredictorBlock::nrows)
-    }
-
-    fn len(&self) -> usize {
-        <Self as GamlssBlocks<F>>::try_len(self)
-            .expect("validated partial-correlation parameter block layout must fit in usize")
-    }
-
-    fn try_len(&self) -> Result<usize, ModelError> {
-        Ok(self
-            .0
-            .try_range()?
-            .end
-            .max(self.1.try_range()?.end)
-            .max(self.2.try_range()?.end))
-    }
-
-    fn validate(&self, nobs: usize) -> Result<(), ModelError> {
-        if D == 0 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "dimension",
-                expected: "positive",
-            });
-        }
-
-        validate_vector_parameter_block::<PLocation, D, _, _>(&self.0, nobs)?;
-        validate_vector_parameter_block::<PScale, D, _, _>(&self.1, nobs)?;
-        validate_strict_lower_triangular_parameter_block::<PCorr, D, _, _>(&self.2, nobs)?;
-        self.0.penalty().validate_dim(self.0.len())?;
-        self.1.penalty().validate_dim(self.1.len())?;
-        self.2.penalty().validate_dim(self.2.len())?;
-
-        let ranges = [
-            (PLocation::NAME, self.0.try_range()?),
-            (PScale::NAME, self.1.try_range()?),
-            (PCorr::NAME, self.2.try_range()?),
-        ];
-        validate_non_overlapping_ranges(&ranges)?;
-
-        Ok(())
-    }
-
-    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let mut loss = 0.0;
-        let mut family_workspace = family.workspace();
         for row in 0..obs.len() {
             let weight = obs.weight_at(row);
             if weight == 0.0 {
+                let scores = <F::Shape as crate::shape::ParameterShape>::zeros();
+                let mut cursor = 0;
+                self.as_inner()
+                    .set_scores(&scores, row, 0.0, workspace, &mut cursor);
                 continue;
             }
-            let eta = location_scale_partial_corr_eta_row::<F, D, _, _, _, _, _, _, _, _, _>(
-                self, beta, row,
-            );
-            loss = weight.mul_add(
-                family.nll_eta(obs.observation_at(row), &eta, &mut family_workspace),
-                loss,
-            );
-        }
-        loss
-    }
-
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
-        location_scale_partial_corr_eta_row::<F, D, _, _, _, _, _, _, _, _, _>(self, beta, row)
-    }
-
-    fn penalty_value(&self, beta: &[f64]) -> f64 {
-        self.0.penalty().value(&beta[self.0.range()])
-            + self.1.penalty().value(&beta[self.1.range()])
-            + self.2.penalty().value(&beta[self.2.range()])
-    }
-
-    fn initial_parameters<'obs, Obs>(&self, _family: &F, _obs: &'obs Obs) -> Vec<f64>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        vec![0.0; <Self as GamlssBlocks<F>>::len(self)]
-    }
-
-    fn try_initial_parameters<'obs, Obs>(
-        &self,
-        _family: &F,
-        _obs: &'obs Obs,
-    ) -> Result<Vec<f64>, ModelError>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        Ok(vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?])
-    }
-
-    fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-        self.2
-            .penalty()
-            .add_gradient(&beta[self.2.range()], &mut grad[self.2.range()]);
-    }
-
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let scalar_count = D + D + strict_lower_workspace_count::<PCorr, D>();
-        let mut workspace = GradientWorkspace::new();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, nobs);
-        }
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_vector_parameter_streams(&self.1, D, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_strict_lower_triangular_parameter_streams(&self.2, D + D, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        workspace
-    }
-
-    fn value_gradient_into_workspace<'obs, Obs>(
-        &self,
-        family: &F,
-        obs: &'obs Obs,
-        beta: &[f64],
-        grad: &mut [f64],
-        family_workspace: &mut F::Workspace,
-        workspace: &mut GradientWorkspace,
-    ) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let scalar_count = D + D + strict_lower_workspace_count::<PCorr, D>();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, obs.len());
-        }
-
-        let mut loss = 0.0;
-        for row_index in 0..obs.len() {
-            let weight = obs.weight_at(row_index);
-            if weight == 0.0 {
-                for index in 0..scalar_count {
-                    workspace.set_row_gradient(index, row_index, 0.0);
-                }
-                continue;
-            }
-
-            let eta = location_scale_partial_corr_eta_row::<F, D, _, _, _, _, _, _, _, _, _>(
-                self, beta, row_index,
-            );
+            let eta = F::eta_from_shape(self.as_inner().values_row(beta, row));
             let (nll, gradient) =
-                family.nll_and_gradient_eta(obs.observation_at(row_index), &eta, family_workspace);
+                family.nll_and_gradient_eta(obs.observation_at(row), &eta, family_workspace);
             loss = weight.mul_add(nll, loss);
-            for component in 0..D {
-                workspace.set_row_gradient(
-                    component,
-                    row_index,
-                    weight
-                        * <F::ParamSpec as LocationScalePartialCorrSpec<F, D>>::location_gradient_part(
-                            &gradient, component,
-                        ),
-                );
-                workspace.set_row_gradient(
-                    D + component,
-                    row_index,
-                    weight
-                        * <F::ParamSpec as LocationScalePartialCorrSpec<F, D>>::scale_gradient_part(
-                            &gradient, component,
-                        ),
-                );
-            }
-            for row in 0..D {
-                for col in 0..row {
-                    workspace.set_row_gradient(
-                        partial_corr_workspace_index::<PCorr, D>(row, col),
-                        row_index,
-                        weight
-                            * <F::ParamSpec as LocationScalePartialCorrSpec<F, D>>::partial_corr_gradient_part(
-                                &gradient, row, col,
-                            ),
-                    );
-                }
-            }
+            let scores = F::gradient_to_shape(&gradient);
+            let mut cursor = 0;
+            self.as_inner()
+                .set_scores(&scores, row, weight, workspace, &mut cursor);
         }
 
-        for component in 0..D {
-            let predictor = self.0.component(component).unwrap();
-            let range = self.0.component_range(component).unwrap();
-            let (row_gradient, local_gradient) =
-                workspace.row_gradient_and_local_gradient_mut(component, range.len());
-            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-            add_into(&mut grad[range], local_gradient);
-
-            let predictor = self.1.component(component).unwrap();
-            let range = self.1.component_range(component).unwrap();
-            let (row_gradient, local_gradient) =
-                workspace.row_gradient_and_local_gradient_mut(D + component, range.len());
-            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-            add_into(&mut grad[range], local_gradient);
-        }
-        for row in 0..D {
-            for col in 0..row {
-                let predictor = self.2.entry(row, col).unwrap();
-                let range = self.2.entry_range(row, col).unwrap();
-                let (row_gradient, local_gradient) = workspace.row_gradient_and_local_gradient_mut(
-                    partial_corr_workspace_index::<PCorr, D>(row, col),
-                    range.len(),
-                );
-                predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-                add_into(&mut grad[range], local_gradient);
-            }
-        }
-
-        loss += self.0.penalty().value(&beta[self.0.range()]);
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        loss += self.1.penalty().value(&beta[self.1.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-        loss += self.2.penalty().value(&beta[self.2.range()]);
-        self.2
-            .penalty()
-            .add_gradient(&beta[self.2.range()], &mut grad[self.2.range()]);
-
-        loss
+        let mut cursor = 0;
+        self.as_inner().backprop(beta, grad, workspace, &mut cursor);
+        self.as_inner().add_penalty_gradient(beta, grad);
+        loss + self.as_inner().penalty_value(beta)
     }
 
     fn block_ranges(&self) -> Vec<Range<usize>> {
-        vec![self.0.range(), self.1.range(), self.2.range()]
+        let mut ranges = Vec::with_capacity(self.as_inner().leaf_count());
+        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
+            ranges.push(descriptor.range);
+        });
+        ranges
     }
 
     fn parameter_layout(&self) -> ParameterLayout {
-        ParameterLayout::new(vec![
-            ParameterSlice {
-                name: PLocation::NAME,
-                range: self.0.range(),
-            },
-            ParameterSlice {
-                name: PScale::NAME,
-                range: self.1.range(),
-            },
-            ParameterSlice {
-                name: PCorr::NAME,
-                range: self.2.range(),
-            },
-        ])
-    }
-
-    fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-        let mut descriptors =
-            Vec::with_capacity(D + D + strict_lower_workspace_count::<PCorr, D>());
-        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
-            descriptors.push(descriptor);
-        });
-        descriptors
-    }
-
-    fn parameter_slice_count(&self) -> usize {
-        3
-    }
-
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        match index {
-            0 => name == PLocation::NAME && range == self.0.range(),
-            1 => name == PScale::NAME && range == self.1.range(),
-            2 => name == PCorr::NAME && range == self.2.range(),
-            _ => false,
-        }
-    }
-
-    fn visit_parameter_slices<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        visit(0, PLocation::NAME, self.0.range());
-        visit(1, PScale::NAME, self.1.range());
-        visit(2, PCorr::NAME, self.2.range());
-    }
-
-    fn visit_parameter_descriptors<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, ParameterDescriptor),
-    {
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_vector_parameter_streams(&self.1, D, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_strict_lower_triangular_parameter_streams(&self.2, D + D, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-    }
-
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        other.parameter_slice_count() == 3
-            && other.parameter_slice_matches(0, PLocation::NAME, self.0.range())
-            && other.parameter_slice_matches(1, PScale::NAME, self.1.range())
-            && other.parameter_slice_matches(2, PCorr::NAME, self.2.range())
-    }
-}
-
-impl<F, const D: usize, PMean, PPrecision, LPrecision, XMean, XPrecision, PenMean, PenPrecision>
-    GamlssBlocks<F>
-    for (
-        SimplexLogitParameterBlock<PMean, D, XMean, PenMean>,
-        ParameterBlock<PPrecision, LPrecision, XPrecision, PenPrecision>,
-    )
-where
-    F: Family,
-    F::ParamSpec: MeanPrecisionSimplexSpec<
-            F,
-            D,
-            MeanParameter = PMean,
-            PrecisionParameter = PPrecision,
-            PrecisionLink = LPrecision,
-        >,
-    PMean: ParameterName,
-    PPrecision: ParameterName,
-    LPrecision: crate::Link<f64>,
-    XMean: PredictorBlock,
-    XPrecision: PredictorBlock,
-    PenMean: Penalty,
-    PenPrecision: Penalty,
-{
-    fn nrows(&self) -> usize {
-        self.0
-            .logit(0)
-            .map_or_else(|| PredictorBlock::nrows(self.1.x()), PredictorBlock::nrows)
-    }
-
-    fn len(&self) -> usize {
-        <Self as GamlssBlocks<F>>::try_len(self)
-            .expect("validated simplex parameter block layout must fit in usize")
-    }
-
-    fn try_len(&self) -> Result<usize, ModelError> {
-        Ok(self.0.try_range()?.end.max(self.1.try_range()?.end))
-    }
-
-    fn validate(&self, nobs: usize) -> Result<(), ModelError> {
-        if D < 2 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "dimension",
-                expected: "at least two simplex components",
+        let mut slices = Vec::new();
+        let mut cursor = 0;
+        self.as_inner()
+            .visit_slices(&mut cursor, &mut |_, name, range| {
+                slices.push(ParameterSlice { name, range });
             });
-        }
-
-        validate_simplex_logit_parameter_block::<PMean, D, _, _>(&self.0, nobs)?;
-        self.1.x().validate()?;
-        validate_block_rows(PPrecision::NAME, self.1.x().nrows(), nobs)?;
-        self.0.penalty().validate_dim(self.0.len())?;
-        self.1.penalty().validate_dim(self.1.len())?;
-
-        let ranges = [
-            (PMean::NAME, self.0.try_range()?),
-            (PPrecision::NAME, self.1.try_range()?),
-        ];
-        validate_non_overlapping_ranges(&ranges)?;
-        Ok(())
-    }
-
-    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let mut loss = 0.0;
-        let mut family_workspace = family.workspace();
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            if weight == 0.0 {
-                continue;
-            }
-            let eta = simplex_precision_eta_row::<F, D, _, _, _, _, _, _, _>(self, beta, row);
-            loss = weight.mul_add(
-                family.nll_eta(obs.observation_at(row), &eta, &mut family_workspace),
-                loss,
-            );
-        }
-        loss
-    }
-
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
-        simplex_precision_eta_row::<F, D, _, _, _, _, _, _, _>(self, beta, row)
-    }
-
-    fn penalty_value(&self, beta: &[f64]) -> f64 {
-        self.0.penalty().value(&beta[self.0.range()])
-            + self.1.penalty().value(&beta[self.1.range()])
-    }
-
-    fn initial_parameters<'obs, Obs>(&self, _family: &F, _obs: &'obs Obs) -> Vec<f64>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        vec![0.0; <Self as GamlssBlocks<F>>::len(self)]
-    }
-
-    fn try_initial_parameters<'obs, Obs>(
-        &self,
-        _family: &F,
-        _obs: &'obs Obs,
-    ) -> Result<Vec<f64>, ModelError>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        Ok(vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?])
-    }
-
-    fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-    }
-
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let scalar_count = D;
-        let mut workspace = GradientWorkspace::new();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, nobs);
-        }
-        visit_simplex_logit_parameter_streams(&self.0, 0, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_scalar_parameter_stream(&self.1, D - 1, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        workspace
-    }
-
-    fn value_gradient_into_workspace<'obs, Obs>(
-        &self,
-        family: &F,
-        obs: &'obs Obs,
-        beta: &[f64],
-        grad: &mut [f64],
-        family_workspace: &mut F::Workspace,
-        workspace: &mut GradientWorkspace,
-    ) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let scalar_count = D;
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, obs.len());
-        }
-
-        let mut loss = 0.0;
-        for row_index in 0..obs.len() {
-            let weight = obs.weight_at(row_index);
-            if weight == 0.0 {
-                for index in 0..scalar_count {
-                    workspace.set_row_gradient(index, row_index, 0.0);
-                }
-                continue;
-            }
-
-            let eta = simplex_precision_eta_row::<F, D, _, _, _, _, _, _, _>(self, beta, row_index);
-            let (nll, gradient) =
-                family.nll_and_gradient_eta(obs.observation_at(row_index), &eta, family_workspace);
-            loss = weight.mul_add(nll, loss);
-            for component in 0..D.saturating_sub(1) {
-                workspace.set_row_gradient(
-                    component,
-                    row_index,
-                    weight
-                        * <F::ParamSpec as MeanPrecisionSimplexSpec<F, D>>::simplex_logit_gradient_part(
-                            &gradient, component,
-                        ),
-                );
-            }
-            workspace.set_row_gradient(
-                D - 1,
-                row_index,
-                weight
-                    * <F::ParamSpec as MeanPrecisionSimplexSpec<F, D>>::precision_gradient_part(
-                        &gradient,
-                    ),
-            );
-        }
-
-        for component in 0..D.saturating_sub(1) {
-            let predictor = self.0.logit(component).unwrap();
-            let range = self.0.logit_range(component).unwrap();
-            let (row_gradient, local_gradient) =
-                workspace.row_gradient_and_local_gradient_mut(component, range.len());
-            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-            add_into(&mut grad[range], local_gradient);
-        }
-        let beta_block = &beta[self.1.range()];
-        let (row_gradient, local_gradient) =
-            workspace.row_gradient_and_local_gradient_mut(D - 1, self.1.len());
-        self.1
-            .x()
-            .add_gradient(row_gradient, beta_block, local_gradient);
-        add_into(&mut grad[self.1.range()], local_gradient);
-
-        loss += self.0.penalty().value(&beta[self.0.range()]);
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        loss += self.1.penalty().value(beta_block);
-        self.1
-            .penalty()
-            .add_gradient(beta_block, &mut grad[self.1.range()]);
-
-        loss
-    }
-
-    fn block_ranges(&self) -> Vec<Range<usize>> {
-        vec![self.0.range(), self.1.range()]
-    }
-
-    fn parameter_layout(&self) -> ParameterLayout {
-        ParameterLayout::new(vec![
-            ParameterSlice {
-                name: PMean::NAME,
-                range: self.0.range(),
-            },
-            ParameterSlice {
-                name: PPrecision::NAME,
-                range: self.1.range(),
-            },
-        ])
+        ParameterLayout::new(slices)
     }
 
     fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-        let mut descriptors = Vec::with_capacity(D);
+        let mut descriptors = Vec::with_capacity(self.as_inner().leaf_count());
         <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
             descriptors.push(descriptor);
         });
         descriptors
     }
 
-    fn parameter_slice_count(&self) -> usize {
-        2
-    }
-
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        match index {
-            0 => name == PMean::NAME && range == self.0.range(),
-            1 => name == PPrecision::NAME && range == self.1.range(),
-            _ => false,
-        }
-    }
-
-    fn visit_parameter_slices<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        visit(0, PMean::NAME, self.0.range());
-        visit(1, PPrecision::NAME, self.1.range());
-    }
-
     fn visit_parameter_descriptors<V>(&self, mut visit: V)
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        visit_simplex_logit_parameter_streams(&self.0, 0, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_scalar_parameter_stream(&self.1, D - 1, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-    }
-
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        other.parameter_slice_count() == 2
-            && other.parameter_slice_matches(0, PMean::NAME, self.0.range())
-            && other.parameter_slice_matches(1, PPrecision::NAME, self.1.range())
+        let mut cursor = 0;
+        self.as_inner()
+            .visit_descriptors(&ParameterPath::whole(), &mut cursor, &mut visit);
     }
 }
 
-impl<
-    F,
-    const D: usize,
-    PVector,
-    PLower,
-    PScalar,
-    LScalar,
-    XVector,
-    XLower,
-    XScalar,
-    PenVector,
-    PenLower,
-    PenScalar,
-> GamlssBlocks<F>
-    for (
-        VectorParameterBlock<PVector, D, XVector, PenVector>,
-        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
-        ParameterBlock<PScalar, LScalar, XScalar, PenScalar>,
-    )
-where
-    F: Family,
-    F::ParamSpec: LocationCholeskyScalarSpec<
-            F,
-            D,
-            VectorParameter = PVector,
-            LowerTriangularParameter = PLower,
-            ScalarParameter = PScalar,
-            ScalarLink = LScalar,
-        >,
-    PVector: ParameterName,
-    PLower: ParameterName,
-    PScalar: ParameterName,
-    LScalar: crate::Link<f64>,
-    XVector: PredictorBlock,
-    XLower: PredictorBlock,
-    XScalar: PredictorBlock,
-    PenVector: Penalty,
-    PenLower: Penalty,
-    PenScalar: Penalty,
-{
-    fn nrows(&self) -> usize {
-        self.0.component(0).map_or(0, PredictorBlock::nrows)
-    }
-
-    fn len(&self) -> usize {
-        <Self as GamlssBlocks<F>>::try_len(self)
-            .expect("validated Cholesky-scalar parameter block layout must fit in usize")
-    }
-
-    fn try_len(&self) -> Result<usize, ModelError> {
-        Ok(self
-            .0
-            .try_range()?
-            .end
-            .max(self.1.try_range()?.end)
-            .max(self.2.try_range()?.end))
-    }
-
-    fn validate(&self, nobs: usize) -> Result<(), ModelError> {
-        if D == 0 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "dimension",
-                expected: "positive",
-            });
-        }
-
-        validate_vector_parameter_block::<PVector, D, _, _>(&self.0, nobs)?;
-        validate_lower_triangular_parameter_block::<PLower, D, _, _>(&self.1, nobs)?;
-        self.2.x().validate()?;
-        validate_block_rows(PScalar::NAME, self.2.x().nrows(), nobs)?;
-        self.0.penalty().validate_dim(self.0.len())?;
-        self.1.penalty().validate_dim(self.1.len())?;
-        self.2.penalty().validate_dim(self.2.len())?;
-
-        let ranges = [
-            (PVector::NAME, self.0.try_range()?),
-            (PLower::NAME, self.1.try_range()?),
-            (PScalar::NAME, self.2.try_range()?),
-        ];
-        validate_non_overlapping_ranges(&ranges)?;
-
-        Ok(())
-    }
-
-    fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let mut loss = 0.0;
-        let mut family_workspace = family.workspace();
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            if weight == 0.0 {
-                continue;
-            }
-            let eta = location_cholesky_scalar_eta_row::<F, D, _, _, _, _, _, _, _, _, _, _>(
-                self, beta, row,
-            );
-            loss = weight.mul_add(
-                family.nll_eta(obs.observation_at(row), &eta, &mut family_workspace),
-                loss,
-            );
-        }
-        loss
-    }
-
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
-        location_cholesky_scalar_eta_row::<F, D, _, _, _, _, _, _, _, _, _, _>(self, beta, row)
-    }
-
-    fn penalty_value(&self, beta: &[f64]) -> f64 {
-        self.0.penalty().value(&beta[self.0.range()])
-            + self.1.penalty().value(&beta[self.1.range()])
-            + self.2.penalty().value(&beta[self.2.range()])
-    }
-
-    fn initial_parameters<'obs, Obs>(&self, _family: &F, _obs: &'obs Obs) -> Vec<f64>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        vec![0.0; <Self as GamlssBlocks<F>>::len(self)]
-    }
-
-    fn try_initial_parameters<'obs, Obs>(
-        &self,
-        _family: &F,
-        _obs: &'obs Obs,
-    ) -> Result<Vec<f64>, ModelError>
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        Ok(vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?])
-    }
-
-    fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-        self.2
-            .penalty()
-            .add_gradient(&beta[self.2.range()], &mut grad[self.2.range()]);
-    }
-
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let scalar_count = D
-            + LowerTriangularParameterBlock::<PLower, D, (), ()>::packed_len()
-                .expect("D * (D + 1) / 2 must fit")
-            + 1;
-        let mut workspace = GradientWorkspace::new();
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, nobs);
-        }
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        visit_scalar_parameter_stream(&self.2, scalar_count - 1, |stream| {
-            let _ = workspace.local_gradient_mut(stream.index, stream.range.len());
-        });
-        workspace
-    }
-
-    fn value_gradient_into_workspace<'obs, Obs>(
-        &self,
-        family: &F,
-        obs: &'obs Obs,
-        beta: &[f64],
-        grad: &mut [f64],
-        family_workspace: &mut F::Workspace,
-        workspace: &mut GradientWorkspace,
-    ) -> f64
-    where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-    {
-        let scalar_index = D + LowerTriangularParameterBlock::<PLower, D, (), ()>::packed_len()
-            .expect("D * (D + 1) / 2 must fit");
-        let scalar_count = scalar_index + 1;
-        workspace.prepare(scalar_count);
-        for index in 0..scalar_count {
-            workspace.prepare_row_gradient(index, obs.len());
-        }
-
-        let mut loss = 0.0;
-        for row_index in 0..obs.len() {
-            let weight = obs.weight_at(row_index);
-            if weight == 0.0 {
-                for index in 0..scalar_count {
-                    workspace.set_row_gradient(index, row_index, 0.0);
-                }
-                continue;
-            }
-            let eta = location_cholesky_scalar_eta_row::<F, D, _, _, _, _, _, _, _, _, _, _>(
-                self, beta, row_index,
-            );
-            let (nll, gradient) =
-                family.nll_and_gradient_eta(obs.observation_at(row_index), &eta, family_workspace);
-            loss = weight.mul_add(nll, loss);
-            for component in 0..D {
-                workspace.set_row_gradient(
-                    component,
-                    row_index,
-                    weight
-                        * <F::ParamSpec as LocationCholeskyScalarSpec<F, D>>::vector_gradient_part(
-                            &gradient, component,
-                        ),
-                );
-            }
-            for row in 0..D {
-                for col in 0..=row {
-                    workspace.set_row_gradient(
-                        lower_workspace_index::<PLower, D>(row, col),
-                        row_index,
-                        weight
-                            * <F::ParamSpec as LocationCholeskyScalarSpec<F, D>>::lower_triangular_gradient_part(
-                                &gradient, row, col,
-                            ),
-                    );
-                }
-            }
-            workspace.set_row_gradient(
-                scalar_index,
-                row_index,
-                weight
-                    * <F::ParamSpec as LocationCholeskyScalarSpec<F, D>>::scalar_gradient_part(
-                        &gradient,
-                    ),
-            );
-        }
-
-        for component in 0..D {
-            let predictor = self.0.component(component).unwrap();
-            let range = self.0.component_range(component).unwrap();
-            let (row_gradient, local_gradient) =
-                workspace.row_gradient_and_local_gradient_mut(component, range.len());
-            predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-            add_into(&mut grad[range], local_gradient);
-        }
-        for row in 0..D {
-            for col in 0..=row {
-                let predictor = self.1.entry(row, col).unwrap();
-                let range = self.1.entry_range(row, col).unwrap();
-                let (row_gradient, local_gradient) = workspace.row_gradient_and_local_gradient_mut(
-                    lower_workspace_index::<PLower, D>(row, col),
-                    range.len(),
-                );
-                predictor.add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-                add_into(&mut grad[range], local_gradient);
-            }
-        }
-        let beta_block = &beta[self.2.range()];
-        let (row_gradient, local_gradient) =
-            workspace.row_gradient_and_local_gradient_mut(scalar_index, self.2.len());
-        self.2
-            .x()
-            .add_gradient(row_gradient, beta_block, local_gradient);
-        add_into(&mut grad[self.2.range()], local_gradient);
-
-        loss += self.0.penalty().value(&beta[self.0.range()]);
-        self.0
-            .penalty()
-            .add_gradient(&beta[self.0.range()], &mut grad[self.0.range()]);
-        loss += self.1.penalty().value(&beta[self.1.range()]);
-        self.1
-            .penalty()
-            .add_gradient(&beta[self.1.range()], &mut grad[self.1.range()]);
-        loss += self.2.penalty().value(beta_block);
-        self.2
-            .penalty()
-            .add_gradient(beta_block, &mut grad[self.2.range()]);
-
-        loss
-    }
-
-    fn block_ranges(&self) -> Vec<Range<usize>> {
-        vec![self.0.range(), self.1.range(), self.2.range()]
-    }
-
-    fn parameter_layout(&self) -> ParameterLayout {
-        ParameterLayout::new(vec![
-            ParameterSlice {
-                name: PVector::NAME,
-                range: self.0.range(),
-            },
-            ParameterSlice {
-                name: PLower::NAME,
-                range: self.1.range(),
-            },
-            ParameterSlice {
-                name: PScalar::NAME,
-                range: self.2.range(),
-            },
-        ])
-    }
-
-    fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-        let mut descriptors = Vec::new();
-        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
-            descriptors.push(descriptor);
-        });
-        descriptors
-    }
-
-    fn parameter_slice_count(&self) -> usize {
-        3
-    }
-
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        match index {
-            0 => name == PVector::NAME && range == self.0.range(),
-            1 => name == PLower::NAME && range == self.1.range(),
-            2 => name == PScalar::NAME && range == self.2.range(),
-            _ => false,
-        }
-    }
-
-    fn visit_parameter_slices<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, &'static str, Range<usize>),
-    {
-        visit(0, PVector::NAME, self.0.range());
-        visit(1, PLower::NAME, self.1.range());
-        visit(2, PScalar::NAME, self.2.range());
-    }
-
-    fn visit_parameter_descriptors<V>(&self, mut visit: V)
-    where
-        V: FnMut(usize, ParameterDescriptor),
-    {
-        let scalar_index = D + LowerTriangularParameterBlock::<PLower, D, (), ()>::packed_len()
-            .expect("D * (D + 1) / 2 must fit");
-        visit_vector_parameter_streams(&self.0, 0, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_lower_triangular_parameter_streams(&self.1, D, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-        visit_scalar_parameter_stream(&self.2, scalar_index, |stream| {
-            visit(stream.index, stream.into_descriptor());
-        });
-    }
-
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        other.parameter_slice_count() == 3
-            && other.parameter_slice_matches(0, PVector::NAME, self.0.range())
-            && other.parameter_slice_matches(1, PLower::NAME, self.1.range())
-            && other.parameter_slice_matches(2, PScalar::NAME, self.2.range())
-    }
-}
+impl<B> sealed::Sealed for ParameterBlocks<B> {}
 
 #[inline]
 fn with_validated_global_penalties<O, GP>(
@@ -2847,1338 +1775,6 @@ where
         penalties,
     })
 }
-
-fn structured_eta_row<F, const D: usize, PVector, PLower, XVector, XLower, PenVector, PenLower>(
-    blocks: &(
-        VectorParameterBlock<PVector, D, XVector, PenVector>,
-        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
-    ),
-    beta: &[f64],
-    row: usize,
-) -> F::Eta
-where
-    F: Family,
-    F::ParamSpec: LocationCholeskySpec<F, D>,
-    XVector: PredictorBlock,
-    XLower: PredictorBlock,
-{
-    let mut vector = [0.0; D];
-    let mut lower = [[0.0; D]; D];
-
-    for (component, value) in vector.iter_mut().enumerate() {
-        let predictor = blocks
-            .0
-            .component(component)
-            .expect("validated vector block has D components");
-        let range = blocks
-            .0
-            .component_range(component)
-            .expect("validated vector component has a coefficient range");
-        *value = predictor.eta_row(row, &beta[range]);
-    }
-
-    for (matrix_row, row_values) in lower.iter_mut().enumerate() {
-        for (matrix_col, value) in row_values.iter_mut().take(matrix_row + 1).enumerate() {
-            let predictor = blocks
-                .1
-                .entry(matrix_row, matrix_col)
-                .expect("validated lower-triangular block has this entry");
-            let range = blocks
-                .1
-                .entry_range(matrix_row, matrix_col)
-                .expect("validated lower-triangular entry has a coefficient range");
-            *value = predictor.eta_row(row, &beta[range]);
-        }
-    }
-
-    <F::ParamSpec as LocationCholeskySpec<F, D>>::eta_from_vector_lower(vector, lower)
-}
-
-#[allow(clippy::type_complexity)]
-fn location_scale_partial_corr_eta_row<
-    F,
-    const D: usize,
-    PLocation,
-    PScale,
-    PCorr,
-    XLocation,
-    XScale,
-    XCorr,
-    PenLocation,
-    PenScale,
-    PenCorr,
->(
-    blocks: &(
-        VectorParameterBlock<PLocation, D, XLocation, PenLocation>,
-        VectorParameterBlock<PScale, D, XScale, PenScale>,
-        StrictLowerTriangularParameterBlock<PCorr, D, XCorr, PenCorr>,
-    ),
-    beta: &[f64],
-    row: usize,
-) -> F::Eta
-where
-    F: Family,
-    F::ParamSpec: LocationScalePartialCorrSpec<F, D>,
-    XLocation: PredictorBlock,
-    XScale: PredictorBlock,
-    XCorr: PredictorBlock,
-{
-    let mut location = [0.0; D];
-    let mut scale = [0.0; D];
-    let mut partial_corr = [[0.0; D]; D];
-
-    for component in 0..D {
-        let predictor = blocks.0.component(component).unwrap();
-        let range = blocks.0.component_range(component).unwrap();
-        location[component] = predictor.eta_row(row, &beta[range]);
-
-        let predictor = blocks.1.component(component).unwrap();
-        let range = blocks.1.component_range(component).unwrap();
-        scale[component] = predictor.eta_row(row, &beta[range]);
-    }
-
-    for (matrix_row, row_values) in partial_corr.iter_mut().enumerate() {
-        for (matrix_col, value) in row_values.iter_mut().take(matrix_row).enumerate() {
-            let predictor = blocks.2.entry(matrix_row, matrix_col).unwrap();
-            let range = blocks.2.entry_range(matrix_row, matrix_col).unwrap();
-            *value = predictor.eta_row(row, &beta[range]);
-        }
-    }
-
-    <F::ParamSpec as LocationScalePartialCorrSpec<F, D>>::eta_from_location_scale_partial_corr(
-        location,
-        scale,
-        partial_corr,
-    )
-}
-
-#[allow(clippy::type_complexity)]
-fn simplex_precision_eta_row<
-    F,
-    const D: usize,
-    PMean,
-    PPrecision,
-    LPrecision,
-    XMean,
-    XPrecision,
-    PenMean,
-    PenPrecision,
->(
-    blocks: &(
-        SimplexLogitParameterBlock<PMean, D, XMean, PenMean>,
-        ParameterBlock<PPrecision, LPrecision, XPrecision, PenPrecision>,
-    ),
-    beta: &[f64],
-    row: usize,
-) -> F::Eta
-where
-    F: Family,
-    F::ParamSpec: MeanPrecisionSimplexSpec<F, D>,
-    XMean: PredictorBlock,
-    XPrecision: PredictorBlock,
-{
-    let mut logits = [0.0; D];
-    for (component, value) in logits.iter_mut().take(D.saturating_sub(1)).enumerate() {
-        let predictor = blocks.0.logit(component).unwrap();
-        let range = blocks.0.logit_range(component).unwrap();
-        *value = predictor.eta_row(row, &beta[range]);
-    }
-    let precision = blocks.1.x().eta_row(row, &beta[blocks.1.range()]);
-    <F::ParamSpec as MeanPrecisionSimplexSpec<F, D>>::eta_from_simplex_logits_precision(
-        logits, precision,
-    )
-}
-
-#[allow(clippy::type_complexity)]
-fn location_cholesky_scalar_eta_row<
-    F,
-    const D: usize,
-    PVector,
-    PLower,
-    PScalar,
-    LScalar,
-    XVector,
-    XLower,
-    XScalar,
-    PenVector,
-    PenLower,
-    PenScalar,
->(
-    blocks: &(
-        VectorParameterBlock<PVector, D, XVector, PenVector>,
-        LowerTriangularParameterBlock<PLower, D, XLower, PenLower>,
-        ParameterBlock<PScalar, LScalar, XScalar, PenScalar>,
-    ),
-    beta: &[f64],
-    row: usize,
-) -> F::Eta
-where
-    F: Family,
-    F::ParamSpec: LocationCholeskyScalarSpec<F, D>,
-    XVector: PredictorBlock,
-    XLower: PredictorBlock,
-    XScalar: PredictorBlock,
-{
-    let mut vector = [0.0; D];
-    let mut lower = [[0.0; D]; D];
-
-    for (component, value) in vector.iter_mut().enumerate() {
-        let predictor = blocks.0.component(component).unwrap();
-        let range = blocks.0.component_range(component).unwrap();
-        *value = predictor.eta_row(row, &beta[range]);
-    }
-
-    for (matrix_row, row_values) in lower.iter_mut().enumerate() {
-        for (matrix_col, value) in row_values.iter_mut().take(matrix_row + 1).enumerate() {
-            let predictor = blocks.1.entry(matrix_row, matrix_col).unwrap();
-            let range = blocks.1.entry_range(matrix_row, matrix_col).unwrap();
-            *value = predictor.eta_row(row, &beta[range]);
-        }
-    }
-
-    let scalar = blocks.2.x().eta_row(row, &beta[blocks.2.range()]);
-    <F::ParamSpec as LocationCholeskyScalarSpec<F, D>>::eta_from_vector_lower_scalar(
-        vector, lower, scalar,
-    )
-}
-
-fn validate_vector_parameter_block<P, const D: usize, X, Penalty>(
-    block: &VectorParameterBlock<P, D, X, Penalty>,
-    nobs: usize,
-) -> Result<(), ModelError>
-where
-    P: ParameterName,
-    X: PredictorBlock,
-{
-    block.try_range()?;
-    for component in 0..D {
-        let predictor = block
-            .component(component)
-            .expect("vector block has D components");
-        predictor.validate()?;
-        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
-    }
-    Ok(())
-}
-
-fn validate_lower_triangular_parameter_block<P, const D: usize, X, Penalty>(
-    block: &LowerTriangularParameterBlock<P, D, X, Penalty>,
-    nobs: usize,
-) -> Result<(), ModelError>
-where
-    P: ParameterName,
-    X: PredictorBlock,
-{
-    block.try_range()?;
-    let expected = LowerTriangularParameterBlock::<P, D, X, Penalty>::packed_len().ok_or(
-        ModelError::ArithmeticOverflow {
-            context: "lower-triangular predictor count",
-        },
-    )?;
-    if block.entries().len() != expected {
-        return Err(ModelError::InvalidParameter {
-            parameter: P::NAME,
-            expected: "D * (D + 1) / 2 predictor blocks",
-        });
-    }
-    for predictor in block.entries() {
-        predictor.validate()?;
-        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
-    }
-    Ok(())
-}
-
-fn validate_strict_lower_triangular_parameter_block<P, const D: usize, X, Penalty>(
-    block: &StrictLowerTriangularParameterBlock<P, D, X, Penalty>,
-    nobs: usize,
-) -> Result<(), ModelError>
-where
-    P: ParameterName,
-    X: PredictorBlock,
-{
-    block.try_range()?;
-    let expected = StrictLowerTriangularParameterBlock::<P, D, X, Penalty>::packed_len().ok_or(
-        ModelError::ArithmeticOverflow {
-            context: "strict-lower predictor count",
-        },
-    )?;
-    if block.entries().len() != expected {
-        return Err(ModelError::InvalidParameter {
-            parameter: P::NAME,
-            expected: "D * (D - 1) / 2 predictor blocks",
-        });
-    }
-    for predictor in block.entries() {
-        predictor.validate()?;
-        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
-    }
-    Ok(())
-}
-
-fn validate_simplex_logit_parameter_block<P, const D: usize, X, Penalty>(
-    block: &SimplexLogitParameterBlock<P, D, X, Penalty>,
-    nobs: usize,
-) -> Result<(), ModelError>
-where
-    P: ParameterName,
-    X: PredictorBlock,
-{
-    block.try_range()?;
-    let expected = SimplexLogitParameterBlock::<P, D, X, Penalty>::free_len().ok_or(
-        ModelError::InvalidParameter {
-            parameter: P::NAME,
-            expected: "D >= 1",
-        },
-    )?;
-    if block.logits().len() != expected {
-        return Err(ModelError::InvalidParameter {
-            parameter: P::NAME,
-            expected: "D - 1 predictor blocks",
-        });
-    }
-    for predictor in block.logits() {
-        predictor.validate()?;
-        validate_block_rows(P::NAME, predictor.nrows(), nobs)?;
-    }
-    Ok(())
-}
-
-fn visit_scalar_parameter_stream<P, L, X, Penalty, V>(
-    block: &ParameterBlock<P, L, X, Penalty>,
-    index: usize,
-    mut visit: V,
-) where
-    P: ParameterName,
-    V: FnMut(ParameterStream),
-{
-    visit(ParameterStream {
-        index,
-        role: P::NAME,
-        path_axis: None,
-        range: block.range(),
-    });
-}
-
-fn visit_vector_parameter_streams<P, const D: usize, X, Penalty, V>(
-    block: &VectorParameterBlock<P, D, X, Penalty>,
-    start_index: usize,
-    mut visit: V,
-) where
-    P: ParameterName,
-    X: PredictorBlock,
-    V: FnMut(ParameterStream),
-{
-    for component in 0..D {
-        visit(ParameterStream {
-            index: start_index + component,
-            role: P::NAME,
-            path_axis: Some(ParameterAxis::Vector { component }),
-            range: block
-                .component_range(component)
-                .expect("validated vector component has a coefficient range"),
-        });
-    }
-}
-
-fn visit_lower_triangular_parameter_streams<P, const D: usize, X, Penalty, V>(
-    block: &LowerTriangularParameterBlock<P, D, X, Penalty>,
-    start_index: usize,
-    mut visit: V,
-) where
-    P: ParameterName,
-    X: PredictorBlock,
-    V: FnMut(ParameterStream),
-{
-    for row in 0..D {
-        for col in 0..=row {
-            let packed_index =
-                LowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
-                    .expect("row and col are valid lower-triangular indices");
-            visit(ParameterStream {
-                index: start_index + packed_index,
-                role: P::NAME,
-                path_axis: Some(ParameterAxis::Lower { row, col }),
-                range: block
-                    .entry_range(row, col)
-                    .expect("validated lower-triangular entry has a coefficient range"),
-            });
-        }
-    }
-}
-
-fn visit_strict_lower_triangular_parameter_streams<P, const D: usize, X, Penalty, V>(
-    block: &StrictLowerTriangularParameterBlock<P, D, X, Penalty>,
-    start_index: usize,
-    mut visit: V,
-) where
-    P: ParameterName,
-    X: PredictorBlock,
-    V: FnMut(ParameterStream),
-{
-    for row in 0..D {
-        for col in 0..row {
-            let packed_index =
-                StrictLowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
-                    .expect("row and col are valid strict-lower indices");
-            visit(ParameterStream {
-                index: start_index + packed_index,
-                role: P::NAME,
-                path_axis: Some(ParameterAxis::StrictLower { row, col }),
-                range: block
-                    .entry_range(row, col)
-                    .expect("validated strict-lower entry has a coefficient range"),
-            });
-        }
-    }
-}
-
-fn visit_simplex_logit_parameter_streams<P, const D: usize, X, Penalty, V>(
-    block: &SimplexLogitParameterBlock<P, D, X, Penalty>,
-    start_index: usize,
-    mut visit: V,
-) where
-    P: ParameterName,
-    X: PredictorBlock,
-    V: FnMut(ParameterStream),
-{
-    for class in 0..D.saturating_sub(1) {
-        visit(ParameterStream {
-            index: start_index + class,
-            role: P::NAME,
-            path_axis: Some(ParameterAxis::SimplexLogit { class }),
-            range: block
-                .logit_range(class)
-                .expect("validated simplex logit has a coefficient range"),
-        });
-    }
-}
-
-const fn structured_scalar_count<P, const D: usize>() -> usize {
-    D + LowerTriangularParameterBlock::<P, D, (), ()>::packed_len()
-        .expect("D * (D + 1) / 2 must fit")
-}
-
-fn lower_workspace_index<P, const D: usize>(row: usize, col: usize) -> usize {
-    D + LowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
-        .expect("row and col are valid lower-triangular indices")
-}
-
-const fn strict_lower_workspace_count<P, const D: usize>() -> usize {
-    StrictLowerTriangularParameterBlock::<P, D, (), ()>::packed_len()
-        .expect("D * (D - 1) / 2 must fit")
-}
-
-fn partial_corr_workspace_index<P, const D: usize>(row: usize, col: usize) -> usize {
-    D + D
-        + StrictLowerTriangularParameterBlock::<P, D, (), ()>::packed_index(row, col)
-            .expect("row and col are valid strict-lower indices")
-}
-
-const fn repeated_scalar_workspace_index(
-    component: usize,
-    parameter: usize,
-    arity: usize,
-) -> usize {
-    component * arity + parameter
-}
-
-fn repeated_parameter_array_range<P, L, X, Penalty, const D: usize>(
-    blocks: &[ParameterBlock<P, L, X, Penalty>; D],
-) -> Range<usize> {
-    match (blocks.first(), blocks.last()) {
-        (Some(first), Some(last)) => first.range().start..last.range().end,
-        _ => 0..0,
-    }
-}
-
-fn validate_contiguous_repeated_parameter_ranges<P, L, X, Penalty, const D: usize>(
-    parameter: &'static str,
-    blocks: &[ParameterBlock<P, L, X, Penalty>; D],
-) -> Result<(), ModelError>
-where
-    P: ParameterName,
-{
-    for pair in blocks.windows(2) {
-        let previous = pair[0].try_range()?;
-        let current = pair[1].try_range()?;
-        if previous.end != current.start {
-            return Err(ModelError::InvalidParameter {
-                parameter,
-                expected: "ordered, contiguous coefficient ranges for repeated components",
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Macro that generates a [`GamlssBlocks`] implementation for tuple parameter
-/// blocks.
-///
-/// Takes the arity `K`, lists of parameter types, link types, design types and
-/// penalty types, plus internal variable names. Produces a zero-cost
-/// implementation of `train_nll`, `value_gradient_into_workspace`,
-/// `penalty_value` and helper methods without dynamic dispatch.
-macro_rules! impl_gamlss_blocks {
-    (
-        $k:literal;
-        params = ($($param:ident),+);
-        links = ($($link:ident),+);
-        designs = ($($design:ident),+);
-        penalties = ($($penalty:ident),+);
-        blocks = ($($block:ident),+);
-        beta_blocks = ($($beta_block:ident),+);
-        row_gradients = ($($row_gradient:ident),+);
-        local_grads = ($($local_grad:ident),+);
-        indices = ($($idx:tt),+)
-    ) => {
-        impl<F, $($param, $link, $design, $penalty,)+> GamlssBlocks<F>
-            for ($(ParameterBlock<$param, $link, $design, $penalty>,)+)
-        where
-            F: InitialEtaFromObservations<$k>,
-            F::ParamSpec: ScalarParamSpec<F, $k, Params = ($($param,)+), Links = ($($link,)+)>,
-            F::Eta: ParameterParts<$k>,
-            F::GradientEta: ParameterParts<$k>,
-            $($param: ParameterName,)+
-            $($link: crate::Link<f64>,)+
-            $($design: PredictorBlock,)+
-            $($penalty: Penalty,)+
-        {
-            fn nrows(&self) -> usize {
-                PredictorBlock::nrows(self.0.x())
-            }
-
-            fn len(&self) -> usize {
-                <Self as GamlssBlocks<F>>::try_len(self)
-                    .expect("validated parameter block layout must fit in usize")
-            }
-
-            fn try_len(&self) -> Result<usize, ModelError> {
-                let mut len = 0;
-                $(
-                    let end = self.$idx.offset().checked_add(self.$idx.len()).ok_or(
-                        ModelError::BlockRangeOverflow {
-                            parameter: <$param as ParameterName>::NAME,
-                            offset: self.$idx.offset(),
-                            len: self.$idx.len(),
-                        },
-                    )?;
-                    len = len.max(end);
-                )+
-                Ok(len)
-            }
-
-            fn validate(&self, y_len: usize) -> Result<(), ModelError> {
-                $(
-                    self.$idx.x().validate()?;
-                    validate_block_rows(
-                        <$param as ParameterName>::NAME,
-                        PredictorBlock::nrows(self.$idx.x()),
-                        y_len,
-                    )?;
-                    self.$idx.penalty().validate_dim(self.$idx.len())?;
-                )+
-
-                let ranges = [$((
-                    <$param as ParameterName>::NAME,
-                    self.$idx.try_range()?,
-                ),)+];
-                validate_non_overlapping_ranges(&ranges)?;
-
-                Ok(())
-            }
-
-            #[allow(clippy::suboptimal_flops)]
-            fn train_nll<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-                beta: &[f64],
-            ) -> f64
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                $(let $block = &self.$idx;)+
-                $(let $beta_block = &beta[$block.range()];)+
-                let mut loss = 0.0;
-                let mut family_workspace = family.workspace();
-
-                for row in 0..obs.len() {
-                    let weight = obs.weight_at(row);
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
-                    loss += weight * family.nll_eta(observation, &eta, &mut family_workspace);
-                }
-
-                loss
-            }
-
-            fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
-            where
-                F: Family,
-            {
-                $(let $block = &self.$idx;)+
-                $(let $beta_block = &beta[$block.range()];)+
-                F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+])
-            }
-
-            fn penalty_value(&self, beta: &[f64]) -> f64 {
-                $(let $block = &self.$idx;)+
-                $(let $beta_block = &beta[$block.range()];)+
-
-                0.0 $(+ $block.penalty().value($beta_block))+
-            }
-
-            fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
-                    .expect("validated parameter block layout must fit in usize")
-            }
-
-            fn try_initial_parameters<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-            ) -> Result<Vec<f64>, ModelError>
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                let eta = family.initial_eta_from_observations(obs);
-                let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
-                $(
-                    let $block = &self.$idx;
-                    let value = eta.part($idx);
-                    if value.is_finite() {
-                        $block
-                            .x()
-                            .set_constant_start(value, &mut beta[$block.range()]);
-                    }
-                )+
-                Ok(beta)
-            }
-
-            fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-                $(let $block = &self.$idx;)+
-                $(let $beta_block = &beta[$block.range()];)+
-
-                $(
-                    $block.penalty().add_gradient(
-                        $beta_block,
-                        &mut grad[$block.offset()..$block.offset() + $block.len()],
-                    );
-                )+
-            }
-
-            fn gradient_workspace(&self, y_len: usize) -> GradientWorkspace {
-                let mut workspace = GradientWorkspace::new();
-                workspace.prepare($k);
-                $(
-                    workspace.prepare_row_gradient($idx, y_len);
-                    let _ = workspace.local_gradient_mut($idx, self.$idx.len());
-                )+
-                workspace
-            }
-
-            #[allow(clippy::suboptimal_flops)]
-            fn value_gradient_into_workspace<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-                beta: &[f64],
-                grad: &mut [f64],
-                family_workspace: &mut F::Workspace,
-                workspace: &mut GradientWorkspace,
-            ) -> f64
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                $(let $block = &self.$idx;)+
-                $(let $beta_block = &beta[$block.range()];)+
-                workspace.prepare($k);
-                $(workspace.prepare_row_gradient($idx, obs.len());)+
-                let mut loss = 0.0;
-
-                for row in 0..obs.len() {
-                    let weight = obs.weight_at(row);
-                    if weight == 0.0 {
-                        $(workspace.set_row_gradient($idx, row, 0.0);)+
-                        continue;
-                    }
-                    let observation = obs.observation_at(row);
-                    let eta = F::Eta::from_array([$($block.x().eta_row(row, $beta_block),)+]);
-                    let (nll, gradient) =
-                        family.nll_and_gradient_eta(observation, &eta, family_workspace);
-                    loss += weight * nll;
-                    $(workspace.set_row_gradient($idx, row, weight * gradient.part($idx));)+
-                }
-
-                $(
-                    loss += $block.penalty().value($beta_block);
-                    let ($row_gradient, $local_grad) =
-                        workspace.row_gradient_and_local_gradient_mut($idx, $block.len());
-                    $block.x().add_gradient($row_gradient, $beta_block, $local_grad);
-                    $block.penalty().add_gradient($beta_block, $local_grad);
-                    add_into(&mut grad[$block.offset()..$block.offset() + $block.len()], $local_grad);
-                )+
-
-                loss
-            }
-
-            fn block_ranges(&self) -> Vec<Range<usize>> {
-                vec![$(self.$idx.range(),)+]
-            }
-
-            fn visit_block_ranges<V>(&self, mut visit: V)
-            where
-                V: FnMut(usize, Range<usize>),
-            {
-                $(
-                    visit($idx, self.$idx.range());
-                )+
-            }
-
-            fn parameter_layout(&self) -> ParameterLayout {
-                ParameterLayout::new(vec![$(
-                    ParameterSlice {
-                        name: <$param as ParameterName>::NAME,
-                        range: self.$idx.range(),
-                    },
-                )+])
-            }
-
-            #[doc(hidden)]
-            fn parameter_slice_count(&self) -> usize {
-                $k
-            }
-
-            #[doc(hidden)]
-            fn parameter_slice_matches(
-                &self,
-                index: usize,
-                name: &'static str,
-                range: Range<usize>,
-            ) -> bool {
-                match index {
-                    $(
-                        $idx => name == <$param as ParameterName>::NAME
-                            && range == self.$idx.range(),
-                    )+
-                    _ => false,
-                }
-            }
-
-            #[doc(hidden)]
-            fn visit_parameter_slices<V>(&self, mut visit: V)
-            where
-                V: FnMut(usize, &'static str, Range<usize>),
-            {
-                $(
-                    visit($idx, <$param as ParameterName>::NAME, self.$idx.range());
-                )+
-            }
-
-            #[doc(hidden)]
-            fn visit_parameter_descriptors<V>(&self, mut visit: V)
-            where
-                V: FnMut(usize, ParameterDescriptor),
-            {
-                $(
-                    visit_scalar_parameter_stream(&self.$idx, $idx, |stream| {
-                        visit(stream.index, stream.into_descriptor());
-                    });
-                )+
-            }
-
-            #[doc(hidden)]
-            fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-            where
-                Other: GamlssBlocks<F>,
-            {
-                other.parameter_slice_count() == $k
-                    $(&& other.parameter_slice_matches(
-                        $idx,
-                        <$param as ParameterName>::NAME,
-                        self.$idx.range(),
-                    ))+
-            }
-        }
-    };
-}
-
-impl_gamlss_blocks!(
-    1;
-    params = (P1);
-    links = (L1);
-    designs = (X1);
-    penalties = (Pen1);
-    blocks = (block1);
-    beta_blocks = (beta1);
-    row_gradients = (row_gradient1);
-    local_grads = (grad1);
-    indices = (0)
-);
-
-impl_gamlss_blocks!(
-    2;
-    params = (P1, P2);
-    links = (L1, L2);
-    designs = (X1, X2);
-    penalties = (Pen1, Pen2);
-    blocks = (block1, block2);
-    beta_blocks = (beta1, beta2);
-    row_gradients = (row_gradient1, row_gradient2);
-    local_grads = (grad1, grad2);
-    indices = (0, 1)
-);
-
-impl_gamlss_blocks!(
-    3;
-    params = (P1, P2, P3);
-    links = (L1, L2, L3);
-    designs = (X1, X2, X3);
-    penalties = (Pen1, Pen2, Pen3);
-    blocks = (block1, block2, block3);
-    beta_blocks = (beta1, beta2, beta3);
-    row_gradients = (row_gradient1, row_gradient2, row_gradient3);
-    local_grads = (grad1, grad2, grad3);
-    indices = (0, 1, 2)
-);
-
-impl_gamlss_blocks!(
-    4;
-    params = (P1, P2, P3, P4);
-    links = (L1, L2, L3, L4);
-    designs = (X1, X2, X3, X4);
-    penalties = (Pen1, Pen2, Pen3, Pen4);
-    blocks = (block1, block2, block3, block4);
-    beta_blocks = (beta1, beta2, beta3, beta4);
-    row_gradients = (row_gradient1, row_gradient2, row_gradient3, row_gradient4);
-    local_grads = (grad1, grad2, grad3, grad4);
-    indices = (0, 1, 2, 3)
-);
-
-impl_gamlss_blocks!(
-    5;
-    params = (P1, P2, P3, P4, P5);
-    links = (L1, L2, L3, L4, L5);
-    designs = (X1, X2, X3, X4, X5);
-    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5);
-    blocks = (block1, block2, block3, block4, block5);
-    beta_blocks = (beta1, beta2, beta3, beta4, beta5);
-    row_gradients = (
-        row_gradient1,
-        row_gradient2,
-        row_gradient3,
-        row_gradient4,
-        row_gradient5
-    );
-    local_grads = (grad1, grad2, grad3, grad4, grad5);
-    indices = (0, 1, 2, 3, 4)
-);
-
-impl_gamlss_blocks!(
-    6;
-    params = (P1, P2, P3, P4, P5, P6);
-    links = (L1, L2, L3, L4, L5, L6);
-    designs = (X1, X2, X3, X4, X5, X6);
-    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6);
-    blocks = (block1, block2, block3, block4, block5, block6);
-    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6);
-    row_gradients = (
-        row_gradient1,
-        row_gradient2,
-        row_gradient3,
-        row_gradient4,
-        row_gradient5,
-        row_gradient6
-    );
-    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6);
-    indices = (0, 1, 2, 3, 4, 5)
-);
-
-impl_gamlss_blocks!(
-    7;
-    params = (P1, P2, P3, P4, P5, P6, P7);
-    links = (L1, L2, L3, L4, L5, L6, L7);
-    designs = (X1, X2, X3, X4, X5, X6, X7);
-    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7);
-    blocks = (block1, block2, block3, block4, block5, block6, block7);
-    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7);
-    row_gradients = (
-        row_gradient1,
-        row_gradient2,
-        row_gradient3,
-        row_gradient4,
-        row_gradient5,
-        row_gradient6,
-        row_gradient7
-    );
-    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7);
-    indices = (0, 1, 2, 3, 4, 5, 6)
-);
-
-impl_gamlss_blocks!(
-    8;
-    params = (P1, P2, P3, P4, P5, P6, P7, P8);
-    links = (L1, L2, L3, L4, L5, L6, L7, L8);
-    designs = (X1, X2, X3, X4, X5, X6, X7, X8);
-    penalties = (Pen1, Pen2, Pen3, Pen4, Pen5, Pen6, Pen7, Pen8);
-    blocks = (block1, block2, block3, block4, block5, block6, block7, block8);
-    beta_blocks = (beta1, beta2, beta3, beta4, beta5, beta6, beta7, beta8);
-    row_gradients = (
-        row_gradient1,
-        row_gradient2,
-        row_gradient3,
-        row_gradient4,
-        row_gradient5,
-        row_gradient6,
-        row_gradient7,
-        row_gradient8
-    );
-    local_grads = (grad1, grad2, grad3, grad4, grad5, grad6, grad7, grad8);
-    indices = (0, 1, 2, 3, 4, 5, 6, 7)
-);
-
-macro_rules! impl_repeated_scalar_gamlss_blocks {
-    (
-        $k:literal;
-        params = ($($param:ident),+);
-        links = ($($link:ident),+);
-        designs = ($($design:ident),+);
-        penalties = ($($penalty:ident),+);
-        blocks = ($($block:ident),+);
-        beta_blocks = ($($beta_block:ident),+);
-        row_gradients = ($($row_gradient:ident),+);
-        local_grads = ($($local_grad:ident),+);
-        indices = ($($idx:tt),+)
-    ) => {
-        impl<F, const D: usize, $($param, $link, $design, $penalty,)+> GamlssBlocks<F>
-            for ($([ParameterBlock<$param, $link, $design, $penalty>; D],)+)
-        where
-            F: Family,
-            F::ParamSpec: RepeatedScalarParamSpec<
-                F,
-                D,
-                $k,
-                Params = ($($param,)+),
-                Links = ($($link,)+),
-            >,
-            <F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily:
-                InitialEtaFromObservations<$k>,
-            <<F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily as Family>::Eta:
-                ParameterParts<$k>,
-            <<F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily as Family>::GradientEta:
-                ParameterParts<$k>,
-            $($param: ParameterName,)+
-            $($link: crate::Link<f64>,)+
-            $($design: PredictorBlock,)+
-            $($penalty: Penalty,)+
-        {
-            fn nrows(&self) -> usize {
-                if D == 0 {
-                    0
-                } else {
-                    PredictorBlock::nrows(self.0[0].x())
-                }
-            }
-
-            fn len(&self) -> usize {
-                <Self as GamlssBlocks<F>>::try_len(self)
-                    .expect("validated repeated parameter block layout must fit in usize")
-            }
-
-            fn try_len(&self) -> Result<usize, ModelError> {
-                let mut len = 0;
-                $(
-                    for block in &self.$idx {
-                        let end = block.offset().checked_add(block.len()).ok_or(
-                            ModelError::BlockRangeOverflow {
-                                parameter: <$param as ParameterName>::NAME,
-                                offset: block.offset(),
-                                len: block.len(),
-                            },
-                        )?;
-                        len = len.max(end);
-                    }
-                )+
-                Ok(len)
-            }
-
-            fn validate(&self, nobs: usize) -> Result<(), ModelError> {
-                if D == 0 {
-                    return Err(ModelError::InvalidParameter {
-                        parameter: "repeated components",
-                        expected: "at least one component",
-                    });
-                }
-
-                $(
-                    for block in &self.$idx {
-                        block.x().validate()?;
-                        validate_block_rows(
-                            <$param as ParameterName>::NAME,
-                            PredictorBlock::nrows(block.x()),
-                            nobs,
-                        )?;
-                        block.penalty().validate_dim(block.len())?;
-                        block.try_range()?;
-                    }
-                )+
-
-                let mut ranges = Vec::with_capacity(D * $k);
-                $(
-                    for block in &self.$idx {
-                        ranges.push((<$param as ParameterName>::NAME, block.try_range()?));
-                    }
-                )+
-                validate_non_overlapping_ranges(&ranges)?;
-                $(
-                    validate_contiguous_repeated_parameter_ranges(
-                        <$param as ParameterName>::NAME,
-                        &self.$idx,
-                    )?;
-                )+
-
-                Ok(())
-            }
-
-            fn train_nll<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-                beta: &[f64],
-            ) -> f64
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                let mut loss = 0.0;
-                let mut family_workspace = family.workspace();
-                for row in 0..obs.len() {
-                    let weight = obs.weight_at(row);
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let components = std::array::from_fn(|component| {
-                        <<F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily as Family>::Eta::from_array([
-                            $(self.$idx[component].x().eta_row(row, &beta[self.$idx[component].range()]),)+
-                        ])
-                    });
-                    let eta =
-                        <F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::eta_from_components(
-                            components,
-                        );
-                    loss = weight.mul_add(
-                        family.nll_eta(obs.observation_at(row), &eta, &mut family_workspace),
-                        loss,
-                    );
-                }
-                loss
-            }
-
-            fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
-                let components = std::array::from_fn(|component| {
-                    <<F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily as Family>::Eta::from_array([
-                        $(self.$idx[component].x().eta_row(row, &beta[self.$idx[component].range()]),)+
-                    ])
-                });
-                <F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::eta_from_components(components)
-            }
-
-            fn penalty_value(&self, beta: &[f64]) -> f64 {
-                let mut value = 0.0;
-                $(
-                    for block in &self.$idx {
-                        value += block.penalty().value(&beta[block.range()]);
-                    }
-                )+
-                value
-            }
-
-            fn initial_parameters<'obs, Obs>(&self, family: &F, obs: &'obs Obs) -> Vec<f64>
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                <Self as GamlssBlocks<F>>::try_initial_parameters(self, family, obs)
-                    .expect("validated repeated parameter block layout must fit in usize")
-            }
-
-            fn try_initial_parameters<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-            ) -> Result<Vec<f64>, ModelError>
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                let mut beta = vec![0.0; <Self as GamlssBlocks<F>>::try_len(self)?];
-                for component in 0..D {
-                    let eta = <F::ParamSpec as RepeatedScalarParamSpec<
-                        F,
-                        D,
-                        $k,
-                    >>::initial_component_eta_from_observations(family, obs, component);
-                    $(
-                        let value = eta.part($idx);
-                        if value.is_finite() {
-                            let block = &self.$idx[component];
-                            block
-                                .x()
-                                .set_constant_start(value, &mut beta[block.range()]);
-                        }
-                    )+
-                }
-                Ok(beta)
-            }
-
-            fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-                $(
-                    for block in &self.$idx {
-                        block
-                            .penalty()
-                            .add_gradient(&beta[block.range()], &mut grad[block.range()]);
-                    }
-                )+
-            }
-
-            fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-                let scalar_count = D * $k;
-                let mut workspace = GradientWorkspace::new();
-                workspace.prepare(scalar_count);
-                for index in 0..scalar_count {
-                    workspace.prepare_row_gradient(index, nobs);
-                }
-                for component in 0..D {
-                    $(
-                        let workspace_index = repeated_scalar_workspace_index(component, $idx, $k);
-                        let _ = workspace.local_gradient_mut(workspace_index, self.$idx[component].len());
-                    )+
-                }
-                workspace
-            }
-
-            fn value_gradient_into_workspace<'obs, Obs>(
-                &self,
-                family: &F,
-                obs: &'obs Obs,
-                beta: &[f64],
-                grad: &mut [f64],
-                family_workspace: &mut F::Workspace,
-                workspace: &mut GradientWorkspace,
-            ) -> f64
-            where
-                Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-            {
-                let scalar_count = D * $k;
-                workspace.prepare(scalar_count);
-                for index in 0..scalar_count {
-                    workspace.prepare_row_gradient(index, obs.len());
-                }
-
-                let mut loss = 0.0;
-                for row_index in 0..obs.len() {
-                    let weight = obs.weight_at(row_index);
-                    if weight == 0.0 {
-                        for index in 0..scalar_count {
-                            workspace.set_row_gradient(index, row_index, 0.0);
-                        }
-                        continue;
-                    }
-                    let components = std::array::from_fn(|component| {
-                        <<F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::ComponentFamily as Family>::Eta::from_array([
-                            $(self.$idx[component].x().eta_row(row_index, &beta[self.$idx[component].range()]),)+
-                        ])
-                    });
-                    let eta =
-                        <F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::eta_from_components(
-                            components,
-                        );
-                    let (nll, gradient) =
-                        family.nll_and_gradient_eta(obs.observation_at(row_index), &eta, family_workspace);
-                    loss = weight.mul_add(nll, loss);
-
-                    for component in 0..D {
-                        let component_gradient =
-                            <F::ParamSpec as RepeatedScalarParamSpec<F, D, $k>>::gradient_component(
-                                &gradient,
-                                component,
-                            );
-                        $(
-                            workspace.set_row_gradient(
-                                repeated_scalar_workspace_index(component, $idx, $k),
-                                row_index,
-                                weight * component_gradient.part($idx),
-                            );
-                        )+
-                    }
-                }
-
-                for component in 0..D {
-                    $(
-                        let block = &self.$idx[component];
-                        let range = block.range();
-                        let (row_gradient, local_gradient) = workspace.row_gradient_and_local_gradient_mut(
-                            repeated_scalar_workspace_index(component, $idx, $k),
-                            range.len(),
-                        );
-                        block.x().add_gradient(row_gradient, &beta[range.clone()], local_gradient);
-                        block.penalty().add_gradient(&beta[range.clone()], local_gradient);
-                        loss += block.penalty().value(&beta[range.clone()]);
-                        add_into(&mut grad[range], local_gradient);
-                    )+
-                }
-
-                loss
-            }
-
-            fn block_ranges(&self) -> Vec<Range<usize>> {
-                let mut ranges = Vec::with_capacity(D * $k);
-                $(
-                    for block in &self.$idx {
-                        ranges.push(block.range());
-                    }
-                )+
-                ranges
-            }
-
-            fn parameter_layout(&self) -> ParameterLayout {
-                ParameterLayout::new(vec![$(
-                    ParameterSlice {
-                        name: <$param as ParameterName>::NAME,
-                        range: repeated_parameter_array_range(&self.$idx),
-                    },
-                )+])
-            }
-
-            fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-                let mut descriptors = Vec::with_capacity(D * $k);
-                <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
-                    descriptors.push(descriptor);
-                });
-                descriptors
-            }
-
-            fn parameter_slice_count(&self) -> usize {
-                $k
-            }
-
-            fn parameter_slice_matches(
-                &self,
-                index: usize,
-                name: &'static str,
-                range: Range<usize>,
-            ) -> bool {
-                match index {
-                    $(
-                        $idx => name == <$param as ParameterName>::NAME
-                            && range == repeated_parameter_array_range(&self.$idx),
-                    )+
-                    _ => false,
-                }
-            }
-
-            fn visit_parameter_slices<V>(&self, mut visit: V)
-            where
-                V: FnMut(usize, &'static str, Range<usize>),
-            {
-                $(
-                    visit(
-                        $idx,
-                        <$param as ParameterName>::NAME,
-                        repeated_parameter_array_range(&self.$idx),
-                    );
-                )+
-            }
-
-            fn visit_parameter_descriptors<V>(&self, mut visit: V)
-            where
-                V: FnMut(usize, ParameterDescriptor),
-            {
-                let mut index = 0;
-                for component in 0..D {
-                    $(
-                        visit(
-                            index,
-                            ParameterDescriptor::component(
-                                <$param as ParameterName>::NAME,
-                                component,
-                                self.$idx[component].range(),
-                            ),
-                        );
-                        index += 1;
-                    )+
-                }
-            }
-
-            fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-            where
-                Other: GamlssBlocks<F>,
-            {
-                other.parameter_slice_count() == $k
-                    $(&& other.parameter_slice_matches(
-                        $idx,
-                        <$param as ParameterName>::NAME,
-                        repeated_parameter_array_range(&self.$idx),
-                    ))+
-            }
-        }
-    };
-}
-
-impl_repeated_scalar_gamlss_blocks!(
-    1;
-    params = (P1);
-    links = (L1);
-    designs = (X1);
-    penalties = (Pen1);
-    blocks = (block1);
-    beta_blocks = (beta1);
-    row_gradients = (row_gradient1);
-    local_grads = (grad1);
-    indices = (0)
-);
-
-impl_repeated_scalar_gamlss_blocks!(
-    2;
-    params = (P1, P2);
-    links = (L1, L2);
-    designs = (X1, X2);
-    penalties = (Pen1, Pen2);
-    blocks = (block1, block2);
-    beta_blocks = (beta1, beta2);
-    row_gradients = (row_gradient1, row_gradient2);
-    local_grads = (grad1, grad2);
-    indices = (0, 1)
-);
-
-impl_repeated_scalar_gamlss_blocks!(
-    3;
-    params = (P1, P2, P3);
-    links = (L1, L2, L3);
-    designs = (X1, X2, X3);
-    penalties = (Pen1, Pen2, Pen3);
-    blocks = (block1, block2, block3);
-    beta_blocks = (beta1, beta2, beta3);
-    row_gradients = (row_gradient1, row_gradient2, row_gradient3);
-    local_grads = (grad1, grad2, grad3);
-    indices = (0, 1, 2)
-);
-
-impl_repeated_scalar_gamlss_blocks!(
-    4;
-    params = (P1, P2, P3, P4);
-    links = (L1, L2, L3, L4);
-    designs = (X1, X2, X3, X4);
-    penalties = (Pen1, Pen2, Pen3, Pen4);
-    blocks = (block1, block2, block3, block4);
-    beta_blocks = (beta1, beta2, beta3, beta4);
-    row_gradients = (row_gradient1, row_gradient2, row_gradient3, row_gradient4);
-    local_grads = (grad1, grad2, grad3, grad4);
-    indices = (0, 1, 2, 3)
-);
 
 /// Validates that the predictor row count matches the response length.
 const fn validate_block_rows(
@@ -4320,17 +1916,23 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        CholeskyScale, DenseDesign, Family, Gamlss, GamlssBlocks, GlobalPenalty,
-        HingeQuadraticPenalty, Identity, InitialEtaFromObservations, LinearFormBuilder,
-        LinearPredictorBlock, LocationCholesky, LocationCholeskySpec,
-        LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
-        ObservationView, OffsetBlock, ParameterAxis, ParameterBlock, ParameterBlocks,
-        ParameterDescriptor, ParameterLayout, ParameterName, ParameterPath, ParameterSlice,
-        PredictorBlock, RidgePenalty, ScalarParams, Sigma, SumBlock, Tau, VectorParameterBlock,
+        Broadcast, CholeskyScale, CompilableFamily, DenseDesign, Family, Gamlss, GamlssBlocks,
+        GlobalPenalty, HingeQuadraticPenalty, InitialEtaFromObservations, LinearFormBuilder,
+        LinearPredictorBlock, Lower, LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu,
+        Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterAxis, ParameterBlock,
+        ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterPath,
+        ParameterSlice, PredictorBlock, Product, RidgePenalty, Scalar, Sigma, SumBlock, Tau,
+        Vector, VectorParameterBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
     struct FixedSigmaNormal;
+
+    crate::impl_scalar_compilable_family!(
+        impl for FixedSigmaNormal;
+        parameters = (Mu,);
+        arity = 1;
+    );
 
     impl Family for FixedSigmaNormal {
         type Eta = f64;
@@ -4338,7 +1940,6 @@ mod tests {
         type GradientEta = f64;
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -4365,7 +1966,69 @@ mod tests {
     impl InitialEtaFromObservations<1> for FixedSigmaNormal {}
 
     #[derive(Debug, Clone, Copy)]
+    struct SharedMeanPair;
+
+    impl Family for SharedMeanPair {
+        type Eta = [f64; 2];
+        type Theta = [f64; 2];
+        type GradientEta = [f64; 2];
+        type Observation<'obs> = [f64; 2];
+        type Workspace = ();
+
+        fn workspace(&self) -> Self::Workspace {}
+
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
+        }
+
+        fn nll(
+            &self,
+            observation: Self::Observation<'_>,
+            theta: &Self::Theta,
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
+            observation
+                .iter()
+                .zip(theta)
+                .map(|(y, mean)| 0.5 * (mean - y).powi(2))
+                .sum()
+        }
+
+        fn nll_and_gradient_eta(
+            &self,
+            observation: Self::Observation<'_>,
+            eta: &Self::Eta,
+            workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            (
+                self.nll(observation, eta, workspace),
+                std::array::from_fn(|index| eta[index] - observation[index]),
+            )
+        }
+    }
+
+    impl CompilableFamily for SharedMeanPair {
+        type Shape = Broadcast<Scalar<Mu>, 2>;
+
+        fn eta_from_shape(values: <Self::Shape as crate::ParameterShape>::Values) -> Self::Eta {
+            values
+        }
+
+        fn gradient_to_shape(
+            gradient: &Self::GradientEta,
+        ) -> <Self::Shape as crate::ParameterShape>::Values {
+            *gradient
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct TwoParameterMock;
+
+    crate::impl_scalar_compilable_family!(
+        impl for TwoParameterMock;
+        parameters = (Mu, Sigma);
+        arity = 2;
+    );
 
     impl Family for TwoParameterMock {
         type Eta = (f64, f64);
@@ -4373,7 +2036,6 @@ mod tests {
         type GradientEta = (f64, f64);
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu, Sigma), (Identity, Identity), 2>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -4416,7 +2078,6 @@ mod tests {
         type GradientEta = Self::Eta;
         type Observation<'obs> = [f64; 2];
         type Workspace = ();
-        type ParamSpec = LocationCholesky<Mu, CholeskyScale, 2>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -4451,36 +2112,18 @@ mod tests {
         }
     }
 
-    impl LocationCholeskySpec<StructuredMock, 2> for LocationCholesky<Mu, CholeskyScale, 2> {
-        type VectorParameter = Mu;
-        type LowerTriangularParameter = CholeskyScale;
+    impl CompilableFamily for StructuredMock {
+        type Shape = Product<Vector<Mu, 2>, Lower<CholeskyScale, 2>>;
 
-        fn eta_from_vector_lower(
-            vector: [f64; 2],
-            lower: [[f64; 2]; 2],
-        ) -> <StructuredMock as Family>::Eta {
-            (vector, lower)
+        fn eta_from_shape(values: ([f64; 2], [[f64; 2]; 2])) -> Self::Eta {
+            values
         }
 
-        fn vector_gradient_part(
-            gradient: &<StructuredMock as Family>::GradientEta,
-            component: usize,
-        ) -> f64 {
-            gradient.0[component]
+        fn gradient_to_shape(gradient: &Self::GradientEta) -> ([f64; 2], [[f64; 2]; 2]) {
+            *gradient
         }
 
-        fn lower_triangular_gradient_part(
-            gradient: &<StructuredMock as Family>::GradientEta,
-            row: usize,
-            col: usize,
-        ) -> f64 {
-            gradient.1[row][col]
-        }
-
-        fn initial_vector_lower_from_observations<'obs, Obs>(
-            _family: &StructuredMock,
-            _obs: &'obs Obs,
-        ) -> ([f64; 2], [[f64; 2]; 2])
+        fn initial_shape<'obs, Obs>(&self, _obs: &'obs Obs) -> ([f64; 2], [[f64; 2]; 2])
         where
             Obs: ObservationView<'obs, Observation = [f64; 2]> + 'obs,
         {
@@ -4491,13 +2134,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct InitializingLocation;
 
+    crate::impl_scalar_compilable_family!(
+        impl for InitializingLocation;
+        parameters = (Mu,);
+        arity = 1;
+    );
+
     impl Family for InitializingLocation {
         type Eta = f64;
         type Theta = f64;
         type GradientEta = f64;
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -4531,13 +2179,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct NonFiniteInitializingLocation;
 
+    crate::impl_scalar_compilable_family!(
+        impl for NonFiniteInitializingLocation;
+        parameters = (Mu,);
+        arity = 1;
+    );
+
     impl Family for NonFiniteInitializingLocation {
         type Eta = f64;
         type Theta = f64;
         type GradientEta = f64;
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -4595,8 +2248,9 @@ mod tests {
     fn custom_one_parameter_family_uses_generic_family_contract() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let beta = vec![1.5];
         let mut grad = vec![0.0];
 
@@ -4605,6 +2259,37 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], 0.0);
+    }
+
+    #[test]
+    fn broadcast_shape_owns_one_predictor_and_sums_consumer_scores() {
+        let y = [[1.0, 3.0], [2.0, 4.0]];
+        let block = ParameterBlock::<Mu, _, _>::linear(
+            DenseDesign::intercept(y.len()),
+            RidgePenalty::new_unchecked(0.5),
+            0,
+        );
+        let model = Gamlss::try_new_with_observations(
+            SharedMeanPair,
+            ParameterBlocks::from_assigned(block),
+            y.as_slice(),
+        )
+        .unwrap();
+        let beta = [0.5];
+        let mut likelihood_gradient = [0.0];
+        let mut objective_gradient = [0.0];
+
+        model
+            .try_likelihood_value_gradient_into(&beta, &mut likelihood_gradient)
+            .unwrap();
+        model
+            .try_value_gradient_into(&beta, &mut objective_gradient)
+            .unwrap();
+
+        assert_relative_eq!(likelihood_gradient[0], -8.0);
+        assert_relative_eq!(objective_gradient[0], -7.5);
+        assert_eq!(model.parameter_descriptors().len(), 1);
+        assert_eq!(model.parameter_descriptors()[0].range, 0..1);
     }
 
     #[test]
@@ -4720,8 +2405,9 @@ mod tests {
     fn initial_parameters_default_to_zero_for_custom_family() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
 
         assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
     }
@@ -4730,8 +2416,13 @@ mod tests {
     fn initial_parameters_write_intercept_like_constant() {
         let y = vec![1.0, 2.0, 3.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new(
+            InitializingLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
         let beta = model.initial_parameters().unwrap();
 
         assert_eq!(beta.len(), model.nparams());
@@ -4743,8 +2434,13 @@ mod tests {
     fn initial_parameters_leave_no_intercept_design_zero() {
         let y = vec![1.0, 2.0, 3.0];
         let x = DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(
+            InitializingLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
 
         assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
     }
@@ -4755,8 +2451,13 @@ mod tests {
         let first = LinearPredictorBlock::new(DenseDesign::from_rows(&[[0.0], [1.0], [2.0]]));
         let second = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
         let predictor = SumBlock::new((first, second));
-        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
-        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(
+            InitializingLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
 
         assert_eq!(model.initial_parameters().unwrap(), vec![0.0, 2.0]);
     }
@@ -4767,8 +2468,13 @@ mod tests {
         let offset = OffsetBlock::new(y.len(), 10.0);
         let intercept = LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
         let predictor = SumBlock::new((offset, intercept));
-        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
-        let model = Gamlss::try_new(InitializingLocation, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::new(predictor, NoPenalty, 0);
+        let model = Gamlss::try_new(
+            InitializingLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
         let beta = model.initial_parameters().unwrap();
 
         assert_eq!(beta, vec![-8.0]);
@@ -4779,8 +2485,13 @@ mod tests {
     fn initial_parameters_ignore_nonfinite_family_starts() {
         let y = vec![1.0, 2.0, 3.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(NonFiniteInitializingLocation, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(
+            NonFiniteInitializingLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
 
         assert_eq!(model.initial_parameters().unwrap(), vec![0.0]);
     }
@@ -4794,8 +2505,13 @@ mod tests {
             weight: 0.5,
         };
         let x = DenseDesign::intercept(obs.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new_with_observations(FixedSigmaNormal, (mu,), obs).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new_with_observations(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            obs,
+        )
+        .unwrap();
         let beta = vec![2.5];
         let mut grad = vec![0.0];
 
@@ -4815,10 +2531,15 @@ mod tests {
             weight: f64::NAN,
         };
         let x = DenseDesign::intercept(obs.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
 
         assert_eq!(
-            Gamlss::try_new_with_observations(FixedSigmaNormal, (mu,), obs).unwrap_err(),
+            Gamlss::try_new_with_observations(
+                FixedSigmaNormal,
+                ParameterBlocks::from_assigned((mu,)),
+                obs
+            )
+            .unwrap_err(),
             ModelError::InvalidWeight { index: 0 }
         );
     }
@@ -4828,8 +2549,9 @@ mod tests {
     fn model_borrows_response_without_copying() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
 
         assert_eq!(model.obs.as_ptr(), y.as_ptr());
         assert_eq!(model.obs, y.as_slice());
@@ -4841,11 +2563,17 @@ mod tests {
         let y = vec![1.0, 2.0];
         let unit_weights = vec![1.0, 1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x.clone(), NoPenalty, 0);
-        let weighted_mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
-        let weighted =
-            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), &y, &unit_weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x.clone(), NoPenalty, 0);
+        let weighted_mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
+        let weighted = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((weighted_mu,)),
+            &y,
+            &unit_weights,
+        )
+        .unwrap();
         let beta = vec![1.5];
         let mut grad = vec![0.0];
         let mut weighted_grad = vec![0.0];
@@ -4868,11 +2596,17 @@ mod tests {
         let y = vec![1.0, 2.0, 3.0];
         let weights = vec![0.5, 0.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x.clone(), NoPenalty, 0);
-        let weighted_mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
-        let weighted =
-            Gamlss::try_new_weighted(FixedSigmaNormal, (weighted_mu,), &y, &weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x.clone(), NoPenalty, 0);
+        let weighted_mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
+        let weighted = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((weighted_mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
 
         assert_relative_eq!(model.weight_sum(), 3.0);
         assert_relative_eq!(model.effective_nobs(), 3.0);
@@ -4901,8 +2635,14 @@ mod tests {
         let y = vec![1.0, 10.0];
         let weights = vec![1.0, 0.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
         let beta = vec![1.0];
         let mut grad = vec![f64::NAN];
 
@@ -4918,8 +2658,14 @@ mod tests {
         let y = vec![1.0, f64::NAN];
         let weights = vec![1.0, 0.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
         let beta = vec![1.0];
         let mut grad = vec![f64::NAN];
 
@@ -4936,8 +2682,14 @@ mod tests {
         let weights = vec![1.0, 0.0, 1.0];
         let x = DenseDesign::from_row_major(3, 2, vec![1.0, 0.0, f64::NAN, f64::NAN, 1.0, 1.0])
             .unwrap();
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
         let beta = vec![1.0, 1.0];
         let mut grad = vec![f64::NAN, f64::NAN];
 
@@ -4956,24 +2708,39 @@ mod tests {
         let short_weights = vec![1.0];
         let infinite_weights = vec![1.0, f64::INFINITY];
         let negative_weights = vec![1.0, -0.1];
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
 
         assert_eq!(
-            Gamlss::try_new_weighted(FixedSigmaNormal, (mu.clone(),), &y, &short_weights,)
-                .unwrap_err(),
+            Gamlss::try_new_weighted(
+                FixedSigmaNormal,
+                ParameterBlocks::from_assigned((mu.clone(),)),
+                &y,
+                &short_weights,
+            )
+            .unwrap_err(),
             ModelError::WeightLength {
                 expected: 2,
                 actual: 1,
             }
         );
         assert_eq!(
-            Gamlss::try_new_weighted(FixedSigmaNormal, (mu.clone(),), &y, &infinite_weights,)
-                .unwrap_err(),
+            Gamlss::try_new_weighted(
+                FixedSigmaNormal,
+                ParameterBlocks::from_assigned((mu.clone(),)),
+                &y,
+                &infinite_weights,
+            )
+            .unwrap_err(),
             ModelError::InvalidWeight { index: 1 }
         );
         assert_eq!(
-            Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &negative_weights).unwrap_err(),
+            Gamlss::try_new_weighted(
+                FixedSigmaNormal,
+                ParameterBlocks::from_assigned((mu,)),
+                &y,
+                &negative_weights
+            )
+            .unwrap_err(),
             ModelError::InvalidWeight { index: 1 }
         );
     }
@@ -4981,13 +2748,18 @@ mod tests {
     #[test]
     fn scalar_response_is_permissive_but_strict_constructor_rejects_non_finite() {
         let y = vec![1.0, f64::NAN];
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
 
-        Gamlss::try_new(FixedSigmaNormal, (mu.clone(),), &y).unwrap();
+        Gamlss::try_new(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu.clone(),)),
+            &y,
+        )
+        .unwrap();
 
         assert_eq!(
-            Gamlss::try_new_strict(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            Gamlss::try_new_strict(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
+                .unwrap_err(),
             ModelError::InvalidObservation { index: 1 }
         );
     }
@@ -5006,8 +2778,9 @@ mod tests {
     fn prediction_api_returns_eta_and_theta_for_one_parameter_model() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 2.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let beta = vec![0.5, 0.25];
 
         assert_relative_eq!(model.predict_eta_row(&beta, 1).unwrap(), 1.0);
@@ -5037,8 +2810,9 @@ mod tests {
     fn prediction_api_rejects_invalid_parameter_length_and_row() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
 
         assert_eq!(
             model.predict_eta_row(&[], 0).unwrap_err(),
@@ -5057,12 +2831,12 @@ mod tests {
     fn prediction_api_uses_compatible_blocks_for_new_rows() {
         let y = vec![1.0, 2.0];
         let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(train_x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0], [1.0, 3.0], [1.0, 4.0]]);
-        let prediction_mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
-        let prediction_blocks = (prediction_mu,);
+        let prediction_mu = ParameterBlock::<Mu, _, _>::linear(prediction_x, NoPenalty, 0);
+        let prediction_blocks = ParameterBlocks::from_assigned((prediction_mu,));
         let beta = vec![0.5, 0.25];
         let prediction = model.prediction_view(&prediction_blocks).unwrap();
 
@@ -5121,12 +2895,12 @@ mod tests {
     fn prediction_api_rejects_incompatible_prediction_blocks() {
         let y = vec![1.0, 2.0];
         let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(train_x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let prediction_x = DenseDesign::from_rows(&[[1.0, 2.0, 3.0]]);
-        let prediction_mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_x, NoPenalty, 0);
-        let prediction_blocks = (prediction_mu,);
+        let prediction_mu = ParameterBlock::<Mu, _, _>::linear(prediction_x, NoPenalty, 0);
+        let prediction_blocks = ParameterBlocks::from_assigned((prediction_mu,));
 
         assert_eq!(
             model
@@ -5163,18 +2937,21 @@ mod tests {
         let y = vec![1.0, 2.0];
         let train_mu_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
         let train_sigma_x = DenseDesign::intercept(y.len());
-        let train_mu = ParameterBlock::<Mu, Identity, _, _>::linear(train_mu_x, NoPenalty, 0);
-        let train_sigma =
-            ParameterBlock::<Sigma, Identity, _, _>::linear(train_sigma_x, NoPenalty, 2);
-        let model = Gamlss::try_new(TwoParameterMock, (train_mu, train_sigma), &y).unwrap();
+        let train_mu = ParameterBlock::<Mu, _, _>::linear(train_mu_x, NoPenalty, 0);
+        let train_sigma = ParameterBlock::<Sigma, _, _>::linear(train_sigma_x, NoPenalty, 2);
+        let model = Gamlss::try_new(
+            TwoParameterMock,
+            ParameterBlocks::from_assigned((train_mu, train_sigma)),
+            &y,
+        )
+        .unwrap();
 
         let prediction_mu_x = DenseDesign::intercept(1);
         let prediction_sigma_x = DenseDesign::from_rows(&[[1.0, 2.0]]);
-        let prediction_mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(prediction_mu_x, NoPenalty, 0);
+        let prediction_mu = ParameterBlock::<Mu, _, _>::linear(prediction_mu_x, NoPenalty, 0);
         let prediction_sigma =
-            ParameterBlock::<Sigma, Identity, _, _>::linear(prediction_sigma_x, NoPenalty, 1);
-        let prediction_blocks = (prediction_mu, prediction_sigma);
+            ParameterBlock::<Sigma, _, _>::linear(prediction_sigma_x, NoPenalty, 1);
+        let prediction_blocks = ParameterBlocks::from_assigned((prediction_mu, prediction_sigma));
 
         assert_eq!(
             model
@@ -5209,10 +2986,11 @@ mod tests {
     fn rejects_overflowing_parameter_block_ranges() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, usize::MAX);
 
         assert_eq!(
-            Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
+                .unwrap_err(),
             ModelError::BlockRangeOverflow {
                 parameter: "mu",
                 offset: usize::MAX,
@@ -5225,8 +3003,8 @@ mod tests {
     fn blocks_try_len_reports_overflowing_total_length() {
         let y = [1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, usize::MAX);
-        let blocks = (mu,);
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, usize::MAX);
+        let blocks = ParameterBlocks::from_assigned((mu,));
 
         assert_eq!(
             GamlssBlocks::<FixedSigmaNormal>::try_len(&blocks).unwrap_err(),
@@ -5242,14 +3020,11 @@ mod tests {
     fn blocks_validate_rejects_invalid_local_penalty() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(
-            x,
-            RidgePenalty::new_unchecked(f64::NAN),
-            0,
-        );
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(f64::NAN), 0);
 
         assert_eq!(
-            Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap_err(),
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
+                .unwrap_err(),
             ModelError::InvalidParameter {
                 parameter: "ridge penalty lambda",
                 expected: "finite and >= 0",
@@ -5261,8 +3036,9 @@ mod tests {
     fn workspace_objective_matches_model_gradient_on_repeated_calls() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let mut workspace_objective = model.clone().into_workspace_objective();
 
         for beta in [vec![1.0, 0.25], vec![1.5, -0.1]] {
@@ -5286,9 +3062,14 @@ mod tests {
         let y = vec![1.0, 2.0];
         let weights = vec![0.5, 2.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.25), 0);
-        let model = Gamlss::try_new_weighted(FixedSigmaNormal, (mu,), &y, &weights).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(0.25), 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
         let beta = vec![0.75, 0.5];
         let mut separate_grad = vec![0.0; beta.len()];
         let mut fused_grad = vec![f64::NAN; beta.len()];
@@ -5306,12 +3087,61 @@ mod tests {
     }
 
     #[test]
+    fn likelihood_and_pointwise_apis_exclude_penalties_and_preserve_weights() {
+        let y = vec![1.0, 2.0];
+        let weights = vec![2.0, 0.5];
+        let x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(0.25), 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap()
+        .with_objective_scale(ObjectiveScale::Mean);
+        let beta = vec![0.5, 0.25];
+        let mut raw = vec![0.0; y.len()];
+        let mut weighted = vec![0.0; y.len()];
+        let mut log_likelihood = vec![0.0; y.len()];
+        let mut likelihood_gradient = vec![0.0; beta.len()];
+
+        model.try_pointwise_nll_into(&beta, &mut raw).unwrap();
+        model
+            .try_weighted_pointwise_nll_into(&beta, &mut weighted)
+            .unwrap();
+        model
+            .try_pointwise_log_likelihood_into(&beta, &mut log_likelihood)
+            .unwrap();
+        let likelihood = model
+            .try_likelihood_value_gradient_into(&beta, &mut likelihood_gradient)
+            .unwrap();
+
+        assert_relative_eq!(raw[0], 0.125);
+        assert_relative_eq!(raw[1], 0.78125);
+        assert_relative_eq!(weighted[0], weights[0] * raw[0]);
+        assert_relative_eq!(weighted[1], weights[1] * raw[1]);
+        assert_relative_eq!(log_likelihood[0], -raw[0]);
+        assert_relative_eq!(log_likelihood[1], -raw[1]);
+        assert_relative_eq!(likelihood, weighted.iter().sum::<f64>());
+        assert_relative_eq!(model.try_likelihood_value(&beta).unwrap(), likelihood);
+        assert_relative_eq!(likelihood_gradient[0], -1.625);
+        assert_relative_eq!(likelihood_gradient[1], -0.625);
+
+        // Sum likelihood is intentionally independent of optimizer mean scaling.
+        assert_relative_eq!(likelihood, 0.640_625);
+        assert_relative_eq!(
+            model.try_value(&beta).unwrap(),
+            likelihood / weights.iter().sum::<f64>() + 0.078_125
+        );
+    }
+
+    #[test]
     fn mean_objective_scales_likelihood_but_not_penalties() {
         let y = vec![0.0, 3.0];
         let x = DenseDesign::intercept(y.len());
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
             .unwrap()
             .with_objective_scale(ObjectiveScale::Mean)
             .with_global_penalties(GlobalSquarePenalty { lambda: 2.0 });
@@ -5330,8 +3160,9 @@ mod tests {
     fn value_gradient_rejects_invalid_lengths() {
         let y = vec![1.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let mut grad = vec![0.0];
 
         assert_eq!(
@@ -5382,8 +3213,9 @@ mod tests {
         let linear = crate::LinearPredictorBlock::new(DenseDesign::intercept(y.len()));
         let nonlinear = SoftplusIntercept { nrows: y.len() };
         let predictor = SumBlock::new((linear, nonlinear));
-        let mu = ParameterBlock::<Mu, Identity, _, _>::new(predictor, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::new(predictor, NoPenalty, 0);
+        let mut model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let beta = vec![0.4, -0.2];
         let eps = 1.0e-6;
         let mut grad = vec![0.0; beta.len()];
@@ -5407,13 +3239,18 @@ mod tests {
         target_shift: f64,
     }
 
+    crate::impl_scalar_compilable_family!(
+        impl for StatefulLocation;
+        parameters = (Mu,);
+        arity = 1;
+    );
+
     impl Family for StatefulLocation {
         type Eta = f64;
         type Theta = f64;
         type GradientEta = f64;
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5443,8 +3280,13 @@ mod tests {
     fn family_instance_state_participates_in_objective() {
         let y = vec![2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(StatefulLocation { target_shift: 1.0 }, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new(
+            StatefulLocation { target_shift: 1.0 },
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+        )
+        .unwrap();
         let beta = vec![0.5];
         let mut grad = vec![0.0];
 
@@ -5458,13 +3300,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct BivariateLocation;
 
+    crate::impl_scalar_compilable_family!(
+        impl for BivariateLocation;
+        parameters = (Mu,);
+        arity = 1;
+    );
+
     impl Family for BivariateLocation {
         type Eta = f64;
         type Theta = f64;
         type GradientEta = f64;
         type Observation<'obs> = [f64; 2];
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5500,9 +3347,13 @@ mod tests {
     fn model_accepts_multivariate_observation_rows() {
         let y = vec![[1.0, 3.0], [2.0, 4.0]];
         let x = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model =
-            Gamlss::try_new_with_observations(BivariateLocation, (mu,), y.as_slice()).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new_with_observations(
+            BivariateLocation,
+            ParameterBlocks::from_assigned((mu,)),
+            y.as_slice(),
+        )
+        .unwrap();
         let beta = vec![2.0];
         let mut grad = vec![0.0];
 
@@ -5537,13 +3388,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct BorrowedRowMean;
 
+    crate::impl_scalar_compilable_family!(
+        impl for BorrowedRowMean;
+        parameters = (Mu,);
+        arity = 1;
+    );
+
     impl Family for BorrowedRowMean {
         type Eta = f64;
         type Theta = f64;
         type GradientEta = f64;
         type Observation<'obs> = &'obs [f64];
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu,), (Identity,), 1>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5583,8 +3439,13 @@ mod tests {
             rows: vec![vec![1.0, 3.0], vec![2.0, 4.0]],
         };
         let x = DenseDesign::intercept(obs.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new_with_observations(BorrowedRowMean, (mu,), obs).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model = Gamlss::try_new_with_observations(
+            BorrowedRowMean,
+            ParameterBlocks::from_assigned((mu,)),
+            obs,
+        )
+        .unwrap();
         let beta = vec![2.0];
         let mut grad = vec![0.0];
 
@@ -5598,13 +3459,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct ThreeParameterMock;
 
+    crate::impl_scalar_compilable_family!(
+        impl for ThreeParameterMock;
+        parameters = (Mu, Sigma, Nu);
+        arity = 3;
+    );
+
     impl Family for ThreeParameterMock {
         type Eta = (f64, f64, f64);
         type Theta = (f64, f64, f64);
         type GradientEta = (f64, f64, f64);
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<(Mu, Sigma, Nu), (Identity, Identity, Identity), 3>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5636,22 +3502,18 @@ mod tests {
     #[test]
     fn custom_three_parameter_family_uses_generic_blocks() {
         let y = vec![2.0];
-        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            0,
-        );
-        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            1,
-        );
-        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            2,
-        );
-        let mut model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
+        let first =
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0);
+        let second =
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 1);
+        let third =
+            ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 2);
+        let mut model = Gamlss::try_new(
+            ThreeParameterMock,
+            ParameterBlocks::from_assigned((first, second, third)),
+            &y,
+        )
+        .unwrap();
         let beta = vec![1.5, 0.5, -0.5];
         let mut grad = vec![0.0; 3];
 
@@ -5667,14 +3529,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct FourParameterMock;
 
+    crate::impl_scalar_compilable_family!(
+        impl for FourParameterMock;
+        parameters = (Mu, Sigma, Nu, Tau);
+        arity = 4;
+    );
+
     impl Family for FourParameterMock {
         type Eta = (f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64);
         type GradientEta = (f64, f64, f64, f64);
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec =
-            ScalarParams<(Mu, Sigma, Nu, Tau), (Identity, Identity, Identity, Identity), 4>;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5714,17 +3580,18 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct FiveParameterMock;
 
+    crate::impl_scalar_compilable_family!(
+        impl for FiveParameterMock;
+        parameters = (Mu, Sigma, Nu, Tau, Fifth);
+        arity = 5;
+    );
+
     impl Family for FiveParameterMock {
         type Eta = (f64, f64, f64, f64, f64);
         type Theta = (f64, f64, f64, f64, f64);
         type GradientEta = (f64, f64, f64, f64, f64);
         type Observation<'obs> = f64;
         type Workspace = ();
-        type ParamSpec = ScalarParams<
-            (Mu, Sigma, Nu, Tau, Fifth),
-            (Identity, Identity, Identity, Identity, Identity),
-            5,
-        >;
         #[inline]
         fn workspace(&self) -> Self::Workspace {}
 
@@ -5769,27 +3636,20 @@ mod tests {
     #[test]
     fn prediction_api_returns_eta_and_theta_for_four_parameter_model() {
         let y = vec![2.0];
-        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            0,
-        );
-        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            1,
-        );
-        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            2,
-        );
-        let fourth = ParameterBlock::<Tau, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            3,
-        );
-        let model = Gamlss::try_new(FourParameterMock, (first, second, third, fourth), &y).unwrap();
+        let first =
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0);
+        let second =
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 1);
+        let third =
+            ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 2);
+        let fourth =
+            ParameterBlock::<Tau, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 3);
+        let model = Gamlss::try_new(
+            FourParameterMock,
+            ParameterBlocks::from_assigned((first, second, third, fourth)),
+            &y,
+        )
+        .unwrap();
         let beta = vec![0.5, 1.5, 2.5, 3.5];
 
         assert_eq!(
@@ -5830,29 +3690,25 @@ mod tests {
 
     fn intercept_block<P>(
         nrows: usize,
-    ) -> ParameterBlock<P, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty> {
+    ) -> ParameterBlock<P, LinearPredictorBlock<DenseDesign>, NoPenalty> {
         ParameterBlock::linear(DenseDesign::intercept(nrows), NoPenalty, 99)
     }
 
     #[test]
     fn parameter_layout_and_unpack_use_distribution_parameter_names() {
         let y = vec![2.0];
-        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            0,
-        );
-        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            1,
-        );
-        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            2,
-        );
-        let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
+        let first =
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0);
+        let second =
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 1);
+        let third =
+            ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 2);
+        let model = Gamlss::try_new(
+            ThreeParameterMock,
+            ParameterBlocks::from_assigned((first, second, third)),
+            &y,
+        )
+        .unwrap();
         let parameters = vec![1.5, 0.5, -0.5];
         let layout = model.parameter_layout();
         let unpacked = model.unpack_parameters(&parameters).unwrap();
@@ -5876,22 +3732,18 @@ mod tests {
     #[test]
     fn visitor_apis_match_allocating_layout_helpers() {
         let y = vec![2.0];
-        let first = ParameterBlock::<Mu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            0,
-        );
-        let second = ParameterBlock::<Sigma, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            1,
-        );
-        let third = ParameterBlock::<Nu, Identity, _, _>::linear(
-            DenseDesign::intercept(y.len()),
-            NoPenalty,
-            2,
-        );
-        let model = Gamlss::try_new(ThreeParameterMock, (first, second, third), &y).unwrap();
+        let first =
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0);
+        let second =
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 1);
+        let third =
+            ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 2);
+        let model = Gamlss::try_new(
+            ThreeParameterMock,
+            ParameterBlocks::from_assigned((first, second, third)),
+            &y,
+        )
+        .unwrap();
 
         let mut visited_ranges = Vec::new();
         model.visit_block_ranges(|index, range| visited_ranges.push((index, range)));
@@ -5928,9 +3780,9 @@ mod tests {
     fn training_diagnostics_report_train_nll_penalty_and_gradient_norm() {
         let y = vec![1.0, 2.0];
         let x = DenseDesign::intercept(y.len());
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(0.5), 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let parameters = vec![1.5];
         let mut grad = vec![f64::NAN; parameters.len()];
         let diagnostics = model.training_diagnostics(&parameters).unwrap();
@@ -6006,10 +3858,11 @@ mod tests {
     fn global_penalty_adds_value_and_gradient_to_full_objective() {
         let y = vec![0.0, 0.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
-            .unwrap()
-            .with_global_penalties(DifferenceGlobalPenalty { lambda: 1.0 });
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let mut model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
+                .unwrap()
+                .with_global_penalties(DifferenceGlobalPenalty { lambda: 1.0 });
         let beta = vec![1.0, -1.0];
         let mut grad = vec![0.0; beta.len()];
 
@@ -6025,8 +3878,9 @@ mod tests {
     fn try_with_global_penalties_validates_full_parameter_dimension() {
         let y = vec![0.0, 0.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let penalty =
             HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
 
@@ -6040,8 +3894,9 @@ mod tests {
     fn try_with_global_penalties_validates_penalty_invariants() {
         let y = vec![0.0, 0.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let penalty =
             HingeQuadraticPenalty::new(LinearFormBuilder::new().term(0, f64::NAN).build(), 1.0);
 
@@ -6058,8 +3913,8 @@ mod tests {
     fn workspace_try_with_global_penalties_validates_full_parameter_dimension() {
         let y = vec![0.0, 0.0];
         let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x, NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y)
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model = Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y)
             .unwrap()
             .into_workspace_objective();
         let penalty =
@@ -6077,13 +3932,18 @@ mod tests {
         #[derive(Debug, Clone, Copy)]
         struct TwoParamMock;
 
+        crate::impl_scalar_compilable_family!(
+            impl for TwoParamMock;
+            parameters = (Mu, Sigma);
+            arity = 2;
+        );
+
         impl Family for TwoParamMock {
             type Eta = (f64, f64);
             type Theta = (f64, f64);
             type GradientEta = (f64, f64);
             type Observation<'obs> = f64;
             type Workspace = ();
-            type ParamSpec = ScalarParams<(Mu, Sigma), (Identity, Identity), 2>;
             #[inline]
             fn workspace(&self) -> Self::Workspace {}
 
@@ -6113,10 +3973,15 @@ mod tests {
         let y = vec![1.0, 2.0, 3.0];
         let x_mu = DenseDesign::from_rows(&[[1.0, 0.5], [1.0, 1.5], [1.0, 2.5]]);
         let x_sigma = DenseDesign::intercept(y.len());
-        let mu = ParameterBlock::<Mu, Identity, _, _>::linear(x_mu, NoPenalty, 0);
-        let sigma = ParameterBlock::<Sigma, Identity, _, _>::linear(x_sigma, NoPenalty, 0);
-        let (mu, sigma) = ParameterBlocks::new((mu, sigma));
-        let mut model = Gamlss::try_new(TwoParamMock, (mu, sigma), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(x_mu, NoPenalty, 0);
+        let sigma = ParameterBlock::<Sigma, _, _>::linear(x_sigma, NoPenalty, 0);
+        let (mu, sigma) = ParameterBlocks::new((mu, sigma)).into_inner();
+        let mut model = Gamlss::try_new(
+            TwoParamMock,
+            ParameterBlocks::from_assigned((mu, sigma)),
+            &y,
+        )
+        .unwrap();
 
         let beta = vec![0.5, 0.2, 0.3];
         let nparams = model.nparams();
@@ -6145,9 +4010,9 @@ mod tests {
     #[test]
     fn block_objective_for_rejects_wrong_full_beta_length() {
         let y = vec![1.0, 2.0];
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
-        let mut model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let mut model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
 
         assert_eq!(
             model.block_objective_for::<Mu>(Vec::new()).unwrap_err(),
@@ -6161,9 +4026,9 @@ mod tests {
     #[test]
     fn workspace_block_objective_for_rejects_wrong_full_beta_length() {
         let y = vec![1.0, 2.0];
-        let mu =
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
-        let model = Gamlss::try_new(FixedSigmaNormal, (mu,), &y).unwrap();
+        let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(2), NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let mut objective = model.into_workspace_objective();
 
         assert_eq!(

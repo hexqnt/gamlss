@@ -2,7 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
-    Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma, UnitIntervalLink,
+    Nu, ObservationView, ParameterParts, PositiveLink, Sigma, UnitIntervalLink,
 };
 
 use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
@@ -80,6 +80,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink, NuLink> for Zaga<MuLink, SigmaLink, NuLink>;
+    parameters = (Mu, Sigma, Nu);
+    arity = 3;
+);
+
 impl<MuLink, SigmaLink, NuLink> Family for Zaga<MuLink, SigmaLink, NuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -91,7 +97,6 @@ where
     type GradientEta = ZagaEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma, Nu), (MuLink, SigmaLink, NuLink), 3>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -215,6 +220,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZagaMeanSigmaZeroProbability, ZagaTheta};
 
     #[cfg(feature = "rand")]

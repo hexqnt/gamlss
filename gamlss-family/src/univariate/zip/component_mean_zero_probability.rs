@@ -2,8 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     ComponentMean, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
-    Log, Logit, ObservationView, ParameterParts, PositiveLink, ScalarParams, UnitIntervalLink,
-    ZeroProbability,
+    Log, Logit, ObservationView, ParameterParts, PositiveLink, UnitIntervalLink, ZeroProbability,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -51,6 +50,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, ZeroProbabilityLink> for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>;
+    parameters = (ComponentMean, ZeroProbability);
+    arity = 2;
+);
+
 impl<MeanLink, ZeroProbabilityLink> Family
     for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
 where
@@ -62,8 +67,6 @@ where
     type GradientEta = ZipEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec =
-        ScalarParams<(ComponentMean, ZeroProbability), (MeanLink, ZeroProbabilityLink), 2>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -171,6 +174,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZipComponentMeanZeroProbability, ZipTheta};
 
     #[cfg(feature = "rand")]

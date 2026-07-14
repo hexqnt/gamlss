@@ -1,6 +1,7 @@
 //! Multivariate distribution families.
 
 pub use independent::IndependentVec;
+pub use matrix::{FixedLowerTriangular, PackedLowerTriangular};
 pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
 
 /// Cholesky helpers.

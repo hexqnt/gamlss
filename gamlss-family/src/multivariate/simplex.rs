@@ -2,13 +2,14 @@
 
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, FixedDimensionalFamily, Log, Mean, MeanPrecisionSimplex, MeanPrecisionSimplexSpec,
-    PositiveLink, Precision,
+    CompilableFamily, Family, FixedDimensionalFamily, HasObservationDimension, InitialEtaFromTheta,
+    Log, Mean, ModelError, ObservationView, PositiveLink, Precision,
+    shape::{Product, Scalar, Simplex},
 };
-use gamlss_special::{digamma, ln_gamma};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+use gamlss_special::{baseline_softmax, digamma, ln_multivariate_beta};
 
 const SIMPLEX_TOLERANCE: f64 = 1.0e-8;
 
@@ -23,9 +24,14 @@ where
     PrecisionLink: PositiveLink<f64>,
 {
     /// Creates a stateless Dirichlet mean/precision family.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the compile-time dimension is less than two.
     #[must_use]
     #[inline]
     pub const fn new() -> Self {
+        assert!(D >= 2, "Dirichlet dimension must be at least two");
         Self {
             marker: PhantomData,
         }
@@ -33,7 +39,7 @@ where
 
     fn theta_from_eta(eta: &DirichletMeanPrecisionEta<D>) -> DirichletMeanPrecisionTheta<D> {
         DirichletMeanPrecisionTheta {
-            mean: softmax_baseline(eta.logits),
+            mean: baseline_softmax(eta.logits),
             precision: PrecisionLink::inverse(eta.precision),
         }
     }
@@ -43,13 +49,12 @@ where
             return f64::INFINITY;
         }
 
-        let mut sum = ln_gamma(theta.precision);
+        let alpha: [f64; D] = std::array::from_fn(|component| theta.alpha_unchecked(component));
+        let mut nll = ln_multivariate_beta(&alpha);
         for component in 0..D {
-            let alpha = theta.alpha_unchecked(component);
-            sum -= ln_gamma(alpha);
-            sum += (alpha - 1.0) * y[component].ln();
+            nll -= (alpha[component] - 1.0) * y[component].ln();
         }
-        -sum
+        nll
     }
 
     fn nll_and_gradient_eta_values(
@@ -97,7 +102,7 @@ where
 
 impl<const D: usize, PrecisionLink> Default for DirichletMeanPrecision<D, PrecisionLink>
 where
-    PrecisionLink: PositiveLink<f64>,
+    PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -113,7 +118,6 @@ where
     type GradientEta = DirichletMeanPrecisionEta<D>;
     type Observation<'obs> = [f64; D];
     type Workspace = ();
-    type ParamSpec = MeanPrecisionSimplex<Mean, Precision, D>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -160,8 +164,18 @@ where
 {
 }
 
+impl<const D: usize, PrecisionLink> HasObservationDimension
+    for DirichletMeanPrecision<D, PrecisionLink>
+where
+    PrecisionLink: PositiveLink<f64>,
+{
+    fn observation_dimension(&self) -> usize {
+        D
+    }
+}
+
 #[cfg(feature = "rand")]
-impl<Rng, const D: usize, PrecisionLink> CanSimulate<Rng>
+impl<Rng, const D: usize, PrecisionLink> TrySimulate<Rng>
     for DirichletMeanPrecision<D, PrecisionLink>
 where
     Rng: rand::Rng,
@@ -169,21 +183,121 @@ where
 {
     type Sample = [f64; D];
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
         if !valid_theta(theta) {
-            return [f64::NAN; D];
+            return Err(SimulationError::InvalidParameters("Dirichlet theta"));
         }
         let mut out = [0.0; D];
         let mut sum = 0.0;
         for component in 0..D {
-            let gamma = rand_distr::Gamma::new(theta.alpha_unchecked(component), 1.0).unwrap();
+            let Ok(gamma) = rand_distr::Gamma::new(theta.alpha_unchecked(component), 1.0) else {
+                return Err(SimulationError::BackendRejected("Dirichlet concentration"));
+            };
             out[component] = rand_distr::Distribution::sample(&gamma, rng);
             sum += out[component];
+        }
+        if !sum.is_finite() || sum <= 0.0 {
+            return Err(SimulationError::NumericalFailure(
+                "Dirichlet gamma normalization",
+            ));
         }
         for value in &mut out {
             *value /= sum;
         }
-        out
+        Ok(out)
+    }
+}
+
+impl<const D: usize, PrecisionLink> CompilableFamily for DirichletMeanPrecision<D, PrecisionLink>
+where
+    PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    type Shape = Product<Simplex<Mean, D>, Scalar<Precision>>;
+
+    fn eta_from_shape(values: ([f64; D], f64)) -> DirichletMeanPrecisionEta<D> {
+        DirichletMeanPrecisionEta::new(values.0, values.1)
+    }
+
+    fn gradient_to_shape(gradient: &DirichletMeanPrecisionEta<D>) -> ([f64; D], f64) {
+        (gradient.logits, gradient.precision)
+    }
+
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ([f64; D], f64)
+    where
+        Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
+    {
+        let mut weight_sum = 0.0;
+        let mut mean = [0.0; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            if weight > 0.0 && valid_observation(&value) {
+                weight_sum += weight;
+                for component in 0..D {
+                    mean[component] += weight * value[component];
+                }
+            }
+        }
+        if weight_sum > 0.0 {
+            for value in &mut mean {
+                *value /= weight_sum;
+            }
+        } else if D > 0 {
+            #[allow(clippy::cast_precision_loss)]
+            let uniform = 1.0 / D as f64;
+            mean.fill(uniform);
+        }
+        let floor = f64::MIN_POSITIVE.sqrt();
+        for value in &mut mean {
+            *value = value.max(floor);
+        }
+        let total = mean.iter().sum::<f64>();
+        for value in &mut mean {
+            *value /= total;
+        }
+
+        let mut variance = [0.0; D];
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let value = obs.observation_at(row);
+            if weight > 0.0 && valid_observation(&value) {
+                for component in 0..D {
+                    variance[component] += weight * (value[component] - mean[component]).powi(2);
+                }
+            }
+        }
+        let mut precision_sum = 0.0;
+        let mut precision_count = 0.0;
+        if weight_sum > 0.0 {
+            for component in 0..D {
+                let variance = variance[component] / weight_sum;
+                if variance > 0.0 {
+                    let estimate = mean[component] * (1.0 - mean[component]) / variance - 1.0;
+                    if estimate.is_finite() && estimate > 0.0 {
+                        precision_sum += estimate.clamp(1.0, 1.0e4);
+                        precision_count += 1.0;
+                    }
+                }
+            }
+        }
+        let precision = if precision_count > 0.0 {
+            precision_sum / precision_count
+        } else {
+            10.0
+        };
+        let baseline = mean[D - 1].ln();
+        let logits = std::array::from_fn(|component| {
+            if component + 1 == D {
+                0.0
+            } else {
+                mean[component].ln() - baseline
+            }
+        });
+        (logits, PrecisionLink::initial_eta_from_theta(precision))
     }
 }
 
@@ -211,17 +325,35 @@ impl<const D: usize> DirichletMeanPrecisionEta<D> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DirichletMeanPrecisionTheta<const D: usize> {
     /// Simplex mean weights.
-    pub mean: [f64; D],
+    mean: [f64; D],
     /// Positive concentration precision. Component `alpha_i = mean_i * precision`.
-    pub precision: f64,
+    precision: f64,
 }
 
 impl<const D: usize> DirichletMeanPrecisionTheta<D> {
-    /// Creates natural-scale parameters.
+    /// Creates valid natural-scale parameters.
+    pub fn try_new(mean: [f64; D], precision: f64) -> Result<Self, ModelError> {
+        let theta = Self { mean, precision };
+        if valid_theta(&theta) {
+            Ok(theta)
+        } else {
+            Err(ModelError::InvalidParameter {
+                parameter: "dirichlet theta",
+                expected: "D >= 2, an interior simplex mean, and finite positive alpha values",
+            })
+        }
+    }
+
+    /// Simplex mean weights.
     #[must_use]
-    #[inline]
-    pub const fn new(mean: [f64; D], precision: f64) -> Self {
-        Self { mean, precision }
+    pub const fn mean(&self) -> &[f64; D] {
+        &self.mean
+    }
+
+    /// Concentration precision.
+    #[must_use]
+    pub const fn precision(&self) -> f64 {
+        self.precision
     }
 
     /// Returns one Dirichlet concentration parameter.
@@ -234,35 +366,6 @@ impl<const D: usize> DirichletMeanPrecisionTheta<D> {
     #[inline]
     fn alpha_unchecked(&self, component: usize) -> f64 {
         self.mean[component] * self.precision
-    }
-}
-
-impl<const D: usize, PrecisionLink>
-    MeanPrecisionSimplexSpec<DirichletMeanPrecision<D, PrecisionLink>, D>
-    for MeanPrecisionSimplex<Mean, Precision, D>
-where
-    PrecisionLink: PositiveLink<f64>,
-{
-    type MeanParameter = Mean;
-    type PrecisionParameter = Precision;
-    type PrecisionLink = PrecisionLink;
-
-    fn eta_from_simplex_logits_precision(
-        logits: [f64; D],
-        precision: f64,
-    ) -> DirichletMeanPrecisionEta<D> {
-        DirichletMeanPrecisionEta::new(logits, precision)
-    }
-
-    fn simplex_logit_gradient_part(
-        gradient: &DirichletMeanPrecisionEta<D>,
-        component: usize,
-    ) -> f64 {
-        gradient.logits[component]
-    }
-
-    fn precision_gradient_part(gradient: &DirichletMeanPrecisionEta<D>) -> f64 {
-        gradient.precision
     }
 }
 
@@ -280,25 +383,11 @@ fn valid_theta<const D: usize>(theta: &DirichletMeanPrecisionTheta<D>) -> bool {
             .mean
             .iter()
             .all(|value| value.is_finite() && *value > 0.0)
+        && theta.mean.iter().all(|value| {
+            let alpha = *value * theta.precision;
+            alpha.is_finite() && alpha > 0.0
+        })
         && (theta.mean.iter().sum::<f64>() - 1.0).abs() <= SIMPLEX_TOLERANCE
-}
-
-fn softmax_baseline<const D: usize>(mut logits: [f64; D]) -> [f64; D] {
-    if D == 0 {
-        return logits;
-    }
-    logits[D - 1] = 0.0;
-    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let mut weights = [0.0; D];
-    let mut sum = 0.0;
-    for component in 0..D {
-        weights[component] = (logits[component] - max).exp();
-        sum += weights[component];
-    }
-    for weight in &mut weights {
-        *weight /= sum;
-    }
-    weights
 }
 
 #[cfg(test)]
@@ -322,9 +411,39 @@ mod tests {
     }
 
     #[test]
+    fn extreme_finite_logits_preserve_interior_simplex() {
+        let family = DirichletMeanPrecision::<3>::new();
+        let eta = DirichletMeanPrecisionEta::new([1.0e6, -1.0e6, 0.0], 2.0_f64.ln());
+        let theta = family.theta(&eta, &mut family.workspace());
+
+        assert!(
+            theta
+                .mean()
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.0)
+        );
+        assert_relative_eq!(theta.mean().iter().sum::<f64>(), 1.0, epsilon = 1.0e-12);
+        assert!(
+            family
+                .nll([0.2, 0.3, 0.5], &theta, &mut family.workspace())
+                .is_finite()
+        );
+    }
+
+    #[test]
+    fn checked_theta_rejects_nonrepresentable_alpha() {
+        assert!(DirichletMeanPrecisionTheta::<1>::try_new([1.0], 1.0).is_err());
+        assert!(DirichletMeanPrecisionTheta::<2>::try_new([0.0, 1.0], 1.0).is_err());
+        assert!(
+            DirichletMeanPrecisionTheta::<2>::try_new([f64::MIN_POSITIVE, 1.0], f64::MIN_POSITIVE,)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn nll_matches_hand_computed_value() {
         let family = DirichletMeanPrecision::<3>::new();
-        let theta = DirichletMeanPrecisionTheta::new([0.2, 0.3, 0.5], 10.0);
+        let theta = DirichletMeanPrecisionTheta::try_new([0.2, 0.3, 0.5], 10.0).unwrap();
         let y = [0.1_f64, 0.4, 0.5];
         let expected = -((gamlss_special::ln_gamma(10.0)
             - gamlss_special::ln_gamma(2.0)
@@ -383,7 +502,7 @@ mod tests {
             family
                 .nll(
                     [0.2, 0.3, 0.6],
-                    &DirichletMeanPrecisionTheta::new([0.2, 0.3, 0.5], 3.0),
+                    &DirichletMeanPrecisionTheta::try_new([0.2, 0.3, 0.5], 3.0).unwrap(),
                     &mut family.workspace()
                 )
                 .is_infinite()
@@ -407,11 +526,8 @@ mod tests {
             NoPenalty,
             99,
         );
-        let precision = ParameterBlock::<Precision, gamlss_core::Log, _, _>::linear(
-            DenseDesign::intercept(n),
-            NoPenalty,
-            99,
-        );
+        let precision =
+            ParameterBlock::<Precision, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99);
         let blocks = ParameterBlocks::new((mean, precision));
         let model = Gamlss::try_new_with_observations(
             DirichletMeanPrecision::<3>::new(),

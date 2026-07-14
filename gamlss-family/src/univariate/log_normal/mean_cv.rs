@@ -1,6 +1,6 @@
 use gamlss_core::{
     Cv, Family, InitialEtaFromObservations, InitialEtaFromTheta, Mean, ObservationView,
-    ParameterParts, PositiveLink, ScalarParams,
+    ParameterParts, PositiveLink,
 };
 
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
@@ -98,6 +98,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, CvLink> for LogNormal<MeanCv, MeanLink, CvLink>;
+    parameters = (Mean, Cv);
+    arity = 2;
+);
+
 impl<MeanLink, CvLink> Family for LogNormal<MeanCv, MeanLink, CvLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -108,7 +114,6 @@ where
     type GradientEta = LogNormalMeanCvEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean, Cv), (MeanLink, CvLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

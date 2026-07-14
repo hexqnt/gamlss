@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    Logit, Mu, ObservationView, ParameterParts, PositiveLink, Precision, ScalarParams,
-    UnitIntervalLink,
+    Logit, Mu, ObservationView, ParameterParts, PositiveLink, Precision, UnitIntervalLink,
 };
 
 use gamlss_special::{
@@ -25,7 +24,7 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 /// The mean link must guarantee values in `(0, 1)`.
 ///
 /// ```compile_fail
-/// use gamlss_core::{ScalarParams, Identity, Log};
+/// use gamlss_core::{Identity, Log};
 /// use gamlss_family::Beta;
 ///
 /// let _ = Beta::<Identity, Log>::new();
@@ -121,6 +120,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, PrecisionLink> for Beta<MuLink, PrecisionLink>;
+    parameters = (Mu, Precision);
+    arity = 2;
+);
+
 impl<MuLink, PrecisionLink> Family for Beta<MuLink, PrecisionLink>
 where
     MuLink: UnitIntervalLink<f64>,
@@ -131,7 +136,6 @@ where
     type GradientEta = BetaEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Precision), (MuLink, PrecisionLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

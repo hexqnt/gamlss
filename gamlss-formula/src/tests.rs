@@ -356,7 +356,7 @@ fn pspline_stores_basis_and_reuses_it_for_prediction() {
     assert_eq!(range.clone(), 1..7);
 
     let blocks = built.prediction_blocks(&new_data).unwrap();
-    assert_eq!(blocks.0.len(), 7);
+    assert_eq!(blocks.as_inner().0.len(), 7);
     let theta = vec![0.0; built.model().nparams()];
     let predicted = built.predict_theta(&theta, &new_data).unwrap();
     assert_eq!(predicted.len(), 3);
@@ -396,6 +396,7 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
     for (row, values) in built
         .model()
         .blocks()
+        .as_inner()
         .0
         .x()
         .dense()
@@ -685,8 +686,12 @@ fn cyclic_pspline_prediction_blocks_preserve_penalty_metadata() {
     let theta = [0.0, 1.0, -1.0, 0.5, 0.25, -0.25];
     let mut grad = [0.0; 6];
 
-    let value = blocks.0.penalty().value(&theta);
-    blocks.0.penalty().add_gradient(&theta, &mut grad);
+    let value = blocks.as_inner().0.penalty().value(&theta);
+    blocks
+        .as_inner()
+        .0
+        .penalty()
+        .add_gradient(&theta, &mut grad);
 
     assert!(value > 0.0);
     assert!(grad.iter().any(|value| f64::abs(*value) > 1.0e-8));
@@ -744,5 +749,5 @@ fn prediction_reuses_training_spline_range_not_newdata_range() {
     assert_relative_eq!(basis.max(), 1.0);
 
     let blocks = built.prediction_blocks(&new_data).unwrap();
-    assert_eq!(blocks.0.len(), 5);
+    assert_eq!(blocks.as_inner().0.len(), 5);
 }

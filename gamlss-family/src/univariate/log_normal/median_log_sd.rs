@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, LogSd, Median, ObservationView,
-    ParameterParts, PositiveLink, ScalarParams,
+    ParameterParts, PositiveLink,
 };
 
 use crate::initial::{positive_floor, robust_location_scale, weighted_values};
@@ -94,6 +94,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MedianLink, LogSdLink> for LogNormal<MedianLogSd, MedianLink, LogSdLink>;
+    parameters = (Median, LogSd);
+    arity = 2;
+);
+
 impl<MedianLink, LogSdLink> Family for LogNormal<MedianLogSd, MedianLink, LogSdLink>
 where
     MedianLink: PositiveLink<f64>,
@@ -104,7 +110,6 @@ where
     type GradientEta = LogNormalMedianLogSdEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Median, LogSd), (MedianLink, LogSdLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

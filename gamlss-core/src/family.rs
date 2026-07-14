@@ -1,6 +1,5 @@
-use std::marker::PhantomData;
-
-use crate::{ParameterName, model::ObservationView};
+use crate::model::ParameterPath;
+use crate::{ModelError, model::ObservationView, shape::ParameterShape};
 
 /// Dense expected information matrix for a fixed-arity family.
 ///
@@ -47,108 +46,6 @@ impl<const K: usize> DenseInformation<K> {
     }
 }
 
-/// Scalar parameter tuple specification for ordinary GAMLSS families.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ScalarParams<Params, Links, const K: usize> {
-    marker: PhantomData<(Params, Links)>,
-}
-
-impl<F, Params, Links, const K: usize> ParamSpec<F> for ScalarParams<Params, Links, K> where
-    F: Family
-{
-}
-
-impl<F, Params, Links, const K: usize> ScalarParamSpec<F, K> for ScalarParams<Params, Links, K>
-where
-    F: Family,
-    F::Eta: ParameterParts<K>,
-    F::GradientEta: ParameterParts<K>,
-{
-    type Params = Params;
-    type Links = Links;
-}
-
-/// Location vector plus lower-triangular scale-factor parameter-shape specification.
-///
-/// This is a concrete structured shape for elliptical/location-scale families
-/// such as a multivariate normal parameterized by `mu` and a Cholesky scale
-/// factor. It is intentionally not the generic multivariate-family
-/// abstraction: simplex, copula, shared-factor, sparse-precision, and
-/// independent-product constructions should introduce their own [`ParamSpec`]
-/// shapes when their parameter geometry differs.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LocationCholesky<PVector, PLower, const D: usize> {
-    marker: PhantomData<(PVector, PLower)>,
-}
-
-impl<F, PVector, PLower, const D: usize> ParamSpec<F> for LocationCholesky<PVector, PLower, D> where
-    F: Family
-{
-}
-
-/// Location vector, marginal scale vector, and strict-lower partial-correlation shape.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LocationScalePartialCorr<PVector, PScale, PCorr, const D: usize> {
-    marker: PhantomData<(PVector, PScale, PCorr)>,
-}
-
-impl<F, PVector, PScale, PCorr, const D: usize> ParamSpec<F>
-    for LocationScalePartialCorr<PVector, PScale, PCorr, D>
-where
-    F: Family,
-{
-}
-
-/// Baseline-softmax simplex mean plus scalar precision shape.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MeanPrecisionSimplex<PMean, PPrecision, const D: usize> {
-    marker: PhantomData<(PMean, PPrecision)>,
-}
-
-impl<F, PMean, PPrecision, const D: usize> ParamSpec<F>
-    for MeanPrecisionSimplex<PMean, PPrecision, D>
-where
-    F: Family,
-{
-}
-
-/// Product of two parameter-shape specifications.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ProductSpec<First, Second> {
-    marker: PhantomData<(First, Second)>,
-}
-
-impl<F, First, Second> ParamSpec<F> for ProductSpec<First, Second> where F: Family {}
-
-/// Baseline-softmax simplex parameter-shape specification.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SimplexWeights<P, const C: usize> {
-    marker: PhantomData<P>,
-}
-
-impl<F, P, const C: usize> ParamSpec<F> for SimplexWeights<P, C> where F: Family {}
-
-/// Repeated parameter-shape specification.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Repeated<Spec, const C: usize> {
-    marker: PhantomData<Spec>,
-}
-
-impl<F, Spec, const C: usize> ParamSpec<F> for Repeated<Spec, C> where F: Family {}
-
-/// Homogeneous mixture parameter-shape specification.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MixtureSpec<WeightSpec, ComponentSpec, const C: usize> {
-    marker: PhantomData<(WeightSpec, ComponentSpec)>,
-}
-
-impl<F, WeightSpec, ComponentSpec, const C: usize> ParamSpec<F>
-    for MixtureSpec<WeightSpec, ComponentSpec, C>
-where
-    F: Family,
-{
-}
-
 /// Distribution contract for the compiled GAMLSS objective.
 ///
 /// The predictor layer is responsible for computing raw link-scale
@@ -178,12 +75,15 @@ pub trait Family {
     type Eta;
     /// Distribution parameters on the natural scale.
     type Theta;
-    /// Gradient of the negative log-likelihood with respect to `Eta`.
+    /// Exact gradient of the negative log-likelihood with respect to `Eta`.
+    ///
+    /// A carrier may preserve an exact factorization useful to a composite
+    /// family, such as responsibility times conditional gradient in a finite
+    /// mixture. Codecs must materialize the final scalar derivative for every
+    /// predictor coordinate before model execution.
     type GradientEta;
     /// Reusable per-family buffers for likelihood evaluation.
     type Workspace;
-    /// Typed parameter-shape specification used by compiled model blocks.
-    type ParamSpec;
 
     /// Creates reusable buffers for this family.
     fn workspace(&self) -> Self::Workspace;
@@ -217,10 +117,12 @@ pub trait Family {
     }
     /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
     ///
-    /// `GradientEta` is the gradient of the negative log-likelihood with
-    /// respect to the link-scale predictors `Eta`, after applying the chain
-    /// rule for the family links. It must have the same arity and ordering as
-    /// `Eta`.
+    /// `GradientEta` represents the exact gradient of the negative
+    /// log-likelihood with respect to the link-scale predictors `Eta`, after
+    /// applying the chain rule for family links. It must map unambiguously to
+    /// the same predictor coordinates and ordering as `Eta`; composite carriers
+    /// may retain exact factors until their compilation codec materializes
+    /// scalar scores.
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
@@ -229,176 +131,204 @@ pub trait Family {
     ) -> (f64, Self::GradientEta);
 }
 
-/// Marker trait for typed model parameter-shape specifications.
-pub trait ParamSpec<F: Family + ?Sized> {}
-
-/// Shape contract for ordinary scalar-parameter GAMLSS families.
-pub trait ScalarParamSpec<F, const K: usize>: ParamSpec<F>
-where
-    F: Family,
-    F::Eta: ParameterParts<K>,
-    F::GradientEta: ParameterParts<K>,
-{
-    /// Parameter roles in model-block order.
-    type Params;
-    /// Link functions in model-block order.
-    type Links;
-}
-
-/// Shape contract for a location vector and lower-triangular scale factor.
+/// Opt-in codec between a distribution family and the static compiled-model executor.
 ///
-/// Implement this only for families whose link-scale predictors naturally split
-/// into one vector block and one lower-triangular matrix block. Do not use this
-/// as a catch-all marker for multivariate distributions with different
-/// structure.
-pub trait LocationCholeskySpec<F, const D: usize>: ParamSpec<F>
-where
-    F: Family,
-{
-    /// Parameter role represented by the vector block.
-    type VectorParameter: ParameterName;
-    /// Parameter role represented by the lower-triangular block.
-    type LowerTriangularParameter: ParameterName;
+/// [`Family`] remains the complete likelihood contract and does not imply that
+/// its runtime configuration has a static predictor topology. Implementing this
+/// trait selects one known [`ParameterShape`] and maps its scalar values to and
+/// from the family's named `Eta` carriers.
+pub trait CompilableFamily: Family {
+    /// Static predictor-coordinate geometry for this family.
+    type Shape: ParameterShape;
 
-    /// Assembles link-scale predictors from structured scalar parts.
-    fn eta_from_vector_lower(vector: [f64; D], lower: [[f64; D]; D]) -> F::Eta;
+    /// Builds the family's link-scale carrier from shape values.
+    fn eta_from_shape(values: <Self::Shape as ParameterShape>::Values) -> Self::Eta;
 
-    /// Returns one vector-component gradient from a link-scale gradient value.
-    fn vector_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+    /// Materializes the final scalar derivative for every shape leaf.
+    ///
+    /// Implementations must resolve all factors stored in `GradientEta` here;
+    /// predictor blocks receive plain per-coordinate scores only.
+    fn gradient_to_shape(gradient: &Self::GradientEta) -> <Self::Shape as ParameterShape>::Values;
 
-    /// Returns one lower-triangular gradient entry from a link-scale gradient value.
-    fn lower_triangular_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
-
-    /// Sample-aware initial predictors for the vector and lower-triangular parts.
-    fn initial_vector_lower_from_observations<'obs, Obs>(
-        _family: &F,
-        _obs: &'obs Obs,
-    ) -> ([f64; D], [[f64; D]; D])
+    /// Sample-aware initial link-scale values in shape topology.
+    fn initial_shape<'obs, Obs>(&self, _obs: &'obs Obs) -> <Self::Shape as ParameterShape>::Values
     where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {
-        ([0.0; D], [[0.0; D]; D])
+        Self::Shape::zeros()
+    }
+
+    /// Validates family-instance invariants required by compiled fitting.
+    fn validate_compiled(&self) -> Result<(), ModelError> {
+        Ok(())
     }
 }
 
-/// Shape contract for `mu`, `sigma`, and strict-lower partial-correlation predictors.
-pub trait LocationScalePartialCorrSpec<F, const D: usize>: ParamSpec<F>
-where
-    F: Family,
-{
-    /// Parameter role represented by the location vector block.
-    type LocationParameter: ParameterName;
-    /// Parameter role represented by the marginal scale vector block.
-    type ScaleParameter: ParameterName;
-    /// Parameter role represented by the strict-lower partial-correlation block.
-    type PartialCorrelationParameter: ParameterName;
+/// Opt-in codec for runtime-dimensional compiled families.
+///
+/// This is intentionally separate from the const-generic [`ParameterShape`]
+/// tree. It keeps runtime dimension explicit while allowing a monomorphic
+/// predictor type and allocation-free row likelihood/gradient evaluation.
+pub trait DynamicallyCompilableFamily: Family {
+    /// Number of scalar predictor coordinates for this family instance.
+    fn dynamic_parameter_count(&self) -> usize;
 
-    /// Assembles link-scale predictors from structured scalar parts.
-    fn eta_from_location_scale_partial_corr(
-        location: [f64; D],
-        scale: [f64; D],
-        partial_corr: [[f64; D]; D],
-    ) -> F::Eta;
+    /// Converts a flat predictor-coordinate row into the family's eta carrier.
+    fn eta_from_flat(values: &[f64]) -> Self::Eta;
 
-    /// Returns one location-vector gradient component.
-    fn location_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+    /// Writes a materialized family gradient into flat coordinate order.
+    fn gradient_to_flat(gradient: &Self::GradientEta, out: &mut [f64]);
 
-    /// Returns one scale-vector gradient component.
-    fn scale_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
+    /// NLL directly from flat eta coordinates.
+    fn nll_eta_flat(
+        &self,
+        observation: Self::Observation<'_>,
+        values: &[f64],
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        self.nll_eta(observation, &Self::eta_from_flat(values), workspace)
+    }
 
-    /// Returns one strict-lower partial-correlation gradient entry.
-    fn partial_corr_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
-}
+    /// Fused NLL and in-place flat gradient from flat eta coordinates.
+    fn nll_and_gradient_eta_flat(
+        &self,
+        observation: Self::Observation<'_>,
+        values: &[f64],
+        gradient: &mut [f64],
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        let (nll, materialized) =
+            self.nll_and_gradient_eta(observation, &Self::eta_from_flat(values), workspace);
+        Self::gradient_to_flat(&materialized, gradient);
+        nll
+    }
 
-/// Shape contract for baseline-softmax simplex logits plus scalar precision.
-pub trait MeanPrecisionSimplexSpec<F, const D: usize>: ParamSpec<F>
-where
-    F: Family,
-{
-    /// Parameter role represented by the simplex mean logits.
-    type MeanParameter: ParameterName;
-    /// Parameter role represented by the scalar precision block.
-    type PrecisionParameter: ParameterName;
-    /// Link used by the scalar precision block.
-    type PrecisionLink;
+    /// Semantic role and nested path for one flat coordinate.
+    fn dynamic_parameter_coordinate(&self, index: usize) -> (&'static str, ParameterPath);
 
-    /// Assembles link-scale predictors from `D - 1` free logits and scalar precision.
-    fn eta_from_simplex_logits_precision(logits: [f64; D], precision: f64) -> F::Eta;
-
-    /// Returns one free-logit gradient component.
-    fn simplex_logit_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
-
-    /// Returns the scalar precision gradient component.
-    fn precision_gradient_part(gradient: &F::GradientEta) -> f64;
-}
-
-/// Shape contract for a location-Cholesky block product with one scalar block.
-pub trait LocationCholeskyScalarSpec<F, const D: usize>: ParamSpec<F>
-where
-    F: Family,
-{
-    /// Parameter role represented by the location vector block.
-    type VectorParameter: ParameterName;
-    /// Parameter role represented by the lower-triangular block.
-    type LowerTriangularParameter: ParameterName;
-    /// Parameter role represented by the scalar block.
-    type ScalarParameter: ParameterName;
-    /// Link used by the scalar block.
-    type ScalarLink;
-
-    /// Assembles link-scale predictors from structured scalar parts.
-    fn eta_from_vector_lower_scalar(vector: [f64; D], lower: [[f64; D]; D], scalar: f64) -> F::Eta;
-
-    /// Returns one vector-component gradient.
-    fn vector_gradient_part(gradient: &F::GradientEta, component: usize) -> f64;
-
-    /// Returns one lower-triangular gradient entry.
-    fn lower_triangular_gradient_part(gradient: &F::GradientEta, row: usize, col: usize) -> f64;
-
-    /// Returns the scalar gradient.
-    fn scalar_gradient_part(gradient: &F::GradientEta) -> f64;
-}
-
-/// Shape contract for repeated scalar-parameter component specs.
-pub trait RepeatedScalarParamSpec<F, const D: usize, const K: usize>: ParamSpec<F>
-where
-    F: Family,
-    Self::ComponentFamily: Family,
-    <Self::ComponentFamily as Family>::Eta: ParameterParts<K>,
-    <Self::ComponentFamily as Family>::GradientEta: ParameterParts<K>,
-{
-    /// Scalar component family repeated by the outer family.
-    type ComponentFamily: Family;
-    /// Component parameter roles in model-block order.
-    type Params;
-    /// Component links in model-block order.
-    type Links;
-
-    /// Returns the shared component family.
-    fn component_family(family: &F) -> &Self::ComponentFamily;
-
-    /// Assembles outer-family link-scale predictors from component predictors.
-    fn eta_from_components(components: [<Self::ComponentFamily as Family>::Eta; D]) -> F::Eta;
-
-    /// Returns one component gradient from the outer-family gradient value.
-    fn gradient_component(
-        gradient: &F::GradientEta,
-        component: usize,
-    ) -> &<Self::ComponentFamily as Family>::GradientEta;
-
-    /// Sample-aware initial predictors for one repeated component.
-    fn initial_component_eta_from_observations<'obs, Obs>(
-        _family: &F,
-        _obs: &'obs Obs,
-        _component: usize,
-    ) -> <Self::ComponentFamily as Family>::Eta
+    /// Dataset-aware flat eta initializer.
+    fn initial_flat<'obs, Obs>(&self, _obs: &'obs Obs) -> Vec<f64>
     where
-        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
-        Self::ComponentFamily: InitialEtaFromObservations<K>,
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {
-        <Self::ComponentFamily as Family>::Eta::from_array([0.0; K])
+        vec![0.0; self.dynamic_parameter_count()]
+    }
+
+    /// Validates runtime family configuration for compiled fitting.
+    fn validate_dynamic_compiled(&self) -> Result<(), ModelError> {
+        if self.dynamic_parameter_count() == 0 {
+            Err(ModelError::InvalidParameter {
+                parameter: "dynamic parameter count",
+                expected: "positive",
+            })
+        } else {
+            Ok(())
+        }
     }
 }
+
+/// Implements [`CompilableFamily`] for an ordinary fixed-arity scalar family.
+///
+/// This macro is primarily intended for distribution crates. Links deliberately
+/// do not appear in the shape: they remain an implementation detail of the
+/// family named by the `impl` header.
+#[macro_export]
+macro_rules! impl_scalar_compilable_family {
+    (
+        impl for $family:ty;
+        parameters = ($($parameter:ty),+ $(,)?);
+        arity = $arity:literal $(;)?
+    ) => {
+        impl $crate::CompilableFamily for $family
+        where
+            $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
+            <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
+            <$family as $crate::Family>::GradientEta: $crate::ParameterParts<$arity>,
+        {
+            type Shape = $crate::shape::ScalarTuple<($($parameter,)+), $arity>;
+
+            fn eta_from_shape(values: [f64; $arity]) -> Self::Eta {
+                <Self::Eta as $crate::ParameterParts<$arity>>::from_array(values)
+            }
+
+            fn gradient_to_shape(gradient: &Self::GradientEta) -> [f64; $arity] {
+                std::array::from_fn(|index| {
+                    <Self::GradientEta as $crate::ParameterParts<$arity>>::part(gradient, index)
+                })
+            }
+
+            fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> [f64; $arity]
+            where
+                Obs: $crate::ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+            {
+                let eta = self.initial_eta_from_observations(obs);
+                std::array::from_fn(|index| {
+                    <Self::Eta as $crate::ParameterParts<$arity>>::part(&eta, index)
+                })
+            }
+        }
+    };
+    (
+        impl<$($generic:ident),+> for $family:ty;
+        parameters = ($($parameter:ty),+ $(,)?);
+        arity = $arity:literal $(;)?
+    ) => {
+        impl<$($generic),+> $crate::CompilableFamily for $family
+        where
+            $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
+            <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
+            <$family as $crate::Family>::GradientEta: $crate::ParameterParts<$arity>,
+        {
+            type Shape = $crate::shape::ScalarTuple<($($parameter,)+), $arity>;
+
+            #[inline]
+            fn eta_from_shape(values: [f64; $arity]) -> Self::Eta {
+                <Self::Eta as $crate::ParameterParts<$arity>>::from_array(values)
+            }
+
+            #[inline]
+            fn gradient_to_shape(gradient: &Self::GradientEta) -> [f64; $arity] {
+                std::array::from_fn(|index| {
+                    <Self::GradientEta as $crate::ParameterParts<$arity>>::part(gradient, index)
+                })
+            }
+
+            fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> [f64; $arity]
+            where
+                Obs: $crate::ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+            {
+                let eta = self.initial_eta_from_observations(obs);
+                std::array::from_fn(|index| {
+                    <Self::Eta as $crate::ParameterParts<$arity>>::part(&eta, index)
+                })
+            }
+        }
+    };
+}
+
+/// Error returned when a distribution cannot generate a sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationError {
+    /// Natural-scale parameters are outside the sampler's domain.
+    InvalidParameters(&'static str),
+    /// The random backend rejected otherwise representable parameters.
+    BackendRejected(&'static str),
+    /// Generated normalization or arithmetic was non-finite.
+    NumericalFailure(&'static str),
+}
+
+impl std::fmt::Display for SimulationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, detail) = match self {
+            Self::InvalidParameters(detail) => ("invalid simulation parameters", detail),
+            Self::BackendRejected(detail) => ("sampling backend rejected parameters", detail),
+            Self::NumericalFailure(detail) => ("numerical simulation failure", detail),
+        };
+        write!(formatter, "{kind}: {detail}")
+    }
+}
+
+impl std::error::Error for SimulationError {}
 
 /// Extension trait for families that provide diagonal Fisher information.
 ///
@@ -668,17 +598,42 @@ where
     }
 }
 
-/// Marker extension trait for families with conditional CDF support.
-///
-/// This is reserved for multivariate diagnostics and forecasting APIs that
-/// need conditional probability statements rather than a joint CDF.
-pub trait HasConditionalCdf: Family {}
+/// Narrow runtime observation-dimension capability.
+pub trait HasObservationDimension: Family {
+    /// Number of scalar coordinates in one observation.
+    fn observation_dimension(&self) -> usize;
+}
 
-/// Marker extension trait for families with Rosenblatt transform support.
-///
-/// This is reserved for multivariate PIT and residual diagnostics where the
-/// joint CDF is not a scalar PIT substitute.
-pub trait HasRosenblattTransform: Family {}
+/// Distribution helper for ordered conditional CDFs.
+pub trait HasConditionalCdf: HasObservationDimension {
+    /// Evaluates `P(Y_component <= y | Y_0..Y_component-1 = preceding)`.
+    ///
+    /// Invalid component indices, parameter domains, or insufficient
+    /// conditioning values are represented by `NaN`.
+    fn conditional_cdf(
+        &self,
+        component: usize,
+        y: f64,
+        preceding: &[f64],
+        theta: &Self::Theta,
+    ) -> f64;
+}
+
+/// Distribution helper for ordered Rosenblatt transforms.
+pub trait HasRosenblattTransform: HasObservationDimension {
+    /// Writes one conditional PIT value per observation coordinate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::ResponseLength`] when `out` does not match the
+    /// family's observation dimension.
+    fn rosenblatt_into(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>;
+}
 
 /// Distribution helper for the quantile function.
 pub trait HasQuantile: Family {
@@ -727,7 +682,24 @@ pub trait HasCrps: Family {
     fn crps(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
-/// Distribution helper for simulation.
+/// Fallible distribution helper for compositional simulation.
+pub trait TrySimulate<Rng>: Family {
+    /// Generated sample representation.
+    type Sample;
+
+    /// Attempts to generate one sample for natural-scale parameters.
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError>;
+}
+
+/// Infallible distribution helper for simulation.
+///
+/// Composition should prefer [`TrySimulate`]. This trait remains a separate
+/// convenience surface because not every sample representation has an honest
+/// invalid sentinel.
 pub trait CanSimulate<Rng>: Family {
     /// Generated sample representation.
     ///

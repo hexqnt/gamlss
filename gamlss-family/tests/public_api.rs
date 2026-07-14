@@ -34,6 +34,37 @@ where
 }
 
 #[test]
+fn mixture_prelude_exposes_read_only_gradient_carriers() {
+    use gamlss_family::prelude::{Mixture, MixtureEta, NormalEta, NormalMuSigma};
+
+    let family = Mixture::<_, 2>::try_new(NormalMuSigma::new()).unwrap();
+    let eta = MixtureEta::new(
+        [0.2, 0.0],
+        [
+            NormalEta {
+                mu: -0.5,
+                sigma: 0.0,
+            },
+            NormalEta {
+                mu: 0.5,
+                sigma: 0.0,
+            },
+        ],
+    );
+    let (_, gradient) = family.nll_and_gradient_eta(0.1, &eta, &mut family.workspace());
+
+    assert_eq!(gradient.logits().len(), 2);
+    assert_eq!(gradient.components().len(), 2);
+    assert!(gradient.components()[0].responsibility().is_finite());
+    assert!(
+        gradient.components()[0]
+            .conditional_gradient()
+            .mu
+            .is_finite()
+    );
+}
+
+#[test]
 fn semantic_parameterization_aliases_construct_without_type_annotations() {
     assert!(finite_nll(
         GammaMeanCv::new(),
@@ -272,7 +303,7 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
         dirichlet
             .nll(
                 [0.2, 0.3, 0.5],
-                &DirichletMeanPrecisionTheta::new([0.2, 0.3, 0.5], 5.0),
+                &DirichletMeanPrecisionTheta::try_new([0.2, 0.3, 0.5], 5.0).unwrap(),
                 &mut workspace
             )
             .is_finite()
@@ -284,6 +315,9 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
     let eta = MvStudentTCholeskyEta::new([0.0, 0.0, 0.0], cholesky, 1.0);
     let mut workspace = ();
     let theta = student.theta(&eta, &mut workspace);
+    assert!(theta.mu().iter().all(|value| value.abs() <= f64::EPSILON));
+    assert_eq!(theta.cholesky().get(1, 0), Some(0.2));
+    assert!(theta.tau() > 2.0);
     assert!(
         student
             .nll([0.1, -0.2, 0.3], &theta, &mut workspace)
@@ -293,7 +327,7 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
         student
             .nll(
                 [0.1, -0.2, 0.3],
-                &MvStudentTCholeskyTheta::new([0.0, 0.0, 0.0], cholesky, 5.0),
+                &MvStudentTCholeskyTheta::try_new([0.0, 0.0, 0.0], cholesky, 5.0).unwrap(),
                 &mut workspace
             )
             .is_finite()
@@ -322,4 +356,14 @@ fn multivariate_prelude_exposes_new_generic_families() {
     let _ = MvNormalMeanStdPartialCorrDefault::<4>::new();
     let _ = MvStudentTCholeskyDefault::<4>::new();
     let _ = PackedPartialCorr::<4>::zeros();
+}
+
+#[cfg(feature = "multivariate")]
+#[test]
+fn multivariate_matrix_module_owns_triangular_storage() {
+    use gamlss_family::multivariate::matrix::{FixedLowerTriangular, PackedLowerTriangular};
+
+    let _ = FixedLowerTriangular::<2>::zeros();
+    let packed = PackedLowerTriangular::try_new(2, vec![1.0, 0.0, 1.0]).unwrap();
+    assert_eq!(packed.dimension(), 2);
 }

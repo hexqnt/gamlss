@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, PositiveLink, ScalarParams,
+    ParameterParts, PositiveLink,
 };
 
 use crate::initial::{positive_floor, weighted_mean, weighted_values};
@@ -82,6 +82,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<Link> for Exponential<MeanParam, Link>;
+    parameters = (Mean,);
+    arity = 1;
+);
+
 impl<Link> Family for Exponential<MeanParam, Link>
 where
     Link: PositiveLink<f64>,
@@ -91,7 +97,6 @@ where
     type GradientEta = ExponentialMeanEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean,), (Link,), 1>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

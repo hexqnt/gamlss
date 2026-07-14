@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "gamlss-bayes",
     "gamlss-core",
     "gamlss-diagnostics",
     "gamlss-family",
@@ -25,6 +26,7 @@ categories = ["algorithms", "mathematics", "science"]
 [workspace.dependencies]
 approx = "0.5.1"
 gamlss-core = { path = "gamlss-core", version = "0.3.1" }
+gamlss-bayes = { path = "gamlss-bayes", version = "0.3.1" }
 gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.1" }
 gamlss-family = { path = "gamlss-family", version = "0.3.1" }
 gamlss-formula = { path = "gamlss-formula", version = "0.3.1" }
@@ -71,11 +73,13 @@ include = [
 
 [features]
 default = ["formula"]
+bayes = ["dep:gamlss-bayes"]
 formula = ["dep:gamlss-formula"]
 multivariate = ["gamlss-family/multivariate"]
 rand = ["gamlss-family/rand"]
 
 [dependencies]
+gamlss-bayes = { workspace = true, optional = true }
 gamlss-core.workspace = true
 gamlss-diagnostics.workspace = true
 gamlss-family.workspace = true

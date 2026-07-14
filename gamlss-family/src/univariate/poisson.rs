@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams,
+    ObservationView, ParameterParts, PositiveLink,
 };
 
 use gamlss_special::{
@@ -195,6 +195,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink> for Poisson<MuLink>;
+    parameters = (Mu,);
+    arity = 1;
+);
+
 impl<MuLink> Family for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -204,7 +210,6 @@ where
     type GradientEta = PoissonEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu,), (MuLink,), 1>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

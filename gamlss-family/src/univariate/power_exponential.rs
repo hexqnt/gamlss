@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, ScalarParams, Sigma,
+    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 
 use gamlss_special::{
@@ -143,6 +143,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink, NuLink> for PowerExponential<MuLink, SigmaLink, NuLink>;
+    parameters = (Mu, Sigma, Nu);
+    arity = 3;
+);
+
 impl<MuLink, SigmaLink, NuLink> Family for PowerExponential<MuLink, SigmaLink, NuLink>
 where
     MuLink: Link<f64>,
@@ -154,7 +160,6 @@ where
     type GradientEta = PowerExponentialEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma, Nu), (MuLink, SigmaLink, NuLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

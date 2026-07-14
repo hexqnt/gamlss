@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 #[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
+use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
     Identity, InitialEtaFromObservations, InitialEtaFromTheta, LinearPredictorBlock, Link, Log,
     ModelError, Mu, NoPenalty, ObservationView, ParameterBlock, ParameterBlocks, ParameterParts,
-    Penalty, PositiveLink, ScalarParams, Sigma,
+    Penalty, PositiveLink, Sigma,
 };
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
@@ -25,10 +25,10 @@ pub type NormalMuSigma = Normal<Identity, Log>;
 /// The lifetime tracks the borrowed response slice.
 pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Gamlss<
     NormalMuSigma,
-    (
-        ParameterBlock<Mu, Identity, LinearPredictorBlock<XMu>, PMu>,
-        ParameterBlock<Sigma, Log, LinearPredictorBlock<XSigma>, PSigma>,
-    ),
+    ParameterBlocks<(
+        ParameterBlock<Mu, LinearPredictorBlock<XMu>, PMu>,
+        ParameterBlock<Sigma, LinearPredictorBlock<XSigma>, PSigma>,
+    )>,
     &'a [f64],
 >;
 
@@ -115,6 +115,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink> for Normal<MuLink, SigmaLink>;
+    parameters = (Mu, Sigma);
+    arity = 2;
+);
+
 impl<MuLink, SigmaLink> Family for Normal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -125,7 +131,6 @@ where
     type GradientEta = NormalEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -268,6 +273,29 @@ where
     }
 }
 
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for Normal<MuLink, SigmaLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        if !Self::valid_theta(*theta) {
+            return Err(SimulationError::InvalidParameters("Normal theta"));
+        }
+        let distribution = rand_distr::Normal::new(theta.mu, theta.sigma)
+            .map_err(|_| SimulationError::BackendRejected("Normal location/scale"))?;
+        Ok(rand_distr::Distribution::sample(&distribution, rng))
+    }
+}
+
 /// Normal distribution predictors on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalEta {
@@ -376,8 +404,8 @@ where
     PSigma: Penalty,
 {
     let blocks = ParameterBlocks::try_new((
-        ParameterBlock::<Mu, Identity, _, _>::linear(mu_x, mu_penalty, 0),
-        ParameterBlock::<Sigma, Log, _, _>::linear(sigma_x, sigma_penalty, 0),
+        ParameterBlock::<Mu, _, _>::linear(mu_x, mu_penalty, 0),
+        ParameterBlock::<Sigma, _, _>::linear(sigma_x, sigma_penalty, 0),
     ))?;
 
     Gamlss::try_new(NormalMuSigma::new(), blocks, y)

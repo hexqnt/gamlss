@@ -6,10 +6,9 @@ pub use multivariate::IndependentVec;
 #[cfg(feature = "multivariate")]
 pub use multivariate::normal::{
     DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-    DynMvNormalCholeskyTheta, FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyDefault,
-    MvNormalCholeskyEta, MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr,
-    MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
-    MvNormalMeanStdPartialCorrTheta, PackedLowerTriangular, PackedPartialCorr,
+    DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
+    MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+    MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta, PackedPartialCorr,
 };
 #[cfg(feature = "multivariate")]
 pub use multivariate::student_t::{
@@ -18,6 +17,7 @@ pub use multivariate::student_t::{
 #[cfg(feature = "multivariate")]
 pub use multivariate::{
     DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+    FixedLowerTriangular, PackedLowerTriangular,
 };
 pub use univariate::{
     Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta, BernoulliProbability,
@@ -35,14 +35,13 @@ pub use univariate::{
     LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
     LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
     LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
-    LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta, Mixture,
-    MixtureEta, MixtureGradient, MixtureTheta, MixtureWorkspace, NegativeBinomial,
+    LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta, NegativeBinomial,
     NegativeBinomialEta, NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
     NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize, NegativeBinomialTheta, Normal,
     NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean,
     PoissonTheta, PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu,
-    PowerExponentialTheta, ResponsibleGradient, Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta,
-    SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
+    PowerExponentialTheta, Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal,
+    SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
     SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta,
     SkewStudentTMeanSd, SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
     SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
@@ -61,9 +60,16 @@ pub use univariate::{
     ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
 };
 
+pub use mixture::{
+    FactorizedComponentGradient, Mixture, MixtureEta, MixtureGradient, MixtureTheta,
+    MixtureWorkspace,
+};
+
 mod constants;
 mod domain;
 mod initial;
+/// Homogeneous finite-mixture distributions.
+pub mod mixture;
 /// Multivariate distributions.
 #[cfg(feature = "multivariate")]
 pub mod multivariate;
@@ -91,43 +97,44 @@ pub mod prelude {
         Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta,
         BernoulliProbability, BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta,
         Exponential, ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, ExponentialRate,
-        ExponentialRateEta, ExponentialRateTheta, Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta,
-        GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate,
-        GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, Ged, GedMuSigmaNu, GeneralizedGamma,
-        GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta, Gev, GevEta,
-        GevMuSigmaShape, GevTheta, Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian,
-        InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
-        InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
-        InverseGaussianTheta, JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta,
-        Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta, LogNormal, LogNormalEta,
-        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
-        LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd,
-        LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        ExponentialRateEta, ExponentialRateTheta, FactorizedComponentGradient, Gamma, GammaEta,
+        GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta,
+        GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta, GammaTheta,
+        Ged, GedMuSigmaNu, GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu,
+        GeneralizedGammaTheta, Gev, GevEta, GevMuSigmaShape, GevTheta, Gumbel, GumbelEta,
+        GumbelMuSigma, GumbelTheta, InverseGaussian, InverseGaussianEta, InverseGaussianMeanCv,
+        InverseGaussianMeanCvEta, InverseGaussianMeanCvTheta, InverseGaussianMeanShape,
+        InverseGaussianMuShape, InverseGaussianTheta, JohnsonSu, JohnsonSuEta,
+        JohnsonSuMuSigmaNuTau, JohnsonSuTheta, Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta,
+        LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
+        LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
+        LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
         LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
-        LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta,
-        NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
-        NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
-        NegativeBinomialMeanSize, NegativeBinomialTheta, Normal, NormalEta, NormalGamlss,
-        NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean, PoissonTheta,
-        PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu, PowerExponentialTheta,
-        Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
-        SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
-        SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd,
-        SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
-        SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
-        StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma,
-        StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev,
-        StudentTTheta, Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
-        TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullEta,
-        WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape,
-        WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta, Zaga,
-        ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
-        ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
-        ZagaTotalMeanCvZeroProbabilityTheta, Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta,
-        ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
-        ZinbTotalMeanSizeZeroProbabilityEta, ZinbTotalMeanSizeZeroProbabilityTheta, Zip,
-        ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
-        ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
+        LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta, Mixture,
+        MixtureEta, MixtureGradient, MixtureTheta, NegativeBinomial, NegativeBinomialEta,
+        NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
+        NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize, NegativeBinomialTheta,
+        Normal, NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, Poisson, PoissonEta,
+        PoissonMean, PoissonTheta, PowerExponential, PowerExponentialEta,
+        PowerExponentialMuSigmaNu, PowerExponentialTheta, Shash, ShashEta, ShashMuSigmaNuTau,
+        ShashTheta, SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta,
+        SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
+        SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd, SkewStudentTMeanSdEta,
+        SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau,
+        SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta, StudentTMuSdTau,
+        StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau,
+        StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta, Tweedie,
+        TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta, TweedieMeanCvPowerTheta,
+        TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullEta, WeibullMeanShape,
+        WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeEta,
+        WeibullScaleShapeTheta, WeibullTheta, Zaga, ZagaComponentMeanCvZeroProbability, ZagaEta,
+        ZagaMeanSigmaZeroProbability, ZagaTheta, ZagaTotalMeanCvZeroProbability,
+        ZagaTotalMeanCvZeroProbabilityEta, ZagaTotalMeanCvZeroProbabilityTheta, Zinb,
+        ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability, ZinbTheta,
+        ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityEta,
+        ZinbTotalMeanSizeZeroProbabilityTheta, Zip, ZipComponentMeanZeroProbability, ZipEta,
+        ZipMeanZeroProbability, ZipTheta, ZipTotalMeanZeroProbability,
+        ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
     };
 }
 

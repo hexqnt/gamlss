@@ -1,6 +1,6 @@
 use gamlss_core::{
     Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean, ObservationView,
-    ParameterParts, PositiveLink, ScalarParams, Shape,
+    ParameterParts, PositiveLink, Shape,
 };
 
 use gamlss_special::{digamma, ln_gamma};
@@ -105,6 +105,12 @@ impl From<WeibullMeanShapeTheta> for WeibullScaleShapeTheta {
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, ShapeLink> for Weibull<MeanShape, MeanLink, ShapeLink>;
+    parameters = (Mean, Shape);
+    arity = 2;
+);
+
 impl<MeanLink, ShapeLink> Family for Weibull<MeanShape, MeanLink, ShapeLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -115,7 +121,6 @@ where
     type GradientEta = WeibullMeanShapeEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mean, Shape), (MeanLink, ShapeLink), 2>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}

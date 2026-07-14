@@ -4,6 +4,16 @@ fn high_level_crate_reexports_diagnostics_module() {
     use gamlss::diagnostics as _;
 }
 
+#[cfg(feature = "bayes")]
+#[test]
+fn high_level_crate_reexports_opt_in_bayesian_api() {
+    use gamlss::bayes::GaussianCoefficientPrior;
+    use gamlss::prelude::CoefficientPrior;
+
+    let prior = GaussianCoefficientPrior::isotropic(2, 0.0, 1.0).unwrap();
+    assert_eq!(prior.dimension(), 2);
+}
+
 #[cfg(feature = "multivariate")]
 #[test]
 fn high_level_crate_reexports_multivariate_family() {

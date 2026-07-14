@@ -2,7 +2,7 @@
 //!
 //! `UserNormal` intentionally duplicates the normal law to keep the formulas
 //! familiar. A real custom family follows the same shape:
-//! - choose typed parameter markers and link functions through `ParamSpec`;
+//! - implement `CompilableFamily` with a static predictor shape;
 //! - convert link-scale predictors `Eta` to natural parameters `Theta`;
 //! - return scalar negative log-likelihood and its NLL gradient on the link scale.
 
@@ -12,8 +12,7 @@ use std::marker::PhantomData;
 
 use gamlss::core::{
     DenseDesign, Family, Gamlss, HasCdf, Identity, InitialEtaFromObservations, Link, Log, Mu,
-    NoPenalty, Objective, ParameterBlock, ParameterBlocks, ParameterParts, PositiveLink,
-    ScalarParams, Sigma,
+    NoPenalty, Objective, ParameterBlock, ParameterBlocks, ParameterParts, PositiveLink, Sigma,
 };
 
 const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
@@ -35,6 +34,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, SigmaLink> for UserNormal<MuLink, SigmaLink>;
+    parameters = (Mu, Sigma);
+    arity = 2;
+);
+
 impl<MuLink, SigmaLink> Family for UserNormal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -45,7 +50,6 @@ where
     type GradientEta = UserNormalEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Sigma), (MuLink, SigmaLink), 2>;
 
     fn workspace(&self) -> Self::Workspace {}
 
@@ -170,8 +174,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = y.len();
 
     let blocks = ParameterBlocks::try_new((
-        ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
-        ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
+        ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
+        ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 0),
     ))?;
 
     let family = UserNormal::<Identity, Log>::new();

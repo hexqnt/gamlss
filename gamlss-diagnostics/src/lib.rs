@@ -31,8 +31,8 @@
 //! # use gamlss_family::Normal;
 //! # let y = [0.0, 1.0, -1.0];
 //! # let blocks = ParameterBlocks::new((
-//! #     ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
-//! #     ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+//! #     ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+//! #     ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
 //! # ));
 //! # let model = Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, &y)?;
 //! let parameters = [0.0, 0.0];
@@ -43,14 +43,16 @@
 //! ```
 
 use gamlss_core::{
-    Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView, PredictionView,
+    Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, HasMarginalCdf, HasObservationDimension,
+    ModelError, ObservationView, PredictionView,
 };
 use gamlss_special::unit_normal_quantile;
 
 /// Common diagnostics imports.
 pub mod prelude {
     pub use crate::{
-        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt, PredictionDiagnosticsView,
+        CdfDiagnosticsExt, CrpsDiagnosticsExt, MarginalCdfDiagnosticsExt, PredictionDiagnosticsExt,
+        PredictionDiagnosticsView,
     };
 }
 
@@ -170,6 +172,70 @@ where
                 self.obs.observation_at(row),
                 &theta,
             );
+        })
+    }
+}
+
+/// Explicit component-wise marginal PIT diagnostics for multivariate families.
+pub trait MarginalCdfDiagnosticsExt<F, Blocks> {
+    /// Returns marginal PIT values for one response coordinate.
+    ///
+    /// `observations` contains that coordinate in model row order. The explicit
+    /// scalar slice prevents a joint multivariate CDF from being mistaken for a
+    /// scalar PIT.
+    fn marginal_pit_values(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+    ) -> Result<Vec<f64>, ModelError>;
+
+    /// Writes marginal PIT values into `out`.
+    fn marginal_pit_values_into(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError>;
+}
+
+impl<F, Blocks, Obs> MarginalCdfDiagnosticsExt<F, Blocks> for Gamlss<F, Blocks, Obs>
+where
+    F: HasMarginalCdf + HasObservationDimension,
+    Blocks: GamlssBlocks<F>,
+    for<'obs> Obs: ObservationView<'obs, Observation = F::Observation<'obs>>,
+{
+    fn marginal_pit_values(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+    ) -> Result<Vec<f64>, ModelError> {
+        let mut out = vec![0.0; self.nobs()];
+        self.marginal_pit_values_into(parameters, component, observations, &mut out)?;
+        Ok(out)
+    }
+
+    fn marginal_pit_values_into(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        if component >= self.family().observation_dimension() {
+            return Err(ModelError::InvalidParameter {
+                parameter: "marginal PIT component",
+                expected: "inside the family observation dimension",
+            });
+        }
+        validate_output_len(self.nobs(), observations.len())?;
+        validate_output_len(self.nobs(), out.len())?;
+        self.for_each_theta(parameters, |row, theta| {
+            out[row] = self
+                .family()
+                .marginal_cdf(component, observations[row], &theta);
         })
     }
 }
@@ -570,34 +636,26 @@ mod tests {
 
     type TestModel<'a> = Gamlss<
         Normal<Identity, Log>,
-        (
-            ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-            ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-        ),
+        ParameterBlocks<(
+            ParameterBlock<Mu, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+            ParameterBlock<Sigma, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        )>,
         &'a [f64],
     >;
 
     type WeightedTestModel<'a> = Gamlss<
         Normal<Identity, Log>,
-        (
-            ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-            ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-        ),
+        ParameterBlocks<(
+            ParameterBlock<Mu, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+            ParameterBlock<Sigma, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        )>,
         (&'a [f64], &'a [f64]),
     >;
 
     fn normal_intercept_model(y: &[f64]) -> TestModel<'_> {
         let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
         ));
 
         Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, y).expect("valid normal model")
@@ -608,16 +666,8 @@ mod tests {
         weights: &'a [f64],
     ) -> WeightedTestModel<'a> {
         let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
         ));
 
         Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, y, weights)

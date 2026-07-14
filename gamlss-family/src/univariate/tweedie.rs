@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
-    Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, ScalarParams,
-    UnitIntervalLink,
+    Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, UnitIntervalLink,
 };
 
 use gamlss_special::{
@@ -360,6 +359,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, DispersionLink, PowerLink> for Tweedie<MeanLink, DispersionLink, PowerLink>;
+    parameters = (Mu, Dispersion, Power);
+    arity = 3;
+);
+
 impl<MeanLink, DispersionLink, PowerLink> Family for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -371,8 +376,6 @@ where
     type GradientEta = TweedieEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec =
-        ScalarParams<(Mu, Dispersion, Power), (MeanLink, DispersionLink, PowerLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -645,6 +648,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, CvLink, PowerLink> for TweedieCv<MeanLink, CvLink, PowerLink>;
+    parameters = (Mu, Cv, Power);
+    arity = 3;
+);
+
 impl<MeanLink, CvLink, PowerLink> Family for TweedieCv<MeanLink, CvLink, PowerLink>
 where
     MeanLink: PositiveLink<f64>,
@@ -656,7 +665,6 @@ where
     type GradientEta = TweedieMeanCvPowerEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(Mu, Cv, Power), (MeanLink, CvLink, PowerLink), 3>;
 
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
@@ -806,9 +814,9 @@ mod tests {
     use gamlss_core::CanSimulate;
     use gamlss_core::{Family, HasCdf};
 
-    use super::{
-        TweedieMeanCvPower, TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
-    };
+    #[cfg(feature = "rand")]
+    use super::{TweedieMeanCvPower, TweedieMeanCvPowerTheta};
+    use super::{TweedieMeanDispersionPower, TweedieTheta};
 
     #[test]
     fn tweedie_cdf_does_not_stop_on_underflow_before_the_poisson_mode() {

@@ -40,7 +40,12 @@ impl Link<f64> for Log {
     }
 }
 
-impl PositiveLink<f64> for Log {}
+impl PositiveLink<f64> for Log {
+    #[inline]
+    fn derivative_log_inverse(_: f64) -> f64 {
+        1.0
+    }
+}
 
 impl InitialEtaFromTheta<f64> for Log {
     #[inline]
@@ -76,7 +81,18 @@ impl Link<f64> for Softplus {
     }
 }
 
-impl PositiveLink<f64> for Softplus {}
+impl PositiveLink<f64> for Softplus {
+    #[inline]
+    fn derivative_log_inverse(eta: f64) -> f64 {
+        if eta > 30.0 {
+            1.0 / eta
+        } else if eta < -30.0 {
+            1.0 / (1.0 + eta.exp())
+        } else {
+            Self::derivative_inverse(eta) / Self::inverse(eta)
+        }
+    }
+}
 
 impl InitialEtaFromTheta<f64> for Softplus {
     #[inline]
@@ -187,7 +203,17 @@ impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
     }
 }
 
-impl<const MIN: i64, const MAX: i64> PositiveLink<f64> for ClampedLog<MIN, MAX> {}
+impl<const MIN: i64, const MAX: i64> PositiveLink<f64> for ClampedLog<MIN, MAX> {
+    #[allow(clippy::cast_precision_loss)]
+    #[inline]
+    fn derivative_log_inverse(eta: f64) -> f64 {
+        if (MIN as f64..=MAX as f64).contains(&eta) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+}
 
 impl<const MIN: i64, const MAX: i64> InitialEtaFromTheta<f64> for ClampedLog<MIN, MAX> {
     #[inline]
@@ -230,7 +256,14 @@ pub trait InitialEtaFromTheta<S>: Link<S> {
 ///
 /// This contract is suitable for scale/rate/shape-like parameters without an
 /// upper bound. For probabilities use [`UnitIntervalLink`].
-pub trait PositiveLink<S>: Link<S> {}
+pub trait PositiveLink<S>: Link<S> {
+    /// Derivative of `ln(inverse(eta))` with respect to `eta`.
+    ///
+    /// Positive-scale likelihoods often contain a log-Jacobian term. Computing
+    /// its chain rule directly avoids the unstable intermediate
+    /// `derivative_inverse(eta) / inverse(eta)` for very small positive values.
+    fn derivative_log_inverse(eta: S) -> S;
+}
 
 /// Marker for link functions that guarantee a result in `(0, 1)`.
 ///

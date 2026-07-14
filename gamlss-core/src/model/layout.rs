@@ -94,6 +94,32 @@ impl ParameterPath {
         self.axes
     }
 
+    /// Appends one inner axis to this path.
+    #[inline]
+    pub fn push_axis(&mut self, axis: ParameterAxis) {
+        self.axes.push(axis);
+    }
+
+    /// Returns this path with one inner axis appended.
+    #[must_use]
+    #[inline]
+    pub fn with_axis(mut self, axis: ParameterAxis) -> Self {
+        self.push_axis(axis);
+        self
+    }
+
+    /// Returns this path prefixed by an outer path.
+    #[must_use]
+    pub fn prefixed_by(mut self, prefix: &Self) -> Self {
+        if prefix.axes.is_empty() {
+            return self;
+        }
+        let mut axes = Vec::with_capacity(prefix.axes.len() + self.axes.len());
+        axes.extend_from_slice(&prefix.axes);
+        axes.append(&mut self.axes);
+        Self { axes }
+    }
+
     /// `true` when this path refers to the whole named parameter role.
     #[must_use]
     #[inline]

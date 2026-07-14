@@ -1,8 +1,9 @@
 #[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
+use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
-    Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf, InitialEtaFromObservations,
-    ObservationView, ParameterParts, Repeated, RepeatedScalarParamSpec, ScalarParamSpec,
+    CompilableFamily, Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf,
+    HasObservationDimension, ObservationView,
+    shape::{ParameterShape, Repeated},
 };
 
 /// Independent fixed-size product of one scalar family.
@@ -25,9 +26,14 @@ pub struct IndependentVec<F, const D: usize> {
 
 impl<F, const D: usize> IndependentVec<F, D> {
     /// Creates an independent product family from a scalar component family.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the compile-time dimension is zero.
     #[must_use]
     #[inline]
     pub const fn new(component: F) -> Self {
+        assert!(D > 0, "independent product dimension must be positive");
         Self { component }
     }
 
@@ -64,7 +70,6 @@ where
     type GradientEta = [F::GradientEta; D];
     type Observation<'obs> = [f64; D];
     type Workspace = [F::Workspace; D];
-    type ParamSpec = Repeated<F::ParamSpec, D>;
 
     fn workspace(&self) -> Self::Workspace {
         std::array::from_fn(|_| self.component.workspace())
@@ -159,6 +164,15 @@ impl<F, const D: usize> FixedDimensionalFamily<D> for IndependentVec<F, D> where
 {
 }
 
+impl<F, const D: usize> HasObservationDimension for IndependentVec<F, D>
+where
+    F: for<'obs> Family<Observation<'obs> = f64>,
+{
+    fn observation_dimension(&self) -> usize {
+        D
+    }
+}
+
 impl<F, const D: usize> HasCdf for IndependentVec<F, D>
 where
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf,
@@ -201,51 +215,58 @@ where
     }
 }
 
-impl<F, Spec, Params, Links, const D: usize, const K: usize>
-    RepeatedScalarParamSpec<IndependentVec<F, D>, D, K> for Repeated<Spec, D>
+#[cfg(feature = "rand")]
+impl<Rng, F, const D: usize> TrySimulate<Rng> for IndependentVec<F, D>
 where
-    F: for<'obs> Family<Observation<'obs> = f64>,
-    Spec: ScalarParamSpec<F, K, Params = Params, Links = Links>,
-    F::Eta: ParameterParts<K>,
-    F::GradientEta: ParameterParts<K>,
+    F: for<'obs> Family<Observation<'obs> = f64> + TrySimulate<Rng>,
 {
-    type ComponentFamily = F;
-    type Params = Params;
-    type Links = Links;
+    type Sample = [F::Sample; D];
 
-    fn component_family(family: &IndependentVec<F, D>) -> &Self::ComponentFamily {
-        family.component()
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        let mut samples = Vec::with_capacity(D);
+        for component_theta in theta {
+            samples.push(self.component.try_sample(rng, component_theta)?);
+        }
+        samples
+            .try_into()
+            .map_err(|_| SimulationError::NumericalFailure("independent-product sample dimension"))
+    }
+}
+
+impl<F, const D: usize> CompilableFamily for IndependentVec<F, D>
+where
+    F: for<'obs> CompilableFamily<Observation<'obs> = f64>,
+{
+    type Shape = Repeated<F::Shape, D>;
+
+    fn eta_from_shape(values: <Self::Shape as ParameterShape>::Values) -> <Self as Family>::Eta {
+        values.map(F::eta_from_shape)
     }
 
-    fn eta_from_components(components: [F::Eta; D]) -> <IndependentVec<F, D> as Family>::Eta {
-        components
+    fn gradient_to_shape(
+        gradient: &<Self as Family>::GradientEta,
+    ) -> <Self::Shape as ParameterShape>::Values {
+        std::array::from_fn(|component| F::gradient_to_shape(&gradient[component]))
     }
 
-    fn gradient_component(
-        gradient: &<IndependentVec<F, D> as Family>::GradientEta,
-        component: usize,
-    ) -> &F::GradientEta {
-        &gradient[component]
-    }
-
-    fn initial_component_eta_from_observations<'obs, Obs>(
-        family: &IndependentVec<F, D>,
-        obs: &'obs Obs,
-        component: usize,
-    ) -> F::Eta
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> <Self::Shape as ParameterShape>::Values
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
-        F: InitialEtaFromObservations<K>,
     {
-        let mut values = Vec::with_capacity(obs.len());
-        let mut weights = Vec::with_capacity(obs.len());
-        for row in 0..obs.len() {
-            values.push(obs.observation_at(row)[component]);
-            weights.push(obs.weight_at(row));
-        }
-        family
-            .component()
-            .initial_eta_from_observations(&(values.as_slice(), weights.as_slice()))
+        std::array::from_fn(|component| {
+            let mut values = Vec::with_capacity(obs.len());
+            let mut weights = Vec::with_capacity(obs.len());
+            for row in 0..obs.len() {
+                values.push(obs.observation_at(row)[component]);
+                weights.push(obs.weight_at(row));
+            }
+            self.component
+                .initial_shape(&(values.as_slice(), weights.as_slice()))
+        })
     }
 }
 
@@ -253,8 +274,8 @@ where
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, Identity, InitialEtaFromObservations,
-        Log, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
+        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, InitialEtaFromObservations, Mu,
+        NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
     };
 
     use super::IndependentVec;
@@ -345,22 +366,19 @@ mod tests {
     fn repeated_scalar_component_specs_are_fit_ready() {
         let y = [[0.2, -0.3], [1.0, 0.4], [-0.5, 0.8]];
         let n = y.len();
-        let mu = [
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
-            ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
-        ];
-        let sigma = [
-            ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
-            ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
-        ];
-        let blocks = ParameterBlocks::new((mu, sigma));
+        let blocks = ParameterBlocks::new(std::array::from_fn::<_, 2, _>(|_| {
+            (
+                ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+                ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(n), NoPenalty, 99),
+            )
+        }));
         let model = Gamlss::try_new_with_observations(
             IndependentVec::<NormalMuSigma, 2>::default(),
             blocks,
             y.as_slice(),
         )
         .unwrap();
-        let beta = vec![0.1, -0.2, 0.0, 0.3];
+        let beta = vec![0.1, 0.0, -0.2, 0.3];
         let eta = model.predict_eta_row(&beta, 0).unwrap();
 
         assert_eq!(model.nparams(), 4);
@@ -377,8 +395,8 @@ mod tests {
             model.initial_parameters().unwrap(),
             vec![
                 expected_0.mu,
-                expected_1.mu,
                 expected_0.sigma,
+                expected_1.mu,
                 expected_1.sigma
             ]
         );

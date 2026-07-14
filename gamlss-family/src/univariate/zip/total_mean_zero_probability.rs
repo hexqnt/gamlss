@@ -2,8 +2,7 @@
 use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
-    ObservationView, ParameterParts, PositiveLink, ScalarParams, TotalMean, UnitIntervalLink,
-    ZeroProbability,
+    ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -11,7 +10,9 @@ use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 
-use super::{ComponentMeanZeroProbability, MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
+#[cfg(feature = "rand")]
+use super::ComponentMeanZeroProbability;
+use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 
 /// ZIP distribution parameterized by total mean and zero-inflation probability.
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;
@@ -53,6 +54,12 @@ where
     }
 }
 
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, ZeroProbabilityLink> for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>;
+    parameters = (TotalMean, ZeroProbability);
+    arity = 2;
+);
+
 impl<MeanLink, ZeroProbabilityLink> Family
     for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>
 where
@@ -64,7 +71,6 @@ where
     type GradientEta = ZipEta;
     type Observation<'obs> = f64;
     type Workspace = ();
-    type ParamSpec = ScalarParams<(TotalMean, ZeroProbability), (MeanLink, ZeroProbabilityLink), 2>;
     #[inline]
     fn workspace(&self) -> Self::Workspace {}
 
@@ -192,6 +198,7 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
 
+    #[cfg(feature = "rand")]
     use super::{ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]

@@ -6,12 +6,8 @@
 
 use gamlss_core::{Identity, Log};
 
-pub use dynamic::{
-    DynMvNormalCholesky, DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta, PackedLowerTriangular,
-};
-pub use fixed::{
-    FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta,
-};
+pub use dynamic::{DynMvNormalCholesky, DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta};
+pub use fixed::{MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta};
 pub use mean_std_partial_corr::{
     MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
     MvNormalMeanStdPartialCorrTheta, PackedPartialCorr,
@@ -38,9 +34,11 @@ mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::Family;
 
+    use crate::multivariate::matrix::{FixedLowerTriangular, PackedLowerTriangular};
+
     use super::{
-        DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta, FixedLowerTriangular,
-        MvNormalCholeskyDefault, MvNormalCholeskyEta, PackedLowerTriangular,
+        DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta, MvNormalCholeskyDefault,
+        MvNormalCholeskyEta,
     };
 
     #[test]
