@@ -1,0 +1,12 @@
+[book]
+title = "GAMLSS на Rust"
+authors = ["HexQuant"]
+language = "ru"
+description = "Практическое введение в вероятностную регрессию с библиотекой gamlss"
+
+[preprocessor.katex]
+after = ["links"]
+
+[output.html]
+git-repository-url = "https://github.com/hexqnt/gamlss"
+edit-url-template = "https://github.com/hexqnt/gamlss/edit/main/book/{path}"
