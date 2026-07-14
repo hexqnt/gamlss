@@ -13,7 +13,7 @@ use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf, HasObservationDimension,
     Identity, InitialEtaFromTheta, Link, Log, ModelError, Mu, ObservationView, PartialCorrelation,
     PositiveLink, Sigma,
-    shape::{Product, StrictLower, Vector},
+    shape::{Product, ShapeValues, StrictLower, Vector},
 };
 use gamlss_special::unit_normal_cdf;
 
@@ -357,9 +357,7 @@ where
     type Shape =
         Product<Product<Vector<Mu, D>, Vector<Sigma, D>>, StrictLower<PartialCorrelation, D>>;
 
-    fn eta_from_shape(
-        values: (([f64; D], [f64; D]), [[f64; D]; D]),
-    ) -> MvNormalMeanStdPartialCorrEta<D> {
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> MvNormalMeanStdPartialCorrEta<D> {
         let mut partial_corr = PackedPartialCorr::zeros();
         for row in 1..D {
             for col in 0..row {
@@ -371,16 +369,14 @@ where
         MvNormalMeanStdPartialCorrEta::new(values.0.0, values.0.1, partial_corr)
     }
 
-    fn gradient_to_shape(
-        gradient: &MvNormalMeanStdPartialCorrEta<D>,
-    ) -> (([f64; D], [f64; D]), [[f64; D]; D]) {
+    fn gradient_to_shape(gradient: &MvNormalMeanStdPartialCorrEta<D>) -> ShapeValues<Self::Shape> {
         let partial_corr = std::array::from_fn(|row| {
             std::array::from_fn(|col| gradient.partial_corr.get(row, col).unwrap_or(0.0))
         });
         ((gradient.mu, gradient.sigma), partial_corr)
     }
 
-    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> (([f64; D], [f64; D]), [[f64; D]; D])
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {

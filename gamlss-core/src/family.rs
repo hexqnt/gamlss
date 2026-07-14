@@ -1,5 +1,9 @@
 use crate::model::ParameterPath;
-use crate::{ModelError, model::ObservationView, shape::ParameterShape};
+use crate::{
+    ModelError,
+    model::ObservationView,
+    shape::{ParameterShape, ShapeValues},
+};
 
 /// Dense expected information matrix for a fixed-arity family.
 ///
@@ -142,16 +146,16 @@ pub trait CompilableFamily: Family {
     type Shape: ParameterShape;
 
     /// Builds the family's link-scale carrier from shape values.
-    fn eta_from_shape(values: <Self::Shape as ParameterShape>::Values) -> Self::Eta;
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> Self::Eta;
 
     /// Materializes the final scalar derivative for every shape leaf.
     ///
     /// Implementations must resolve all factors stored in `GradientEta` here;
     /// predictor blocks receive plain per-coordinate scores only.
-    fn gradient_to_shape(gradient: &Self::GradientEta) -> <Self::Shape as ParameterShape>::Values;
+    fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape>;
 
     /// Sample-aware initial link-scale values in shape topology.
-    fn initial_shape<'obs, Obs>(&self, _obs: &'obs Obs) -> <Self::Shape as ParameterShape>::Values
+    fn initial_shape<'obs, Obs>(&self, _obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {

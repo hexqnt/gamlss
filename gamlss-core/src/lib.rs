@@ -69,8 +69,8 @@ pub use predictor::{
     PredictorBlock, ProductBlock, SoftplusScalar, SoftplusTransform, SumBlock, TransformedScalar,
 };
 pub use shape::{
-    Broadcast, Lower, ParameterShape, Product, Repeated, Scalar, ScalarTuple, Simplex, StrictLower,
-    Vector,
+    Broadcast, LocationCholesky, Lower, ParameterShape, Product, Repeated, Scalar, ScalarTuple,
+    ShapeValues, Simplex, StrictLower, Vector,
 };
 
 /// Design matrix abstractions.
@@ -106,18 +106,18 @@ pub mod prelude {
         HasMarginalCdf, HasObservationDimension, HasQuantile, HasRosenblattTransform,
         HingeQuadraticPenalty, Identity, InitialEtaFromObservations, InitialEtaFromTheta,
         LinearForm, LinearFormBuilder, LinearPredictorBlock, LinearPredictorGeometry, LinearTerm,
-        Link, Log, LogLocation, LogPlus, LogSd, Logit, Lower, LowerTriangularParameterBlock,
-        MatrixPenalty, Mean, Median, MixtureWeight, ModelError, Mu, NoPenalty, Nu, Objective,
-        ObjectiveScale, ObservationView, OffsetBlock, OneProbability, ParameterAxis,
-        ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterDescriptor,
+        Link, LocationCholesky, Log, LogLocation, LogPlus, LogSd, Logit, Lower,
+        LowerTriangularParameterBlock, MatrixPenalty, Mean, Median, MixtureWeight, ModelError, Mu,
+        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, OneProbability,
+        ParameterAxis, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterDescriptor,
         ParameterLayout, ParameterName, ParameterParts, ParameterPath, ParameterShape,
         ParameterSlice, PartialCorrelation, Penalty, PositiveLink, Power, Precision,
         PredictionView, PredictorBlock, Probability, Product, ProductBlock, Rate, Repeated,
-        RidgePenalty, RowMultiplier, Scalar, ScalarTuple, Scale, SegmentPenalty, Shape, Sigma,
-        Simplex, SimplexLogitParameterBlock, SimulationError, Size, Softplus, StrictLower,
-        StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean, TrainingDiagnostics,
-        TransformedScalar, TryAssignParameterOffsets, TrySimulate, UnitIntervalLink,
-        UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties, WorkspaceGamlss,
-        ZeroProbability,
+        RidgePenalty, RowMultiplier, Scalar, ScalarTuple, Scale, SegmentPenalty, Shape,
+        ShapeValues, Sigma, Simplex, SimplexLogitParameterBlock, SimulationError, Size, Softplus,
+        StrictLower, StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean,
+        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, TrySimulate,
+        UnitIntervalLink, UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties,
+        WorkspaceGamlss, ZeroProbability,
     };
 }

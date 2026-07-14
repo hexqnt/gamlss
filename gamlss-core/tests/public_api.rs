@@ -8,13 +8,13 @@ use gamlss_core::{
     Family, FiniteScalarObservations, FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf,
     HasConditionalCdf, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
     HasInitialEta, HasLogDensity, HasMarginalCdf, HasObservationDimension, HasRosenblattTransform,
-    InitialEtaFromObservations, LinearForm, LinearFormBuilder, Log, LogLocation, LogSd, Logit,
-    LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
-    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
-    ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
-    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, Sigma, Size,
-    Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
-    VectorParameterBlock, ZeroProbability,
+    InitialEtaFromObservations, LinearForm, LinearFormBuilder, LocationCholesky, Log, LogLocation,
+    LogSd, Logit, LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar,
+    NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis,
+    ParameterBlock, ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName,
+    ParameterParts, ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock,
+    Probability, ShapeValues, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
+    TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock, ZeroProbability,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,6 +248,14 @@ fn convenience_predictor_helpers_remain_root_reexports() {
     assert_eq!(softplus.nparams(), 1);
     assert_eq!(negative.nparams(), 1);
     assert_eq!(floored.nparams(), 1);
+}
+
+#[test]
+fn shape_aliases_remain_root_reexports() {
+    let values: ShapeValues<LocationCholesky<2>> = ([1.0, 2.0], [[3.0, 0.0], [4.0, 5.0]]);
+
+    assert_eq!(values.0, [1.0, 2.0]);
+    assert_eq!(values.1[1], [4.0, 5.0]);
 }
 
 #[test]

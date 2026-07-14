@@ -2,6 +2,8 @@
 
 use std::marker::PhantomData;
 
+use crate::param::{CholeskyScale, Mu};
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -244,6 +246,13 @@ impl<A: ParameterShape, B: ParameterShape> ParameterShape for Product<A, B> {
 }
 
 impl<A: ParameterShape, B: ParameterShape> sealed::Sealed for Product<A, B> {}
+
+/// A location vector paired with a lower-triangular Cholesky-scale subtree.
+///
+/// This geometry is shared by elliptical multivariate families such as the
+/// multivariate normal and Student-t families.
+pub type LocationCholesky<const D: usize> = Product<Vector<Mu, D>, Lower<CholeskyScale, D>>;
+
 /// `C` independent repetitions of one shape subtree.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Repeated<A, const C: usize>(PhantomData<A>);
@@ -330,11 +339,20 @@ pub trait ParameterShape: sealed::Sealed {
     fn add_to_first(values: &mut Self::Values, delta: f64);
 }
 
+/// Materialized scalar values carried by parameter shape `S`.
+///
+/// This alias keeps family codecs and generic helpers from repeating the
+/// associated-type projection `<S as ParameterShape>::Values`.
+pub type ShapeValues<S> = <S as ParameterShape>::Values;
+
 #[cfg(test)]
 mod tests {
     use crate::{Mu, Sigma};
 
-    use super::{Broadcast, Lower, ParameterShape, Product, Scalar, Simplex, StrictLower, Vector};
+    use super::{
+        Broadcast, LocationCholesky, Lower, ParameterShape, Product, Scalar, ShapeValues, Simplex,
+        StrictLower, Vector,
+    };
 
     #[test]
     fn zero_scaling_overwrites_non_finite_values_across_nested_shapes() {
@@ -382,5 +400,13 @@ mod tests {
 
         assert!(scalar.abs() <= f64::EPSILON);
         assert!(simplex.iter().all(|value| value.abs() <= f64::EPSILON));
+    }
+
+    #[test]
+    fn location_cholesky_alias_preserves_shape_values() {
+        let values: ShapeValues<LocationCholesky<2>> = ([1.0, 2.0], [[3.0, 0.0], [4.0, 5.0]]);
+
+        assert!((values.0[0] - 1.0).abs() <= f64::EPSILON);
+        assert!((values.1[1][0] - 4.0).abs() <= f64::EPSILON);
     }
 }

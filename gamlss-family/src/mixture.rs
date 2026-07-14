@@ -2,7 +2,7 @@
 
 use gamlss_core::{
     CompilableFamily, Family, MixtureWeight, ModelError, ObservationView,
-    shape::{ParameterShape, Product, Repeated, Simplex},
+    shape::{ParameterShape, Product, Repeated, ShapeValues, Simplex},
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -225,13 +225,11 @@ where
 {
     type Shape = Product<Simplex<MixtureWeight, C>, Repeated<F::Shape, C>>;
 
-    fn eta_from_shape(values: <Self::Shape as ParameterShape>::Values) -> <Self as Family>::Eta {
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> <Self as Family>::Eta {
         MixtureEta::new(values.0, values.1.map(F::eta_from_shape))
     }
 
-    fn gradient_to_shape(
-        gradient: &<Self as Family>::GradientEta,
-    ) -> <Self::Shape as ParameterShape>::Values {
+    fn gradient_to_shape(gradient: &<Self as Family>::GradientEta) -> ShapeValues<Self::Shape> {
         let components = std::array::from_fn(|index| {
             let component = &gradient.components()[index];
             let mut values = F::gradient_to_shape(component.conditional_gradient());
@@ -241,7 +239,7 @@ where
         (*gradient.logits(), components)
     }
 
-    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> <Self::Shape as ParameterShape>::Values
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {

@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasObservationDimension, InitialEtaFromTheta,
     Log, Mean, ModelError, ObservationView, PositiveLink, Precision,
-    shape::{Product, Scalar, Simplex},
+    shape::{Product, Scalar, ShapeValues, Simplex},
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -218,15 +218,15 @@ where
 {
     type Shape = Product<Simplex<Mean, D>, Scalar<Precision>>;
 
-    fn eta_from_shape(values: ([f64; D], f64)) -> DirichletMeanPrecisionEta<D> {
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> DirichletMeanPrecisionEta<D> {
         DirichletMeanPrecisionEta::new(values.0, values.1)
     }
 
-    fn gradient_to_shape(gradient: &DirichletMeanPrecisionEta<D>) -> ([f64; D], f64) {
+    fn gradient_to_shape(gradient: &DirichletMeanPrecisionEta<D>) -> ShapeValues<Self::Shape> {
         (gradient.logits, gradient.precision)
     }
 
-    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ([f64; D], f64)
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {

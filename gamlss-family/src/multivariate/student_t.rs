@@ -7,10 +7,10 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    CholeskyScale, CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf,
-    HasObservationDimension, Identity, InitialEtaFromTheta, Link, Log, LogPlus, ModelError, Mu,
+    CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf, HasObservationDimension,
+    Identity, InitialEtaFromTheta, Link, LocationCholesky, Log, LogPlus, ModelError,
     ObservationView, PositiveLink, Tau,
-    shape::{Lower, Product, Scalar, Vector},
+    shape::{Product, Scalar, ShapeValues},
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -310,9 +310,9 @@ where
     OffDiagonalLink: InitialEtaFromTheta<f64>,
     TauLink: InitialEtaFromTheta<f64>,
 {
-    type Shape = Product<Product<Vector<Mu, D>, Lower<CholeskyScale, D>>, Scalar<Tau>>;
+    type Shape = Product<LocationCholesky<D>, Scalar<Tau>>;
 
-    fn eta_from_shape(values: (([f64; D], [[f64; D]; D]), f64)) -> MvStudentTCholeskyEta<D> {
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> MvStudentTCholeskyEta<D> {
         MvStudentTCholeskyEta::new(
             values.0.0,
             FixedLowerTriangular::from_lower_rows(values.0.1),
@@ -320,14 +320,14 @@ where
         )
     }
 
-    fn gradient_to_shape(gradient: &MvStudentTCholeskyEta<D>) -> (([f64; D], [[f64; D]; D]), f64) {
+    fn gradient_to_shape(gradient: &MvStudentTCholeskyEta<D>) -> ShapeValues<Self::Shape> {
         let lower = std::array::from_fn(|row| {
             std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
         });
         ((gradient.mu, lower), gradient.tau)
     }
 
-    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> (([f64; D], [[f64; D]; D]), f64)
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {

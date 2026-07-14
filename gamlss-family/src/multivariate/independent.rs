@@ -3,7 +3,7 @@ use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf,
     HasObservationDimension, ObservationView,
-    shape::{ParameterShape, Repeated},
+    shape::{Repeated, ShapeValues},
 };
 
 /// Independent fixed-size product of one scalar family.
@@ -243,17 +243,15 @@ where
 {
     type Shape = Repeated<F::Shape, D>;
 
-    fn eta_from_shape(values: <Self::Shape as ParameterShape>::Values) -> <Self as Family>::Eta {
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> <Self as Family>::Eta {
         values.map(F::eta_from_shape)
     }
 
-    fn gradient_to_shape(
-        gradient: &<Self as Family>::GradientEta,
-    ) -> <Self::Shape as ParameterShape>::Values {
+    fn gradient_to_shape(gradient: &<Self as Family>::GradientEta) -> ShapeValues<Self::Shape> {
         std::array::from_fn(|component| F::gradient_to_shape(&gradient[component]))
     }
 
-    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> <Self::Shape as ParameterShape>::Values
+    fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
