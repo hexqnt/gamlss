@@ -202,7 +202,8 @@ mod tests {
 
     use super::{
         LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
-        LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta,
+        LogNormalMedianLogSd,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -228,6 +229,34 @@ mod tests {
             1.7,
             [1.2_f64.ln(), 0.8_f64.ln()],
         );
+    }
+
+    #[test]
+    fn log_normal_mean_cv_accepts_extreme_finite_cv() {
+        let family = LogNormalMeanCv::new();
+        let eta = LogNormalMeanCvEta {
+            mean: 0.0,
+            cv: 1.0e200_f64.ln(),
+        };
+        let theta = LogNormalMeanCvTheta {
+            mean: 1.0,
+            cv: 1.0e200,
+        };
+
+        let natural_nll = family.nll(1.0, &theta, &mut ());
+        let (eta_nll, gradient) = family.nll_and_gradient_eta(1.0, &eta, &mut ());
+
+        assert!(
+            natural_nll.is_finite(),
+            "natural-scale nll was {natural_nll}"
+        );
+        assert!(eta_nll.is_finite(), "eta-scale nll was {eta_nll}");
+        assert!(
+            gradient.mean.is_finite(),
+            "mean gradient was {}",
+            gradient.mean
+        );
+        assert!(gradient.cv.is_finite(), "cv gradient was {}", gradient.cv);
     }
 
     #[test]

@@ -1,7 +1,6 @@
-use crate::model::ParameterPath;
 use crate::{
     ModelError,
-    model::ObservationView,
+    model::{ObservationView, ParameterPath},
     shape::{ParameterShape, ShapeValues},
 };
 
@@ -168,6 +167,47 @@ pub trait CompilableFamily: Family {
     }
 }
 
+/// Exact family-local identity of a runtime predictor topology.
+///
+/// The key is compared only between instances of the same concrete family
+/// type. Its parts must encode every instance setting that changes coordinate
+/// ordering or meaning, even when the total coordinate count stays unchanged.
+/// It is construction-time metadata and is never inspected in the row hot path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct DynamicLayoutKey {
+    parts: Vec<usize>,
+}
+
+impl DynamicLayoutKey {
+    /// Creates a family-local layout key from exact structural parts.
+    #[must_use]
+    #[inline]
+    pub const fn new(parts: Vec<usize>) -> Self {
+        Self { parts }
+    }
+
+    /// Creates a key for a topology determined by one runtime dimension.
+    #[must_use]
+    #[inline]
+    pub fn from_dimension(dimension: usize) -> Self {
+        Self::new(vec![dimension])
+    }
+
+    /// Returns the exact family-local structural parts.
+    #[must_use]
+    #[inline]
+    pub fn parts(&self) -> &[usize] {
+        &self.parts
+    }
+
+    /// Consumes the key and returns its structural parts.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> Vec<usize> {
+        self.parts
+    }
+}
+
 /// Opt-in codec for runtime-dimensional compiled families.
 ///
 /// This is intentionally separate from the const-generic [`ParameterShape`]
@@ -177,11 +217,17 @@ pub trait DynamicallyCompilableFamily: Family {
     /// Number of scalar predictor coordinates for this family instance.
     fn dynamic_parameter_count(&self) -> usize;
 
+    /// Exact identity of this instance's runtime predictor topology.
+    ///
+    /// Implementations must include all configuration that affects coordinate
+    /// ordering or semantics, not only the coordinate count.
+    fn dynamic_layout_key(&self) -> DynamicLayoutKey;
+
     /// Converts a flat predictor-coordinate row into the family's eta carrier.
-    fn eta_from_flat(values: &[f64]) -> Self::Eta;
+    fn eta_from_flat(&self, values: &[f64]) -> Self::Eta;
 
     /// Writes a materialized family gradient into flat coordinate order.
-    fn gradient_to_flat(gradient: &Self::GradientEta, out: &mut [f64]);
+    fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]);
 
     /// NLL directly from flat eta coordinates.
     fn nll_eta_flat(
@@ -190,7 +236,7 @@ pub trait DynamicallyCompilableFamily: Family {
         values: &[f64],
         workspace: &mut Self::Workspace,
     ) -> f64 {
-        self.nll_eta(observation, &Self::eta_from_flat(values), workspace)
+        self.nll_eta(observation, &self.eta_from_flat(values), workspace)
     }
 
     /// Fused NLL and in-place flat gradient from flat eta coordinates.
@@ -202,8 +248,8 @@ pub trait DynamicallyCompilableFamily: Family {
         workspace: &mut Self::Workspace,
     ) -> f64 {
         let (nll, materialized) =
-            self.nll_and_gradient_eta(observation, &Self::eta_from_flat(values), workspace);
-        Self::gradient_to_flat(&materialized, gradient);
+            self.nll_and_gradient_eta(observation, &self.eta_from_flat(values), workspace);
+        self.gradient_to_flat(&materialized, gradient);
         nll
     }
 
@@ -211,6 +257,10 @@ pub trait DynamicallyCompilableFamily: Family {
     fn dynamic_parameter_coordinate(&self, index: usize) -> (&'static str, ParameterPath);
 
     /// Dataset-aware flat eta initializer.
+    ///
+    /// Implementations must return exactly
+    /// [`dynamic_parameter_count`](Self::dynamic_parameter_count) values in the
+    /// same coordinate order used by [`eta_from_flat`](Self::eta_from_flat).
     fn initial_flat<'obs, Obs>(&self, _obs: &'obs Obs) -> Vec<f64>
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,

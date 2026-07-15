@@ -25,6 +25,9 @@ categories = ["algorithms", "mathematics", "science"]
 
 [workspace.dependencies]
 approx = "0.5.1"
+criterion = { version = "0.8.2", default-features = false, features = [
+    "cargo_bench_support",
+] }
 gamlss-core = { path = "gamlss-core", version = "0.3.1" }
 gamlss-bayes = { path = "gamlss-bayes", version = "0.3.1" }
 gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.1" }
@@ -69,6 +72,7 @@ include = [
     "Cargo.toml",
     "README.md",
     "LICENSE*",
+
 ]
 
 [features]

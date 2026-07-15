@@ -1,7 +1,7 @@
 //! Skew Student-t distribution parameterizations.
 
 use gamlss_special::{
-    integrate_finite, invert_real_cdf, ln_gamma, student_t_cdf_standardized,
+    integrate_finite, invert_real_cdf, ln_gamma_delta, student_t_cdf_standardized,
     student_t_log_pdf_standardized,
 };
 
@@ -118,11 +118,11 @@ fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option
     }
 
     let delta = nu / nu.hypot(1.0);
-    let log_mean_factor = 0.5 * tau.ln() + ln_gamma(0.5 * (tau - 1.0))
-        - 0.5 * std::f64::consts::PI.ln()
-        - ln_gamma(0.5 * tau);
+    let log_mean_factor =
+        0.5 * (tau.ln() - std::f64::consts::PI.ln()) - ln_gamma_delta(0.5 * (tau - 1.0), 0.5);
     let standardized_mean = delta * log_mean_factor.exp();
-    let standardized_variance = tau / (tau - 2.0) - standardized_mean * standardized_mean;
+    let standardized_variance =
+        2.0_f64.mul_add(1.0 / (tau - 2.0), 1.0) - standardized_mean * standardized_mean;
     if standardized_variance <= 0.0 || !standardized_variance.is_finite() {
         return None;
     }
@@ -134,9 +134,9 @@ fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasQuantile};
 
-    use super::SkewStudentTMuSigmaNuTau;
+    use super::{SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau};
     use crate::{SkewStudentTTheta, StudentTMuSigmaTau, StudentTMuSigmaTauTheta};
 
     #[test]
@@ -188,5 +188,30 @@ mod tests {
 
         assert!(left > 0.0);
         assert_relative_eq!(left + reflected, 1.0, epsilon = 2.0e-9);
+    }
+
+    #[test]
+    fn mean_sd_parameterization_preserves_large_tau_normal_limit() {
+        let theta = SkewStudentTMeanSdTheta {
+            mean: 3.0,
+            sigma: 2.0,
+            nu: 1.0,
+            tau: 1.0e16,
+        };
+        let standardized_mean = 1.0 / std::f64::consts::PI.sqrt();
+        let scale = theta.sigma / (1.0 - standardized_mean * standardized_mean).sqrt();
+        let location_scale = SkewStudentTTheta {
+            mu: theta.mean - scale * standardized_mean,
+            sigma: scale,
+            nu: theta.nu,
+            tau: theta.tau,
+        };
+        let mean_sd_family = SkewStudentTMeanSdNuTau::new();
+        let location_scale_family = SkewStudentTMuSigmaNuTau::new();
+        let actual = mean_sd_family.nll(theta.mean, &theta, &mut ());
+        let expected = location_scale_family.nll(theta.mean, &location_scale, &mut ());
+
+        assert!(actual.is_finite(), "nll was {actual}");
+        assert_relative_eq!(actual, expected, epsilon = 1.0e-14);
     }
 }

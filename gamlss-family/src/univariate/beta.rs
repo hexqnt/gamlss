@@ -8,8 +8,8 @@ use gamlss_core::{
 };
 
 use gamlss_special::{
-    digamma, integrate_finite, invert_bounded_cdf, ln_gamma, regularized_beta,
-    regularized_beta_complement,
+    bernoulli_kl, digamma_minus_ln, integrate_finite, invert_bounded_cdf,
+    ln_gamma_stirling_residual, regularized_beta, regularized_beta_complement,
 };
 
 use crate::initial::{
@@ -73,10 +73,25 @@ where
 
         let alpha = theta.mu * theta.precision;
         let beta = (1.0 - theta.mu) * theta.precision;
-        ln_gamma(alpha) + ln_gamma(beta)
-            - ln_gamma(theta.precision)
-            - (alpha - 1.0) * y.ln()
-            - (beta - 1.0) * (1.0 - y).ln()
+        if alpha <= 0.0 || !alpha.is_finite() || beta <= 0.0 || !beta.is_finite() {
+            return f64::INFINITY;
+        }
+
+        ln_gamma_stirling_residual(alpha) + ln_gamma_stirling_residual(beta)
+            - ln_gamma_stirling_residual(theta.precision)
+            + theta.precision * bernoulli_kl(theta.mu, y)
+            + y.ln()
+            + (-y).ln_1p()
+    }
+
+    #[inline]
+    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
+        let centered = (numerator - denominator) / denominator;
+        if centered.abs() <= 0.5 {
+            centered.ln_1p()
+        } else {
+            numerator.ln() - denominator.ln()
+        }
     }
 
     #[inline]
@@ -96,9 +111,10 @@ where
 
         let alpha = theta.mu * theta.precision;
         let beta = (1.0 - theta.mu) * theta.precision;
-        let common = digamma(theta.precision);
-        let d_alpha = digamma(alpha) - common - y.ln();
-        let d_beta = digamma(beta) - common - (1.0 - y).ln();
+        let precision_residual = digamma_minus_ln(theta.precision);
+        let d_alpha = digamma_minus_ln(alpha) - precision_residual + Self::log_ratio(theta.mu, y);
+        let d_beta =
+            digamma_minus_ln(beta) - precision_residual + Self::log_ratio(1.0 - theta.mu, 1.0 - y);
         let d_mu = theta.precision * (d_alpha - d_beta);
         let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
         let gradient_eta = BetaEta {
@@ -359,6 +375,30 @@ mod tests {
     fn beta_gradient_matches_finite_difference() {
         let family = BetaMeanPrecision::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 0.4, [0.2, 1.0]);
+    }
+
+    #[test]
+    fn concentrated_beta_preserves_normalizer_and_precision_gradient() {
+        let family = BetaMeanPrecision::new();
+        let eta = super::BetaEta {
+            mu: 0.0,
+            precision: 1.0e16_f64.ln(),
+        };
+        let precision = eta.precision.exp();
+        let expected_nll = -0.5 * (2.0 * precision / std::f64::consts::PI).ln();
+        let (nll, gradient) = family.nll_and_gradient_eta(0.5, &eta, &mut ());
+
+        assert!((nll - expected_nll).abs() < 1.0e-13, "nll was {nll}");
+        assert!(
+            gradient.mu.abs() < 1.0e-14,
+            "mu gradient was {}",
+            gradient.mu
+        );
+        assert!(
+            (gradient.precision + 0.5).abs() < 1.0e-14,
+            "precision gradient was {}",
+            gradient.precision
+        );
     }
 
     #[test]

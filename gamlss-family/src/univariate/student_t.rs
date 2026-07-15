@@ -2,7 +2,9 @@
 
 use gamlss_core::{Identity, Log, LogPlus};
 
-use gamlss_special::{digamma, invert_real_cdf, ln_beta, ln_gamma, regularized_beta};
+use gamlss_special::{
+    digamma_delta, invert_real_cdf, ln_beta, regularized_beta, student_t_nll_constant,
+};
 
 pub use dynamic::{StudentTDynamic, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta};
 pub use fixed::{StudentT, StudentTEta};
@@ -47,7 +49,7 @@ pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 
     }
 
     let z = (y - theta.mu) / theta.sigma;
-    student_t_constant(nu) + theta.sigma.ln() + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
+    student_t_nll_constant(nu) + theta.sigma.ln() + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
 }
 
 #[allow(clippy::suboptimal_flops)]
@@ -72,12 +74,25 @@ pub(super) fn student_t_nll_gradient_theta(
 
     let z = (y - theta.mu) / theta.sigma;
     let z2 = z * z;
-    let denominator = nu + z2;
-    let mu = -(nu + 1.0) * z / (theta.sigma * denominator);
-    let sigma = (1.0 - (nu + 1.0) * z2 / denominator) / theta.sigma;
-    let tau = 0.5 / nu + 0.5 * digamma(0.5 * nu) - 0.5 * digamma(f64::midpoint(nu, 1.0))
-        + 0.5 * (z2 / nu).ln_1p()
-        - f64::midpoint(nu, 1.0) * z2 / (nu * denominator);
+    let squared_fraction = if z2 == 0.0 {
+        0.0
+    } else if z2 < nu {
+        let ratio = z2 / nu;
+        ratio / (1.0 + ratio)
+    } else {
+        1.0 / (1.0 + nu / z2)
+    };
+    let scale = nu.max(z2);
+    let slope = (nu / scale + 1.0 / scale) * z / (nu / scale + z2 / scale);
+    let mu = -slope / theta.sigma;
+    let sigma = (1.0 - (nu + 1.0) * squared_fraction) / theta.sigma;
+    let tail_derivative = if squared_fraction == 0.0 {
+        0.0
+    } else {
+        f64::midpoint(1.0, 1.0 / nu) * squared_fraction
+    };
+    let tau =
+        0.5 / nu - 0.5 * digamma_delta(0.5 * nu, 0.5) + 0.5 * (z2 / nu).ln_1p() - tail_derivative;
 
     StudentTGradientTheta { mu, sigma, tau }
 }
@@ -121,7 +136,7 @@ fn student_t_standard_density(nu: f64, t: f64) -> f64 {
         return 0.0;
     }
 
-    (-student_t_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()).exp()
+    (-student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()).exp()
 }
 
 #[allow(clippy::suboptimal_flops)]
@@ -152,12 +167,6 @@ pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64
     theta.sigma * (z * (2.0 * cdf - 1.0) + tail_moment - student_t_standard_crps_constant(nu))
 }
 
-/// Normalization constant for the logarithm of the Student's t density.
-fn student_t_constant(nu: f64) -> f64 {
-    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu)
-        - ln_gamma(f64::midpoint(nu, 1.0))
-}
-
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -168,7 +177,7 @@ mod tests {
 
     use super::{
         StudentTEta, StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma,
-        StudentTMuSigmaTau, StudentTMuSigmaTauTheta, StudentTTheta,
+        StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTTheta,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -182,6 +191,87 @@ mod tests {
     fn student_t_gradient_matches_finite_difference() {
         let family = StudentTMuSigma::try_new(5.0).unwrap();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn very_large_degrees_of_freedom_approach_normal_likelihood() {
+        let family = StudentTMuSigma::try_new(1.0e16).unwrap();
+        let theta = StudentTTheta {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+        let y = 1.25;
+        let expected = f64::midpoint(std::f64::consts::TAU.ln(), y * y);
+
+        assert_relative_eq!(
+            family.nll(y, &theta, &mut family.workspace()),
+            expected,
+            epsilon = 2.0e-14
+        );
+
+        let dynamic = StudentTMuSigmaTau::new();
+        let eta = StudentTMuSigmaTauEta {
+            mu: 0.0,
+            sigma: 0.0,
+            tau: 1.0e16_f64.ln(),
+        };
+        let (dynamic_nll, gradient) =
+            dynamic.nll_and_gradient_eta(y, &eta, &mut dynamic.workspace());
+        assert_relative_eq!(dynamic_nll, expected, epsilon = 2.0e-14);
+        assert_relative_eq!(gradient.mu, -y, epsilon = 2.0e-15);
+        assert_relative_eq!(gradient.sigma, 1.0 - y * y, epsilon = 2.0e-15);
+        assert!(
+            gradient.tau.abs() < 1.0e-12,
+            "tau gradient was {}",
+            gradient.tau
+        );
+
+        let extreme_family = StudentTMuSigma::try_new(1.0e308).unwrap();
+        let extreme_y = 1.0e154;
+        let extreme_eta = StudentTEta {
+            mu: 0.0,
+            sigma: 0.0,
+        };
+        let (extreme_nll, extreme_gradient) = extreme_family.nll_and_gradient_eta(
+            extreme_y,
+            &extreme_eta,
+            &mut extreme_family.workspace(),
+        );
+        assert!(extreme_nll.is_finite());
+        assert_relative_eq!(
+            extreme_gradient.mu,
+            -5.0e153,
+            epsilon = 0.0,
+            max_relative = 2.0e-15
+        );
+        assert_relative_eq!(
+            extreme_gradient.sigma,
+            1.0 - 5.0e307,
+            epsilon = 0.0,
+            max_relative = 2.0e-15
+        );
+
+        let extreme_dynamic_eta = StudentTMuSigmaTauEta {
+            mu: 0.0,
+            sigma: 0.0,
+            tau: 1.0e308_f64.ln(),
+        };
+        let (extreme_dynamic_nll, extreme_dynamic_gradient) =
+            dynamic.nll_and_gradient_eta(extreme_y, &extreme_dynamic_eta, &mut dynamic.workspace());
+        assert!(extreme_dynamic_nll.is_finite());
+        assert!(extreme_dynamic_gradient.tau.is_finite());
+        assert_relative_eq!(
+            extreme_dynamic_gradient.mu,
+            extreme_gradient.mu,
+            epsilon = 0.0,
+            max_relative = 1.0e-14
+        );
+        assert_relative_eq!(
+            extreme_dynamic_gradient.sigma,
+            extreme_gradient.sigma,
+            epsilon = 0.0,
+            max_relative = 1.0e-14
+        );
     }
 
     #[test]

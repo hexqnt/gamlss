@@ -10,7 +10,7 @@ documentation = "https://docs.rs/gamlss-spline"
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = ["src/**/*", "benches/**/*", "Cargo.toml", "README.md"]
 
 [dependencies]
 gamlss-core.workspace = true
@@ -18,6 +18,11 @@ thiserror.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "spline_hot_paths"
+harness = false
 
 [lints]
 workspace = true

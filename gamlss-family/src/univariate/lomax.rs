@@ -35,10 +35,7 @@ where
 
     #[inline]
     fn theta_from_eta(eta: LomaxEta) -> LomaxTheta {
-        LomaxTheta {
-            shape: ShapeLink::inverse(eta.shape),
-            scale: ScaleLink::inverse(eta.scale),
-        }
+        eta.theta_from_links::<ShapeLink, ScaleLink>()
     }
 
     #[inline]
@@ -74,10 +71,7 @@ where
         let ratio = y / theta.scale;
         let d_shape = -1.0 / theta.shape + ratio.ln_1p();
         let d_scale = (1.0 - theta.shape * ratio) / (theta.scale * (1.0 + ratio));
-        let gradient_eta = LomaxEta {
-            shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
-        };
+        let gradient_eta = eta.chain_gradient::<ShapeLink, ScaleLink>(d_shape, d_scale);
 
         (nll, gradient_eta)
     }
@@ -221,41 +215,23 @@ where
     }
 }
 
-/// Predictors for the Lomax family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LomaxEta {
-    /// Shape predictor.
-    pub shape: f64,
-    /// Scale predictor.
-    pub scale: f64,
-}
-
-impl ParameterParts<2> for LomaxEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            shape: values[0],
-            scale: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for the Lomax family on the link scale.
+    LomaxEta {
+        /// Shape predictor.
+        shape,
+        /// Scale predictor.
+        scale,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.shape,
-            1 => self.scale,
-            _ => unreachable!("lomax eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale Lomax parameters.
+    LomaxTheta {
+        /// Positive shape parameter.
+        shape,
+        /// Positive scale parameter.
+        scale,
     }
-}
-
-/// Natural-scale Lomax parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LomaxTheta {
-    /// Positive shape parameter.
-    pub shape: f64,
-    /// Positive scale parameter.
-    pub scale: f64,
 }
 
 #[cfg(test)]

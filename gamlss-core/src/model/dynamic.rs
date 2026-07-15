@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{DynamicallyCompilableFamily, ModelError, Penalty, PredictorBlock};
+use crate::{DynamicLayoutKey, DynamicallyCompilableFamily, ModelError, Penalty, PredictorBlock};
 
 use super::{
     GamlssBlocks, GradientWorkspace, ObservationView, ParameterDescriptor, ParameterLayout,
@@ -16,6 +16,12 @@ struct DynamicCoordinate<X, Pen> {
     range: Range<usize>,
 }
 
+impl<X, Pen> DynamicCoordinate<X, Pen> {
+    fn descriptor(&self) -> ParameterDescriptor {
+        ParameterDescriptor::new(self.role, self.path.clone(), self.range.clone())
+    }
+}
+
 /// Homogeneous predictor storage for a runtime-dimensional family codec.
 ///
 /// Each scalar distribution coordinate may own an arbitrary number of
@@ -24,6 +30,7 @@ struct DynamicCoordinate<X, Pen> {
 /// non-overlapping coefficient ranges.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynamicParameterBlocks<X, Pen> {
+    layout_key: DynamicLayoutKey,
     coordinates: Vec<DynamicCoordinate<X, Pen>>,
 }
 
@@ -44,12 +51,14 @@ where
         F: DynamicallyCompilableFamily,
     {
         family.validate_dynamic_compiled()?;
-        if blocks.len() != family.dynamic_parameter_count() {
+        let coordinate_count = family.dynamic_parameter_count();
+        if blocks.len() != coordinate_count {
             return Err(ModelError::InvalidParameter {
                 parameter: "dynamic predictor blocks",
                 expected: "one block per runtime family coordinate",
             });
         }
+        let layout_key = family.dynamic_layout_key();
 
         let mut offset = 0usize;
         let mut coordinates = Vec::with_capacity(blocks.len());
@@ -70,7 +79,17 @@ where
             });
             offset = end;
         }
-        Ok(Self { coordinates })
+        Ok(Self {
+            layout_key,
+            coordinates,
+        })
+    }
+
+    /// Exact runtime family topology captured when these blocks were built.
+    #[must_use]
+    #[inline]
+    pub const fn layout_key(&self) -> &DynamicLayoutKey {
+        &self.layout_key
     }
 
     /// Number of scalar runtime family coordinates.
@@ -100,21 +119,29 @@ where
             .map(|coordinate| coordinate.penalty.value(&beta[coordinate.range.clone()]))
             .sum()
     }
-}
 
-impl<X, Pen> DynamicParameterBlocks<X, Pen>
-where
-    X: PredictorBlock,
-    Pen: Penalty,
-{
     fn fill_values(&self, beta: &[f64], row: usize, values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.coordinates.len());
         for (value, coordinate) in values.iter_mut().zip(&self.coordinates) {
             *value = coordinate
                 .predictor
                 .eta_row(row, &beta[coordinate.range.clone()]);
         }
     }
+
+    fn initial_beta(&self, values: &[f64]) -> Vec<f64> {
+        let mut beta = vec![0.0; self.coefficient_count()];
+        for (coordinate, value) in self.coordinates.iter().zip(values.iter().copied()) {
+            if value.is_finite() {
+                coordinate
+                    .predictor
+                    .set_constant_start(value, &mut beta[coordinate.range.clone()]);
+            }
+        }
+        beta
+    }
 }
+
 impl<F, X, Pen> GamlssBlocks<F> for DynamicParameterBlocks<X, Pen>
 where
     F: DynamicallyCompilableFamily,
@@ -152,6 +179,23 @@ where
                 expected: "one block per runtime family coordinate",
             });
         }
+        let expected_key = family.dynamic_layout_key();
+        if self.layout_key != expected_key {
+            return Err(ModelError::DynamicLayoutMismatch {
+                expected: expected_key,
+                got: self.layout_key.clone(),
+            });
+        }
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            let (role, path) = family.dynamic_parameter_coordinate(index);
+            if coordinate.role != role || coordinate.path != path {
+                return Err(ModelError::DynamicCoordinateMismatch {
+                    index,
+                    expected: ParameterDescriptor::new(role, path, coordinate.range.clone()),
+                    got: coordinate.descriptor(),
+                });
+            }
+        }
         <Self as GamlssBlocks<F>>::validate(self, nobs)
     }
 
@@ -176,10 +220,62 @@ where
         loss
     }
 
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
+    fn train_nll_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        family_workspace: &mut F::Workspace,
+        workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let values = workspace.dynamic_values_mut(self.coordinates.len());
+        let mut loss = 0.0;
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            if weight == 0.0 {
+                continue;
+            }
+            self.fill_values(beta, row, values);
+            loss = weight.mul_add(
+                family.nll_eta_flat(obs.observation_at(row), values, family_workspace),
+                loss,
+            );
+        }
+        loss
+    }
+
+    fn pointwise_nll_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        weighted: bool,
+        out: &mut [f64],
+        workspace: (&mut F::Workspace, &mut GradientWorkspace),
+    ) where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let (family_workspace, workspace) = workspace;
+        let values = workspace.dynamic_values_mut(self.coordinates.len());
+        for (row, value) in out.iter_mut().enumerate() {
+            let weight = obs.weight_at(row);
+            if weighted && weight == 0.0 {
+                *value = 0.0;
+                continue;
+            }
+            self.fill_values(beta, row, values);
+            let nll = family.nll_eta_flat(obs.observation_at(row), values, family_workspace);
+            *value = if weighted { weight * nll } else { nll };
+        }
+    }
+
+    fn eta_row(&self, family: &F, beta: &[f64], row: usize) -> F::Eta {
         let mut values = vec![0.0; self.coordinates.len()];
         self.fill_values(beta, row, &mut values);
-        F::eta_from_flat(&values)
+        family.eta_from_flat(&values)
     }
 
     fn penalty_value(&self, beta: &[f64]) -> f64 {
@@ -191,15 +287,25 @@ where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
         let values = family.initial_flat(obs);
-        let mut beta = vec![0.0; self.coefficient_count()];
-        for (coordinate, value) in self.coordinates.iter().zip(values) {
-            if value.is_finite() {
-                coordinate
-                    .predictor
-                    .set_constant_start(value, &mut beta[coordinate.range.clone()]);
-            }
+        self.initial_beta(&values)
+    }
+
+    fn try_initial_parameters<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let values = family.initial_flat(obs);
+        if values.len() != self.coordinates.len() {
+            return Err(ModelError::DynamicInitialValueCount {
+                expected: self.coordinates.len(),
+                actual: values.len(),
+            });
         }
-        beta
+        Ok(self.initial_beta(&values))
     }
 
     fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]) {
@@ -243,11 +349,7 @@ where
                 if weight == 0.0 {
                     scores.fill(0.0);
                 } else {
-                    for (value, coordinate) in values.iter_mut().zip(&self.coordinates) {
-                        *value = coordinate
-                            .predictor
-                            .eta_row(row, &beta[coordinate.range.clone()]);
-                    }
+                    self.fill_values(beta, row, values);
                     loss = weight.mul_add(
                         family.nll_and_gradient_eta_flat(
                             obs.observation_at(row),
@@ -275,35 +377,56 @@ where
     }
 
     fn block_ranges(&self) -> Vec<Range<usize>> {
-        self.coordinates
-            .iter()
-            .map(|coordinate| coordinate.range.clone())
-            .collect()
+        let mut ranges = Vec::with_capacity(self.coordinates.len());
+        <Self as GamlssBlocks<F>>::visit_block_ranges(self, |_, range| ranges.push(range));
+        ranges
     }
 
     fn parameter_layout(&self) -> ParameterLayout {
-        ParameterLayout::new(
-            self.coordinates
-                .iter()
-                .map(|coordinate| ParameterSlice {
-                    name: coordinate.role,
-                    range: coordinate.range.clone(),
-                })
-                .collect(),
-        )
+        let mut slices = Vec::with_capacity(self.coordinates.len());
+        <Self as GamlssBlocks<F>>::visit_parameter_slices(self, |_, name, range| {
+            slices.push(ParameterSlice { name, range });
+        });
+        ParameterLayout::new(slices)
     }
 
     fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
-        self.coordinates
-            .iter()
-            .map(|coordinate| {
-                ParameterDescriptor::new(
-                    coordinate.role,
-                    coordinate.path.clone(),
-                    coordinate.range.clone(),
-                )
-            })
-            .collect()
+        let mut descriptors = Vec::with_capacity(self.coordinates.len());
+        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |_, descriptor| {
+            descriptors.push(descriptor);
+        });
+        descriptors
+    }
+
+    fn visit_block_ranges<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            visit(index, coordinate.range.clone());
+        }
+    }
+
+    fn visit_parameter_slices<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            visit(index, coordinate.role, coordinate.range.clone());
+        }
+    }
+
+    fn visit_parameter_descriptors<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, ParameterDescriptor),
+    {
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            visit(index, coordinate.descriptor());
+        }
+    }
+
+    fn dynamic_layout_key(&self) -> Option<&DynamicLayoutKey> {
+        Some(&self.layout_key)
     }
 }
 

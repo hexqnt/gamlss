@@ -13,7 +13,7 @@ use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasMarginalCdf, HasObservationDimension,
     Identity, InitialEtaFromTheta, Link, Log, ModelError, Mu, ObservationView, PartialCorrelation,
     PositiveLink, Sigma,
-    shape::{Product, ShapeValues, StrictLower, Vector},
+    shape::{Product, ShapeValues, StrictLower, Vector, strict_lower_triangular_packed_len},
 };
 use gamlss_special::unit_normal_cdf;
 
@@ -79,10 +79,7 @@ impl<const D: usize> PackedPartialCorr<D> {
     /// Checked expected packed length for dimension `D`.
     #[must_use]
     pub const fn checked_len() -> Option<usize> {
-        match D.checked_mul(D.saturating_sub(1)) {
-            Some(product) => Some(product / 2),
-            None => None,
-        }
+        strict_lower_triangular_packed_len(D)
     }
 
     /// Expected packed length for dimension `D`.
@@ -137,8 +134,8 @@ impl<const D: usize> PackedPartialCorr<D> {
 /// Means and marginal standard deviations are represented explicitly. The
 /// correlation matrix is built from strict-lower partial-correlation predictors
 /// mapped through `tanh`, then converted to a correlation Cholesky factor. For
-/// `D == 2`, a private bivariate fast path evaluates the density and gradient
-/// directly without materializing Cholesky workspace.
+/// each row, the partial correlations condition on the preceding response
+/// coordinates, so their interpretation depends on response-coordinate order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MvNormalMeanStdPartialCorr<const D: usize, MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

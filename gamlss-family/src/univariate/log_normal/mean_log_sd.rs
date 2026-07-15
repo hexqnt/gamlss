@@ -11,41 +11,23 @@ use super::{LogNormal, LogNormalLogLocationLogSdTheta};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeanLogSd;
 
-/// Predictors for log-normal mean/log-SD on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMeanLogSdEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Log-SD predictor.
-    pub log_sd: f64,
-}
-
-impl ParameterParts<2> for LogNormalMeanLogSdEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            log_sd: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for log-normal mean/log-SD on the link scale.
+    LogNormalMeanLogSdEta {
+        /// Mean predictor.
+        mean,
+        /// Log-SD predictor.
+        log_sd,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.log_sd,
-            _ => unreachable!("log-normal mean/log-SD eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale log-normal mean/log-SD parameters.
+    LogNormalMeanLogSdTheta {
+        /// Positive mean.
+        mean,
+        /// Positive standard deviation of `log(Y)`.
+        log_sd,
     }
-}
-
-/// Natural-scale log-normal mean/log-SD parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMeanLogSdTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive standard deviation of `log(Y)`.
-    pub log_sd: f64,
 }
 
 impl LogNormalMeanLogSdTheta {
@@ -66,10 +48,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: LogNormalMeanLogSdEta) -> LogNormalMeanLogSdTheta {
-        LogNormalMeanLogSdTheta {
-            mean: MeanLink::inverse(eta.mean),
-            log_sd: LogSdLink::inverse(eta.log_sd),
-        }
+        eta.theta_from_links::<MeanLink, LogSdLink>()
     }
 
     #[inline]
@@ -90,10 +69,7 @@ where
 
         (
             nll,
-            LogNormalMeanLogSdEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
-            },
+            eta.chain_gradient::<MeanLink, LogSdLink>(d_mean, d_log_sd),
         )
     }
 }

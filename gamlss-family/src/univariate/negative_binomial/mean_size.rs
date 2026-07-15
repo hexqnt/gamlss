@@ -69,14 +69,10 @@ where
             );
         }
 
-        let total = theta.shape + theta.mu;
-        let d_mu = (y + theta.shape) / total - y / theta.mu;
-        let d_shape =
-            Self::digamma_shape_difference(y, theta.shape) + (theta.mu / theta.shape).ln_1p() - 1.0
-                + (y + theta.shape) / total;
+        let gradient_theta = Self::gradient_theta(y, theta);
         let gradient_eta = NegativeBinomialEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
+            mu: gradient_theta.mu * MuLink::derivative_inverse(eta.mu),
+            shape: gradient_theta.shape * ShapeLink::derivative_inverse(eta.shape),
         };
 
         (nll, gradient_eta)

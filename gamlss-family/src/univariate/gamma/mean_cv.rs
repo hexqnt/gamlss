@@ -2,6 +2,7 @@ use gamlss_core::{
     Cv, Family, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean, ObservationView,
     ParameterParts, PositiveLink,
 };
+use gamlss_special::{digamma, digamma_minus_ln};
 
 use crate::initial::positive_floor;
 
@@ -13,47 +14,29 @@ pub type GammaMeanCv = Gamma<MeanCv, Log, Log>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeanCv;
 
-/// Predictors for gamma mean/CV on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GammaMeanCvEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Coefficient-of-variation predictor.
-    pub cv: f64,
-}
-
-impl ParameterParts<2> for GammaMeanCvEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            cv: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for gamma mean/CV on the link scale.
+    GammaMeanCvEta {
+        /// Mean predictor.
+        mean,
+        /// Coefficient-of-variation predictor.
+        cv,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.cv,
-            _ => unreachable!("gamma mean/CV eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale gamma mean/CV parameters.
+    GammaMeanCvTheta {
+        /// Positive mean.
+        mean,
+        /// Positive coefficient of variation.
+        cv,
     }
-}
-
-/// Natural-scale gamma mean/CV parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GammaMeanCvTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive coefficient of variation.
-    pub cv: f64,
 }
 
 impl GammaMeanCvTheta {
     #[inline]
     pub(super) fn shape_rate(self) -> GammaShapeRateTheta {
-        let shape = 1.0 / (self.cv * self.cv);
+        let shape = (1.0 / self.cv) / self.cv;
         GammaShapeRateTheta {
             shape,
             rate: shape / self.mean,
@@ -67,11 +50,29 @@ where
     CvLink: PositiveLink<f64>,
 {
     #[inline]
-    fn theta_from_eta(eta: GammaMeanCvEta) -> GammaMeanCvTheta {
-        GammaMeanCvTheta {
-            mean: MeanLink::inverse(eta.mean),
-            cv: CvLink::inverse(eta.cv),
+    fn scaled_digamma_minus_log(shape: f64) -> f64 {
+        if shape < 1.0 {
+            return shape.mul_add(digamma(shape + 1.0) - shape.ln(), -1.0);
         }
+        shape * digamma_minus_ln(shape)
+    }
+
+    #[inline]
+    fn scaled_ratio_deviance(y: f64, mean: f64, shape_rate: GammaShapeRateTheta) -> f64 {
+        let centered = (y - mean) / mean;
+        if centered.abs() <= 0.5 {
+            shape_rate.shape * (centered - centered.ln_1p())
+        } else {
+            shape_rate.shape.mul_add(
+                -(y.ln() - mean.ln()),
+                shape_rate.rate.mul_add(y, -shape_rate.shape),
+            )
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: GammaMeanCvEta) -> GammaMeanCvTheta {
+        eta.theta_from_links::<MeanLink, CvLink>()
     }
 
     #[inline]
@@ -84,18 +85,14 @@ where
             return (nll, GammaMeanCvEta::from_array([f64::NAN; 2]));
         }
 
-        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
-        let d_mean = d_rate * (-shape_rate.rate / theta.mean);
-        let d_cv = d_shape * (-2.0 * shape_rate.shape / theta.cv)
-            + d_rate * (-2.0 * shape_rate.rate / theta.cv);
+        let log_mean_score = shape_rate.shape - shape_rate.rate * y;
+        let d_mean = log_mean_score / theta.mean;
+        let log_cv_score = -2.0
+            * (Self::scaled_digamma_minus_log(shape_rate.shape)
+                + Self::scaled_ratio_deviance(y, theta.mean, shape_rate));
+        let d_cv = log_cv_score / theta.cv;
 
-        (
-            nll,
-            GammaMeanCvEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                cv: d_cv * CvLink::derivative_inverse(eta.cv),
-            },
-        )
+        (nll, eta.chain_gradient::<MeanLink, CvLink>(d_mean, d_cv))
     }
 }
 

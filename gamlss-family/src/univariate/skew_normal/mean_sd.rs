@@ -84,9 +84,10 @@ where
 
         let gradient =
             nll_gradient_location_scale(y, location_scale.mu, location_scale.sigma, theta.nu);
-        let nu2_plus_one = theta.nu.mul_add(theta.nu, 1.0);
-        let delta_derivative = 1.0 / (nu2_plus_one * nu2_plus_one.sqrt());
-        let standardized_mean = SQRT_2_OVER_PI * theta.nu / nu2_plus_one.sqrt();
+        let hypot = theta.nu.hypot(1.0);
+        let inverse_hypot = 1.0 / hypot;
+        let delta_derivative = inverse_hypot * inverse_hypot * inverse_hypot;
+        let standardized_mean = SQRT_2_OVER_PI * theta.nu / hypot;
         let standardized_mean_derivative = SQRT_2_OVER_PI * delta_derivative;
         let standardized_variance = 1.0 - standardized_mean * standardized_mean;
         let scale_per_sd = location_scale.sigma / theta.sigma;
@@ -316,9 +317,31 @@ impl SkewNormalMeanSdTheta {
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::Family;
 
     #[cfg(feature = "rand")]
-    use super::{SkewNormalMeanSdNu, SkewNormalMeanSdTheta};
+    use super::SkewNormalMeanSdTheta;
+    use super::{SkewNormalMeanSdEta, SkewNormalMeanSdNu};
+
+    #[test]
+    fn extreme_finite_skewness_keeps_mean_sd_gradient_consistent() {
+        let family = SkewNormalMeanSdNu::new();
+        let eta = SkewNormalMeanSdEta {
+            mean: 0.0,
+            sigma: 0.0,
+            nu: 1.0e200,
+        };
+        let (nll, gradient) = family.nll_and_gradient_eta(0.0, &eta, &mut ());
+
+        assert!(nll.is_finite());
+        assert!(
+            (gradient.sigma - 1.0).abs() < 1.0e-14,
+            "sigma gradient was {}",
+            gradient.sigma
+        );
+        assert!(gradient.mean.is_finite());
+        assert!(gradient.nu.is_finite());
+    }
 
     #[cfg(feature = "rand")]
     #[test]

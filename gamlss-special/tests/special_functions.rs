@@ -5,12 +5,13 @@
 )]
 use approx::assert_relative_eq;
 use gamlss_special::{
-    digamma, discrete_quantile, included_count, integrate_finite, invert_bounded_cdf,
-    invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma, ln_gamma_delta, ln_multivariate_beta,
-    log_add_exp, log_ndtr, normal_mills_ratio, owens_t, regularized_beta,
-    regularized_beta_complement, regularized_gamma_lower, regularized_gamma_upper,
-    student_t_cdf_standardized, student_t_log_pdf_standardized, student_t_nll_constant,
-    unit_normal_cdf, unit_normal_log_sf, unit_normal_quantile, unit_normal_sf,
+    bernoulli_kl, digamma, digamma_delta, digamma_minus_ln, discrete_quantile, included_count,
+    integrate_finite, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma,
+    ln_gamma_delta, ln_gamma_stirling_residual, ln_multivariate_beta, log_add_exp, log_ndtr,
+    normal_mills_ratio, owens_t, regularized_beta, regularized_beta_complement,
+    regularized_gamma_lower, regularized_gamma_upper, student_t_cdf_standardized,
+    student_t_log_pdf_standardized, student_t_nll_constant, unit_normal_cdf, unit_normal_log_sf,
+    unit_normal_quantile, unit_normal_sf,
 };
 use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
@@ -133,6 +134,56 @@ fn ln_gamma_delta_and_ln_beta_handle_large_ratios() {
 }
 
 #[test]
+fn stirling_residuals_preserve_large_argument_corrections() {
+    for value in [0.25, 1.0, 3.5, 8.0, 100.0] {
+        assert_close(
+            ln_gamma_stirling_residual(value),
+            ln_gamma(value) - value * value.ln() + value,
+            1.0e-13,
+            1.0e-13,
+        );
+        assert_close(
+            digamma_minus_ln(value),
+            digamma(value) - value.ln(),
+            1.0e-12,
+            1.0e-13,
+        );
+    }
+
+    let large = 1.0e16_f64;
+    assert_close(
+        ln_gamma_stirling_residual(large),
+        -gamlss_special::unit_normal_log_pdf(0.0) - 0.5 * large.ln(),
+        0.0,
+        1.0e-14,
+    );
+    assert_close(digamma_minus_ln(large), -0.5 / large, 0.0, 1.0e-32);
+    assert!(ln_gamma_stirling_residual(0.0).is_nan());
+    assert!(digamma_minus_ln(f64::INFINITY).is_nan());
+}
+
+#[test]
+fn bernoulli_kl_preserves_near_equal_probabilities() {
+    assert_eq!(bernoulli_kl(0.5, 0.5), 0.0);
+    assert_close(
+        bernoulli_kl(0.4, 0.7),
+        0.4 * (0.4_f64 / 0.7).ln() + 0.6 * (0.6_f64 / 0.3).ln(),
+        1.0e-14,
+        1.0e-14,
+    );
+
+    let reference = f64::from_bits(0.5_f64.to_bits() + 1);
+    let difference = reference - 0.5;
+    assert_close(
+        bernoulli_kl(0.5, reference),
+        2.0 * difference * difference,
+        1.0e-15,
+        1.0e-45,
+    );
+    assert!(bernoulli_kl(0.0, 0.5).is_nan());
+}
+
+#[test]
 fn digamma_matches_known_constants_and_recurrence() {
     let euler_gamma = 0.577_215_664_901_532_9;
 
@@ -155,6 +206,28 @@ fn digamma_matches_statrs_reference_grid() {
             2.0e-11,
         );
     }
+}
+
+#[test]
+fn digamma_delta_preserves_small_large_argument_differences() {
+    for (base, increment) in [(0.1_f64, 0.5_f64), (8.0, 0.5), (25.0, 3.5)] {
+        assert_close(
+            digamma_delta(base, increment),
+            statrs::function::gamma::digamma(base + increment)
+                - statrs::function::gamma::digamma(base),
+            2.0e-12,
+            2.0e-12,
+        );
+    }
+
+    assert_close(digamma_delta(1.0e16, 1.0), 1.0e-16, 0.0, 1.0e-31);
+    assert_tail_close(
+        digamma_delta(1.0, f64::EPSILON),
+        std::f64::consts::PI.powi(2) * f64::EPSILON / 6.0,
+        2.0e-14,
+    );
+    assert_eq!(digamma_delta(2.0, 0.0), 0.0);
+    assert!(digamma_delta(0.0, 1.0).is_nan());
 }
 
 #[test]

@@ -11,50 +11,41 @@ use super::{LogNormal, LogNormalLogLocationLogSdTheta};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeanCv;
 
-/// Predictors for log-normal mean/CV on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMeanCvEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Coefficient-of-variation predictor.
-    pub cv: f64,
-}
-
-impl ParameterParts<2> for LogNormalMeanCvEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            cv: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for log-normal mean/CV on the link scale.
+    LogNormalMeanCvEta {
+        /// Mean predictor.
+        mean,
+        /// Coefficient-of-variation predictor.
+        cv,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.cv,
-            _ => unreachable!("log-normal mean/CV eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale log-normal mean/CV parameters.
+    LogNormalMeanCvTheta {
+        /// Positive mean.
+        mean,
+        /// Positive coefficient of variation.
+        cv,
     }
-}
-
-/// Natural-scale log-normal mean/CV parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMeanCvTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive coefficient of variation.
-    pub cv: f64,
 }
 
 impl LogNormalMeanCvTheta {
     #[inline]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
-        let log_sd_squared = (self.cv * self.cv).ln_1p();
+        let log_sd_squared = if self.cv <= 1.0 {
+            (self.cv * self.cv).ln_1p()
+        } else {
+            2.0 * self.cv.hypot(1.0).ln()
+        };
+        let log_sd = if log_sd_squared == 0.0 {
+            self.cv
+        } else {
+            log_sd_squared.sqrt()
+        };
         LogNormalLogLocationLogSdTheta {
             log_location: 0.5f64.mul_add(-log_sd_squared, self.mean.ln()),
-            log_sd: log_sd_squared.sqrt(),
+            log_sd,
         }
     }
 }
@@ -66,10 +57,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: LogNormalMeanCvEta) -> LogNormalMeanCvTheta {
-        LogNormalMeanCvTheta {
-            mean: MeanLink::inverse(eta.mean),
-            cv: CvLink::inverse(eta.cv),
-        }
+        eta.theta_from_links::<MeanLink, CvLink>()
     }
 
     #[inline]
@@ -83,18 +71,13 @@ where
         }
 
         let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
-        let cv2_plus_one = theta.cv.mul_add(theta.cv, 1.0);
+        let inverse_hypot = 1.0 / theta.cv.hypot(1.0);
+        let cv_over_one_plus_cv2 = (theta.cv * inverse_hypot) * inverse_hypot;
         let d_mean = d_location / theta.mean;
-        let d_cv = d_location * (-theta.cv / cv2_plus_one)
-            + d_log_sd * (theta.cv / (cv2_plus_one * canonical.log_sd));
+        let d_cv = -d_location * cv_over_one_plus_cv2
+            + d_log_sd * (cv_over_one_plus_cv2 / canonical.log_sd);
 
-        (
-            nll,
-            LogNormalMeanCvEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                cv: d_cv * CvLink::derivative_inverse(eta.cv),
-            },
-        )
+        (nll, eta.chain_gradient::<MeanLink, CvLink>(d_mean, d_cv))
     }
 }
 

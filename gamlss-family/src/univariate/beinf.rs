@@ -7,7 +7,10 @@ use gamlss_core::{
     Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau, UnitIntervalLink,
 };
 
-use gamlss_special::{digamma, invert_bounded_cdf, ln_gamma, regularized_beta};
+use gamlss_special::{
+    bernoulli_kl, digamma_minus_ln, invert_bounded_cdf, ln_gamma_stirling_residual,
+    regularized_beta,
+};
 
 use crate::initial::{
     POSITIVE_FLOOR, VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary,
@@ -68,22 +71,50 @@ where
         if precision <= 0.0 || !precision.is_finite() {
             return None;
         }
-        let denominator = 1.0 + theta.nu + theta.tau;
+        let alpha = theta.mu * precision;
+        let beta = (1.0 - theta.mu) * precision;
+        if alpha <= 0.0 || !alpha.is_finite() || beta <= 0.0 || !beta.is_finite() {
+            return None;
+        }
+        let scale = 1.0_f64.max(theta.nu).max(theta.tau);
+        let scaled_beta = 1.0 / scale;
+        let scaled_zero = theta.nu / scale;
+        let scaled_one = theta.tau / scale;
+        let scaled_denominator = scaled_beta + scaled_zero + scaled_one;
+        let log_scaled_denominator = scaled_denominator.ln();
+        let log_p0 = scaled_zero.ln() - log_scaled_denominator;
+        let log_p_beta = scaled_beta.ln() - log_scaled_denominator;
         Some(BeinfParts {
-            alpha: theta.mu * precision,
-            beta: (1.0 - theta.mu) * precision,
-            p0: theta.nu / denominator,
-            p1: theta.tau / denominator,
-            p_beta: 1.0 / denominator,
+            alpha,
+            beta,
+            precision,
+            inverse_denominator: scaled_beta / scaled_denominator,
+            log_p0,
+            log_p1: scaled_one.ln() - log_scaled_denominator,
+            log_p_beta,
+            p0: log_p0.exp(),
+            p_beta: log_p_beta.exp(),
         })
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn beta_log_density(y: f64, alpha: f64, beta: f64) -> f64 {
-        ln_gamma(alpha + beta) - ln_gamma(alpha) - ln_gamma(beta)
-            + (alpha - 1.0) * y.ln()
-            + (beta - 1.0) * (1.0 - y).ln()
+    fn beta_log_density(y: f64, mean: f64, parts: BeinfParts) -> f64 {
+        -(ln_gamma_stirling_residual(parts.alpha) + ln_gamma_stirling_residual(parts.beta)
+            - ln_gamma_stirling_residual(parts.precision)
+            + parts.precision * bernoulli_kl(mean, y)
+            + y.ln()
+            + (-y).ln_1p())
+    }
+
+    #[inline]
+    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
+        let centered = (numerator - denominator) / denominator;
+        if centered.abs() <= 0.5 {
+            centered.ln_1p()
+        } else {
+            numerator.ln() - denominator.ln()
+        }
     }
 
     #[inline]
@@ -96,20 +127,19 @@ where
             return f64::INFINITY;
         };
         if y == 0.0 {
-            return -parts.p0.ln();
+            return -parts.log_p0;
         }
         if y == 1.0 {
-            return -parts.p1.ln();
+            return -parts.log_p1;
         }
 
-        -(parts.p_beta.ln() + Self::beta_log_density(y, parts.alpha, parts.beta))
+        -parts.log_p_beta - Self::beta_log_density(y, theta.mu, parts)
     }
 
     #[inline]
     #[allow(clippy::float_cmp, clippy::suboptimal_flops)]
     fn gradient_theta(y: f64, theta: BeinfTheta, parts: BeinfParts) -> BeinfTheta {
-        let denominator = 1.0 + theta.nu + theta.tau;
-        let d_log_denominator = 1.0 / denominator;
+        let d_log_denominator = parts.inverse_denominator;
 
         if y == 0.0 {
             return BeinfTheta {
@@ -128,11 +158,12 @@ where
             };
         }
 
-        let precision = parts.alpha + parts.beta;
-        let common = digamma(precision);
-        let d_alpha = digamma(parts.alpha) - common - y.ln();
-        let d_beta = digamma(parts.beta) - common - (1.0 - y).ln();
-        let d_mu = precision * (d_alpha - d_beta);
+        let precision_residual = digamma_minus_ln(parts.precision);
+        let d_alpha =
+            digamma_minus_ln(parts.alpha) - precision_residual + Self::log_ratio(theta.mu, y);
+        let d_beta = digamma_minus_ln(parts.beta) - precision_residual
+            + Self::log_ratio(1.0 - theta.mu, 1.0 - y);
+        let d_mu = parts.precision * (d_alpha - d_beta);
         let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
 
         BeinfTheta {
@@ -367,8 +398,12 @@ where
 struct BeinfParts {
     alpha: f64,
     beta: f64,
+    precision: f64,
+    inverse_denominator: f64,
+    log_p0: f64,
+    log_p1: f64,
+    log_p_beta: f64,
     p0: f64,
-    p1: f64,
     p_beta: f64,
 }
 
@@ -425,9 +460,50 @@ pub struct BeinfTheta {
 mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::CanSimulate;
+    use gamlss_core::Family;
 
-    #[cfg(feature = "rand")]
     use super::{BeinfMuSigmaNuTau, BeinfTheta};
+    use crate::{BetaMeanPrecision, BetaTheta};
+
+    #[test]
+    fn beinf_preserves_concentrated_beta_component_and_large_odds() {
+        let family = BeinfMuSigmaNuTau::new();
+        let beta = BetaMeanPrecision::new();
+        let precision = 1.0e16;
+        let theta = BeinfTheta {
+            mu: 0.5,
+            sigma: 1.0 / (precision + 1.0),
+            nu: 0.3,
+            tau: 0.4,
+        };
+        let expected = (1.0_f64 + theta.nu + theta.tau).ln()
+            + beta.nll(
+                0.5,
+                &BetaTheta {
+                    mu: theta.mu,
+                    precision,
+                },
+                &mut (),
+            );
+        let nll = family.nll(0.5, &theta, &mut ());
+
+        assert!((nll - expected).abs() < 1.0e-13, "nll was {nll}");
+
+        let atom_nll = family.nll(
+            0.0,
+            &BeinfTheta {
+                mu: 0.5,
+                sigma: 0.2,
+                nu: f64::MAX,
+                tau: f64::MAX,
+            },
+            &mut (),
+        );
+        assert!(
+            (atom_nll - std::f64::consts::LN_2).abs() < 1.0e-14,
+            "atom nll was {atom_nll}"
+        );
+    }
 
     #[cfg(feature = "rand")]
     #[test]

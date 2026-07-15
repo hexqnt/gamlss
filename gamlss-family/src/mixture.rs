@@ -469,8 +469,9 @@ fn log_sum_exp(values: &[f64]) -> f64 {
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        CompilableFamily, DenseDesign, Family, Gamlss, MixtureWeight, Mu, NoPenalty, ParameterAxis,
-        ParameterBlock, ParameterBlocks, Sigma, SimplexLogitParameterBlock,
+        CompilableFamily, DenseDesign, Family, Gamlss, MixtureWeight, ModelError, Mu, NoPenalty,
+        Objective, ParameterAxis, ParameterBlock, ParameterBlocks, ParameterPath, Sigma,
+        SimplexLogitParameterBlock,
     };
 
     use super::{Mixture, MixtureEta, MixtureTheta};
@@ -691,7 +692,7 @@ mod tests {
         });
         let blocks = ParameterBlocks::new((weights, components));
         let family = Mixture::<_, 2>::try_new(NormalMuSigma::new()).unwrap();
-        let model = Gamlss::try_new(family, blocks, &y).unwrap();
+        let mut model = Gamlss::try_new(family, blocks, &y).unwrap();
         let beta = [0.2, 0.7, -0.8, -0.1, 0.9, 0.2];
         let mut gradient = [0.0; 6];
 
@@ -720,6 +721,50 @@ mod tests {
             descriptors[3].path.axes(),
             &[ParameterAxis::Component { index: 1 }]
         );
+
+        assert_eq!(model.parameter_layout().ranges_of::<Mu>(), vec![2..3, 4..5]);
+        assert_eq!(
+            model.block_objective_for::<Mu>(beta.to_vec()).unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+        let component_one_path = ParameterPath::from_axis(ParameterAxis::Component { index: 1 });
+        let (descriptor_index, component_one_mu) = model
+            .unique_parameter_descriptor_at_path::<Mu>(&component_one_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(descriptor_index, 3);
+        assert_eq!(component_one_mu, descriptors[3]);
+
+        let unpacked = model.unpack_parameters(&beta).unwrap();
+        assert_eq!(unpacked.blocks_of::<Mu>().count(), 2);
+        assert_eq!(
+            unpacked.block_at(descriptor_index).unwrap().descriptor,
+            component_one_mu
+        );
+        assert_eq!(
+            unpacked.block_at(descriptor_index).unwrap().coefficients,
+            beta[4..5]
+        );
+        assert_eq!(
+            unpacked.unique_block_of::<Mu>().unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+        {
+            let mut component_objective = model
+                .block_objective_at(descriptor_index, beta.to_vec())
+                .unwrap();
+            let mut component_gradient = [0.0];
+            component_objective
+                .value_gradient(&beta[4..5], &mut component_gradient)
+                .unwrap();
+            assert_relative_eq!(component_gradient[0], gradient[4], epsilon = 1.0e-12);
+        }
 
         let starts = model.initial_parameters().unwrap();
         assert!((starts[2] - starts[4]).abs() > f64::EPSILON);

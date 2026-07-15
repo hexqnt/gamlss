@@ -2,7 +2,10 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, PositiveLink};
 
-use gamlss_special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
+use gamlss_special::{
+    bernoulli_kl, digamma_minus_ln, included_count, is_nonnegative_integer, ln_gamma,
+    ln_gamma_delta, ln_gamma_stirling_residual, log_add_exp,
+};
 
 pub use mean_dispersion::{
     NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
@@ -14,7 +17,6 @@ mod mean_dispersion;
 mod mean_size;
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
-const DIGAMMA_RECURRENCE_MAX_COUNT_F64: f64 = 1_024.0;
 
 /// Negative binomial family parameterized by positive mean and shape.
 ///
@@ -50,17 +52,81 @@ where
             return f64::INFINITY;
         }
 
-        let count_log_ratio = if y == 0.0 {
-            0.0
+        if y == 0.0 {
+            return theta.shape * Self::log1p_ratio(theta.mu, theta.shape);
+        }
+
+        let total = theta.shape + y;
+        if total.is_finite() {
+            let count_fraction = theta.shape / total;
+            let success_probability = (-Self::log1p_ratio(theta.mu, theta.shape)).exp();
+            if (0.0..1.0).contains(&count_fraction) && (0.0..1.0).contains(&success_probability) {
+                return ln_gamma_stirling_residual(theta.shape) + ln_gamma_stirling_residual(y)
+                    - ln_gamma_stirling_residual(total)
+                    + y.ln()
+                    + total * bernoulli_kl(count_fraction, success_probability);
+            }
+        }
+
+        -ln_gamma_delta(theta.shape, y)
+            + ln_gamma(y + 1.0)
+            + theta.shape * Self::log1p_ratio(theta.mu, theta.shape)
+            + y * Self::log1p_ratio(theta.shape, theta.mu)
+    }
+
+    #[inline]
+    fn log1p_ratio(numerator: f64, denominator: f64) -> f64 {
+        log_add_exp(0.0, numerator.ln() - denominator.ln())
+    }
+
+    #[inline]
+    fn reciprocal_sum(left: f64, right: f64) -> f64 {
+        let scale = left.max(right);
+        (1.0 / scale) / (left / scale + right / scale)
+    }
+
+    fn log1p_ratio_minus_fraction(numerator: f64, denominator: f64) -> f64 {
+        const LOG_ONE_QUARTER: f64 = -1.386_294_361_119_890_6;
+
+        let log_ratio = numerator.ln() - denominator.ln();
+        if log_ratio <= LOG_ONE_QUARTER {
+            let ratio = log_ratio.exp();
+            let mut power = ratio * ratio;
+            let mut sum = 0.0;
+            for order in 2..=128 {
+                let order_f = f64::from(order);
+                let term = power * (order_f - 1.0) / order_f;
+                sum += term;
+                if term.abs() <= f64::EPSILON * sum.abs() {
+                    break;
+                }
+                power *= -ratio;
+            }
+            sum
         } else {
-            y * (theta.shape / theta.mu).ln_1p()
+            Self::log1p_ratio(numerator, denominator) - 1.0 / (1.0 + (-log_ratio).exp())
+        }
+    }
+
+    #[inline]
+    pub(super) fn gradient_theta(y: f64, theta: NegativeBinomialTheta) -> NegativeBinomialTheta {
+        let success_probability = (-Self::log1p_ratio(theta.mu, theta.shape)).exp();
+        let d_mu = (1.0 - y / theta.mu) * success_probability;
+        let d_shape = if y == 0.0 {
+            Self::log1p_ratio_minus_fraction(theta.mu, theta.shape)
+        } else {
+            let total = theta.shape + y;
+            let residual_difference = digamma_minus_ln(theta.shape) - digamma_minus_ln(total);
+            let log_sum_difference =
+                Self::log1p_ratio(theta.mu, theta.shape) - Self::log1p_ratio(y, theta.shape);
+            let ratio_difference = (y - theta.mu) * Self::reciprocal_sum(theta.shape, theta.mu);
+            residual_difference + log_sum_difference + ratio_difference
         };
 
-        -ln_gamma(y + theta.shape)
-            + ln_gamma(theta.shape)
-            + ln_gamma(y + 1.0)
-            + theta.shape * (theta.mu / theta.shape).ln_1p()
-            + count_log_ratio
+        NegativeBinomialTheta {
+            mu: d_mu,
+            shape: d_shape,
+        }
     }
 
     #[inline]
@@ -80,19 +146,15 @@ where
         let Some(max_count) = included_count(y, MAX_CDF_TERMS) else {
             return f64::NAN;
         };
-        let success_probability = theta.shape / (theta.shape + theta.mu);
-        let failure_probability = theta.mu / (theta.shape + theta.mu);
-        let term = (theta.shape * success_probability.ln()).exp();
+        let log_success = -Self::log1p_ratio(theta.mu, theta.shape);
+        let log_failure = -Self::log1p_ratio(theta.shape, theta.mu);
+        let failure_probability = log_failure.exp();
+        let term = (theta.shape * log_success).exp();
         if term.is_finite() && term > 0.0 {
             return Self::cdf_by_recurrence(theta.shape, failure_probability, max_count, term);
         }
 
-        Self::cdf_by_log_sum(
-            theta.shape,
-            success_probability,
-            failure_probability,
-            max_count,
-        )
+        Self::cdf_by_log_sum(theta.shape, log_success, log_failure, max_count)
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -116,45 +178,18 @@ where
     }
 
     #[allow(clippy::suboptimal_flops, clippy::cast_precision_loss)]
-    fn cdf_by_log_sum(
-        shape: f64,
-        success_probability: f64,
-        failure_probability: f64,
-        max_count: u64,
-    ) -> f64 {
-        let log_success = success_probability.ln();
-        let log_failure = failure_probability.ln();
-        let log_shape_gamma = ln_gamma(shape);
+    fn cdf_by_log_sum(shape: f64, log_success: f64, log_failure: f64, max_count: u64) -> f64 {
         let mut log_sum = f64::NEG_INFINITY;
 
         for count in 0..=max_count {
             let count_f = count as f64;
-            let log_term = ln_gamma(count_f + shape) - log_shape_gamma - ln_gamma(count_f + 1.0)
+            let log_term = ln_gamma_delta(shape, count_f) - ln_gamma(count_f + 1.0)
                 + shape * log_success
                 + count_f * log_failure;
             log_sum = log_add_exp(log_sum, log_term);
         }
 
         log_sum.exp().clamp(0.0, 1.0)
-    }
-
-    #[inline]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::cast_sign_loss
-    )]
-    pub(super) fn digamma_shape_difference(y: f64, shape: f64) -> f64 {
-        if y <= DIGAMMA_RECURRENCE_MAX_COUNT_F64 {
-            let count = y as u64;
-            let mut sum = 0.0;
-            for offset in 0..count {
-                sum += 1.0 / (shape + offset as f64);
-            }
-            -sum
-        } else {
-            gamlss_special::digamma(shape) - gamlss_special::digamma(y + shape)
-        }
     }
 }
 
@@ -185,7 +220,7 @@ mod tests {
     use statrs::distribution::{DiscreteCDF, NegativeBinomial as StatrsNegativeBinomial};
 
     use super::{
-        NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
+        NegativeBinomialEta, NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta,
         NegativeBinomialMeanSize, NegativeBinomialTheta,
     };
     use crate::test_support::{
@@ -317,6 +352,83 @@ mod tests {
 
         assert!(cdf.is_finite());
         assert!(cdf > 0.45 && cdf < 0.55, "cdf was {cdf}");
+    }
+
+    #[test]
+    fn negative_binomial_preserves_poisson_limit_for_huge_shape() {
+        let family = NegativeBinomialMeanSize::new();
+        let theta = NegativeBinomialTheta {
+            mu: 1.0,
+            shape: 1.0e16,
+        };
+
+        let nll_at_zero = family.nll(0.0, &theta, &mut family.workspace());
+        let nll_at_one = family.nll(1.0, &theta, &mut family.workspace());
+        let cdf_at_zero = family.cdf(0.0, &theta);
+        let cdf_at_one = family.cdf(1.0, &theta);
+        let (_, gradient) = family.nll_and_gradient_eta(
+            0.0,
+            &NegativeBinomialEta {
+                mu: theta.mu.ln(),
+                shape: theta.shape.ln(),
+            },
+            &mut family.workspace(),
+        );
+
+        assert!(
+            (nll_at_zero - 1.0).abs() < 1.0e-14,
+            "nll(0) was {nll_at_zero}"
+        );
+        assert!(
+            (nll_at_one - 1.0).abs() < 1.0e-14,
+            "nll(1) was {nll_at_one}"
+        );
+        assert!(
+            (cdf_at_zero - (-1.0_f64).exp()).abs() < 1.0e-14,
+            "cdf(0) was {cdf_at_zero}"
+        );
+        let poisson_cdf_at_one = 2.0 * (-1.0_f64).exp();
+        assert!(
+            (cdf_at_one - poisson_cdf_at_one).abs() < 1.0e-14,
+            "cdf(1) was {cdf_at_one}"
+        );
+        assert!(
+            (gradient.mu - 1.0).abs() < 1.0e-14,
+            "mu gradient was {}",
+            gradient.mu
+        );
+        assert!(
+            gradient.shape.abs() < 1.0e-14,
+            "shape gradient was {}",
+            gradient.shape
+        );
+    }
+
+    #[test]
+    fn concentrated_negative_binomial_preserves_normalizer_and_shape_gradient() {
+        let family = NegativeBinomialMeanSize::new();
+        let eta = NegativeBinomialEta {
+            mu: 1.0e16_f64.ln(),
+            shape: 1.0e16_f64.ln(),
+        };
+        let size = eta.shape.exp();
+        let expected_nll = 2.0_f64.mul_add(
+            gamlss_special::ln_gamma_stirling_residual(size),
+            size.ln() - gamlss_special::ln_gamma_stirling_residual(2.0 * size),
+        );
+        let (nll, gradient) = family.nll_and_gradient_eta(size, &eta, &mut ());
+
+        assert!((nll - expected_nll).abs() < 1.0e-13, "nll was {nll}");
+        assert!(
+            gradient.mu.abs() < 1.0e-14,
+            "mu gradient was {}",
+            gradient.mu
+        );
+        assert!(
+            (gradient.shape + 0.25).abs() < 1.0e-14,
+            "shape gradient was {}",
+            gradient.shape
+        );
     }
 
     #[test]

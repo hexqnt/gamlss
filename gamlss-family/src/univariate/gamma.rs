@@ -5,8 +5,8 @@ use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
 
 use gamlss_special::{
-    digamma, invert_positive_cdf, ln_beta, ln_gamma, regularized_gamma_lower,
-    regularized_gamma_upper,
+    digamma_minus_ln, invert_positive_cdf, ln_beta, ln_gamma_stirling_residual,
+    regularized_gamma_lower, regularized_gamma_upper,
 };
 
 use crate::initial::{LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary};
@@ -49,15 +49,43 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
             return f64::INFINITY;
         }
 
-        ln_gamma(theta.shape) - theta.shape * theta.rate.ln() - (theta.shape - 1.0) * y.ln()
-            + theta.rate * y
+        ln_gamma_stirling_residual(theta.shape)
+            + Self::scaled_gamma_ratio_deviance(y, theta)
+            + y.ln()
     }
 
     #[inline]
     fn gradient_shape_rate(y: f64, theta: GammaShapeRateTheta) -> (f64, f64) {
         (
-            digamma(theta.shape) - theta.rate.ln() - y.ln(),
+            digamma_minus_ln(theta.shape) - Self::log_rate_y_over_shape(y, theta),
             y - theta.shape / theta.rate,
+        )
+    }
+
+    #[inline]
+    fn log_rate_y_over_shape(y: f64, theta: GammaShapeRateTheta) -> f64 {
+        let ratio = (theta.rate / theta.shape) * y;
+        if ratio.is_finite() && ratio > 0.0 {
+            let centered = ratio - 1.0;
+            if centered.abs() <= 0.5 {
+                return centered.ln_1p();
+            }
+        }
+        theta.rate.ln() + y.ln() - theta.shape.ln()
+    }
+
+    #[inline]
+    fn scaled_gamma_ratio_deviance(y: f64, theta: GammaShapeRateTheta) -> f64 {
+        let ratio = (theta.rate / theta.shape) * y;
+        if ratio.is_finite() && ratio > 0.0 {
+            let centered = ratio - 1.0;
+            if centered.abs() <= 0.5 {
+                return theta.shape * (centered - centered.ln_1p());
+            }
+        }
+        theta.shape.mul_add(
+            -Self::log_rate_y_over_shape(y, theta),
+            theta.rate.mul_add(y, -theta.shape),
         )
     }
 
@@ -200,7 +228,8 @@ mod tests {
     use statrs::distribution::{ContinuousCDF, Gamma as StatrsGamma};
 
     use super::{
-        GammaMeanCv, GammaMeanCvTheta, GammaMeanShape, GammaShapeRate, GammaShapeRateTheta,
+        GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape, GammaShapeRate,
+        GammaShapeRateEta, GammaShapeRateTheta,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -245,6 +274,65 @@ mod tests {
             mean_cv.crps(1.7, &theta),
             shape_rate.crps(1.7, &canonical),
             epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn gamma_mean_cv_accepts_representable_shape_beyond_squared_cv_range() {
+        let family = GammaMeanCv::new();
+        let theta = GammaMeanCvTheta {
+            mean: 1.0,
+            cv: 1.0e155,
+        };
+        let eta = GammaMeanCvEta {
+            mean: 0.0,
+            cv: theta.cv.ln(),
+        };
+
+        let natural_nll = family.nll(1.0, &theta, &mut ());
+        let (eta_nll, gradient) = family.nll_and_gradient_eta(1.0, &eta, &mut ());
+
+        assert!(
+            natural_nll.is_finite(),
+            "natural-scale nll was {natural_nll}"
+        );
+        assert!(eta_nll.is_finite(), "eta-scale nll was {eta_nll}");
+        assert!(
+            gradient.mean.abs() < 1.0e-14,
+            "mean gradient was {}",
+            gradient.mean
+        );
+        assert!(
+            (gradient.cv - 2.0).abs() < 1.0e-12,
+            "cv gradient was {}",
+            gradient.cv
+        );
+    }
+
+    #[test]
+    fn concentrated_gamma_preserves_normalizer_and_shape_gradient() {
+        let family = GammaShapeRate::new();
+        let eta = GammaShapeRateEta {
+            shape: 1.0e16_f64.ln(),
+            rate: 1.0e16_f64.ln(),
+        };
+        let shape = eta.shape.exp();
+        let expected_nll = 0.5f64.mul_add(
+            -shape.ln(),
+            crate::constants::HALF_LOG_2_PI + 1.0 / (12.0 * shape),
+        );
+        let (nll, gradient) = family.nll_and_gradient_eta(1.0, &eta, &mut ());
+
+        assert!((nll - expected_nll).abs() < 1.0e-13, "nll was {nll}");
+        assert!(
+            (gradient.shape + 0.5).abs() < 1.0e-14,
+            "shape gradient was {}",
+            gradient.shape
+        );
+        assert!(
+            gradient.rate.abs() < 1.0e-14,
+            "rate gradient was {}",
+            gradient.rate
         );
     }
 

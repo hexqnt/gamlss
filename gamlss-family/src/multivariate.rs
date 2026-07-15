@@ -6,6 +6,7 @@ pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMe
 
 /// Cholesky helpers.
 pub mod cholesky;
+mod elliptical;
 /// Independent product construction.
 pub mod independent;
 /// Matrix storage primitives.

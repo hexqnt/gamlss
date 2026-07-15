@@ -1,5 +1,136 @@
 use crate::ModelError;
 
+use std::num::NonZeroUsize;
+
+/// Borrowed equal-width rows over one contiguous flat observation buffer.
+///
+/// This adapter is the standard zero-copy observation view for
+/// runtime-dimensional families whose observation carrier is `&[f64]`.
+/// Construction validates the row geometry and optional weights once, before
+/// the likelihood hot path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DenseRows<'a> {
+    values: &'a [f64],
+    width: NonZeroUsize,
+    weights: Option<&'a [f64]>,
+}
+
+impl<'a> DenseRows<'a> {
+    /// Creates unweighted rows over `values` without copying.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] if `width` is zero, or
+    /// [`ModelError::DenseObservationSize`] if `values.len()` is not divisible
+    /// by `width`.
+    pub fn try_new(values: &'a [f64], width: usize) -> Result<Self, ModelError> {
+        Self::try_new_inner(values, width, None)
+    }
+
+    /// Creates weighted rows over `values` without copying.
+    ///
+    /// # Errors
+    ///
+    /// Returns the geometry errors from [`Self::try_new`],
+    /// [`ModelError::WeightLength`] if there is not one weight per row, or
+    /// [`ModelError::InvalidWeight`] for a non-finite or negative weight.
+    pub fn try_new_weighted(
+        values: &'a [f64],
+        width: usize,
+        weights: &'a [f64],
+    ) -> Result<Self, ModelError> {
+        Self::try_new_inner(values, width, Some(weights))
+    }
+
+    fn try_new_inner(
+        values: &'a [f64],
+        width: usize,
+        weights: Option<&'a [f64]>,
+    ) -> Result<Self, ModelError> {
+        let Some(width) = NonZeroUsize::new(width) else {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dense observation row width",
+                expected: "positive",
+            });
+        };
+        if !values.len().is_multiple_of(width.get()) {
+            return Err(ModelError::DenseObservationSize {
+                actual_values: values.len(),
+                row_width: width.get(),
+            });
+        }
+        let nrows = values.len() / width.get();
+        if let Some(weights) = weights {
+            if weights.len() != nrows {
+                return Err(ModelError::WeightLength {
+                    expected: nrows,
+                    actual: weights.len(),
+                });
+            }
+            for (index, weight) in weights.iter().copied().enumerate() {
+                validate_observation_weight(index, weight)?;
+            }
+        }
+        Ok(Self {
+            values,
+            width,
+            weights,
+        })
+    }
+
+    /// Flat row-major observation values.
+    #[must_use]
+    #[inline]
+    pub const fn values(&self) -> &'a [f64] {
+        self.values
+    }
+
+    /// Number of values in each row.
+    #[must_use]
+    #[inline]
+    pub const fn width(&self) -> usize {
+        self.width.get()
+    }
+
+    /// Number of rows in the view.
+    #[must_use]
+    #[inline]
+    pub const fn nrows(&self) -> usize {
+        self.values.len() / self.width.get()
+    }
+
+    /// Optional observation weights.
+    #[must_use]
+    #[inline]
+    pub const fn weights(&self) -> Option<&'a [f64]> {
+        self.weights
+    }
+}
+
+impl<'row> ObservationView<'row> for DenseRows<'_> {
+    type Observation = &'row [f64];
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.nrows()
+    }
+
+    #[inline]
+    fn observation_at(&'row self, row: usize) -> Self::Observation {
+        let start = row * self.width.get();
+        &self.values[start..start + self.width.get()]
+    }
+
+    #[inline]
+    fn weight_at(&self, row: usize) -> f64 {
+        self.weights.map_or(1.0, |weights| weights[row])
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
 /// Borrowed scalar observations that reject `NaN` and infinities at validation.
 ///
 /// The plain `&[f64]` observation view intentionally stays permissive so

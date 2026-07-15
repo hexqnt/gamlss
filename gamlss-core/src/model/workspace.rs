@@ -135,6 +135,12 @@ impl GradientWorkspace {
         (&mut self.dynamic_values, &mut self.dynamic_scores)
     }
 
+    /// Returns a reusable flat eta buffer for runtime-dimensional value paths.
+    pub fn dynamic_values_mut(&mut self, len: usize) -> &mut [f64] {
+        self.dynamic_values.resize(len, 0.0);
+        &mut self.dynamic_values
+    }
+
     /// Copies runtime-family scores into per-coordinate row buffers.
     pub fn store_dynamic_scores(&mut self, row: usize, weight: f64) {
         for (index, score) in self.dynamic_scores.iter().copied().enumerate() {

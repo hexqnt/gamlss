@@ -20,41 +20,23 @@ pub type InverseGaussianMuShape = InverseGaussian<Log, Log>;
 /// Inverse Gaussian distribution with log links for mean and shape.
 pub type InverseGaussianMeanShape = InverseGaussianMuShape;
 
-/// Predictors for the inverse Gaussian family on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianEta {
-    /// Mean predictor.
-    pub mu: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for InverseGaussianEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for the inverse Gaussian family on the link scale.
+    InverseGaussianEta {
+        /// Mean predictor.
+        mu,
+        /// Shape predictor.
+        shape,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            _ => unreachable!("inverse Gaussian eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale inverse Gaussian parameters.
+    InverseGaussianTheta {
+        /// Positive mean parameter.
+        mu,
+        /// Positive shape parameter.
+        shape,
     }
-}
-
-/// Natural-scale inverse Gaussian parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianTheta {
-    /// Positive mean parameter.
-    pub mu: f64,
-    /// Positive shape parameter.
-    pub shape: f64,
 }
 
 impl<MuLink, ShapeLink> InverseGaussian<MuLink, ShapeLink>
@@ -64,10 +46,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: InverseGaussianEta) -> InverseGaussianTheta {
-        InverseGaussianTheta {
-            mu: MuLink::inverse(eta.mu),
-            shape: ShapeLink::inverse(eta.shape),
-        }
+        eta.theta_from_links::<MuLink, ShapeLink>()
     }
 
     #[inline]
@@ -87,10 +66,7 @@ where
         let residual = y - theta.mu;
         let d_mu = -theta.shape * residual / (theta.mu * theta.mu * theta.mu);
         let d_shape = -0.5 / theta.shape + residual * residual / (2.0 * theta.mu * theta.mu * y);
-        let gradient_eta = InverseGaussianEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-        };
+        let gradient_eta = eta.chain_gradient::<MuLink, ShapeLink>(d_mu, d_shape);
 
         (nll, gradient_eta)
     }

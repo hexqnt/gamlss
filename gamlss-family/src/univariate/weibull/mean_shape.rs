@@ -13,41 +13,23 @@ pub type WeibullMeanShape = Weibull<MeanShape, Log, Log>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeanShape;
 
-/// Predictors for Weibull mean/shape on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullMeanShapeEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for WeibullMeanShapeEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            shape: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for Weibull mean/shape on the link scale.
+    WeibullMeanShapeEta {
+        /// Mean predictor.
+        mean,
+        /// Shape predictor.
+        shape,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.shape,
-            _ => unreachable!("weibull mean/shape eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale Weibull mean/shape parameters.
+    WeibullMeanShapeTheta {
+        /// Positive mean.
+        mean,
+        /// Positive shape.
+        shape,
     }
-}
-
-/// Natural-scale Weibull mean/shape parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullMeanShapeTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive shape.
-    pub shape: f64,
 }
 
 impl WeibullMeanShapeTheta {
@@ -67,10 +49,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: WeibullMeanShapeEta) -> WeibullMeanShapeTheta {
-        WeibullMeanShapeTheta {
-            mean: MeanLink::inverse(eta.mean),
-            shape: ShapeLink::inverse(eta.shape),
-        }
+        eta.theta_from_links::<MeanLink, ShapeLink>()
     }
 
     #[inline]
@@ -90,10 +69,7 @@ where
 
         (
             nll,
-            WeibullMeanShapeEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            },
+            eta.chain_gradient::<MeanLink, ShapeLink>(d_mean, d_shape),
         )
     }
 }

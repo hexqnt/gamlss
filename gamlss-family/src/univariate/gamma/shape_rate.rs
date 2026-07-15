@@ -18,41 +18,23 @@ pub type GammaTheta = GammaShapeRateTheta;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShapeRate;
 
-/// Predictors for gamma shape/rate on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GammaShapeRateEta {
-    /// Shape predictor.
-    pub shape: f64,
-    /// Rate predictor.
-    pub rate: f64,
-}
-
-impl ParameterParts<2> for GammaShapeRateEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            shape: values[0],
-            rate: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for gamma shape/rate on the link scale.
+    GammaShapeRateEta {
+        /// Shape predictor.
+        shape,
+        /// Rate predictor.
+        rate,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.shape,
-            1 => self.rate,
-            _ => unreachable!("gamma shape/rate eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale gamma shape/rate parameters.
+    GammaShapeRateTheta {
+        /// Positive shape.
+        shape,
+        /// Positive rate.
+        rate,
     }
-}
-
-/// Natural-scale gamma shape/rate parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GammaShapeRateTheta {
-    /// Positive shape.
-    pub shape: f64,
-    /// Positive rate.
-    pub rate: f64,
 }
 
 impl<ShapeLink, RateLink> Gamma<ShapeRate, ShapeLink, RateLink>
@@ -62,10 +44,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: GammaShapeRateEta) -> GammaShapeRateTheta {
-        GammaShapeRateTheta {
-            shape: ShapeLink::inverse(eta.shape),
-            rate: RateLink::inverse(eta.rate),
-        }
+        eta.theta_from_links::<ShapeLink, RateLink>()
     }
 
     #[inline]
@@ -79,10 +58,7 @@ where
         let (d_shape, d_rate) = Self::gradient_shape_rate(y, theta);
         (
             nll,
-            GammaShapeRateEta {
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-                rate: d_rate * RateLink::derivative_inverse(eta.rate),
-            },
+            eta.chain_gradient::<ShapeLink, RateLink>(d_shape, d_rate),
         )
     }
 }

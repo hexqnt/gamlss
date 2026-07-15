@@ -14,15 +14,20 @@ use gamlss_core::{
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
-use gamlss_special::{digamma, ln_gamma, student_t_cdf_standardized};
+use gamlss_special::{digamma_delta, ln_gamma_delta, student_t_cdf_standardized};
 
-use crate::multivariate::matrix::FixedLowerTriangular;
+use crate::multivariate::{elliptical, matrix::FixedLowerTriangular};
 
 /// Default-link generic multivariate Student-t with Cholesky scale.
 pub type MvStudentTCholeskyDefault<const D: usize> =
     MvStudentTCholesky<D, Identity, Log, Identity, LogPlus<2>>;
 
-/// Generic multivariate Student-t with a Cholesky scale factor and shared degrees of freedom.
+/// Generic multivariate Student-t with a Cholesky scatter/scale factor and shared degrees of freedom.
+///
+/// `L L'` is the Student-t scale matrix, not its covariance. The covariance is
+/// defined only for `tau > 2`, when it equals `tau / (tau - 2) * L L'`. The
+/// default [`LogPlus<2>`] link keeps fitted degrees of freedom above that
+/// boundary; custom links need only satisfy the family-level `tau > 0` domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MvStudentTCholesky<
     const D: usize,
@@ -103,10 +108,14 @@ where
         }
 
         let mut a = [0.0; D];
-        transpose_solve(&theta.cholesky, &z, &mut a);
+        if !elliptical::transpose_solve(D, &theta.cholesky, &z, &mut a) {
+            return (f64::INFINITY, Self::nan_eta());
+        }
         let quadratic = z.iter().map(|value| value * value).sum::<f64>();
         let d = D as f64;
-        let robust_weight = (theta.tau + d) / (theta.tau + quadratic);
+        let scale = theta.tau.max(d).max(quadratic);
+        let robust_weight =
+            (theta.tau / scale + d / scale) / (theta.tau / scale + quadratic / scale);
 
         let mut gradient = MvStudentTCholeskyEta {
             mu: [0.0; D],
@@ -121,7 +130,7 @@ where
 
         for row in 0..D {
             for col in 0..=row {
-                let eta_value = lower(&eta.cholesky, row, col);
+                let eta_value = eta.cholesky.lower(row, col);
                 let d_nll_d_l = if row == col {
                     DiagonalLink::derivative_log_inverse(eta_value)
                         - robust_weight
@@ -141,11 +150,23 @@ where
             }
         }
 
-        let d_nll_d_tau = 0.5 * digamma(0.5 * theta.tau)
-            - 0.5 * digamma(f64::midpoint(theta.tau, d))
+        let quadratic_fraction = if quadratic == 0.0 {
+            0.0
+        } else if quadratic < theta.tau {
+            let ratio = quadratic / theta.tau;
+            ratio / (1.0 + ratio)
+        } else {
+            1.0 / (1.0 + theta.tau / quadratic)
+        };
+        let tail_derivative = if quadratic_fraction == 0.0 {
+            0.0
+        } else {
+            f64::midpoint(1.0, d / theta.tau) * quadratic_fraction
+        };
+        let d_nll_d_tau = -0.5 * digamma_delta(0.5 * theta.tau, 0.5 * d)
             + 0.5 * d / theta.tau
             + 0.5 * (quadratic / theta.tau).ln_1p()
-            - f64::midpoint(theta.tau, d) * quadratic / (theta.tau * (theta.tau + quadratic));
+            - tail_derivative;
         gradient.tau = d_nll_d_tau * TauLink::derivative_inverse(eta.tau);
 
         (nll, gradient)
@@ -401,7 +422,7 @@ impl<const D: usize> MvStudentTCholeskyEta<D> {
 pub struct MvStudentTCholeskyTheta<const D: usize> {
     /// Location vector.
     mu: [f64; D],
-    /// Lower-triangular Cholesky scale factor.
+    /// Lower-triangular Cholesky factor of the Student-t scale matrix.
     cholesky: FixedLowerTriangular<D>,
     /// Shared degrees of freedom.
     tau: f64,
@@ -461,7 +482,10 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
         self.tau
     }
 
-    /// Returns one covariance-scale entry from `L L'`.
+    /// Returns one entry of the Student-t scale matrix `L L'`.
+    ///
+    /// This is not the distribution covariance; see the type-level
+    /// documentation for the `tau > 2` conversion.
     #[must_use]
     pub fn scale_covariance(&self, row: usize, col: usize) -> Option<f64> {
         if row >= D || col >= D {
@@ -483,16 +507,12 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
 }
 
 fn valid_theta<const D: usize>(theta: &MvStudentTCholeskyTheta<D>) -> bool {
-    D > 0
-        && theta.tau > 0.0
-        && theta.tau.is_finite()
-        && theta.mu.iter().all(|value| value.is_finite())
-        && (0..D).all(|row| {
-            (0..=row).all(|col| {
-                let value = theta.cholesky.get(row, col).unwrap();
-                value.is_finite() && (row != col || value > 0.0)
-            })
-        })
+    valid_degrees_of_freedom(theta.tau)
+        && elliptical::valid_location_scale(D, &theta.mu, &theta.cholesky)
+}
+
+fn valid_degrees_of_freedom(tau: f64) -> bool {
+    tau > 0.0 && tau.is_finite()
 }
 
 fn nll_cholesky<const D: usize>(
@@ -500,44 +520,18 @@ fn nll_cholesky<const D: usize>(
     theta: &MvStudentTCholeskyTheta<D>,
     z: &mut [f64; D],
 ) -> f64 {
-    if !valid_theta(theta) || !observation.iter().all(|value| value.is_finite()) {
+    if !valid_degrees_of_freedom(theta.tau) {
         return f64::INFINITY;
     }
-    for row in 0..D {
-        let mut value = observation[row] - theta.mu[row];
-        for col in 0..row {
-            value -= theta.cholesky.get(row, col).unwrap() * z[col];
-        }
-        z[row] = value / theta.cholesky.get(row, row).unwrap();
-    }
-    let quadratic = z.iter().map(|value| value * value).sum::<f64>();
-    let log_det_scale = (0..D)
-        .map(|index| theta.cholesky.get(index, index).unwrap().ln())
-        .sum::<f64>();
+    let Some((quadratic, log_det_scale)) =
+        elliptical::standardize(D, &observation, &theta.mu, &theta.cholesky, z)
+    else {
+        return f64::INFINITY;
+    };
     let d = D as f64;
-    log_det_scale
-        + f64::midpoint(theta.tau, d) * (quadratic / theta.tau).ln_1p()
-        + ln_gamma(0.5 * theta.tau)
-        - ln_gamma(f64::midpoint(theta.tau, d))
-        + 0.5 * d * (theta.tau * std::f64::consts::PI).ln()
-}
-
-fn transpose_solve<const D: usize>(
-    cholesky: &FixedLowerTriangular<D>,
-    rhs: &[f64; D],
-    out: &mut [f64; D],
-) {
-    for row in (0..D).rev() {
-        let mut value = rhs[row];
-        for col in (row + 1)..D {
-            value -= lower(cholesky, col, row) * out[col];
-        }
-        out[row] = value / lower(cholesky, row, row);
-    }
-}
-
-fn lower<const D: usize>(cholesky: &FixedLowerTriangular<D>, row: usize, col: usize) -> f64 {
-    cholesky.get(row, col).expect("valid lower index")
+    log_det_scale + f64::midpoint(theta.tau, d) * (quadratic / theta.tau).ln_1p()
+        - ln_gamma_delta(0.5 * theta.tau, 0.5 * d)
+        + 0.5 * d * (theta.tau.ln() + std::f64::consts::PI.ln())
 }
 
 #[cfg(test)]
@@ -588,6 +582,51 @@ mod tests {
             student.nll(y, &student_theta, &mut student.workspace()),
             normal.nll(y, &normal_theta, &mut normal.workspace()),
             epsilon = 1.0e-7
+        );
+
+        let extreme_theta =
+            MvStudentTCholeskyTheta::try_new([0.1, -0.5], cholesky, 1.0e16).unwrap();
+        assert_relative_eq!(
+            student.nll(y, &extreme_theta, &mut student.workspace()),
+            normal.nll(y, &normal_theta, &mut normal.workspace()),
+            epsilon = 2.0e-14
+        );
+
+        let extreme_eta = MvStudentTCholeskyEta::new(
+            [0.1, -0.5],
+            FixedLowerTriangular::from_lower_rows([[1.2_f64.ln(), 0.0], [0.3, 0.9_f64.ln()]]),
+            (1.0e16_f64 - 2.0).ln(),
+        );
+        let (_, gradient) = student.nll_and_gradient_eta(y, &extreme_eta, &mut student.workspace());
+        assert!(
+            gradient.tau.abs() < 1.0e-12,
+            "tau gradient was {}",
+            gradient.tau
+        );
+
+        let extreme_magnitude_eta = MvStudentTCholeskyEta::new(
+            [0.0, 0.0],
+            FixedLowerTriangular::zeros(),
+            (1.0e308_f64 - 2.0).ln(),
+        );
+        let (extreme_nll, extreme_gradient) = student.nll_and_gradient_eta(
+            [1.0e154, 0.0],
+            &extreme_magnitude_eta,
+            &mut student.workspace(),
+        );
+        assert!(extreme_nll.is_finite());
+        assert!(extreme_gradient.tau.is_finite());
+        assert_relative_eq!(
+            extreme_gradient.mu[0],
+            -5.0e153,
+            epsilon = 0.0,
+            max_relative = 1.0e-14
+        );
+        assert_relative_eq!(
+            extreme_gradient.cholesky.get(0, 0).unwrap(),
+            1.0 - 5.0e307,
+            epsilon = 0.0,
+            max_relative = 1.0e-14
         );
     }
 

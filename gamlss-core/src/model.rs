@@ -1,17 +1,18 @@
 use std::ops::Range;
 
 use crate::{
-    BlockObjective, CompilableFamily, Family, GlobalPenalty, ModelError, Objective,
-    ParameterBlocks, ParameterName,
+    BlockObjective, CompilableFamily, DynamicLayoutKey, Family, GlobalPenalty, ModelError,
+    Objective, ParameterBlocks, ParameterName,
 };
 use executor::ShapeBlocks;
+use layout::UniqueParameterMatch;
 
 pub use dynamic::DynamicParameterBlocks;
 pub use layout::{
     ParameterAxis, ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPath,
     ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
-pub use observation::{FiniteScalarObservations, ObservationView};
+pub use observation::{DenseRows, FiniteScalarObservations, ObservationView};
 pub use workspace::{GradientWorkspace, ModelWorkspace};
 
 mod dynamic;
@@ -60,6 +61,11 @@ impl ObjectiveScale {
 /// view supplied by the caller. This keeps `gamlss-core` independent of the
 /// caller's storage backend while static dispatch preserves zero-cost hot-path
 /// evaluation.
+///
+/// The direct [`Objective`] implementation is a convenience that creates
+/// scratch storage for gradient calls. Repeated optimizer evaluations should
+/// use [`Self::into_workspace_objective`] so value and gradient paths reuse the
+/// same [`ModelWorkspace`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gamlss<F, Blocks, Obs> {
     family: F,
@@ -196,11 +202,13 @@ where
     }
 
     /// Number of coefficients in the common beta vector.
+    #[must_use]
     pub fn nparams(&self) -> usize {
         self.blocks.len()
     }
 
     /// Returns the likelihood scaling convention used by this objective.
+    #[must_use]
     pub const fn objective_scale(&self) -> ObjectiveScale {
         self.objective_scale
     }
@@ -222,6 +230,7 @@ where
     }
 
     /// Zero-valued initial optimizer parameter vector of the right length.
+    #[must_use]
     pub fn initial_zeros(&self) -> Vec<f64> {
         vec![0.0; self.nparams()]
     }
@@ -240,6 +249,7 @@ where
     }
 
     /// Creates reusable objective buffers sized for this model.
+    #[must_use]
     pub fn gradient_workspace(&self) -> ModelWorkspace<F>
     where
         F: Family,
@@ -250,6 +260,7 @@ where
     }
 
     /// Wraps the model as an objective with reusable gradient buffers.
+    #[must_use]
     pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
         let workspace = self.gradient_workspace();
         WorkspaceGamlss {
@@ -259,6 +270,7 @@ where
     }
 
     /// Coefficient block ranges within beta.
+    #[must_use]
     pub fn block_ranges(&self) -> Vec<Range<usize>> {
         self.blocks.block_ranges()
     }
@@ -272,6 +284,7 @@ where
     }
 
     /// Layout of named parameter blocks inside the flat optimizer-parameter vector.
+    #[must_use]
     pub fn parameter_layout(&self) -> ParameterLayout {
         self.blocks.parameter_layout()
     }
@@ -282,8 +295,111 @@ where
     /// per block. Structured multivariate block implementations may return
     /// component- or matrix-entry-level descriptors, such as `mu[i]` or
     /// `cholesky[row, col]`.
+    #[must_use]
     pub fn parameter_descriptors(&self) -> Vec<ParameterDescriptor> {
         self.blocks.parameter_descriptors()
+    }
+
+    /// Number of canonical scalar-leaf descriptors in this model layout.
+    #[must_use]
+    pub fn parameter_descriptor_count(&self) -> usize {
+        let mut count = 0;
+        self.visit_parameter_descriptors(|_, _| count += 1);
+        count
+    }
+
+    /// Returns one canonical descriptor by its stable index in this model layout.
+    #[must_use]
+    pub fn parameter_descriptor(&self, descriptor_index: usize) -> Option<ParameterDescriptor> {
+        let mut found = None;
+        self.visit_parameter_descriptors(|index, descriptor| {
+            if index == descriptor_index {
+                found = Some(descriptor);
+            }
+        });
+        found
+    }
+
+    /// Visits every canonical descriptor for typed parameter marker `P`.
+    pub fn visit_parameter_descriptors_of<P>(
+        &self,
+        mut visit: impl FnMut(usize, ParameterDescriptor),
+    ) where
+        P: ParameterName,
+    {
+        self.visit_parameter_descriptors(|index, descriptor| {
+            if descriptor.role == P::NAME {
+                visit(index, descriptor);
+            }
+        });
+    }
+
+    /// Returns every canonical descriptor for typed parameter marker `P`.
+    #[must_use]
+    pub fn parameter_descriptors_of<P>(&self) -> Vec<(usize, ParameterDescriptor)>
+    where
+        P: ParameterName,
+    {
+        let mut descriptors = Vec::new();
+        self.visit_parameter_descriptors_of::<P>(|index, descriptor| {
+            descriptors.push((index, descriptor));
+        });
+        descriptors
+    }
+
+    /// Finds the unique descriptor for typed role `P` at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::AmbiguousParameter`] when `(P::NAME, path)` is
+    /// not unique. This can occur when identical roles appear in separate
+    /// product branches whose paths do not introduce another axis.
+    pub fn unique_parameter_descriptor_at_path<P>(
+        &self,
+        path: &ParameterPath,
+    ) -> Result<Option<(usize, ParameterDescriptor)>, ModelError>
+    where
+        P: ParameterName,
+    {
+        let mut matched = UniqueParameterMatch::new();
+        self.visit_parameter_descriptors_of::<P>(|index, descriptor| {
+            if descriptor.path == *path {
+                matched.record((index, descriptor));
+            }
+        });
+        matched.resolve(P::NAME)
+    }
+
+    /// Finds the stable index of a full descriptor in this model layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::AmbiguousParameter`] if a malformed layout
+    /// contains the same full descriptor more than once.
+    pub fn parameter_descriptor_index(
+        &self,
+        selected: &ParameterDescriptor,
+    ) -> Result<Option<usize>, ModelError> {
+        let mut matched = UniqueParameterMatch::new();
+        self.visit_parameter_descriptors(|index, descriptor| {
+            if descriptor == *selected {
+                matched.record(index);
+            }
+        });
+        matched.resolve(selected.role)
+    }
+
+    fn unique_parameter_range(
+        &self,
+        name: &'static str,
+    ) -> Result<Option<Range<usize>>, ModelError> {
+        let mut matched = UniqueParameterMatch::new();
+        self.visit_parameter_slices(|_, candidate, range| {
+            if candidate == name {
+                matched.record(range);
+            }
+        });
+        matched.resolve(name)
     }
 
     /// Visits named parameter slices in model order without allocating.
@@ -311,10 +427,11 @@ where
     /// # Errors
     ///
     /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
-    /// contain a parameter named `P::NAME`. When blocks are constructed through
-    /// the typed [`crate::ParameterBlock`] API this cannot happen in practice — the
-    /// compiler guarantees that `ParameterBlock<Mu, …>` registers itself as
-    /// `"mu"`.
+    /// contain a parameter named `P::NAME`, or
+    /// [`ModelError::AmbiguousParameter`] if the role occurs in more than one
+    /// coarse block. When blocks are constructed through the typed
+    /// [`crate::ParameterBlock`] API, absence cannot happen in practice for a
+    /// marker that is part of the family shape.
     pub fn block_objective_for<P>(
         &mut self,
         full_beta: Vec<f64>,
@@ -324,8 +441,7 @@ where
     {
         validate_len("parameters", full_beta.len(), self.nparams())?;
         let range = self
-            .blocks
-            .parameter_slice_of::<P>()
+            .unique_parameter_range(P::NAME)?
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
         BlockObjective::try_new(
             self,
@@ -337,19 +453,52 @@ where
         )
     }
 
-    /// Unpacks a flat optimizer-parameter vector into named coefficient blocks.
+    /// Creates a [`BlockObjective`] for one canonical descriptor index.
+    ///
+    /// Unlike [`Self::block_objective_for`], this selects one scalar predictor
+    /// leaf and is unambiguous for repeated, mixture, vector, and matrix roles.
+    pub fn block_objective_at(
+        &mut self,
+        descriptor_index: usize,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError> {
+        validate_len("parameters", full_beta.len(), self.nparams())?;
+        let descriptor = self.parameter_descriptor(descriptor_index).ok_or_else(|| {
+            ModelError::ParameterDescriptorIndexOutOfBounds {
+                index: descriptor_index,
+                count: self.parameter_descriptor_count(),
+            }
+        })?;
+        BlockObjective::try_new_for_descriptor(self, full_beta, descriptor)
+    }
+
+    /// Creates a [`BlockObjective`] for a full descriptor from this model.
+    pub fn block_objective_for_descriptor(
+        &mut self,
+        descriptor: &ParameterDescriptor,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError> {
+        validate_len("parameters", full_beta.len(), self.nparams())?;
+        if self.parameter_descriptor_index(descriptor)?.is_none() {
+            return Err(ModelError::UnknownParameterDescriptor {
+                descriptor: descriptor.clone(),
+            });
+        }
+        BlockObjective::try_new_for_descriptor(self, full_beta, descriptor.clone())
+    }
+
+    /// Unpacks a flat optimizer-parameter vector into descriptor-aware leaf blocks.
     pub fn unpack_parameters(&self, parameters: &[f64]) -> Result<UnpackedParameters, ModelError> {
         validate_len("parameters", parameters.len(), self.nparams())?;
 
-        let blocks = self
-            .parameter_layout()
-            .slices()
-            .iter()
-            .map(|slice| ParameterCoefficients {
-                name: slice.name,
-                coefficients: parameters[slice.range.clone()].to_vec(),
-            })
-            .collect();
+        let mut blocks = Vec::with_capacity(self.parameter_descriptor_count());
+        self.visit_parameter_descriptors(|descriptor_index, descriptor| {
+            blocks.push(ParameterCoefficients {
+                descriptor_index,
+                coefficients: parameters[descriptor.range.clone()].to_vec(),
+                descriptor,
+            });
+        });
 
         Ok(UnpackedParameters { blocks })
     }
@@ -414,8 +563,16 @@ where
         validate_beta_and_gradient_len(self.nparams(), parameters, grad)?;
 
         let likelihood_multiplier = self.likelihood_multiplier();
-        let train_nll =
-            likelihood_multiplier * self.blocks.train_nll(&self.family, &self.obs, parameters);
+        let train_nll = likelihood_multiplier * {
+            let (family_workspace, gradient_workspace) = workspace.parts_mut();
+            self.blocks.train_nll_into_workspace(
+                &self.family,
+                &self.obs,
+                parameters,
+                family_workspace,
+                gradient_workspace,
+            )
+        };
         let penalty = self.blocks.penalty_value(parameters);
         self.try_gradient_into_workspace(parameters, grad, workspace)?;
         Ok(training_diagnostics_from_gradient(train_nll, penalty, grad))
@@ -428,7 +585,7 @@ where
     {
         validate_len("parameters", parameters.len(), self.nparams())?;
         validate_row(row, self.nobs())?;
-        Ok(self.blocks.eta_row(parameters, row))
+        Ok(self.blocks.eta_row(&self.family, parameters, row))
     }
 
     /// Predicts natural-scale distribution parameters for one training row.
@@ -448,7 +605,7 @@ where
     {
         validate_len("parameters", parameters.len(), self.nparams())?;
         Ok((0..self.nobs())
-            .map(|row| self.blocks.eta_row(parameters, row))
+            .map(|row| self.blocks.eta_row(&self.family, parameters, row))
             .collect())
     }
 
@@ -461,7 +618,7 @@ where
         let mut workspace = self.family.workspace();
         Ok((0..self.nobs())
             .map(|row| {
-                let eta = self.blocks.eta_row(parameters, row);
+                let eta = self.blocks.eta_row(&self.family, parameters, row);
                 self.family.theta(&eta, &mut workspace)
             })
             .collect())
@@ -482,7 +639,7 @@ where
         validate_output_len(self.nobs(), out.len())?;
         let mut workspace = self.family.workspace();
         for (row, out) in out.iter_mut().enumerate() {
-            let eta = self.blocks.eta_row(parameters, row);
+            let eta = self.blocks.eta_row(&self.family, parameters, row);
             *out = self.family.theta(&eta, &mut workspace);
         }
         Ok(())
@@ -500,7 +657,7 @@ where
         validate_len("parameters", parameters.len(), self.nparams())?;
         let mut workspace = self.family.workspace();
         for row in 0..self.nobs() {
-            let eta = self.blocks.eta_row(parameters, row);
+            let eta = self.blocks.eta_row(&self.family, parameters, row);
             visit(row, self.family.theta(&eta, &mut workspace));
         }
         Ok(())
@@ -639,13 +796,51 @@ where
 
         let train_nll = self.blocks.train_nll(&self.family, &self.obs, beta);
         let penalty = self.blocks.penalty_value(beta);
-        Ok(self.likelihood_multiplier() * train_nll + penalty)
+        Ok(self.likelihood_multiplier().mul_add(train_nll, penalty))
+    }
+
+    /// Computes the objective while reusing model and runtime-family buffers.
+    pub fn try_value_into_workspace(
+        &self,
+        beta: &[f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<f64, ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+        let train_nll = {
+            let (family_workspace, gradient_workspace) = workspace.parts_mut();
+            self.blocks.train_nll_into_workspace(
+                &self.family,
+                &self.obs,
+                beta,
+                family_workspace,
+                gradient_workspace,
+            )
+        };
+        let penalty = self.blocks.penalty_value(beta);
+        Ok(self.likelihood_multiplier().mul_add(train_nll, penalty))
     }
 
     /// Returns the summed weighted negative log-likelihood without penalties.
     pub fn try_likelihood_value(&self, beta: &[f64]) -> Result<f64, ModelError> {
         validate_len("parameters", beta.len(), self.nparams())?;
         Ok(self.blocks.train_nll(&self.family, &self.obs, beta))
+    }
+
+    /// Workspace-reusing variant of [`Self::try_likelihood_value`].
+    pub fn try_likelihood_value_into_workspace(
+        &self,
+        beta: &[f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<f64, ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+        let (family_workspace, gradient_workspace) = workspace.parts_mut();
+        Ok(self.blocks.train_nll_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            family_workspace,
+            gradient_workspace,
+        ))
     }
 
     /// Computes summed weighted NLL and its coefficient gradient without penalties.
@@ -703,6 +898,26 @@ where
         self.try_pointwise_nll_impl(beta, out, true)
     }
 
+    /// Workspace-reusing variant of [`Self::try_pointwise_nll_into`].
+    pub fn try_pointwise_nll_into_workspace(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl_into_workspace(beta, out, false, workspace)
+    }
+
+    /// Workspace-reusing variant of [`Self::try_weighted_pointwise_nll_into`].
+    pub fn try_weighted_pointwise_nll_into_workspace(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl_into_workspace(beta, out, true, workspace)
+    }
+
     /// Writes raw per-observation log-likelihood contributions.
     pub fn try_pointwise_log_likelihood_into(
         &self,
@@ -710,6 +925,47 @@ where
         out: &mut [f64],
     ) -> Result<(), ModelError> {
         self.try_pointwise_nll_impl(beta, out, false)?;
+        for value in out.iter_mut() {
+            *value = -*value;
+        }
+        Ok(())
+    }
+
+    /// Writes observation-weighted per-observation log-likelihood contributions.
+    pub fn try_weighted_pointwise_log_likelihood_into(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl(beta, out, true)?;
+        for value in out.iter_mut() {
+            *value = -*value;
+        }
+        Ok(())
+    }
+
+    /// Workspace-reusing variant of [`Self::try_pointwise_log_likelihood_into`].
+    pub fn try_pointwise_log_likelihood_into_workspace(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl_into_workspace(beta, out, false, workspace)?;
+        for value in out.iter_mut() {
+            *value = -*value;
+        }
+        Ok(())
+    }
+
+    /// Workspace-reusing variant of [`Self::try_weighted_pointwise_log_likelihood_into`].
+    pub fn try_weighted_pointwise_log_likelihood_into_workspace(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<(), ModelError> {
+        self.try_pointwise_nll_impl_into_workspace(beta, out, true, workspace)?;
         for value in out.iter_mut() {
             *value = -*value;
         }
@@ -726,6 +982,26 @@ where
         validate_output_len(self.nobs(), out.len())?;
         self.blocks
             .pointwise_nll_into(&self.family, &self.obs, beta, weighted, out);
+        Ok(())
+    }
+
+    fn try_pointwise_nll_impl_into_workspace(
+        &self,
+        beta: &[f64],
+        out: &mut [f64],
+        weighted: bool,
+        workspace: &mut ModelWorkspace<F>,
+    ) -> Result<(), ModelError> {
+        validate_len("parameters", beta.len(), self.nparams())?;
+        validate_output_len(self.nobs(), out.len())?;
+        self.blocks.pointwise_nll_into_workspace(
+            &self.family,
+            &self.obs,
+            beta,
+            weighted,
+            out,
+            workspace.parts_mut(),
+        );
         Ok(())
     }
 
@@ -961,7 +1237,7 @@ where
     pub fn predict_eta_row(&self, parameters: &[f64], row: usize) -> Result<F::Eta, ModelError> {
         validate_len("parameters", parameters.len(), self.nparams)?;
         validate_row(row, self.nrows)?;
-        Ok(self.blocks.eta_row(parameters, row))
+        Ok(self.blocks.eta_row(self.family, parameters, row))
     }
 
     /// Predicts natural-scale distribution parameters for one prediction row.
@@ -988,7 +1264,7 @@ where
     pub fn predict_eta(&self, parameters: &[f64]) -> Result<Vec<F::Eta>, ModelError> {
         validate_len("parameters", parameters.len(), self.nparams)?;
         Ok((0..self.nrows)
-            .map(|row| self.blocks.eta_row(parameters, row))
+            .map(|row| self.blocks.eta_row(self.family, parameters, row))
             .collect())
     }
 
@@ -1002,7 +1278,7 @@ where
         let mut workspace = self.family.workspace();
         Ok((0..self.nrows)
             .map(|row| {
-                let eta = self.blocks.eta_row(parameters, row);
+                let eta = self.blocks.eta_row(self.family, parameters, row);
                 self.family.theta(&eta, &mut workspace)
             })
             .collect())
@@ -1024,7 +1300,7 @@ where
         validate_output_len(self.nrows, out.len())?;
         let mut workspace = self.family.workspace();
         for (row, out) in out.iter_mut().enumerate() {
-            let eta = self.blocks.eta_row(parameters, row);
+            let eta = self.blocks.eta_row(self.family, parameters, row);
             *out = self.family.theta(&eta, &mut workspace);
         }
         Ok(())
@@ -1043,7 +1319,7 @@ where
         validate_len("parameters", parameters.len(), self.nparams)?;
         let mut workspace = self.family.workspace();
         for row in 0..self.nrows {
-            let eta = self.blocks.eta_row(parameters, row);
+            let eta = self.blocks.eta_row(self.family, parameters, row);
             visit(row, self.family.theta(&eta, &mut workspace));
         }
         Ok(())
@@ -1122,6 +1398,7 @@ where
     }
 
     /// Returns the likelihood scaling convention used by this objective.
+    #[must_use]
     pub const fn objective_scale(&self) -> ObjectiveScale {
         self.model.objective_scale()
     }
@@ -1147,7 +1424,9 @@ where
     /// # Errors
     ///
     /// Returns [`ModelError::UnknownParameter`] if the model blocks do not
-    /// contain a parameter named `P::NAME`.
+    /// contain a parameter named `P::NAME`, or
+    /// [`ModelError::AmbiguousParameter`] if the role occurs in more than one
+    /// coarse block.
     pub fn block_objective_for<P>(
         &mut self,
         full_beta: Vec<f64>,
@@ -1158,8 +1437,7 @@ where
         validate_len("parameters", full_beta.len(), self.dim())?;
         let range = self
             .model
-            .blocks
-            .parameter_slice_of::<P>()
+            .unique_parameter_range(P::NAME)?
             .ok_or(ModelError::UnknownParameter { name: P::NAME })?;
         BlockObjective::try_new(
             self,
@@ -1169,6 +1447,38 @@ where
                 range,
             },
         )
+    }
+
+    /// Creates a [`BlockObjective`] for one canonical descriptor index.
+    pub fn block_objective_at(
+        &mut self,
+        descriptor_index: usize,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError> {
+        validate_len("parameters", full_beta.len(), self.dim())?;
+        let descriptor = self
+            .model
+            .parameter_descriptor(descriptor_index)
+            .ok_or_else(|| ModelError::ParameterDescriptorIndexOutOfBounds {
+                index: descriptor_index,
+                count: self.model.parameter_descriptor_count(),
+            })?;
+        BlockObjective::try_new_for_descriptor(self, full_beta, descriptor)
+    }
+
+    /// Creates a [`BlockObjective`] for a full descriptor from the inner model.
+    pub fn block_objective_for_descriptor(
+        &mut self,
+        descriptor: &ParameterDescriptor,
+        full_beta: Vec<f64>,
+    ) -> Result<BlockObjective<'_, Self>, ModelError> {
+        validate_len("parameters", full_beta.len(), self.dim())?;
+        if self.model.parameter_descriptor_index(descriptor)?.is_none() {
+            return Err(ModelError::UnknownParameterDescriptor {
+                descriptor: descriptor.clone(),
+            });
+        }
+        BlockObjective::try_new_for_descriptor(self, full_beta, descriptor.clone())
     }
 
     /// Computes training diagnostics using caller-provided objective-gradient storage.
@@ -1251,7 +1561,8 @@ where
     }
 
     fn value(&mut self, parameters: &[f64]) -> Result<f64, Self::Error> {
-        self.model.try_value(parameters)
+        self.model
+            .try_value_into_workspace(parameters, &mut self.workspace)
     }
 
     fn gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<(), Self::Error> {
@@ -1382,6 +1693,36 @@ where
     fn train_nll<'obs, Obs>(&self, family: &F, obs: &'obs Obs, beta: &[f64]) -> f64
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+    /// Workspace-reusing weighted negative log-likelihood without penalties.
+    ///
+    /// Runtime-dimensional block implementations should override this method
+    /// to consume their flat eta coordinates directly. The default is suitable
+    /// for static carriers and reuses the caller's family workspace.
+    fn train_nll_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        family_workspace: &mut F::Workspace,
+        _workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let mut loss = 0.0;
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            if weight == 0.0 {
+                continue;
+            }
+            let eta = self.eta_row(family, beta, row);
+            loss = weight.mul_add(
+                family.nll_eta(obs.observation_at(row), &eta, family_workspace),
+                loss,
+            );
+        }
+        loss
+    }
     /// Writes raw or weighted per-observation NLL contributions.
     fn pointwise_nll_into<'obs, Obs>(
         &self,
@@ -1393,20 +1734,43 @@ where
     ) where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        let mut workspace = family.workspace();
+        let mut family_workspace = family.workspace();
+        let mut workspace = GradientWorkspace::new();
+        self.pointwise_nll_into_workspace(
+            family,
+            obs,
+            beta,
+            weighted,
+            out,
+            (&mut family_workspace, &mut workspace),
+        );
+    }
+    /// Workspace-reusing variant of [`Self::pointwise_nll_into`].
+    fn pointwise_nll_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        weighted: bool,
+        out: &mut [f64],
+        workspace: (&mut F::Workspace, &mut GradientWorkspace),
+    ) where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let (family_workspace, _) = workspace;
         for (row, value) in out.iter_mut().enumerate() {
             let weight = obs.weight_at(row);
             if weighted && weight == 0.0 {
                 *value = 0.0;
                 continue;
             }
-            let eta = self.eta_row(beta, row);
-            let nll = family.nll_eta(obs.observation_at(row), &eta, &mut workspace);
+            let eta = self.eta_row(family, beta, row);
+            let nll = family.nll_eta(obs.observation_at(row), &eta, family_workspace);
             *value = if weighted { weight * nll } else { nll };
         }
     }
     /// Additive predictors on the link scale for one row.
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta
+    fn eta_row(&self, family: &F, beta: &[f64], row: usize) -> F::Eta
     where
         F: Family;
     /// Penalty value depending on coefficient blocks.
@@ -1417,7 +1781,7 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
     /// Fallible variant of [`Self::initial_parameters`] for layouts whose
-    /// total coefficient length must be checked first.
+    /// coefficient length or runtime initializer shape must be checked first.
     fn try_initial_parameters<'obs, Obs>(
         &self,
         family: &F,
@@ -1507,7 +1871,15 @@ where
         self.parameter_layout().block_descriptors()
     }
 
-    /// Visits coefficient ranges for each parameter block in model order without allocating.
+    /// Runtime topology key captured by these blocks, when applicable.
+    fn dynamic_layout_key(&self) -> Option<&DynamicLayoutKey> {
+        None
+    }
+
+    /// Visits coefficient ranges for each parameter block in model order.
+    ///
+    /// The default implementation materializes [`Self::block_ranges`]; compiled
+    /// block implementations override it with an allocation-free traversal.
     fn visit_block_ranges<V>(&self, mut visit: V)
     where
         V: FnMut(usize, Range<usize>),
@@ -1517,24 +1889,11 @@ where
         }
     }
 
-    fn parameter_slice_count(&self) -> usize {
-        self.parameter_layout().slices().len()
-    }
-
-    #[doc(hidden)]
-    fn parameter_slice_matches(
-        &self,
-        index: usize,
-        name: &'static str,
-        range: Range<usize>,
-    ) -> bool {
-        self.parameter_layout()
-            .slices()
-            .get(index)
-            .is_some_and(|slice| slice.name == name && slice.range == range)
-    }
-
-    /// Visits named parameter slices in model order without allocating.
+    /// Visits named parameter slices in model order.
+    ///
+    /// The default implementation materializes [`Self::parameter_layout`];
+    /// compiled block implementations override it with an allocation-free
+    /// traversal.
     fn visit_parameter_slices<V>(&self, mut visit: V)
     where
         V: FnMut(usize, &'static str, Range<usize>),
@@ -1544,42 +1903,20 @@ where
         }
     }
 
-    /// Visits structured coefficient descriptors in model order without allocating.
-    fn visit_parameter_descriptors<V>(&self, visit: V)
+    /// Visits structured coefficient descriptors in model order.
+    ///
+    /// The default implementation materializes
+    /// [`Self::parameter_descriptors`], ensuring that implementations which
+    /// override the allocating descriptor API retain the same metadata here.
+    /// Compiled block implementations override this visitor to avoid the
+    /// allocation.
+    fn visit_parameter_descriptors<V>(&self, mut visit: V)
     where
         V: FnMut(usize, ParameterDescriptor),
     {
-        self.parameter_layout().visit_block_descriptors(visit);
-    }
-
-    #[doc(hidden)]
-    fn parameter_slice_of<P>(&self) -> Option<Range<usize>>
-    where
-        P: ParameterName,
-    {
-        let mut found = None;
-        self.visit_parameter_slices(|_, name, range| {
-            if name == P::NAME && found.is_none() {
-                found = Some(range);
-            }
-        });
-        found
-    }
-
-    #[doc(hidden)]
-    fn has_same_parameter_layout<Other>(&self, other: &Other) -> bool
-    where
-        Other: GamlssBlocks<F>,
-    {
-        let mut got_count = 0;
-        let mut matches = true;
-
-        other.visit_parameter_slices(|index, name, range| {
-            got_count += 1;
-            matches &= self.parameter_slice_matches(index, name, range);
-        });
-
-        matches && got_count == self.parameter_slice_count()
+        for (index, descriptor) in self.parameter_descriptors().into_iter().enumerate() {
+            visit(index, descriptor);
+        }
     }
 }
 
@@ -1636,7 +1973,7 @@ where
         loss
     }
 
-    fn eta_row(&self, beta: &[f64], row: usize) -> F::Eta {
+    fn eta_row(&self, _family: &F, beta: &[f64], row: usize) -> F::Eta {
         F::eta_from_shape(self.as_inner().values_row(beta, row))
     }
 
@@ -1731,12 +2068,10 @@ where
     }
 
     fn parameter_layout(&self) -> ParameterLayout {
-        let mut slices = Vec::new();
-        let mut cursor = 0;
-        self.as_inner()
-            .visit_slices(&mut cursor, &mut |_, name, range| {
-                slices.push(ParameterSlice { name, range });
-            });
+        let mut slices = Vec::with_capacity(self.as_inner().leaf_count());
+        <Self as GamlssBlocks<F>>::visit_parameter_slices(self, |_, name, range| {
+            slices.push(ParameterSlice { name, range });
+        });
         ParameterLayout::new(slices)
     }
 
@@ -1746,6 +2081,23 @@ where
             descriptors.push(descriptor);
         });
         descriptors
+    }
+
+    fn visit_block_ranges<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, Range<usize>),
+    {
+        <Self as GamlssBlocks<F>>::visit_parameter_descriptors(self, |index, descriptor| {
+            visit(index, descriptor.range);
+        });
+    }
+
+    fn visit_parameter_slices<V>(&self, mut visit: V)
+    where
+        V: FnMut(usize, &'static str, Range<usize>),
+    {
+        let mut cursor = 0;
+        self.as_inner().visit_slices(&mut cursor, &mut visit);
     }
 
     fn visit_parameter_descriptors<V>(&self, mut visit: V)
@@ -1901,12 +2253,27 @@ where
     PBlocks: GamlssBlocks<F>,
 {
     blocks.validate(blocks.nrows())?;
-    if expected_blocks.has_same_parameter_layout(blocks) {
+    let expected_layout = expected_blocks.parameter_layout();
+    let got_layout = blocks.parameter_layout();
+    if expected_layout != got_layout {
+        return Err(ModelError::PredictionLayoutMismatch {
+            expected: expected_layout,
+            got: got_layout,
+        });
+    }
+
+    let expected_key = expected_blocks.dynamic_layout_key().cloned();
+    let got_key = blocks.dynamic_layout_key().cloned();
+    let expected_descriptors = expected_blocks.parameter_descriptors();
+    let got_descriptors = blocks.parameter_descriptors();
+    if expected_key == got_key && expected_descriptors == got_descriptors {
         Ok(())
     } else {
-        Err(ModelError::PredictionLayoutMismatch {
-            expected: expected_blocks.parameter_layout(),
-            got: blocks.parameter_layout(),
+        Err(ModelError::PredictionLayoutIdentityMismatch {
+            expected_key,
+            got_key,
+            expected_descriptors,
+            got_descriptors,
         })
     }
 }
@@ -1916,7 +2283,8 @@ mod tests {
     use approx::assert_relative_eq;
 
     use crate::{
-        Broadcast, CholeskyScale, CompilableFamily, DenseDesign, Family, Gamlss, GamlssBlocks,
+        Broadcast, CholeskyScale, CompilableFamily, DenseDesign, DenseRows, DynamicLayoutKey,
+        DynamicParameterBlocks, DynamicallyCompilableFamily, Family, Gamlss, GamlssBlocks,
         GlobalPenalty, HingeQuadraticPenalty, InitialEtaFromObservations, LinearFormBuilder,
         LinearPredictorBlock, Lower, LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu,
         Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterAxis, ParameterBlock,
@@ -2061,6 +2429,152 @@ mod tests {
     }
 
     impl InitialEtaFromObservations<2> for TwoParameterMock {}
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct RuntimeLayoutMock {
+        key: usize,
+        reverse: bool,
+        whole_paths: bool,
+        initial_count: usize,
+    }
+
+    impl Family for RuntimeLayoutMock {
+        type Eta = [f64; 2];
+        type Theta = [f64; 2];
+        type GradientEta = [f64; 2];
+        type Observation<'obs> = f64;
+        type Workspace = ();
+
+        fn workspace(&self) -> Self::Workspace {}
+
+        fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+            *eta
+        }
+
+        fn nll(
+            &self,
+            observation: Self::Observation<'_>,
+            theta: &Self::Theta,
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
+            theta
+                .iter()
+                .map(|value| 0.5 * (value - observation).powi(2))
+                .sum()
+        }
+
+        fn nll_and_gradient_eta(
+            &self,
+            observation: Self::Observation<'_>,
+            eta: &Self::Eta,
+            workspace: &mut Self::Workspace,
+        ) -> (f64, Self::GradientEta) {
+            (
+                self.nll(observation, eta, workspace),
+                [eta[0] - observation, eta[1] - observation],
+            )
+        }
+    }
+
+    impl DynamicallyCompilableFamily for RuntimeLayoutMock {
+        fn dynamic_parameter_count(&self) -> usize {
+            2
+        }
+
+        fn dynamic_layout_key(&self) -> DynamicLayoutKey {
+            DynamicLayoutKey::new(vec![self.key, usize::from(self.whole_paths)])
+        }
+
+        fn eta_from_flat(&self, values: &[f64]) -> Self::Eta {
+            assert_ne!(
+                self.key,
+                usize::MAX,
+                "workspace value paths must not materialize dynamic eta"
+            );
+            let [first, second] = values else {
+                return [f64::NAN; 2];
+            };
+            if self.reverse {
+                [*second, *first]
+            } else {
+                [*first, *second]
+            }
+        }
+
+        fn nll_eta_flat(
+            &self,
+            observation: Self::Observation<'_>,
+            values: &[f64],
+            _workspace: &mut Self::Workspace,
+        ) -> f64 {
+            let [first, second] = values else {
+                return f64::INFINITY;
+            };
+            let (first, second) = if self.reverse {
+                (*second, *first)
+            } else {
+                (*first, *second)
+            };
+            0.5_f64.mul_add(
+                (first - observation).powi(2),
+                0.5 * (second - observation).powi(2),
+            )
+        }
+
+        fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]) {
+            let [first, second] = out else {
+                out.fill(f64::NAN);
+                return;
+            };
+            if self.reverse {
+                *first = gradient[1];
+                *second = gradient[0];
+            } else {
+                *first = gradient[0];
+                *second = gradient[1];
+            }
+        }
+
+        fn dynamic_parameter_coordinate(&self, index: usize) -> (&'static str, ParameterPath) {
+            if self.whole_paths {
+                return (Mu::NAME, ParameterPath::whole());
+            }
+            let component = match (self.reverse, index) {
+                (true, 0) => 1,
+                (true, 1) => 0,
+                _ => index,
+            };
+            (
+                Mu::NAME,
+                ParameterPath::from_axis(ParameterAxis::Vector { component }),
+            )
+        }
+
+        fn initial_flat<'obs, Obs>(&self, _obs: &'obs Obs) -> Vec<f64>
+        where
+            Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+        {
+            vec![0.0; self.initial_count]
+        }
+    }
+
+    fn runtime_layout_blocks(
+        family: &RuntimeLayoutMock,
+        nrows: usize,
+    ) -> DynamicParameterBlocks<LinearPredictorBlock<DenseDesign>, NoPenalty> {
+        DynamicParameterBlocks::try_new(
+            family,
+            (0..2)
+                .map(|_| {
+                    (
+                        LinearPredictorBlock::new(DenseDesign::intercept(nrows)),
+                        NoPenalty,
+                    )
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
 
     #[derive(Debug, Clone, Copy)]
     struct StructuredMock;
@@ -2318,8 +2832,14 @@ mod tests {
             Gamlss::try_new_with_observations(StructuredMock, blocks, y.as_slice()).unwrap();
 
         assert_eq!(model.nparams(), 5);
-        assert_eq!(model.parameter_layout().slice("mu"), Some(0..2));
-        assert_eq!(model.parameter_layout().slice("cholesky"), Some(2..5));
+        assert_eq!(
+            model.parameter_layout().unique_slice("mu").unwrap(),
+            Some(0..2)
+        );
+        assert_eq!(
+            model.parameter_layout().unique_slice("cholesky").unwrap(),
+            Some(2..5)
+        );
         assert_eq!(
             model.parameter_descriptors(),
             vec![
@@ -2828,6 +3348,224 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_layout_identity_is_checked_for_models_and_prediction() {
+        let canonical = RuntimeLayoutMock {
+            key: 7,
+            reverse: false,
+            whole_paths: false,
+            initial_count: 2,
+        };
+        let different_key = RuntimeLayoutMock {
+            key: 8,
+            reverse: false,
+            whole_paths: false,
+            initial_count: 2,
+        };
+        let different_coordinates = RuntimeLayoutMock {
+            key: 7,
+            reverse: true,
+            whole_paths: false,
+            initial_count: 2,
+        };
+        let canonical_eta = canonical.eta_from_flat(&[1.0, 2.0]);
+        assert_relative_eq!(canonical_eta[0], 1.0);
+        assert_relative_eq!(canonical_eta[1], 2.0);
+        let reversed_eta = different_coordinates.eta_from_flat(&[1.0, 2.0]);
+        assert_relative_eq!(reversed_eta[0], 2.0);
+        assert_relative_eq!(reversed_eta[1], 1.0);
+        let mut flat_gradient = [0.0; 2];
+        different_coordinates.gradient_to_flat(&[3.0, 4.0], &mut flat_gradient);
+        assert_relative_eq!(flat_gradient[0], 4.0);
+        assert_relative_eq!(flat_gradient[1], 3.0);
+
+        let y = [0.0];
+        assert_eq!(
+            Gamlss::try_new(
+                different_key,
+                runtime_layout_blocks(&canonical, y.len()),
+                &y,
+            )
+            .unwrap_err(),
+            ModelError::DynamicLayoutMismatch {
+                expected: DynamicLayoutKey::new(vec![8, 0]),
+                got: DynamicLayoutKey::new(vec![7, 0]),
+            }
+        );
+        assert!(matches!(
+            Gamlss::try_new(
+                different_coordinates,
+                runtime_layout_blocks(&canonical, y.len()),
+                &y,
+            )
+            .unwrap_err(),
+            ModelError::DynamicCoordinateMismatch { index: 0, .. }
+        ));
+
+        let model =
+            Gamlss::try_new(canonical, runtime_layout_blocks(&canonical, y.len()), &y).unwrap();
+        let prediction_blocks = runtime_layout_blocks(&different_key, 2);
+        match model.prediction_view(&prediction_blocks).unwrap_err() {
+            ModelError::PredictionLayoutIdentityMismatch {
+                expected_key,
+                got_key,
+                expected_descriptors,
+                got_descriptors,
+            } => {
+                assert_eq!(expected_key, Some(DynamicLayoutKey::new(vec![7, 0])));
+                assert_eq!(got_key, Some(DynamicLayoutKey::new(vec![8, 0])));
+                assert_eq!(expected_descriptors, got_descriptors);
+            }
+            error => panic!("unexpected prediction validation error: {error:?}"),
+        }
+
+        let prediction_blocks = runtime_layout_blocks(&different_coordinates, 2);
+        assert!(matches!(
+            model.prediction_view(&prediction_blocks).unwrap_err(),
+            ModelError::PredictionLayoutIdentityMismatch {
+                expected_key: Some(_),
+                got_key: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dynamic_initializer_coordinate_count_is_checked() {
+        let family = RuntimeLayoutMock {
+            key: 10,
+            reverse: false,
+            whole_paths: false,
+            initial_count: 1,
+        };
+        let y = [0.0];
+        let model = Gamlss::try_new(family, runtime_layout_blocks(&family, y.len()), &y).unwrap();
+
+        assert_eq!(
+            model.initial_parameters().unwrap_err(),
+            ModelError::DynamicInitialValueCount {
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn descriptor_selectors_reject_ambiguous_roles_and_paths() {
+        let family = RuntimeLayoutMock {
+            key: 9,
+            reverse: false,
+            whole_paths: true,
+            initial_count: 2,
+        };
+        let y = [0.0];
+        let mut model =
+            Gamlss::try_new(family, runtime_layout_blocks(&family, y.len()), &y).unwrap();
+        let beta = [0.25, -0.5];
+        let layout = model.parameter_layout();
+
+        assert_eq!(layout.ranges_of::<Mu>(), vec![0..1, 1..2]);
+        assert_eq!(
+            layout.unique_slice_of::<Mu>().unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+        assert_eq!(
+            model
+                .unique_parameter_descriptor_at_path::<Mu>(&ParameterPath::whole())
+                .unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+        assert_eq!(
+            model.block_objective_for::<Mu>(beta.to_vec()).unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+
+        let descriptors = model.parameter_descriptors_of::<Mu>();
+        assert_eq!(descriptors.len(), 2);
+        assert_eq!(descriptors[0].0, 0);
+        assert_eq!(descriptors[1].0, 1);
+        assert_eq!(descriptors[0].1.path, ParameterPath::whole());
+        assert_eq!(descriptors[1].1.path, ParameterPath::whole());
+        assert_eq!(
+            model.parameter_descriptor_index(&descriptors[1].1).unwrap(),
+            Some(1)
+        );
+
+        let unpacked = model.unpack_parameters(&beta).unwrap();
+        assert_eq!(unpacked.blocks_of::<Mu>().count(), 2);
+        assert_eq!(unpacked.block_at(1).unwrap().descriptor, descriptors[1].1);
+        assert_eq!(unpacked.block_at(1).unwrap().coefficients, vec![-0.5]);
+        assert_eq!(
+            unpacked.unique_coefficients_of::<Mu>().unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+
+        {
+            let mut second = model.block_objective_at(1, beta.to_vec()).unwrap();
+            assert_eq!(second.descriptor(), &descriptors[1].1);
+            let mut gradient = [0.0];
+            let value = second.value_gradient(&[-0.5], &mut gradient).unwrap();
+            assert_relative_eq!(value, 0.15625);
+            assert_relative_eq!(gradient[0], -0.5);
+        }
+        {
+            let mut second = model
+                .block_objective_for_descriptor(&descriptors[1].1, beta.to_vec())
+                .unwrap();
+            assert_eq!(second.dim(), 1);
+            assert_relative_eq!(second.value(&[-0.5]).unwrap(), 0.15625);
+        }
+        assert_eq!(
+            model.block_objective_at(2, beta.to_vec()).unwrap_err(),
+            ModelError::ParameterDescriptorIndexOutOfBounds { index: 2, count: 2 }
+        );
+        let unknown = ParameterDescriptor::whole("mu", 2..3);
+        assert_eq!(
+            model
+                .block_objective_for_descriptor(&unknown, beta.to_vec())
+                .unwrap_err(),
+            ModelError::UnknownParameterDescriptor {
+                descriptor: unknown,
+            }
+        );
+
+        let selected = descriptors[1].1.clone();
+        let mut workspace_objective = model.into_workspace_objective();
+        assert_eq!(
+            workspace_objective
+                .block_objective_for::<Mu>(beta.to_vec())
+                .unwrap_err(),
+            ModelError::AmbiguousParameter {
+                name: "mu".to_owned(),
+                matches: 2,
+            }
+        );
+        {
+            let descriptor_objective = workspace_objective
+                .block_objective_for_descriptor(&selected, beta.to_vec())
+                .unwrap();
+            assert_eq!(descriptor_objective.descriptor(), &selected);
+        }
+        {
+            let indexed_objective = workspace_objective
+                .block_objective_at(1, beta.to_vec())
+                .unwrap();
+            assert_eq!(indexed_objective.descriptor(), &selected);
+        }
+    }
+
+    #[test]
     fn prediction_api_uses_compatible_blocks_for_new_rows() {
         let y = vec![1.0, 2.0];
         let train_x = DenseDesign::from_rows(&[[1.0, 0.0], [1.0, 1.0]]);
@@ -3055,6 +3793,67 @@ mod tests {
                 assert_relative_eq!(actual, expected);
             }
         }
+    }
+
+    #[test]
+    fn dynamic_workspace_value_and_pointwise_paths_stay_flat() {
+        let family = RuntimeLayoutMock {
+            key: usize::MAX,
+            reverse: false,
+            whole_paths: false,
+            initial_count: 2,
+        };
+        let y = [0.0, 1.0];
+        let weights = [2.0, 0.5];
+        let model = Gamlss::try_new_weighted(
+            family,
+            runtime_layout_blocks(&family, y.len()),
+            &y,
+            &weights,
+        )
+        .unwrap();
+        let beta = [0.5, -0.25];
+        let expected_raw = [0.15625, 0.90625];
+        let expected_value = 2.0_f64.mul_add(expected_raw[0], 0.5 * expected_raw[1]);
+        let mut workspace = model.gradient_workspace();
+
+        assert_relative_eq!(
+            model
+                .try_value_into_workspace(&beta, &mut workspace)
+                .unwrap(),
+            expected_value
+        );
+        assert_relative_eq!(
+            model
+                .try_likelihood_value_into_workspace(&beta, &mut workspace)
+                .unwrap(),
+            expected_value
+        );
+
+        let mut raw = [f64::NAN; 2];
+        model.try_pointwise_nll_into(&beta, &mut raw).unwrap();
+        for (actual, expected) in raw.iter().zip(expected_raw) {
+            assert_relative_eq!(*actual, expected);
+        }
+
+        let mut weighted = [f64::NAN; 2];
+        model
+            .try_weighted_pointwise_log_likelihood_into_workspace(
+                &beta,
+                &mut weighted,
+                &mut workspace,
+            )
+            .unwrap();
+        for (actual, expected) in weighted
+            .iter()
+            .zip([-2.0 * expected_raw[0], -0.5 * expected_raw[1]])
+        {
+            assert_relative_eq!(*actual, expected);
+        }
+
+        let mut objective = model.into_workspace_objective();
+        assert_relative_eq!(objective.value(&beta).unwrap(), expected_value);
+        assert_relative_eq!(objective.value(&beta).unwrap(), expected_value);
     }
 
     #[test]
@@ -3364,27 +4163,6 @@ mod tests {
         assert_relative_eq!(grad[0], -2.0);
     }
 
-    #[derive(Debug, Clone, PartialEq)]
-    struct BorrowedRows {
-        rows: Vec<Vec<f64>>,
-    }
-
-    impl<'row> ObservationView<'row> for BorrowedRows {
-        type Observation = &'row [f64];
-
-        fn len(&self) -> usize {
-            self.rows.len()
-        }
-
-        fn observation_at(&'row self, row: usize) -> Self::Observation {
-            self.rows[row].as_slice()
-        }
-
-        fn weight_at(&self, _row: usize) -> f64 {
-            1.0
-        }
-    }
-
     #[derive(Debug, Clone, Copy)]
     struct BorrowedRowMean;
 
@@ -3435,9 +4213,8 @@ mod tests {
 
     #[test]
     fn model_accepts_borrowed_dynamic_observation_rows() {
-        let obs = BorrowedRows {
-            rows: vec![vec![1.0, 3.0], vec![2.0, 4.0]],
-        };
+        let values = [1.0, 3.0, 2.0, 4.0];
+        let obs = DenseRows::try_new(&values, 2).unwrap();
         let x = DenseDesign::intercept(obs.len());
         let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
         let mut model = Gamlss::try_new_with_observations(
@@ -3454,6 +4231,46 @@ mod tests {
         model.gradient(&beta, &mut grad).unwrap();
 
         assert_relative_eq!(grad[0], -1.0);
+    }
+
+    #[test]
+    fn dense_rows_validate_geometry_and_weights_once() {
+        let values = [1.0, 3.0, 2.0, 4.0];
+        let weights = [2.0, 0.5];
+        let rows = DenseRows::try_new_weighted(&values, 2, &weights).unwrap();
+
+        assert_eq!(rows.values(), values);
+        assert_eq!(rows.width(), 2);
+        assert_eq!(rows.nrows(), 2);
+        assert_eq!(rows.weights(), Some(weights.as_slice()));
+        assert_eq!(rows.observation_at(1), &[2.0, 4.0]);
+        assert_relative_eq!(rows.weight_at(1), 0.5);
+
+        assert_eq!(
+            DenseRows::try_new(&values, 0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "dense observation row width",
+                expected: "positive",
+            }
+        );
+        assert_eq!(
+            DenseRows::try_new(&values[..3], 2).unwrap_err(),
+            ModelError::DenseObservationSize {
+                actual_values: 3,
+                row_width: 2,
+            }
+        );
+        assert_eq!(
+            DenseRows::try_new_weighted(&values, 2, &[1.0]).unwrap_err(),
+            ModelError::WeightLength {
+                expected: 2,
+                actual: 1,
+            }
+        );
+        assert_eq!(
+            DenseRows::try_new_weighted(&values, 2, &[1.0, f64::NAN]).unwrap_err(),
+            ModelError::InvalidWeight { index: 1 }
+        );
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -3680,7 +4497,10 @@ mod tests {
 
         model.gradient(&beta, &mut grad).unwrap();
 
-        assert_eq!(model.parameter_layout().slice("fifth").unwrap(), 4..5);
+        assert_eq!(
+            model.parameter_layout().unique_slice("fifth").unwrap(),
+            Some(4..5)
+        );
         assert_relative_eq!(grad[0], -0.5);
         assert_relative_eq!(grad[1], -0.5);
         assert_relative_eq!(grad[2], -0.5);
@@ -3716,17 +4536,41 @@ mod tests {
         assert_eq!(layout.len(), 3);
         assert!(!layout.is_empty());
         assert_eq!(layout.ncoefficients(), parameters.len());
-        assert_eq!(layout.slice("mu").unwrap(), 0..1);
-        assert_eq!(layout.slice_of::<Mu>().unwrap(), 0..1);
-        assert_eq!(layout.slice("sigma").unwrap(), 1..2);
-        assert_eq!(layout.slice_of::<Sigma>().unwrap(), 1..2);
-        assert_eq!(layout.slice("nu").unwrap(), 2..3);
-        assert_eq!(layout.slice_of::<Nu>().unwrap(), 2..3);
-        assert_eq!(unpacked.coefficients("mu").unwrap(), &[1.5]);
-        assert_eq!(unpacked.coefficients_of::<Mu>().unwrap(), &[1.5]);
-        assert_eq!(unpacked.block_of::<Mu>().unwrap().name, "mu");
-        assert_eq!(unpacked.coefficients("sigma").unwrap(), &[0.5]);
-        assert_eq!(unpacked.coefficients("nu").unwrap(), &[-0.5]);
+        assert_eq!(layout.unique_slice("mu").unwrap(), Some(0..1));
+        assert_eq!(layout.unique_slice_of::<Mu>().unwrap(), Some(0..1));
+        assert_eq!(layout.unique_slice("sigma").unwrap(), Some(1..2));
+        assert_eq!(layout.unique_slice_of::<Sigma>().unwrap(), Some(1..2));
+        assert_eq!(layout.unique_slice("nu").unwrap(), Some(2..3));
+        assert_eq!(layout.unique_slice_of::<Nu>().unwrap(), Some(2..3));
+        assert_eq!(unpacked.unique_coefficients("mu").unwrap().unwrap(), &[1.5]);
+        assert_eq!(
+            unpacked.unique_coefficients_of::<Mu>().unwrap().unwrap(),
+            &[1.5]
+        );
+        assert_eq!(
+            unpacked.unique_block_of::<Mu>().unwrap().unwrap().name(),
+            "mu"
+        );
+        assert_eq!(unpacked.block_at(0).unwrap().descriptor_index, 0);
+        assert_eq!(
+            unpacked.block_at(0).unwrap().descriptor,
+            ParameterDescriptor::whole("mu", 0..1)
+        );
+        assert_eq!(
+            unpacked
+                .block_for_descriptor(&ParameterDescriptor::whole("sigma", 1..2))
+                .unwrap()
+                .coefficients,
+            vec![0.5]
+        );
+        assert_eq!(
+            unpacked.unique_coefficients("sigma").unwrap().unwrap(),
+            &[0.5]
+        );
+        assert_eq!(
+            unpacked.unique_coefficients("nu").unwrap().unwrap(),
+            &[-0.5]
+        );
     }
 
     #[test]
@@ -3774,6 +4618,19 @@ mod tests {
         let mut layout_visited = Vec::new();
         layout.visit_slices(|index, name, range| layout_visited.push((index, name, range)));
         assert_eq!(layout_visited, visited_slices);
+
+        let mut visited_descriptors = Vec::new();
+        model.visit_parameter_descriptors(|index, descriptor| {
+            visited_descriptors.push((index, descriptor));
+        });
+        assert_eq!(
+            visited_descriptors,
+            model
+                .parameter_descriptors()
+                .into_iter()
+                .enumerate()
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

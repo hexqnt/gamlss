@@ -425,6 +425,67 @@ pub trait DesignMatrix {
     }
 }
 
+/// Borrows an existing design matrix without cloning its storage.
+///
+/// Every operation is forwarded to the underlying implementation so custom
+/// optimized weighted and Gram kernels remain available through a shared
+/// reference.
+impl<T> DesignMatrix for &T
+where
+    T: DesignMatrix + ?Sized,
+{
+    #[inline]
+    fn nrows(&self) -> usize {
+        T::nrows(*self)
+    }
+
+    #[inline]
+    fn ncols(&self) -> usize {
+        T::ncols(*self)
+    }
+
+    #[inline]
+    fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
+        T::dot_row(*self, row, beta)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
+        T::add_t_mul_vec(*self, weights, out);
+    }
+
+    #[inline]
+    fn set_constant_start(&self, value: f64, out: &mut [f64]) -> bool {
+        T::set_constant_start(*self, value, out)
+    }
+
+    #[inline]
+    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
+        T::add_weighted_t_mul_vec(*self, weights, multiplier, out);
+    }
+
+    #[inline]
+    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        T::add_weighted_t_mul_vec_by(*self, weights, multiplier, out);
+    }
+
+    #[inline]
+    fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
+        T::gram_weighted(*self, weights, out);
+    }
+
+    #[inline]
+    fn gram_weighted_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        T::gram_weighted_by(*self, weights, multiplier, out);
+    }
+}
+
 /// Row-wise multiplier used by fused weighted transpose products.
 pub trait RowMultiplier {
     /// Multiplier value for `row`.
@@ -531,6 +592,35 @@ mod tests {
 
         assert_relative_eq!(out[0], 6.5);
         assert_relative_eq!(out[1], 9.0);
+    }
+
+    #[test]
+    fn borrowed_design_forwards_all_specialized_operations() {
+        let owned = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
+        let borrowed = &owned;
+
+        assert_eq!(DesignMatrix::nrows(&borrowed), 2);
+        assert_eq!(DesignMatrix::ncols(&borrowed), 2);
+        assert_relative_eq!(DesignMatrix::dot_row(&borrowed, 1, &[2.0, -1.0]), 2.0);
+
+        let mut start = [0.0; 2];
+        assert!(DesignMatrix::set_constant_start(
+            &&DenseDesign::intercept(2),
+            3.0,
+            &mut start[..1],
+        ));
+        assert_relative_eq!(start[0], 3.0);
+
+        let mut transpose = [0.0; 2];
+        DesignMatrix::add_weighted_t_mul_vec(&borrowed, &[0.5, 2.0], &[2.0, 0.25], &mut transpose);
+        assert_relative_eq!(transpose[0], 2.5);
+        assert_relative_eq!(transpose[1], 4.0);
+
+        let mut gram = [0.0; 4];
+        DesignMatrix::gram_weighted(&borrowed, &[0.5, 2.0], &mut gram);
+        for (actual, expected) in gram.iter().zip([18.5, 25.0, 25.0, 34.0]) {
+            assert_relative_eq!(*actual, expected);
+        }
     }
 
     #[test]

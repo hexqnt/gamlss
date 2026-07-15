@@ -11,41 +11,23 @@ use super::{LogNormal, LogNormalLogLocationLogSdTheta};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MedianLogSd;
 
-/// Predictors for log-normal median/log-SD on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMedianLogSdEta {
-    /// Median predictor.
-    pub median: f64,
-    /// Log-SD predictor.
-    pub log_sd: f64,
-}
-
-impl ParameterParts<2> for LogNormalMedianLogSdEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            median: values[0],
-            log_sd: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for log-normal median/log-SD on the link scale.
+    LogNormalMedianLogSdEta {
+        /// Median predictor.
+        median,
+        /// Log-SD predictor.
+        log_sd,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.median,
-            1 => self.log_sd,
-            _ => unreachable!("log-normal median/log-SD eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale log-normal median/log-SD parameters.
+    LogNormalMedianLogSdTheta {
+        /// Positive median.
+        median,
+        /// Positive standard deviation of `log(Y)`.
+        log_sd,
     }
-}
-
-/// Natural-scale log-normal median/log-SD parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogNormalMedianLogSdTheta {
-    /// Positive median.
-    pub median: f64,
-    /// Positive standard deviation of `log(Y)`.
-    pub log_sd: f64,
 }
 
 impl LogNormalMedianLogSdTheta {
@@ -65,10 +47,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: LogNormalMedianLogSdEta) -> LogNormalMedianLogSdTheta {
-        LogNormalMedianLogSdTheta {
-            median: MedianLink::inverse(eta.median),
-            log_sd: LogSdLink::inverse(eta.log_sd),
-        }
+        eta.theta_from_links::<MedianLink, LogSdLink>()
     }
 
     #[inline]
@@ -84,12 +63,10 @@ where
         }
 
         let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
+        let d_median = d_location / theta.median;
         (
             nll,
-            LogNormalMedianLogSdEta {
-                median: d_location / theta.median * MedianLink::derivative_inverse(eta.median),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
-            },
+            eta.chain_gradient::<MedianLink, LogSdLink>(d_median, d_log_sd),
         )
     }
 }

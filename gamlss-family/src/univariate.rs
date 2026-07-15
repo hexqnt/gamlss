@@ -1,5 +1,8 @@
 //! Univariate distribution families.
 
+#[macro_use]
+mod macros;
+
 pub use beinf::{Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta};
 pub use bernoulli::{Bernoulli, BernoulliEta, BernoulliProbability, BernoulliTheta};
 pub use beta::{Beta, BetaEta, BetaMeanPrecision, BetaTheta};

@@ -1,126 +1,64 @@
 # gamlss
 
 [![CI](https://github.com/hexqnt/gamlss/actions/workflows/ci.yml/badge.svg)](https://github.com/hexqnt/gamlss/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/gamlss.svg)](https://crates.io/crates/gamlss)[![docs.rs](https://img.shields.io/docsrs/gamlss)](https://docs.rs/gamlss)
+[![crates.io](https://img.shields.io/crates/v/gamlss.svg)](https://crates.io/crates/gamlss)
+[![docs.rs](https://img.shields.io/docsrs/gamlss)](https://docs.rs/gamlss)
 
-Type-driven Rust crates for GAMLSS-style modeling.
+Type-driven Rust crates for GAMLSS-style distributional regression.
 
-> **Status:** Actively developed. Public API and numerical behavior may still change before a stable 1.0 release.
+> **Status:** Actively developed. Public APIs and numerical behavior may change before 1.0.
 
-## Crate layout
+## Overview
 
-The primary entry point for users is the `gamlss` crate:
-
-`gamlss` is the batteries-included facade. The main and most stable path today goes through the low-level typed API exposed by `gamlss-core`, `gamlss-family`, `gamlss-spline`, `gamlss-special`, and `gamlss-transform`. By default, the facade also re-exports `gamlss-formula`; that layer is currently an experimental optional convenience crate, not the library's core API.
-
-The workspace also publishes separate crates for finer control over APIs and dependencies:
-
-- `gamlss-core` — type-driven core abstractions for links, parameter blocks, objectives, and compiled models.
-- `gamlss-bayes` — normalized coefficient priors and summed-likelihood posterior potentials, without a sampler backend.
-- `gamlss-family` — distributions, likelihoods, and score helpers.
-- `gamlss-diagnostics` — post-fit PIT/CDF diagnostics, normalized quantile residuals, and CRPS summaries for supported families.
-- `gamlss-special` — special functions and shared numerical helpers for likelihood, CDF, and quantile code.
-- `gamlss-spline` — spline/Fourier predictors, penalties, and spline metadata.
-- `gamlss-transform` — target preprocessing transforms.
-- `gamlss-formula` — experimental optional formula/builder layer that compiles runtime specifications into typed models. It covers curated high-level workflows and is not expected to mirror every family, link, or parameterization available in the low-level crates.
-
-For most use cases, depending on `gamlss` is enough. Bayesian support is opt-in through the `bayes` feature; individual workspace crates remain available when tighter dependency and API control is preferable. If you want a stricter low-level surface without the experimental formula layer, use `default-features = false` or depend on the individual crates directly.
-
-## Cargo features
-
-- `formula` is enabled by default and re-exports the experimental `gamlss-formula` namespace from the facade crate.
-- `bayes` opt-in re-exports `gamlss-bayes` as `gamlss::bayes` and adds its common types to `gamlss::prelude`.
-- `rand` enables the sampling API in `gamlss-family` through the facade crate: `rand = ["gamlss-family/rand"]`.
-- `multivariate` enables fixed- and runtime-dimensional multivariate families.
-
-## Running tests
-
-Run the full workspace test suite:
-
-```bash
-cargo test --workspace --all-features
-```
-
-Numerical tests for `gamlss-family` can also be run separately:
-
-```bash
-cargo test -p gamlss-family --tests --all-features
-```
-
-## GAMLSS overview
-
-GAMLSS can be read as distributional regression: the model describes not only the conditional mean of the response, but the full conditional distribution. This is useful when dispersion, skewness, tail behavior, or even the valid response domain changes with the features. For example, one part of a model may describe the distribution center, another a heteroskedastic scale, and a third the tail shape.
-
-In general, GAMLSS defines the response distribution through a set of parameters from a chosen family:
+GAMLSS models the full conditional response distribution rather than only its mean:
 
 $$
 Y_i \mid x_i \sim D(\theta_{i1}, \ldots, \theta_{iK}),
+\qquad g_k(\theta_{ik}) = X_{k,i}\beta_k + \sum_j f_{k,j}(x_i).
 $$
 
-where `D(...)` is the selected parametric distribution. Each parameter is modeled with its own link function and predictor:
+Each distribution parameter can have its own link, covariates, smooth terms, and penalties. The typed API expresses parameter domains and model structure at compile time while keeping model evaluation backend- and optimizer-agnostic.
 
-$$
-g_k(\theta_{ik}) = \eta_{ik}
-  = X_{k,i}\beta_k + \sum_j f_{k,j}(x_i),
-\qquad k = 1,\ldots,K.
-$$
+The library supports scalar distributional models, optional multivariate families, finite mixtures, smooth predictors, target transforms, post-fit diagnostics, and a lightweight Bayesian posterior-potential layer. Distribution functions, quantiles, CRPS, and sampling are exposed through capability traits and vary by family. See the [family capability matrix](docs/family-capabilities.md) for exact coverage.
 
-In other words, different parameters of the same distribution can use different feature sets, spline terms, penalties, and domain constraints. A link function maps the unconstrained linear predictor `eta` into the parameter's valid domain: scale parameters usually need to be positive, while probability or mean parameters for a beta family must lie inside `(0, 1)`.
+Fitting loops and optimizer integrations intentionally remain outside the core API.
 
-The classic `gamlss` convention often names the first four parameters `mu`, `sigma`, `nu`, and `tau`:
+## Crates
 
-$$
-(\theta_{i1}, \theta_{i2}, \theta_{i3}, \theta_{i4})
-  = (\mu_i, \sigma_i, \nu_i, \tau_i),
-$$
+Most users should depend on the `gamlss` facade. The workspace also publishes focused crates:
 
-$$
-Y_i \mid x_i \sim D(\mu_i, \sigma_i, \nu_i, \tau_i).
-$$
+- `gamlss-core` and `gamlss-family` provide typed model abstractions, distributions, likelihoods, and scores.
+- `gamlss-spline` and `gamlss-special` provide predictors, penalties, special functions, and numerical helpers.
+- `gamlss-transform` and `gamlss-diagnostics` cover response preprocessing and post-fit diagnostics.
+- `gamlss-formula` is an experimental builder layer for curated workflows; `gamlss-bayes` provides priors and posterior potentials without a sampler.
 
-Here `mu`, `sigma`, `nu`, and `tau` usually correspond to location, scale, skewness, and shape. This is a naming convention, not a required API shape: not every family uses all four parameters, and the typed core supports custom parameter markers for application-specific parameter counts and meanings. As a result, the library can express familiar location-scale models such as normal, log-normal, Laplace, and Student's t, as well as differently parameterized families such as gamma, Weibull, inverse Gaussian, and beta.
+See [project structure](docs/project-structure.md) for API layers and crate boundaries.
 
-## Modeling features
+## Features
 
-These tables summarize what the library can model today, grouped by modeling regime. Planned regimes are listed separately so they do not look like current scalar GAMLSS capabilities.
+- `formula` (default) re-exports the experimental builder API.
+- `bayes` enables `gamlss::bayes` and its common prelude types.
+- `rand` enables sampling for supported families.
+- `multivariate` enables multivariate families.
 
-### Scalar GAMLSS
+Use `default-features = false` for the facade without the formula layer, or depend on individual crates for tighter dependency control.
 
-| Area                                               | Status | What it means for modeling                                                                                                                                                                                                                  |
-| -------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Distributional regression core                     | ✅     | Multiple distribution parameters can each have their own predictor, link, penalty, and covariates.                                                                                                                                          |
-| Continuous response families                       | ✅     | Normal, log-normal, gamma, Weibull, inverse Gaussian, exponential, beta, logistic, Laplace, Student-t, skew-normal, skew Student-t, generalized gamma, generalized error / power exponential, Gumbel, GEV, Johnson SU, sinh-arcsinh, Lomax. |
-| Discrete and zero-inflated families                | ✅     | Bernoulli, Poisson, negative binomial, zero-inflated Poisson, zero-inflated negative binomial, zero-adjusted gamma, beta inflated at zero and one, Tweedie.                                                                                 |
-| Location, scale, shape, skewness and tail modeling | ✅     | Families can expose 1-4 typed parameters such as mean/location, scale/CV/precision/dispersion, skewness, degrees of freedom, shape, power, or zero probability.                                                                             |
-| Smooth and structured predictors                   | ✅     | Linear terms, offsets, interactions, P-splines, cyclic/periodic smooths, Fourier terms, monotone I-splines, tensor-product splines, and smoothness/shape penalties.                                                                         |
-| Likelihood, score and objective evaluation         | ✅     | Negative log-likelihood and analytical gradients for fitting; optimizer remains external.                                                                                                                                                   |
-| Distribution functions and simulation              | 🧩     | CDF, quantile, CRPS, density/log-density and sampling are exposed through capability traits and vary by family.                                                                                                                             |
-| Post-fit distribution diagnostics                  | ✅     | PIT/CDF values, normalized quantile residuals, CRPS values and summaries for supported families.                                                                                                                                            |
-| Target/response transforms                         | ✅     | Log, log1p-shift, Box-Cox, Yeo-Johnson, standardization, robust standardization, min-max/max-abs scaling, quantile transforms, asinh scaling, and composable persisted transform state.                                                     |
-| Formula/builder workflows                          | 🧪     | Curated dynamic builders for normal, beta, gamma, inverse Gaussian, log-normal and Weibull compile into typed models; low-level typed API covers more families.                                                                             |
+## Development
 
-### Multivariate GAMLSS
+Run the workspace checks with:
 
-| Area                         | Status | What it means for modeling                                                                                             |
-| ---------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Joint response distributions | ✅     | Fixed and dynamic multivariate Normal, multivariate Student-t, Dirichlet, and independent products use structured observations and parameters. |
-| Dependence modeling          | ✅/🧩  | Cholesky and marginal-scale/partial-correlation covariance models are fit-ready; copulas and factor covariance remain future slices. |
-| Multivariate diagnostics     | ✅/🧩  | Explicit marginal PIT, observation dimension, conditional CDF, and Rosenblatt capabilities exist; coverage varies by family. |
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features
+cargo test --workspace --all-features
+```
 
-### Mixture models
+Run the main benchmarks with:
 
-| Area                          | Status | What it means for modeling                                                                                    |
-| ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| Finite mixture families       | ✅     | Homogeneous fixed-size mixtures compose any `CompilableFamily`, including multivariate Normal components. |
-| Component-specific predictors | ✅     | `Repeated<ComponentShape, C>` gives each component its own typed predictors and penalties; `Broadcast` expresses an explicit shared owner. |
-| Mixing weights                | ✅     | Baseline-softmax weight predictors support covariate-dependent gating and analytical responsibility gradients. |
+```bash
+cargo bench -p gamlss-family --bench objective --all-features
+cargo bench -p gamlss-spline --bench spline_hot_paths
+cargo bench -p gamlss-special --bench numeric_kernels
+```
 
-### Bayesian GAMLSS
-
-| Area                              | Status | What it means for modeling                                                                                           |
-| --------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| Priors over distributional models | ✅/🧩  | `gamlss-bayes` provides a proper normalized diagonal Gaussian prior on predictor coefficients; transformed and smoothing priors remain explicit future work. |
-| Posterior inference              | 🧩     | `PosteriorPotential` exposes summed unpenalized likelihood plus analytical prior gradient to external HMC/VI backends; no sampler is bundled. |
-| Posterior predictive diagnostics  | 🧩     | Pointwise log-likelihood and fallible simulation foundations are available; chain-level summaries remain backend work. |
-
-Fitting loops and optimizer integrations are intentionally outside the core API today; provide or adapt an optimizer against the objective and gradient traits.
+Each crate's `benches/README.md` documents focused Criterion filters and coverage. Compare benchmark results only on the same hardware and toolchain.

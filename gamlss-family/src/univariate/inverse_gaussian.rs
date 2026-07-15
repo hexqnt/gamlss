@@ -71,8 +71,8 @@ mod tests {
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{
-        InverseGaussianMeanCv, InverseGaussianMeanCvTheta, InverseGaussianMuShape,
-        InverseGaussianTheta,
+        InverseGaussianMeanCv, InverseGaussianMeanCvEta, InverseGaussianMeanCvTheta,
+        InverseGaussianMuShape, InverseGaussianTheta,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -116,6 +116,38 @@ mod tests {
             mean_cv.quantile(0.4, &mean_cv_theta),
             mean_shape.quantile(0.4, &mean_shape_theta),
             epsilon = 1.0e-10
+        );
+    }
+
+    #[test]
+    fn inverse_gaussian_mean_cv_accepts_shape_beyond_squared_cv_range() {
+        let family = InverseGaussianMeanCv::new();
+        let theta = InverseGaussianMeanCvTheta {
+            mean: 1.0,
+            cv: 1.0e155,
+        };
+        let eta = InverseGaussianMeanCvEta {
+            mean: 0.0,
+            cv: theta.cv.ln(),
+        };
+
+        let natural_nll = family.nll(1.0, &theta, &mut ());
+        let (eta_nll, gradient) = family.nll_and_gradient_eta(1.0, &eta, &mut ());
+
+        assert!(
+            natural_nll.is_finite(),
+            "natural-scale nll was {natural_nll}"
+        );
+        assert!(eta_nll.is_finite(), "eta-scale nll was {eta_nll}");
+        assert!(
+            (gradient.mean + 0.5).abs() < 1.0e-14,
+            "mean gradient was {}",
+            gradient.mean
+        );
+        assert!(
+            (gradient.cv - 1.0).abs() < 1.0e-14,
+            "cv gradient was {}",
+            gradient.cv
         );
     }
 

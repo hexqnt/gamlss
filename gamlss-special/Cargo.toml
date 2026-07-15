@@ -9,14 +9,19 @@ repository.workspace = true
 documentation = "https://docs.rs/gamlss-special"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "tests/**/*", "Cargo.toml", "README.md"]
+include = ["src/**/*", "tests/**/*", "benches/**/*", "Cargo.toml", "README.md"]
 readme = "README.md"
 
 [dependencies]
 
 [dev-dependencies]
 approx.workspace = true
+criterion.workspace = true
 statrs = "0.18"
+
+[[bench]]
+name = "numeric_kernels"
+harness = false
 
 [lints]
 workspace = true

@@ -42,12 +42,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let residuals = model.quantile_residuals(&parameters)?;
     let coefficients = model.unpack_parameters(&parameters)?;
     let mu_coefficients = coefficients
-        .coefficients_of::<Mu>()
+        .unique_coefficients_of::<Mu>()?
         .expect("mu block is present");
     let mu_intercept = mu_coefficients[0];
     let mu_slope = mu_coefficients[1];
     let sigma_intercept = coefficients
-        .coefficients_of::<Sigma>()
+        .unique_coefficients_of::<Sigma>()?
         .and_then(|values| values.first().copied())
         .expect("sigma block has an intercept coefficient");
     let sigma_hat = sigma_intercept.exp();

@@ -25,6 +25,8 @@
 //! family/domain layer; use [`Gamlss::try_new_strict`] or
 //! [`FiniteScalarObservations`] to reject non-finite scalar responses at model
 //! construction.
+//! Runtime-dimensional multivariate responses can use [`DenseRows`] to borrow
+//! equal-width rows from one contiguous flat buffer with optional weights.
 //!
 //! Prediction methods return link-scale `Eta` or natural-scale `Theta`:
 //! `predict_eta`, `predict_theta` use training blocks, while the
@@ -34,8 +36,8 @@
 pub use design::{DenseDesign, DesignMatrix, RowMultiplier};
 pub use error::ModelError;
 pub use family::{
-    CanSimulate, CompilableFamily, DenseInformation, DynamicallyCompilableFamily, Family,
-    FixedDimensionalFamily, HasCdf, HasConditionalCdf, HasCrps, HasDensity, HasDeviance,
+    CanSimulate, CompilableFamily, DenseInformation, DynamicLayoutKey, DynamicallyCompilableFamily,
+    Family, FixedDimensionalFamily, HasCdf, HasConditionalCdf, HasCrps, HasDensity, HasDeviance,
     HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasMarginalCdf,
     HasObservationDimension, HasQuantile, HasRosenblattTransform, InitialEtaFromObservations,
     ParameterParts, SimulationError, TrySimulate,
@@ -45,10 +47,10 @@ pub use link::{
     UnitIntervalLink,
 };
 pub use model::{
-    DynamicParameterBlocks, FiniteScalarObservations, Gamlss, GamlssBlocks, GradientWorkspace,
-    ObjectiveScale, ObservationView, ParameterAxis, ParameterCoefficients, ParameterDescriptor,
-    ParameterLayout, ParameterPath, ParameterSlice, PredictionView, TrainingDiagnostics,
-    UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+    DenseRows, DynamicParameterBlocks, FiniteScalarObservations, Gamlss, GamlssBlocks,
+    GradientWorkspace, ModelWorkspace, ObjectiveScale, ObservationView, ParameterAxis,
+    ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPath, ParameterSlice,
+    PredictionView, TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -99,25 +101,26 @@ pub mod prelude {
     pub use crate::{
         AbsoluteLimitPenalty, AssignParameterOffsets, BlockObjective, CanSimulate, CholeskyScale,
         ClampedLog, CoefficientTransform, ComponentMean, Cv, DenseDesign, DenseInformation,
-        DesignMatrix, Dispersion, DynamicParameterBlocks, DynamicallyCompilableFamily, Family,
-        FiniteScalarObservations, FixedDimensionalFamily, Gamlss, GamlssBlocks, GlobalPenalty,
-        GradientWorkspace, HasCdf, HasConditionalCdf, HasCrps, HasDensity, HasDesignMatrix,
-        HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-        HasMarginalCdf, HasObservationDimension, HasQuantile, HasRosenblattTransform,
-        HingeQuadraticPenalty, Identity, InitialEtaFromObservations, InitialEtaFromTheta,
-        LinearForm, LinearFormBuilder, LinearPredictorBlock, LinearPredictorGeometry, LinearTerm,
-        Link, LocationCholesky, Log, LogLocation, LogPlus, LogSd, Logit, Lower,
-        LowerTriangularParameterBlock, MatrixPenalty, Mean, Median, MixtureWeight, ModelError, Mu,
-        NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OffsetBlock, OneProbability,
-        ParameterAxis, ParameterBlock, ParameterBlocks, ParameterCoefficients, ParameterDescriptor,
-        ParameterLayout, ParameterName, ParameterParts, ParameterPath, ParameterShape,
-        ParameterSlice, PartialCorrelation, Penalty, PositiveLink, Power, Precision,
-        PredictionView, PredictorBlock, Probability, Product, ProductBlock, Rate, Repeated,
-        RidgePenalty, RowMultiplier, Scalar, ScalarTuple, Scale, SegmentPenalty, Shape,
-        ShapeValues, Sigma, Simplex, SimplexLogitParameterBlock, SimulationError, Size, Softplus,
-        StrictLower, StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, TrySimulate,
-        UnitIntervalLink, UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties,
-        WorkspaceGamlss, ZeroProbability,
+        DenseRows, DesignMatrix, Dispersion, DynamicLayoutKey, DynamicParameterBlocks,
+        DynamicallyCompilableFamily, Family, FiniteScalarObservations, FixedDimensionalFamily,
+        Gamlss, GamlssBlocks, GlobalPenalty, GradientWorkspace, HasCdf, HasConditionalCdf, HasCrps,
+        HasDensity, HasDesignMatrix, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
+        HasInitialEta, HasLogDensity, HasMarginalCdf, HasObservationDimension, HasQuantile,
+        HasRosenblattTransform, HingeQuadraticPenalty, Identity, InitialEtaFromObservations,
+        InitialEtaFromTheta, LinearForm, LinearFormBuilder, LinearPredictorBlock,
+        LinearPredictorGeometry, LinearTerm, Link, LocationCholesky, Log, LogLocation, LogPlus,
+        LogSd, Logit, Lower, LowerTriangularParameterBlock, MatrixPenalty, Mean, Median,
+        MixtureWeight, ModelError, ModelWorkspace, Mu, NoPenalty, Nu, Objective, ObjectiveScale,
+        ObservationView, OffsetBlock, OneProbability, ParameterAxis, ParameterBlock,
+        ParameterBlocks, ParameterCoefficients, ParameterDescriptor, ParameterLayout,
+        ParameterName, ParameterParts, ParameterPath, ParameterShape, ParameterSlice,
+        PartialCorrelation, Penalty, PositiveLink, Power, Precision, PredictionView,
+        PredictorBlock, Probability, Product, ProductBlock, Rate, Repeated, RidgePenalty,
+        RowMultiplier, Scalar, ScalarTuple, Scale, SegmentPenalty, Shape, ShapeValues, Sigma,
+        Simplex, SimplexLogitParameterBlock, SimulationError, Size, Softplus, StrictLower,
+        StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean, TrainingDiagnostics,
+        TransformedScalar, TryAssignParameterOffsets, TrySimulate, UnitIntervalLink,
+        UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties, WorkspaceGamlss,
+        ZeroProbability,
     };
 }

@@ -109,6 +109,58 @@ impl<P, const D: usize> ParameterShape for Vector<P, D> {
 }
 
 impl<P, const D: usize> sealed::Sealed for Vector<P, D> {}
+
+/// Checked number of entries in a packed lower-triangular matrix.
+#[must_use]
+pub const fn lower_triangular_packed_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_add(1) {
+        Some(next) => match dimension.checked_mul(next) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// Checked row-major packed lower-triangular index for `(row, col)`.
+#[must_use]
+pub const fn lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
+    if col > row {
+        return None;
+    }
+    match row.checked_add(1) {
+        Some(next) => match row.checked_mul(next) {
+            Some(product) => (product / 2).checked_add(col),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// Checked number of entries in a packed strict-lower-triangular matrix.
+#[must_use]
+pub const fn strict_lower_triangular_packed_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_sub(1) {
+        Some(previous) => match dimension.checked_mul(previous) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => Some(0),
+    }
+}
+
+/// Checked row-major packed strict-lower-triangular index for `(row, col)`.
+#[must_use]
+pub const fn strict_lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
+    if col >= row {
+        return None;
+    }
+    match row.checked_mul(row - 1) {
+        Some(product) => (product / 2).checked_add(col),
+        None => None,
+    }
+}
+
 /// Row-major lower-triangular scalar coordinates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Lower<P, const D: usize>(PhantomData<P>);
@@ -351,8 +403,26 @@ mod tests {
 
     use super::{
         Broadcast, LocationCholesky, Lower, ParameterShape, Product, Scalar, ShapeValues, Simplex,
-        StrictLower, Vector,
+        StrictLower, Vector, lower_triangular_packed_index, lower_triangular_packed_len,
+        strict_lower_triangular_packed_index, strict_lower_triangular_packed_len,
     };
+
+    #[test]
+    fn packed_triangle_arithmetic_is_checked_and_uses_row_major_order() {
+        assert_eq!(lower_triangular_packed_len(3), Some(6));
+        assert_eq!(lower_triangular_packed_index(2, 0), Some(3));
+        assert_eq!(lower_triangular_packed_index(2, 2), Some(5));
+        assert_eq!(lower_triangular_packed_index(1, 2), None);
+        assert_eq!(lower_triangular_packed_len(usize::MAX), None);
+        assert_eq!(lower_triangular_packed_index(usize::MAX, 0), None);
+
+        assert_eq!(strict_lower_triangular_packed_len(3), Some(3));
+        assert_eq!(strict_lower_triangular_packed_index(2, 0), Some(1));
+        assert_eq!(strict_lower_triangular_packed_index(2, 1), Some(2));
+        assert_eq!(strict_lower_triangular_packed_index(2, 2), None);
+        assert_eq!(strict_lower_triangular_packed_len(usize::MAX), None);
+        assert_eq!(strict_lower_triangular_packed_index(usize::MAX, 0), None);
+    }
 
     #[test]
     fn zero_scaling_overwrites_non_finite_values_across_nested_shapes() {

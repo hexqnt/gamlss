@@ -17,41 +17,23 @@ use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 /// mean/size parameterization with `size = 1 / dispersion`.
 pub type NegativeBinomialMeanDispersion = NegativeBinomialDispersion<Log, Log>;
 
-/// Predictors for negative-binomial mean/dispersion on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NegativeBinomialMeanDispersionEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Dispersion predictor.
-    pub dispersion: f64,
-}
-
-impl ParameterParts<2> for NegativeBinomialMeanDispersionEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            dispersion: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for negative-binomial mean/dispersion on the link scale.
+    NegativeBinomialMeanDispersionEta {
+        /// Mean predictor.
+        mean,
+        /// Dispersion predictor.
+        dispersion,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.dispersion,
-            _ => unreachable!("negative binomial mean/dispersion eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale negative-binomial mean/dispersion parameters.
+    NegativeBinomialMeanDispersionTheta {
+        /// Positive mean.
+        mean,
+        /// Positive dispersion.
+        dispersion,
     }
-}
-
-/// Natural-scale negative-binomial mean/dispersion parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NegativeBinomialMeanDispersionTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive dispersion.
-    pub dispersion: f64,
 }
 
 impl NegativeBinomialMeanDispersionTheta {
@@ -87,10 +69,7 @@ where
     fn theta_from_eta(
         eta: NegativeBinomialMeanDispersionEta,
     ) -> NegativeBinomialMeanDispersionTheta {
-        NegativeBinomialMeanDispersionTheta {
-            mean: MeanLink::inverse(eta.mean),
-            dispersion: DispersionLink::inverse(eta.dispersion),
-        }
+        eta.theta_from_links::<MeanLink, DispersionLink>()
     }
 }
 
@@ -152,20 +131,12 @@ where
             );
         }
 
-        let total = mean_size.shape + mean_size.mu;
-        let d_mu = (y + mean_size.shape) / total - y / mean_size.mu;
-        let d_shape = NegativeBinomial::<Log, Log>::digamma_shape_difference(y, mean_size.shape)
-            + (mean_size.mu / mean_size.shape).ln_1p()
-            - 1.0
-            + (y + mean_size.shape) / total;
-        let d_dispersion = d_shape * (-1.0 / (theta.dispersion * theta.dispersion));
+        let gradient_theta = NegativeBinomial::<Log, Log>::gradient_theta(y, mean_size);
+        let d_dispersion = gradient_theta.shape * (-1.0 / (theta.dispersion * theta.dispersion));
 
         (
             nll,
-            NegativeBinomialMeanDispersionEta {
-                mean: d_mu * MeanLink::derivative_inverse(eta.mean),
-                dispersion: d_dispersion * DispersionLink::derivative_inverse(eta.dispersion),
-            },
+            eta.chain_gradient::<MeanLink, DispersionLink>(gradient_theta.mu, d_dispersion),
         )
     }
 }

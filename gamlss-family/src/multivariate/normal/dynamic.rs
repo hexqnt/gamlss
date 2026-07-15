@@ -3,27 +3,18 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
-    CholeskyScale, DynamicallyCompilableFamily, Family, HasConditionalCdf, HasMarginalCdf,
-    HasObservationDimension, HasRosenblattTransform, Identity, Link, Log, ModelError, Mu,
-    ParameterAxis, ParameterName, ParameterPath, PositiveLink,
+    CholeskyScale, DynamicLayoutKey, DynamicallyCompilableFamily, Family, HasConditionalCdf,
+    HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, Identity, Link, Log,
+    ModelError, Mu, ParameterAxis, ParameterName, ParameterPath, PositiveLink,
 };
 use gamlss_special::unit_normal_cdf;
 
-use crate::multivariate::{cholesky::packed_len, matrix::PackedLowerTriangular};
+use crate::multivariate::{
+    cholesky::{packed_index, packed_len},
+    matrix::PackedLowerTriangular,
+};
 
 use super::kernel;
-
-impl kernel::LowerTriangularMatrix for PackedLowerTriangular {
-    #[inline]
-    fn dimension(&self) -> usize {
-        self.dimension()
-    }
-
-    #[inline]
-    fn lower(&self, row: usize, col: usize) -> f64 {
-        self.lower(row, col)
-    }
-}
 
 /// Runtime-dimensional multivariate normal parameterized by mean and Cholesky scale.
 ///
@@ -318,24 +309,30 @@ where
         self.dimension + packed_len(self.dimension).unwrap_or(0)
     }
 
-    fn eta_from_flat(values: &[f64]) -> Self::Eta {
-        let dimension = dimension_from_parameter_count(values.len()).unwrap_or(0);
-        let split = dimension.min(values.len());
+    fn dynamic_layout_key(&self) -> DynamicLayoutKey {
+        DynamicLayoutKey::from_dimension(self.dimension)
+    }
+
+    fn eta_from_flat(&self, values: &[f64]) -> Self::Eta {
+        if values.len() != self.dynamic_parameter_count() {
+            return self.nan_eta();
+        }
         DynMvNormalCholeskyEta {
-            mu: values[..split].to_vec(),
+            mu: values[..self.dimension].to_vec(),
             cholesky: PackedLowerTriangular::from_validated_parts(
-                dimension,
-                values[split..].to_vec(),
+                self.dimension,
+                values[self.dimension..].to_vec(),
             ),
         }
     }
 
-    fn gradient_to_flat(gradient: &Self::GradientEta, out: &mut [f64]) {
-        let split = gradient.mu.len().min(out.len());
-        out[..split].copy_from_slice(&gradient.mu[..split]);
-        let remaining = &mut out[split..];
-        let count = remaining.len().min(gradient.cholesky.values().len());
-        remaining[..count].copy_from_slice(&gradient.cholesky.values()[..count]);
+    fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]) {
+        if out.len() != self.dynamic_parameter_count() || !self.eta_has_expected_len(gradient) {
+            out.fill(f64::NAN);
+            return;
+        }
+        out[..self.dimension].copy_from_slice(&gradient.mu);
+        out[self.dimension..].copy_from_slice(gradient.cholesky.values());
     }
 
     fn nll_eta_flat(
@@ -418,7 +415,8 @@ where
         }
         let packed = index - self.dimension;
         for row in 0..self.dimension {
-            let row_start = row * (row + 1) / 2;
+            let row_start = packed_index(row, 0)
+                .expect("validated dimension has representable packed Cholesky indices");
             if packed < row_start + row + 1 {
                 return (
                     CholeskyScale::NAME,
@@ -769,34 +767,12 @@ impl DynMvNormalCholeskyTheta {
     }
 }
 
-const fn dimension_from_parameter_count(count: usize) -> Option<usize> {
-    let mut dimension = 1usize;
-    loop {
-        let Some(triangle) = packed_len(dimension) else {
-            return None;
-        };
-        let Some(total) = dimension.checked_add(triangle) else {
-            return None;
-        };
-        if total == count {
-            return Some(dimension);
-        }
-        if total > count {
-            return None;
-        }
-        dimension = match dimension.checked_add(1) {
-            Some(value) => value,
-            None => return None,
-        };
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
         DenseDesign, DynamicParameterBlocks, Family, Gamlss, HasMarginalCdf, LinearPredictorBlock,
-        ModelError, NoPenalty, ObservationView, ParameterAxis,
+        ModelError, Mu, NoPenalty, ObservationView, ParameterAxis,
     };
 
     use super::{DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta, PackedLowerTriangular};
@@ -916,6 +892,31 @@ mod tests {
         );
         assert_eq!(
             descriptors[4].path.axes(),
+            &[ParameterAxis::Lower { row: 1, col: 1 }]
+        );
+
+        let mut visited_descriptors = Vec::new();
+        model.visit_parameter_descriptors(|index, descriptor| {
+            visited_descriptors.push((index, descriptor));
+        });
+        assert_eq!(
+            visited_descriptors,
+            descriptors.into_iter().enumerate().collect::<Vec<_>>()
+        );
+
+        let mu_descriptors = model.parameter_descriptors_of::<Mu>();
+        assert_eq!(mu_descriptors.len(), 2);
+        assert_eq!(
+            mu_descriptors[1].1.path.axes(),
+            &[ParameterAxis::Vector { component: 1 }]
+        );
+        let unpacked = model.unpack_parameters(&beta).unwrap();
+        assert_eq!(
+            unpacked.block_at(1).unwrap().descriptor,
+            mu_descriptors[1].1
+        );
+        assert_eq!(
+            unpacked.block_at(4).unwrap().path().axes(),
             &[ParameterAxis::Lower { row: 1, col: 1 }]
         );
     }

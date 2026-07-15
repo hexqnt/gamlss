@@ -9,7 +9,7 @@ use gamlss_core::{
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
-use gamlss_special::{baseline_softmax, digamma, ln_multivariate_beta};
+use gamlss_special::{baseline_softmax, digamma_minus_ln, ln_gamma_stirling_residual};
 
 const SIMPLEX_TOLERANCE: f64 = 1.0e-8;
 
@@ -50,11 +50,66 @@ where
         }
 
         let alpha: [f64; D] = std::array::from_fn(|component| theta.alpha_unchecked(component));
-        let mut nll = ln_multivariate_beta(&alpha);
+        let alpha_sum = alpha.iter().sum::<f64>();
+        if !alpha_sum.is_finite() {
+            return f64::INFINITY;
+        }
+        let concentration_mean = alpha.map(|component| component / alpha_sum);
+        let mut nll = -ln_gamma_stirling_residual(alpha_sum)
+            + alpha_sum * Self::categorical_kl(&concentration_mean, &y);
         for component in 0..D {
-            nll -= (alpha[component] - 1.0) * y[component].ln();
+            nll += ln_gamma_stirling_residual(alpha[component]) + y[component].ln();
         }
         nll
+    }
+
+    fn categorical_kl(probability: &[f64; D], reference: &[f64; D]) -> f64 {
+        let relative: [f64; D] = std::array::from_fn(|component| {
+            (reference[component] - probability[component]) / probability[component]
+        });
+        if relative.iter().all(|value| value.abs() <= 0.25) {
+            let mut powers = relative;
+            let mut sum = 0.0;
+            for order in 1..=128 {
+                let weighted_power = probability
+                    .iter()
+                    .zip(powers.iter())
+                    .map(|(weight, power)| weight * power)
+                    .sum::<f64>();
+                let magnitude = probability
+                    .iter()
+                    .zip(powers.iter())
+                    .map(|(weight, power)| weight * power.abs())
+                    .sum::<f64>()
+                    / f64::from(order);
+                let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
+                let term = sign * weighted_power / f64::from(order);
+                sum += term;
+                if order > 1 && magnitude <= f64::EPSILON * sum.abs() {
+                    break;
+                }
+                for component in 0..D {
+                    powers[component] *= relative[component];
+                }
+            }
+            sum
+        } else {
+            probability
+                .iter()
+                .zip(reference.iter())
+                .map(|(probability, reference)| probability * (probability.ln() - reference.ln()))
+                .sum()
+        }
+    }
+
+    #[inline]
+    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
+        let centered = (numerator - denominator) / denominator;
+        if centered.abs() <= 0.5 {
+            centered.ln_1p()
+        } else {
+            numerator.ln() - denominator.ln()
+        }
     }
 
     fn nll_and_gradient_eta_values(
@@ -74,20 +129,27 @@ where
         }
 
         let mut d_nll_d_alpha = [0.0; D];
-        let mut weighted_alpha_gradient_sum = 0.0;
-        let mut d_nll_d_precision = -digamma(theta.precision);
+        let alpha_sum = (0..D)
+            .map(|component| theta.alpha_unchecked(component))
+            .sum::<f64>();
+        let precision_residual = digamma_minus_ln(alpha_sum);
         for component in 0..D {
             let alpha = theta.alpha_unchecked(component);
-            d_nll_d_alpha[component] = digamma(alpha) - y[component].ln();
-            d_nll_d_precision += theta.mean[component] * d_nll_d_alpha[component];
-            weighted_alpha_gradient_sum += theta.mean[component] * d_nll_d_alpha[component];
+            d_nll_d_alpha[component] = digamma_minus_ln(alpha) - precision_residual
+                + Self::log_ratio(alpha / alpha_sum, y[component]);
         }
+        let d_nll_d_precision = theta
+            .mean
+            .iter()
+            .zip(d_nll_d_alpha.iter())
+            .map(|(mean, gradient)| mean * gradient)
+            .sum::<f64>();
 
         let mut logits = [0.0; D];
         for component in 0..D.saturating_sub(1) {
             logits[component] = theta.precision
                 * theta.mean[component]
-                * (d_nll_d_alpha[component] - weighted_alpha_gradient_sum);
+                * (d_nll_d_alpha[component] - d_nll_d_precision);
         }
 
         (
@@ -459,6 +521,32 @@ mod tests {
         );
         assert_eq!(theta.alpha(0), Some(2.0));
         assert_eq!(theta.alpha(3), None);
+    }
+
+    #[test]
+    fn concentrated_dirichlet_preserves_normalizer_and_precision_gradient() {
+        let family = DirichletMeanPrecision::<3>::new();
+        let mean = [0.25, 0.25, 0.5];
+        let eta =
+            DirichletMeanPrecisionEta::new([0.5_f64.ln(), 0.5_f64.ln(), 0.0], 1.0e16_f64.ln());
+        let theta = family.theta(&eta, &mut ());
+        let alpha = theta.mean.map(|component| component * theta.precision);
+        let alpha_sum = alpha.iter().sum::<f64>();
+        let expected = alpha
+            .iter()
+            .copied()
+            .map(gamlss_special::ln_gamma_stirling_residual)
+            .sum::<f64>()
+            - gamlss_special::ln_gamma_stirling_residual(alpha_sum)
+            + mean.iter().copied().map(f64::ln).sum::<f64>();
+        let (nll, gradient) = family.nll_and_gradient_eta(mean, &eta, &mut ());
+
+        assert!((nll - expected).abs() < 1.0e-13, "nll was {nll}");
+        assert!(
+            (gradient.precision + 1.0).abs() < 1.0e-14,
+            "precision gradient was {}",
+            gradient.precision
+        );
     }
 
     #[test]

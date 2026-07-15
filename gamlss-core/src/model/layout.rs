@@ -1,15 +1,49 @@
 use std::ops::Range;
 
-use crate::ParameterName;
+use crate::{ModelError, ParameterName};
+
+pub(super) struct UniqueParameterMatch<T> {
+    value: Option<T>,
+    matches: usize,
+}
+
+impl<T> UniqueParameterMatch<T> {
+    #[inline]
+    pub(super) const fn new() -> Self {
+        Self {
+            value: None,
+            matches: 0,
+        }
+    }
+
+    #[inline]
+    pub(super) fn record(&mut self, value: T) {
+        self.matches += 1;
+        if self.value.is_none() {
+            self.value = Some(value);
+        }
+    }
+
+    pub(super) fn resolve(self, name: &str) -> Result<Option<T>, ModelError> {
+        if self.matches > 1 {
+            Err(ModelError::AmbiguousParameter {
+                name: name.to_owned(),
+                matches: self.matches,
+            })
+        } else {
+            Ok(self.value)
+        }
+    }
+}
 
 /// One axis in a nested distribution-parameter path.
 ///
 /// Paths describe structure inside a named distribution parameter without
 /// overloading the parameter role string. For example, a mixture component's
 /// Cholesky entry can be represented as `component[2] / lower[1, 0]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParameterAxis {
-    /// Component inside a repeated, product, or mixture-shaped parameter.
+    /// Component inside a repeated or mixture-shaped parameter.
     Component {
         /// Zero-based component index.
         index: usize,
@@ -53,7 +87,7 @@ pub enum ParameterAxis {
 }
 
 /// Nested position inside a distribution parameter.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ParameterPath {
     axes: Vec<ParameterAxis>,
 }
@@ -132,7 +166,7 @@ impl ParameterPath {
 ///
 /// Associates a stable distribution parameter name (e.g. `"mu"`) with a range
 /// of positions in the common beta vector.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParameterSlice {
     /// Stable distribution parameter name, e.g. `"mu"` or `"sigma"`.
     pub name: &'static str,
@@ -145,7 +179,7 @@ pub struct ParameterSlice {
 /// This type is deliberately separate from [`ParameterSlice`]: slices expose
 /// block-level coefficient layout, while descriptors can expose nested
 /// component-level metadata for multivariate, repeated, and mixture shapes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParameterDescriptor {
     /// Stable distribution parameter role, e.g. `"mu"` or `"cholesky"`.
     pub role: &'static str,
@@ -251,7 +285,7 @@ impl ParameterDescriptor {
 ///
 /// Used for model introspection: unpacking coefficients, building diagnostics,
 /// and conveying information to external optimizers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParameterLayout {
     slices: Vec<ParameterSlice>,
 }
@@ -300,17 +334,16 @@ impl ParameterLayout {
         &self.slices
     }
 
-    /// Returns block-level descriptors for the current layout.
+    /// Returns coarse block-level descriptors for the current layout.
     ///
-    /// Structured multivariate blocks may expose finer-grained descriptors in
-    /// future APIs. This method provides the compatibility baseline: every
-    /// existing slice is represented as a whole-parameter descriptor.
+    /// Every slice is represented as a whole-parameter descriptor. Compiled
+    /// models expose their canonical scalar-leaf descriptors through
+    /// [`crate::Gamlss::parameter_descriptors`].
     #[must_use]
     pub fn block_descriptors(&self) -> Vec<ParameterDescriptor> {
-        self.slices
-            .iter()
-            .map(|slice| ParameterDescriptor::whole(slice.name, slice.range.clone()))
-            .collect()
+        let mut descriptors = Vec::with_capacity(self.slices.len());
+        self.visit_block_descriptors(|_, descriptor| descriptors.push(descriptor));
+        descriptors
     }
 
     /// Visits block-level descriptors in model order without allocating.
@@ -332,43 +365,105 @@ impl ParameterLayout {
         }
     }
 
-    /// Returns the coefficient range for `name`, if present.
+    /// Returns every coarse coefficient range matching `name` in model order.
     #[must_use]
-    #[inline]
-    pub fn slice(&self, name: &str) -> Option<Range<usize>> {
-        self.slices
-            .iter()
-            .find(|slice| slice.name == name)
-            .map(|slice| slice.range.clone())
+    pub fn ranges(&self, name: &str) -> Vec<Range<usize>> {
+        let mut ranges = Vec::with_capacity(self.slices.len());
+        self.visit_ranges(name, |_, range| ranges.push(range));
+        ranges
     }
 
-    /// Returns the coefficient range for typed parameter marker `P`, if present.
+    /// Returns every coarse coefficient range for typed parameter marker `P`.
     #[must_use]
     #[inline]
-    pub fn slice_of<P>(&self) -> Option<Range<usize>>
+    pub fn ranges_of<P>(&self) -> Vec<Range<usize>>
     where
         P: ParameterName,
     {
-        self.slice(P::NAME)
+        self.ranges(P::NAME)
+    }
+
+    /// Visits every coarse coefficient range matching `name` in model order.
+    #[inline]
+    pub fn visit_ranges(&self, name: &str, mut visit: impl FnMut(usize, Range<usize>)) {
+        for (index, slice) in self.slices.iter().enumerate() {
+            if slice.name == name {
+                visit(index, slice.range.clone());
+            }
+        }
+    }
+
+    /// Visits every coarse coefficient range for typed parameter marker `P`.
+    #[inline]
+    pub fn visit_ranges_of<P>(&self, visit: impl FnMut(usize, Range<usize>))
+    where
+        P: ParameterName,
+    {
+        self.visit_ranges(P::NAME, visit);
+    }
+
+    /// Returns the only coarse coefficient range matching `name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::AmbiguousParameter`] when more than one block has
+    /// the requested name. A missing parameter is represented by `Ok(None)`.
+    pub fn unique_slice(&self, name: &str) -> Result<Option<Range<usize>>, ModelError> {
+        let mut matched = UniqueParameterMatch::new();
+        self.visit_ranges(name, |_, range| matched.record(range));
+        matched.resolve(name)
+    }
+
+    /// Returns the only coarse coefficient range for typed parameter marker `P`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::AmbiguousParameter`] when more than one block has
+    /// the requested parameter role.
+    #[inline]
+    pub fn unique_slice_of<P>(&self) -> Result<Option<Range<usize>>, ModelError>
+    where
+        P: ParameterName,
+    {
+        self.unique_slice(P::NAME)
     }
 }
 
-/// Coefficients of a single unpacked parameter block.
+/// Coefficients of one unpacked scalar-leaf parameter descriptor.
 ///
-/// Returned by [`crate::Gamlss::unpack_parameters`] for a human-readable
-/// representation of the flat beta vector.
+/// Returned by [`crate::Gamlss::unpack_parameters`] for a human-readable,
+/// structurally lossless representation of the flat beta vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterCoefficients {
-    /// Stable distribution parameter name.
-    pub name: &'static str,
-    /// Coefficients for this parameter block.
+    /// Stable descriptor index in the originating compiled model layout.
+    pub descriptor_index: usize,
+    /// Full scalar-leaf descriptor, including nested path and beta range.
+    pub descriptor: ParameterDescriptor,
+    /// Coefficients for this descriptor's predictor leaf.
     pub coefficients: Vec<f64>,
+}
+
+impl ParameterCoefficients {
+    /// Stable distribution parameter role.
+    #[must_use]
+    #[inline]
+    pub const fn name(&self) -> &'static str {
+        self.descriptor.role
+    }
+
+    /// Nested parameter path.
+    #[must_use]
+    #[inline]
+    pub const fn path(&self) -> &ParameterPath {
+        &self.descriptor.path
+    }
 }
 
 /// Human-readable representation of the flat optimizer parameter vector.
 ///
-/// Contains one [`ParameterCoefficients`] for each distribution parameter in
-/// model order.
+/// Contains one [`ParameterCoefficients`] for each canonical scalar-leaf
+/// descriptor in model order. Repeated names remain distinct through their
+/// descriptor indices, paths, and ranges.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnpackedParameters {
     /// Parameter blocks in model order.
@@ -376,38 +471,83 @@ pub struct UnpackedParameters {
 }
 
 impl UnpackedParameters {
-    /// Returns an unpacked coefficient block by parameter name.
+    /// Returns a coefficient block by stable descriptor index.
     #[must_use]
     #[inline]
-    pub fn block(&self, name: &str) -> Option<&ParameterCoefficients> {
-        self.blocks.iter().find(|block| block.name == name)
+    pub fn block_at(&self, descriptor_index: usize) -> Option<&ParameterCoefficients> {
+        self.blocks
+            .iter()
+            .find(|block| block.descriptor_index == descriptor_index)
     }
 
-    /// Returns an unpacked coefficient block for typed parameter marker `P`.
+    /// Returns a coefficient block by its full descriptor.
     #[must_use]
     #[inline]
-    pub fn block_of<P>(&self) -> Option<&ParameterCoefficients>
+    pub fn block_for_descriptor(
+        &self,
+        descriptor: &ParameterDescriptor,
+    ) -> Option<&ParameterCoefficients> {
+        self.blocks
+            .iter()
+            .find(|block| block.descriptor == *descriptor)
+    }
+
+    /// Iterates over every coefficient block matching `name`.
+    pub fn blocks<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a ParameterCoefficients> + 'a {
+        self.blocks.iter().filter(move |block| block.name() == name)
+    }
+
+    /// Iterates over every coefficient block for typed parameter marker `P`.
+    pub fn blocks_of<P>(&self) -> impl Iterator<Item = &ParameterCoefficients>
     where
         P: ParameterName,
     {
-        self.block(P::NAME)
+        self.blocks(P::NAME)
     }
 
-    /// Returns coefficients by parameter name.
-    #[must_use]
-    #[inline]
-    pub fn coefficients(&self, name: &str) -> Option<&[f64]> {
-        self.block(name).map(|block| block.coefficients.as_slice())
+    /// Returns the only coefficient block matching `name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::AmbiguousParameter`] when more than one descriptor
+    /// has the requested role. A missing role is represented by `Ok(None)`.
+    pub fn unique_block(&self, name: &str) -> Result<Option<&ParameterCoefficients>, ModelError> {
+        let mut matched = UniqueParameterMatch::new();
+        for block in &self.blocks {
+            if block.name() == name {
+                matched.record(block);
+            }
+        }
+        matched.resolve(name)
     }
 
-    /// Returns coefficients for typed parameter marker `P`.
-    #[must_use]
+    /// Returns the only coefficient block for typed parameter marker `P`.
     #[inline]
-    pub fn coefficients_of<P>(&self) -> Option<&[f64]>
+    pub fn unique_block_of<P>(&self) -> Result<Option<&ParameterCoefficients>, ModelError>
     where
         P: ParameterName,
     {
-        self.coefficients(P::NAME)
+        self.unique_block(P::NAME)
+    }
+
+    /// Returns the only coefficient slice matching `name`.
+    #[inline]
+    pub fn unique_coefficients(&self, name: &str) -> Result<Option<&[f64]>, ModelError> {
+        Ok(self
+            .unique_block(name)?
+            .map(|block| block.coefficients.as_slice()))
+    }
+
+    /// Returns the only coefficient slice for typed parameter marker `P`.
+    #[inline]
+    pub fn unique_coefficients_of<P>(&self) -> Result<Option<&[f64]>, ModelError>
+    where
+        P: ParameterName,
+    {
+        self.unique_coefficients(P::NAME)
     }
 }
 

@@ -10,8 +10,8 @@ use gamlss_core::{
 use crate::initial::{robust_location_scale, weighted_values};
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_theta, student_t_standard_cdf,
-    student_t_standard_quantile,
+    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
+    student_t_standard_cdf, student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with a fixed number of degrees of freedom.
@@ -79,18 +79,13 @@ where
             );
         }
 
-        let nu = self.degrees_of_freedom;
-        let sigma = theta.sigma;
-        let z = (y - theta.mu) / sigma;
-        let slope = (nu + 1.0) * z / (nu + z * z);
-        let d_nll_d_mu = -slope / sigma;
-        let d_nll_d_sigma = (1.0 - slope * z) / sigma;
+        let gradient = student_t_nll_gradient_theta(self.degrees_of_freedom, y, theta);
 
         (
             nll,
             StudentTEta {
-                mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
-                sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
             },
         )
     }

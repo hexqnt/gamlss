@@ -140,6 +140,34 @@ pub fn ln_gamma_delta(base: f64, increment: f64) -> f64 {
     log_power - increment + (lanczos_sum(target) / lanczos_sum(base)).ln()
 }
 
+/// Residual `ln(Gamma(x)) - x * ln(x) + x` for positive finite `x`.
+///
+/// The direct expression catastrophically cancels for large `x`; the
+/// Stirling series keeps the logarithmic remainder representable.
+#[must_use]
+#[inline]
+pub fn ln_gamma_stirling_residual(value: f64) -> f64 {
+    if value <= 0.0 || !value.is_finite() {
+        return f64::NAN;
+    }
+    if value < 8.0 {
+        return value.mul_add(1.0 - value.ln(), ln_gamma(value));
+    }
+
+    let inverse = 1.0 / value;
+    let inverse2 = inverse * inverse;
+    let inverse3 = inverse2 * inverse;
+    let inverse5 = inverse3 * inverse2;
+    let inverse7 = inverse5 * inverse2;
+    let inverse9 = inverse7 * inverse2;
+    let inverse11 = inverse9 * inverse2;
+    0.5f64.mul_add(-value.ln(), HALF_LOG_2_PI) + inverse / 12.0 - inverse3 / 360.0
+        + inverse5 / 1_260.0
+        - inverse7 / 1_680.0
+        + inverse9 / 1_188.0
+        - 691.0 * inverse11 / 360_360.0
+}
+
 /// Natural logarithm of the beta function for positive finite arguments.
 #[must_use]
 #[inline]
@@ -257,6 +285,53 @@ pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
 
     let max = log_left.max(log_right);
     max + (-(log_left - log_right).abs()).exp().ln_1p()
+}
+
+/// Kullback-Leibler divergence between Bernoulli probabilities.
+///
+/// Both probabilities must lie strictly inside `(0, 1)`. A local series
+/// preserves the quadratic divergence when the probabilities are nearly
+/// equal and the two first-order log terms would otherwise cancel.
+#[must_use]
+pub fn bernoulli_kl(probability: f64, reference: f64) -> f64 {
+    if !(0.0..1.0).contains(&probability)
+        || !(0.0..1.0).contains(&reference)
+        || !probability.is_finite()
+        || !reference.is_finite()
+    {
+        return f64::NAN;
+    }
+
+    let complement = 1.0 - probability;
+    let difference = reference - probability;
+    let relative_probability = difference / probability;
+    let relative_complement = -difference / complement;
+    if relative_probability.abs().max(relative_complement.abs()) <= 0.25 {
+        let mut probability_power = relative_probability * relative_probability;
+        let mut complement_power = relative_complement * relative_complement;
+        let mut sum = 0.0;
+        for order in 2..=128 {
+            let order_f = f64::from(order);
+            let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
+            let term = sign * probability.mul_add(probability_power, complement * complement_power)
+                / order_f;
+            let magnitude = probability
+                .mul_add(probability_power.abs(), complement * complement_power.abs())
+                / order_f;
+            sum += term;
+            if magnitude <= f64::EPSILON * sum.abs() {
+                break;
+            }
+            probability_power *= relative_probability;
+            complement_power *= relative_complement;
+        }
+        sum.max(0.0)
+    } else {
+        (-probability).mul_add(
+            relative_probability.ln_1p(),
+            -complement * relative_complement.ln_1p(),
+        )
+    }
 }
 
 /// Exponential integral `E1(x) = integral_x^inf exp(-t) / t dt`.
@@ -421,6 +496,84 @@ pub fn digamma(value: f64) -> f64 {
         + inv_eighth / 240.0
         - 5.0 * inv_tenth / 660.0
         + 691.0 * inv_twelfth / 32_760.0
+}
+
+/// Difference `digamma(x) - ln(x)` for positive finite `x`.
+///
+/// The asymptotic form avoids subtracting nearly equal logarithms for large
+/// arguments.
+#[must_use]
+#[inline]
+pub fn digamma_minus_ln(value: f64) -> f64 {
+    if value <= 0.0 || !value.is_finite() {
+        return f64::NAN;
+    }
+    if value < 8.0 {
+        return digamma(value) - value.ln();
+    }
+
+    let inverse = 1.0 / value;
+    let inverse_squared = inverse * inverse;
+    let inverse_fourth = inverse_squared * inverse_squared;
+    let inverse_sixth = inverse_fourth * inverse_squared;
+    let inverse_eighth = inverse_fourth * inverse_fourth;
+    let inverse_tenth = inverse_eighth * inverse_squared;
+    let inverse_twelfth = inverse_tenth * inverse_squared;
+    (-0.5_f64).mul_add(inverse, -inverse_squared / 12.0) + inverse_fourth / 120.0
+        - inverse_sixth / 252.0
+        + inverse_eighth / 240.0
+        - 5.0 * inverse_tenth / 660.0
+        + 691.0 * inverse_twelfth / 32_760.0
+}
+
+/// Difference `digamma(base + increment) - digamma(base)` for positive arguments.
+///
+/// This evaluates the large-argument asymptotic series term by term, avoiding
+/// cancellation when `increment` is smaller than the spacing between nearby
+/// representable values at `base`.
+#[must_use]
+pub fn digamma_delta(base: f64, increment: f64) -> f64 {
+    if base <= 0.0 || increment < 0.0 || !base.is_finite() || !increment.is_finite() {
+        return f64::NAN;
+    }
+    if increment == 0.0 {
+        return 0.0;
+    }
+
+    let target = base + increment;
+    if !target.is_finite() {
+        return f64::INFINITY;
+    }
+    let mut shifted = base;
+    let mut recurrence = 0.0;
+    #[allow(clippy::while_float)]
+    while shifted < 8.0 {
+        let shifted_target = shifted + increment;
+        recurrence += if increment > shifted {
+            (1.0 - shifted / shifted_target) / shifted
+        } else {
+            increment / shifted / shifted_target
+        };
+        shifted += 1.0;
+    }
+
+    let ratio = increment / shifted;
+    let log_ratio = ratio.ln_1p();
+    let inv = 1.0 / shifted;
+    let inv_sq = inv * inv;
+    let inv_fourth = inv_sq * inv_sq;
+    let inv_sixth = inv_fourth * inv_sq;
+    let inv_eighth = inv_fourth * inv_fourth;
+    let inv_tenth = inv_eighth * inv_sq;
+    let inv_twelfth = inv_tenth * inv_sq;
+    let reciprocal_delta = 0.5 * inv * ratio / (1.0 + ratio);
+
+    recurrence + log_ratio + reciprocal_delta - inv_sq * (-2.0 * log_ratio).exp_m1() / 12.0
+        + inv_fourth * (-4.0 * log_ratio).exp_m1() / 120.0
+        - inv_sixth * (-6.0 * log_ratio).exp_m1() / 252.0
+        + inv_eighth * (-8.0 * log_ratio).exp_m1() / 240.0
+        - 5.0 * inv_tenth * (-10.0 * log_ratio).exp_m1() / 660.0
+        + 691.0 * inv_twelfth * (-12.0 * log_ratio).exp_m1() / 32_760.0
 }
 
 /// Regularized incomplete beta function `I_x(a, b)` for positive `a`, `b`.

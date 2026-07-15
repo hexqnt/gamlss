@@ -100,8 +100,8 @@ fn builds_normal_with_typed_columns_and_metadata() {
     let beta = vec![0.0, 0.5, -0.2];
 
     assert_eq!(built.model().nparams(), 3);
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..2);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 2..3);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..2);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 2..3);
     assert_eq!(built.schema().response.col, y);
     assert_eq!(built.terms()[0].terms[1].range(), 1..2);
     assert!(built.model_mut().value(&beta).unwrap().is_finite());
@@ -118,8 +118,8 @@ fn no_intercept_builds_parameter_without_implicit_intercept() {
         .unwrap();
 
     assert_eq!(built.coefficient_names(), vec!["mu.x", "sigma.(Intercept)"]);
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 1..2);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..1);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 1..2);
 
     let predicted = built.predict_theta(&[0.5, 0.0], &data).unwrap();
     assert_relative_eq!(predicted[0].mu, 1.0);
@@ -288,8 +288,8 @@ fn builds_supported_default_families() {
         .cv(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(gamma.layout().slice("mean").unwrap(), 0..2);
-    assert_eq!(gamma.layout().slice("cv").unwrap(), 2..3);
+    assert_eq!(gamma.layout().unique_slice("mean").unwrap().unwrap(), 0..2);
+    assert_eq!(gamma.layout().unique_slice("cv").unwrap().unwrap(), 2..3);
 
     let log_normal = log_normal()
         .response(y_pos.clone())
@@ -297,8 +297,14 @@ fn builds_supported_default_families() {
         .log_sd(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(log_normal.layout().slice("mean").unwrap(), 0..1);
-    assert_eq!(log_normal.layout().slice("log_sd").unwrap(), 1..3);
+    assert_eq!(
+        log_normal.layout().unique_slice("mean").unwrap().unwrap(),
+        0..1
+    );
+    assert_eq!(
+        log_normal.layout().unique_slice("log_sd").unwrap().unwrap(),
+        1..3
+    );
 
     let weibull = weibull()
         .response(y_pos.clone())
@@ -306,8 +312,14 @@ fn builds_supported_default_families() {
         .shape(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(weibull.layout().slice("mean").unwrap(), 0..2);
-    assert_eq!(weibull.layout().slice("shape").unwrap(), 2..3);
+    assert_eq!(
+        weibull.layout().unique_slice("mean").unwrap().unwrap(),
+        0..2
+    );
+    assert_eq!(
+        weibull.layout().unique_slice("shape").unwrap().unwrap(),
+        2..3
+    );
 
     let inverse_gaussian = inverse_gaussian()
         .response(y_pos)
@@ -315,8 +327,22 @@ fn builds_supported_default_families() {
         .shape(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(inverse_gaussian.layout().slice("mu").unwrap(), 0..2);
-    assert_eq!(inverse_gaussian.layout().slice("shape").unwrap(), 2..3);
+    assert_eq!(
+        inverse_gaussian
+            .layout()
+            .unique_slice("mu")
+            .unwrap()
+            .unwrap(),
+        0..2
+    );
+    assert_eq!(
+        inverse_gaussian
+            .layout()
+            .unique_slice("shape")
+            .unwrap()
+            .unwrap(),
+        2..3
+    );
 
     let beta = beta()
         .response(y_unit)
@@ -324,8 +350,11 @@ fn builds_supported_default_families() {
         .precision(intercept() + linear(x))
         .build(&data)
         .unwrap();
-    assert_eq!(beta.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(beta.layout().slice("precision").unwrap(), 1..3);
+    assert_eq!(beta.layout().unique_slice("mu").unwrap().unwrap(), 0..1);
+    assert_eq!(
+        beta.layout().unique_slice("precision").unwrap().unwrap(),
+        1..3
+    );
 }
 
 #[test]
@@ -376,8 +405,8 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..8);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 8..9);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..8);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 8..9);
     assert_eq!(built.terms()[0].terms[0].range(), 0..1);
     assert_eq!(built.terms()[0].terms[1].range(), 1..2);
     assert_eq!(built.terms()[0].terms[2].range(), 2..8);
@@ -427,7 +456,7 @@ fn offset_changes_predictions_without_adding_coefficients() {
     let theta = [1.0, 2.0, 0.0];
     let predicted = built.predict_theta(&theta, &data).unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..2);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..2);
     assert_relative_eq!(predicted[0].mu, 13.0);
     assert_relative_eq!(predicted[1].mu, 25.0);
 }
@@ -451,7 +480,7 @@ fn factor_indicator_and_interaction_build_expected_metadata() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..5);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..5);
     let names = built.coefficient_names();
     assert_eq!(
         names[..5],

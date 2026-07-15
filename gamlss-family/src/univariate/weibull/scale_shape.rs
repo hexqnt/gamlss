@@ -15,41 +15,23 @@ pub type WeibullTheta = WeibullScaleShapeTheta;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScaleShape;
 
-/// Predictors for Weibull scale/shape on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullScaleShapeEta {
-    /// Scale predictor.
-    pub scale: f64,
-    /// Shape predictor.
-    pub shape: f64,
-}
-
-impl ParameterParts<2> for WeibullScaleShapeEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            scale: values[0],
-            shape: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for Weibull scale/shape on the link scale.
+    WeibullScaleShapeEta {
+        /// Scale predictor.
+        scale,
+        /// Shape predictor.
+        shape,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.scale,
-            1 => self.shape,
-            _ => unreachable!("weibull scale/shape eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale Weibull scale/shape parameters.
+    WeibullScaleShapeTheta {
+        /// Positive scale.
+        scale,
+        /// Positive shape.
+        shape,
     }
-}
-
-/// Natural-scale Weibull scale/shape parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WeibullScaleShapeTheta {
-    /// Positive scale.
-    pub scale: f64,
-    /// Positive shape.
-    pub shape: f64,
 }
 
 impl<ScaleLink, ShapeLink> Weibull<ScaleShape, ScaleLink, ShapeLink>
@@ -59,10 +41,7 @@ where
 {
     #[inline]
     fn theta_from_eta(eta: WeibullScaleShapeEta) -> WeibullScaleShapeTheta {
-        WeibullScaleShapeTheta {
-            scale: ScaleLink::inverse(eta.scale),
-            shape: ShapeLink::inverse(eta.shape),
-        }
+        eta.theta_from_links::<ScaleLink, ShapeLink>()
     }
 
     #[inline]
@@ -79,10 +58,7 @@ where
         let (d_scale, d_shape) = Self::gradient_scale_shape(y, theta);
         (
             nll,
-            WeibullScaleShapeEta {
-                scale: d_scale * ScaleLink::derivative_inverse(eta.scale),
-                shape: d_shape * ShapeLink::derivative_inverse(eta.shape),
-            },
+            eta.chain_gradient::<ScaleLink, ShapeLink>(d_scale, d_shape),
         )
     }
 }

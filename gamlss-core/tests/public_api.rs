@@ -4,39 +4,19 @@
     clippy::cast_precision_loss
 )]
 use gamlss_core::{
-    CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, Dispersion,
-    Family, FiniteScalarObservations, FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf,
-    HasConditionalCdf, HasDensity, HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation,
-    HasInitialEta, HasLogDensity, HasMarginalCdf, HasObservationDimension, HasRosenblattTransform,
-    InitialEtaFromObservations, LinearForm, LinearFormBuilder, LocationCholesky, Log, LogLocation,
-    LogSd, Logit, LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar,
-    NoPenalty, Nu, Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis,
-    ParameterBlock, ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName,
-    ParameterParts, ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock,
-    Probability, ShapeValues, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
-    TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock, ZeroProbability,
+    CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, DenseRows,
+    Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations, FixedDimensionalFamily,
+    FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity, HasDeviance,
+    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasMarginalCdf,
+    HasObservationDimension, HasRosenblattTransform, InitialEtaFromObservations, LinearForm,
+    LinearFormBuilder, LocationCholesky, Log, LogLocation, LogSd, Logit,
+    LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
+    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
+    ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
+    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ShapeValues,
+    Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
+    VectorParameterBlock, ZeroProbability,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-struct BorrowedRows {
-    rows: Vec<Vec<f64>>,
-}
-
-impl<'row> ObservationView<'row> for BorrowedRows {
-    type Observation = &'row [f64];
-
-    fn len(&self) -> usize {
-        self.rows.len()
-    }
-
-    fn observation_at(&'row self, row: usize) -> Self::Observation {
-        self.rows[row].as_slice()
-    }
-
-    fn weight_at(&self, _row: usize) -> f64 {
-        1.0
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 struct DependentConstraintFamily;
@@ -300,6 +280,10 @@ fn objective_scale_and_linear_form_builder_remain_root_reexports() {
 
 #[test]
 fn parameter_layout_helpers_remain_root_reexports() {
+    let dynamic_key = DynamicLayoutKey::new(vec![3, 2]);
+    assert_eq!(dynamic_key.parts(), &[3, 2]);
+    assert_eq!(dynamic_key.into_parts(), vec![3, 2]);
+
     let layout = ParameterLayout::new(vec![
         ParameterSlice {
             name: "mu",
@@ -314,8 +298,25 @@ fn parameter_layout_helpers_remain_root_reexports() {
     assert_eq!(layout.len(), 2);
     assert!(!layout.is_empty());
     assert_eq!(layout.ncoefficients(), 3);
-    assert_eq!(layout.slice_of::<Mu>(), Some(0..2));
-    assert_eq!(layout.slice_of::<Sigma>(), Some(2..3));
+    assert_eq!(layout.unique_slice_of::<Mu>().unwrap(), Some(0..2));
+    assert_eq!(layout.unique_slice_of::<Sigma>().unwrap(), Some(2..3));
+    assert_eq!(layout.ranges_of::<Mu>(), vec![0..2]);
+
+    let repeated = ParameterLayout::new(vec![
+        ParameterSlice {
+            name: "mu",
+            range: 0..1,
+        },
+        ParameterSlice {
+            name: "mu",
+            range: 1..2,
+        },
+    ]);
+    assert_eq!(repeated.ranges_of::<Mu>(), vec![0..1, 1..2]);
+    assert!(matches!(
+        repeated.unique_slice_of::<Mu>(),
+        Err(gamlss_core::ModelError::AmbiguousParameter { matches: 2, .. })
+    ));
 
     assert_eq!(
         layout.block_descriptors(),
@@ -451,11 +452,10 @@ fn multivariate_cdf_capability_traits_remain_root_reexports() {
 
 #[test]
 fn public_api_supports_borrowed_observations_nll_gradient_and_dense_information() {
-    let obs = BorrowedRows {
-        rows: vec![vec![1.0, 3.0], vec![2.0, 4.0]],
-    };
-    let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(obs.len()), NoPenalty, 0);
-    let nu = ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(obs.len()), NoPenalty, 1);
+    let values = [1.0, 3.0, 2.0, 4.0];
+    let obs = DenseRows::try_new(&values, 2).unwrap();
+    let mu = ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(obs.nrows()), NoPenalty, 0);
+    let nu = ParameterBlock::<Nu, _, _>::linear(DenseDesign::intercept(obs.nrows()), NoPenalty, 1);
     let mut model = Gamlss::try_new_with_observations(
         DependentConstraintFamily,
         ParameterBlocks::from_assigned((mu, nu)),

@@ -1,6 +1,12 @@
 use std::{marker::PhantomData, ops::Range};
 
-use crate::{DesignMatrix, LinearPredictorBlock, ModelError, PredictorBlock};
+use crate::{
+    DesignMatrix, LinearPredictorBlock, ModelError, PredictorBlock,
+    shape::{
+        lower_triangular_packed_index, lower_triangular_packed_len,
+        strict_lower_triangular_packed_index, strict_lower_triangular_packed_len,
+    },
+};
 
 /// Helper for assigning sequential offsets to typed parameter block tuples.
 ///
@@ -665,7 +671,7 @@ where
     /// Returns [`ModelError::ArithmeticOverflow`] if the packed length or total
     /// coefficient length does not fit in `usize`.
     pub fn try_new(x: Vec<X>, penalty: Penalty, offset: usize) -> Result<Self, ModelError> {
-        let expected = lower_triangular_len(D).ok_or(ModelError::ArithmeticOverflow {
+        let expected = lower_triangular_packed_len(D).ok_or(ModelError::ArithmeticOverflow {
             context: "lower-triangular predictor count",
         })?;
         if x.len() != expected {
@@ -702,24 +708,15 @@ impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penal
     #[must_use]
     #[inline]
     pub const fn packed_len() -> Option<usize> {
-        lower_triangular_len(D)
+        lower_triangular_packed_len(D)
     }
 
     /// Returns the packed row-major lower-triangular index for `(row, col)`.
     #[must_use]
     #[inline]
     pub const fn packed_index(row: usize, col: usize) -> Option<usize> {
-        if col <= row && row < D {
-            match row.checked_add(1) {
-                Some(next) => match row.checked_mul(next) {
-                    Some(product) => match (product / 2).checked_add(col) {
-                        Some(index) => Some(index),
-                        None => None,
-                    },
-                    None => None,
-                },
-                None => None,
-            }
+        if row < D {
+            lower_triangular_packed_index(row, col)
         } else {
             None
         }
@@ -880,9 +877,10 @@ where
     /// Returns [`ModelError::ArithmeticOverflow`] if the packed length or total
     /// coefficient length does not fit in `usize`.
     pub fn try_new(x: Vec<X>, penalty: Penalty, offset: usize) -> Result<Self, ModelError> {
-        let expected = strict_lower_triangular_len(D).ok_or(ModelError::ArithmeticOverflow {
-            context: "strict-lower predictor count",
-        })?;
+        let expected =
+            strict_lower_triangular_packed_len(D).ok_or(ModelError::ArithmeticOverflow {
+                context: "strict-lower predictor count",
+            })?;
         if x.len() != expected {
             return Err(ModelError::InvalidParameter {
                 parameter: P::NAME,
@@ -917,21 +915,15 @@ impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X,
     #[must_use]
     #[inline]
     pub const fn packed_len() -> Option<usize> {
-        strict_lower_triangular_len(D)
+        strict_lower_triangular_packed_len(D)
     }
 
     /// Returns the packed row-major strict-lower index for `(row, col)`.
     #[must_use]
     #[inline]
     pub const fn packed_index(row: usize, col: usize) -> Option<usize> {
-        if col < row && row < D {
-            match row.checked_mul(row.saturating_sub(1)) {
-                Some(product) => match (product / 2).checked_add(col) {
-                    Some(index) => Some(index),
-                    None => None,
-                },
-                None => None,
-            }
+        if row < D {
+            strict_lower_triangular_packed_index(row, col)
         } else {
             None
         }
@@ -1268,26 +1260,6 @@ pub trait TryAssignParameterOffsets: Sized {
     /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
     /// fit in `usize`.
     fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
-}
-
-const fn lower_triangular_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_add(1) {
-        Some(next) => match dimension.checked_mul(next) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => None,
-    }
-}
-
-const fn strict_lower_triangular_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_sub(1) {
-        Some(previous) => match dimension.checked_mul(previous) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => Some(0),
-    }
 }
 
 macro_rules! impl_assign_offsets {

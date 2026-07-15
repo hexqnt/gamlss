@@ -13,18 +13,6 @@ use crate::multivariate::matrix::FixedLowerTriangular;
 
 use super::kernel;
 
-impl<const D: usize> kernel::LowerTriangularMatrix for FixedLowerTriangular<D> {
-    #[inline]
-    fn dimension(&self) -> usize {
-        D
-    }
-
-    #[inline]
-    fn lower(&self, row: usize, col: usize) -> f64 {
-        self.lower(row, col)
-    }
-}
-
 /// Fixed-dimensional multivariate normal parameterized by mean and Cholesky scale.
 ///
 /// The natural-scale `cholesky` matrix is lower triangular. Diagonal entries
@@ -888,8 +876,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(model.nparams(), 5);
-        assert_eq!(model.parameter_layout().slice("mu"), Some(0..2));
-        assert_eq!(model.parameter_layout().slice("cholesky"), Some(2..5));
+        assert_eq!(
+            model.parameter_layout().unique_slice("mu").unwrap(),
+            Some(0..2)
+        );
+        assert_eq!(
+            model.parameter_layout().unique_slice("cholesky").unwrap(),
+            Some(2..5)
+        );
 
         let beta = vec![0.1, -0.2, 0.0, 0.3, 0.1];
         let eta = model.predict_eta_row(&beta, 0).unwrap();

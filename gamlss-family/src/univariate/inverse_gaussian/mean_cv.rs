@@ -14,41 +14,23 @@ use super::{InverseGaussian, InverseGaussianTheta};
 /// Inverse Gaussian distribution with log links for mean and coefficient of variation.
 pub type InverseGaussianMeanCv = InverseGaussianCv<Log, Log>;
 
-/// Predictors for inverse Gaussian mean/CV on the link scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianMeanCvEta {
-    /// Mean predictor.
-    pub mean: f64,
-    /// Coefficient-of-variation predictor.
-    pub cv: f64,
-}
-
-impl ParameterParts<2> for InverseGaussianMeanCvEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mean: values[0],
-            cv: values[1],
-        }
+define_two_positive_parameter_blocks! {
+    eta:
+    /// Predictors for inverse Gaussian mean/CV on the link scale.
+    InverseGaussianMeanCvEta {
+        /// Mean predictor.
+        mean,
+        /// Coefficient-of-variation predictor.
+        cv,
     }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.cv,
-            _ => unreachable!("inverse Gaussian mean/CV eta only has indices 0 and 1"),
-        }
+    theta:
+    /// Natural-scale inverse Gaussian mean/CV parameters.
+    InverseGaussianMeanCvTheta {
+        /// Positive mean.
+        mean,
+        /// Positive coefficient of variation.
+        cv,
     }
-}
-
-/// Natural-scale inverse Gaussian mean/CV parameters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InverseGaussianMeanCvTheta {
-    /// Positive mean.
-    pub mean: f64,
-    /// Positive coefficient of variation.
-    pub cv: f64,
 }
 
 impl InverseGaussianMeanCvTheta {
@@ -56,7 +38,7 @@ impl InverseGaussianMeanCvTheta {
     fn mean_shape(self) -> InverseGaussianTheta {
         InverseGaussianTheta {
             mu: self.mean,
-            shape: self.mean / (self.cv * self.cv),
+            shape: (self.mean / self.cv) / self.cv,
         }
     }
 }
@@ -83,10 +65,7 @@ where
 
     #[inline]
     fn theta_from_eta(eta: InverseGaussianMeanCvEta) -> InverseGaussianMeanCvTheta {
-        InverseGaussianMeanCvTheta {
-            mean: MeanLink::inverse(eta.mean),
-            cv: CvLink::inverse(eta.cv),
-        }
+        eta.theta_from_links::<MeanLink, CvLink>()
     }
 }
 
@@ -145,21 +124,27 @@ where
             return (nll, InverseGaussianMeanCvEta::from_array([f64::NAN; 2]));
         }
 
-        let residual = y - mean_shape.mu;
-        let d_mu = -mean_shape.shape * residual / (mean_shape.mu * mean_shape.mu * mean_shape.mu);
-        let d_shape = -0.5 / mean_shape.shape
-            + residual * residual / (2.0 * mean_shape.mu * mean_shape.mu * y);
-        let cv2 = theta.cv * theta.cv;
-        let d_mean = d_mu + d_shape / cv2;
-        let d_cv = d_shape * (-2.0 * theta.mean / (cv2 * theta.cv));
+        let centered = (y - theta.mean) / theta.mean;
+        let (ratio_deviance, ratio_difference) = if centered.abs() <= 0.5 {
+            let denominator = 1.0 + centered;
+            (
+                centered * centered / denominator,
+                -centered * (2.0 + centered) / denominator,
+            )
+        } else {
+            (
+                y / theta.mean + theta.mean / y - 2.0,
+                theta.mean / y - y / theta.mean,
+            )
+        };
+        let inverse_cv = 1.0 / theta.cv;
+        let inverse_cv_squared = inverse_cv * inverse_cv;
+        let log_mean_score = 0.5f64.mul_add(inverse_cv_squared * ratio_difference, -0.5);
+        let log_cv_score = 1.0 - inverse_cv_squared * ratio_deviance;
+        let d_mean = log_mean_score / theta.mean;
+        let d_cv = log_cv_score / theta.cv;
 
-        (
-            nll,
-            InverseGaussianMeanCvEta {
-                mean: d_mean * MeanLink::derivative_inverse(eta.mean),
-                cv: d_cv * CvLink::derivative_inverse(eta.cv),
-            },
-        )
+        (nll, eta.chain_gradient::<MeanLink, CvLink>(d_mean, d_cv))
     }
 }
 

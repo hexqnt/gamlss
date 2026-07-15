@@ -193,11 +193,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let diagnostics = model.training_diagnostics(&parameters)?;
     let coefficients = model.unpack_parameters(&parameters)?;
     let mu_hat = coefficients
-        .coefficients_of::<Mu>()
+        .unique_coefficients_of::<Mu>()?
         .and_then(|values| values.first().copied())
         .expect("mu block has an intercept coefficient");
     let sigma_hat = coefficients
-        .coefficients_of::<Sigma>()
+        .unique_coefficients_of::<Sigma>()?
         .and_then(|values| values.first().copied())
         .expect("sigma block has an intercept coefficient")
         .exp();
