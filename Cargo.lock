@@ -317,6 +317,7 @@ dependencies = [
  "argmin-math",
  "gamlss-bayes",
  "gamlss-core",
+ "gamlss-datasets",
  "gamlss-diagnostics",
  "gamlss-family",
  "gamlss-formula",
@@ -341,6 +342,10 @@ dependencies = [
  "approx",
  "thiserror",
 ]
+
+[[package]]
+name = "gamlss-datasets"
+version = "0.3.1"
 
 [[package]]
 name = "gamlss-diagnostics"

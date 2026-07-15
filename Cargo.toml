@@ -2,6 +2,7 @@
 members = [
     "gamlss-bayes",
     "gamlss-core",
+    "gamlss-datasets",
     "gamlss-diagnostics",
     "gamlss-family",
     "gamlss-spline",
@@ -30,6 +31,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
 ] }
 gamlss-core = { path = "gamlss-core", version = "0.3.1" }
 gamlss-bayes = { path = "gamlss-bayes", version = "0.3.1" }
+gamlss-datasets = { path = "gamlss-datasets" }
 gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.1" }
 gamlss-family = { path = "gamlss-family", version = "0.3.1" }
 gamlss-formula = { path = "gamlss-formula", version = "0.3.1" }
@@ -96,6 +98,7 @@ gamlss-transform.workspace = true
 approx.workspace = true
 argmin = "0.11.0"
 argmin-math = { version = "0.5.1", features = ["vec"] }
+gamlss-datasets = { path = "gamlss-datasets" }
 
 [[example]]
 name = "simple_multivariate_fit"

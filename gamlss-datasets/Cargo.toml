@@ -1,0 +1,15 @@
+[package]
+name = "gamlss-datasets"
+version.workspace = true
+edition.workspace = true
+description = "Small built-in datasets for GAMLSS examples and experimentation"
+publish = false
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
