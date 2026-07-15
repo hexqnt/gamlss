@@ -4,7 +4,18 @@ use crate::local::{LocalBasis, cyclic_local_basis, cyclic_local_basis_derivative
 use crate::row_basis::SplineRowBasis;
 use crate::{SplineError, SplineOrder};
 
-/// Metadata for a cyclic spline predictor.
+/// Metadata for a cyclic spline predictor on phase coordinates.
+///
+/// Let $K$ be `n_basis` and $p=\mathtt{order.degree()}$. Every input phase is reduced modulo one, $\phi^\star=\phi-\lfloor\phi\rfloor\in\lbrack0,1\rparen$, before evaluating the wrapped local basis $C_{j,p}$:
+///
+/// $$
+/// \eta(\phi)=\sum_{j=0}^{K-1}\beta_jC_{j,p}(\phi^\star),
+/// \qquad
+/// \eta(\phi+\ell)=\eta(\phi),\quad \ell\in\mathbb{Z}.
+/// $$
+///
+/// At most $p+1$ local weights are evaluated, and their coefficient indices wrap modulo $K$ at the phase boundary.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CyclicSplineSpec {
     n_basis: usize,
@@ -59,7 +70,9 @@ impl CyclicSplineSpec {
     }
 }
 
-/// Cyclic spline predictor for periodic covariates on `[0, 1)`.
+/// Cyclic spline predictor for periodic covariates on $\lbrack0,1\rparen$.
+///
+/// Pass dimensionless phases here. For coordinates with a physical origin and period, use [`crate::PeriodicSplineDesign`], which performs the scaling and applies the chain rule to derivatives.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CyclicSplineDesign {
     phi: Vec<f64>,

@@ -12,7 +12,17 @@ use crate::initial::probability_floor;
 /// Bernoulli distribution with logit link for success probability.
 pub type BernoulliProbability = Bernoulli<Logit>;
 
-/// Bernoulli family parameterized by success probability.
+/// Bernoulli family parameterized by success probability $p\in(0,1)$.
+///
+/// For $y\in\\{0,1\\}$, the probability mass is
+///
+/// $$
+/// \Pr(Y=y\mid p)=p^y(1-p)^{1-y}.
+/// $$
+///
+/// Its moments are $\mathbb{E}(Y)=p$ and $\operatorname{Var}(Y)=p(1-p)$. The default [`BernoulliProbability`] alias uses $p=\operatorname{logit}^{-1}(\eta_p)$.
+///
+/// In the Rust carriers, [`BernoulliTheta::mu`] stores $p$ and [`BernoulliEta::mu`] stores its predictor $\eta_p$.
 ///
 /// The probability link must guarantee values in `(0, 1)`.
 ///
@@ -22,6 +32,7 @@ pub type BernoulliProbability = Bernoulli<Logit>;
 ///
 /// let _ = Bernoulli::<Identity>::new();
 /// ```
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bernoulli<MuLink = Logit> {
     marker: PhantomData<MuLink>,

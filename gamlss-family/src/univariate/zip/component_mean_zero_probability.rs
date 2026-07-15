@@ -12,7 +12,9 @@ use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_
 
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 
-/// ZIP distribution with log/logit links.
+/// ZIP distribution parameterized by Poisson component mean $\lambda$ and structural-zero probability $\pi$.
+///
+/// The historical eta fields `mu` and `sigma` represent $\eta_\lambda$ and $\eta_\pi$. The default links give $\lambda=\exp(\eta_\lambda)$ and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 pub type ZipComponentMeanZeroProbability = Zip<ComponentMeanZeroProbability, Log, Logit>;
 
 /// ZIP component-mean/zero-probability parameterization marker.

@@ -5,7 +5,10 @@ use gamlss_core::{
 
 use super::Weibull;
 
-/// Weibull distribution parameterized by scale and shape.
+/// Weibull distribution parameterized by scale $a>0$ and shape $k>0$.
+///
+/// Here $a$ is [`WeibullScaleShapeTheta::scale`], $k$ is [`WeibullScaleShapeTheta::shape`], and the matching eta fields are `scale` and `shape`. The default links give $a=\exp(\eta_a)$ and $k=\exp(\eta_k)$.
+#[allow(clippy::doc_markdown)]
 pub type WeibullScaleShape = Weibull<ScaleShape, Log, Log>;
 /// Backward-compatible eta alias for scale/shape Weibull.
 pub type WeibullEta = WeibullScaleShapeEta;

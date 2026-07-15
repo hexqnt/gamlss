@@ -11,7 +11,10 @@ use crate::initial::{positive_floor, probability_floor, weighted_summary, weight
 
 use super::{Zaga, ZagaTheta};
 
-/// ZAGA distribution with log/log/logit links.
+/// ZAGA distribution parameterized by gamma component mean $\mu$, component CV $c$, and zero-mass probability $\pi$.
+///
+/// The historical eta fields `mu`, `sigma`, and `nu` represent $\eta_\mu,\eta_c,\eta_\pi$, respectively. The default links give $\mu=\exp(\eta_\mu)$, $c=\exp(\eta_c)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+#[allow(clippy::doc_markdown)]
 pub type ZagaMeanSigmaZeroProbability = Zaga<Log, Log, Logit>;
 /// Explicit alias for the component-mean/CV/zero-probability ZAGA kernel parameterization.
 pub type ZagaComponentMeanCvZeroProbability = ZagaMeanSigmaZeroProbability;

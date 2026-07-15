@@ -13,7 +13,20 @@ use crate::initial::{positive_floor, probability_floor, weighted_summary, weight
 
 use super::{Zaga, ZagaTheta};
 
-/// ZAGA distribution parameterized by total mean, component CV, and zero probability.
+/// ZAGA distribution parameterized by unconditional mean $m$, component CV $c$, and zero-mass probability $\pi$.
+///
+/// The gamma component mean is derived as
+///
+/// $$
+/// \mu=\frac{m}{1-\pi},
+/// \qquad
+/// \mathbb{E}(Y)=m.
+/// $$
+///
+/// The default links are $m=\exp(\eta_m)$, $c=\exp(\eta_c)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+///
+/// These symbols correspond to the `total_mean`, `cv`, and `zero_probability` fields of [`ZagaTotalMeanCvZeroProbabilityTheta`] and [`ZagaTotalMeanCvZeroProbabilityEta`].
+#[allow(clippy::doc_markdown)]
 pub type ZagaTotalMeanCvZeroProbability = ZagaTotalMeanCv<Log, Log, Logit>;
 
 /// Predictors for ZAGA total-mean/CV/zero-probability on the link scale.

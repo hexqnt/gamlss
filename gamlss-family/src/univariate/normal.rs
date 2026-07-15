@@ -32,10 +32,26 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
     &'a [f64],
 >;
 
-/// Normal distribution with typed link functions for `mu` and `sigma`.
+/// Normal distribution with location $\mu\in\mathbb{R}$ and scale $\sigma>0$.
 ///
-/// `SigmaLink` must be a positive link so that the scale parameter stays
-/// positive at the type level.
+/// Its density is
+///
+/// $$
+/// f(y\mid\mu,\sigma)
+/// = \frac{1}{\sigma\sqrt{2\pi}}
+///   \exp\left[-\frac{1}{2}\left(\frac{y-\mu}{\sigma}\right)^2\right],
+/// \qquad y\in\mathbb{R}.
+/// $$
+///
+/// The symbols $\mu,\sigma$ and predictors $\eta_\mu,\eta_\sigma$ correspond to the same-named fields of [`NormalTheta`] and [`NormalEta`].
+///
+/// The natural-scale moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=\sigma^2$. `SigmaLink` must be a positive link so that $\sigma$ stays positive at the type level. The default [`NormalMuSigma`] alias uses
+///
+/// $$
+/// \mu=\eta_\mu,
+/// \qquad
+/// \sigma=\exp(\eta_\sigma).
+/// $$
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

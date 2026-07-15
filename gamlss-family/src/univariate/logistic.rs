@@ -13,7 +13,20 @@ use crate::initial::{robust_location_scale, weighted_values};
 /// Logistic distribution with identity link for location and log link for scale.
 pub type LogisticMuSigma = Logistic<Identity, Log>;
 
-/// Logistic family parameterized by location and positive scale.
+/// Logistic family parameterized by location $\mu\in\mathbb{R}$ and scale $\sigma>0$.
+///
+/// With $z=(y-\mu)/\sigma$, its density is
+///
+/// $$
+/// f(y\mid\mu,\sigma)
+/// =\frac{e^{-z}}{\sigma(1+e^{-z})^2},
+/// \qquad y\in\mathbb{R}.
+/// $$
+///
+/// The natural-scale moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=\pi^2\sigma^2/3$. The default [`LogisticMuSigma`] alias uses $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
+///
+/// The symbols $\mu,\sigma$ and predictors $\eta_\mu,\eta_\sigma$ correspond to the same-named fields of [`LogisticTheta`] and [`LogisticEta`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Logistic<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

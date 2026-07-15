@@ -2,7 +2,18 @@ use gamlss_core::DenseDesign;
 
 use crate::SplineError;
 
-/// B-spline basis with a given degree and knot vector.
+/// B-spline basis with degree $p$ and non-decreasing knot vector $\boldsymbol{t}=(t_0,\ldots,t_{M-1})$.
+///
+/// The degree-zero basis is $B_{i,0}(x)=\mathbf{1}\\!\left\\{t_i\le x<t_{i+1}\right\\}$. Higher degrees use the Cox--de Boor recursion
+///
+/// $$
+/// B_{i,p}(x)
+/// =\frac{x-t_i}{t_{i+p}-t_i}B_{i,p-1}(x)
+/// \mathbin{+}\frac{t_{i+p+1}-x}{t_{i+p+1}-t_{i+1}}B_{i+1,p-1}(x).
+/// $$
+///
+/// Here $\mathbf{1}_A$ is the indicator of set $A$. A recurrence term with a zero denominator contributes zero. At the right boundary the implementation closes the last degree-zero interval so that an open basis includes its final endpoint. The code fields satisfy $p=\mathtt{degree}$, $M=\mathtt{knots.len()}$, and [`BSplineBasis::n_basis`] returns $M-p-1$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BSplineBasis {
     degree: usize,

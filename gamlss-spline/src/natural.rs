@@ -3,7 +3,18 @@ use gamlss_core::{PredictorBlock, RowMultiplier};
 use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
 
-/// Natural cubic spline basis with one coefficient per knot.
+/// Natural cubic cardinal-spline basis with one coefficient per knot.
+///
+/// For strictly increasing knots $t_0,\ldots,t_{K-1}$, the basis functions satisfy
+///
+/// $$
+/// N_j(t_i)=\delta_{ij},
+/// \qquad
+/// f(x)=\sum_{j=0}^{K-1}\beta_jN_j(x).
+/// $$
+///
+/// Here $\delta_{ij}$ is the Kronecker delta, so the coefficient $\beta_j$ is the fitted value $f(t_j)$. The natural boundary conditions are $f^{\prime\prime}(t_0)=f^{\prime\prime}(t_{K-1})=0$. Outside the knot range the implementation extends each basis function linearly using its derivative at the nearest boundary. In code, $K$ is [`NaturalCubicSplineBasis::n_basis`] and $(t_j)$ is [`NaturalCubicSplineBasis::knots`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct NaturalCubicSplineBasis {
     knots: Vec<f64>,

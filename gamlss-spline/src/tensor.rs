@@ -4,6 +4,17 @@ use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
 
 /// Structured tensor-product spline predictor.
+///
+/// If one row of the left basis is $A_i(x)$ for $0\le i<n_A$ and the matching row of the right basis is $B_j(z)$ for $0\le j<n_B$, the tensor basis and predictor are
+///
+/// $$
+/// T_{ij}(x,z)=A_i(x)B_j(z),
+/// \qquad
+/// \eta(x,z)=\sum_i\sum_j\beta_{ij}T_{ij}(x,z).
+/// $$
+///
+/// Here $n_A$ and $n_B$ are [`TensorSplineDesign::left_nparams`] and [`TensorSplineDesign::right_nparams`]. Coefficients use row-major tensor order: pair $(i,j)$ is stored at $i n_B+j$. The two bases must describe the same observation rows; this is a row-wise Kronecker product, not a Cartesian product of rows.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorSplineDesign<A, B> {
     left: A,

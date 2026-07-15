@@ -3,12 +3,18 @@ use crate::transforms::{
     validate_shifted_non_negative_value,
 };
 
-/// `log1p` transform with a fitted shift for targets that may contain zero or
-/// negative values.
+/// Shifted `log1p` transform for targets that may contain zero or negative values.
 ///
-/// The fitted shift maps the minimum training value to `margin`, so
-/// `transform(y) = ln(1 + y + shift)`. New values must satisfy
-/// `y + shift >= 0`.
+/// For fitted shift $s\ge0$,
+///
+/// $$
+/// T_s(y)=\log(1+y+s),
+/// \qquad
+/// T_s^{-1}(z)=e^z-1-s.
+/// $$
+///
+/// Here $s$ is persisted as [`Log1pShiftState::shift`] and $z=T_s(y)$ is the transform-scale value. If $m=\min_i y_i$ for the training targets, fitting uses $s=\max(0,-m+\delta)$, where $\delta=10^{-12}$ when $m\le0$ and $\delta=0$ otherwise; [`Log1pShiftState::margin`] stores this $\delta$. New values must satisfy $y+s\ge0$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Log1pShift;
 

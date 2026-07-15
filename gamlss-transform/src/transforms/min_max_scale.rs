@@ -1,6 +1,17 @@
 use crate::transforms::{TargetTransform, TransformError, validate_non_empty_finite};
 
-/// Min-max transform: `(y - min) / (max - min)`.
+/// Min-max transform fitted from the training range.
+///
+/// With $a=\min_i y_i$ and $s=\max_i y_i-a$,
+///
+/// $$
+/// T(y)=\frac{y-a}{s},
+/// \qquad
+/// T^{-1}(z)=sz+a.
+/// $$
+///
+/// [`MinMaxScaleState::min`] stores $a$ and [`MinMaxScaleState::scale`] stores $s$; $z=T(y)$ is the transform-scale value. Training values map to $\lbrack 0,1\rbrack$, but new values are not clipped and may map outside this interval. A constant training target is rejected.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MinMaxScale;
 

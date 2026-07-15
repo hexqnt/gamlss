@@ -17,10 +17,25 @@ mod total_mean_cv;
 
 /// Zero-adjusted gamma family.
 ///
-/// The default parameterization models the gamma component mean, component
-/// coefficient of variation, and zero-mass probability. Use
-/// [`ZagaTotalMeanCvZeroProbability`] for the derived unconditional-mean
-/// parameterization.
+/// Let $\mu>0$ be the mean of the positive gamma component, let $c=\sqrt{\operatorname{Var}(Y\mid Y>0)}/\mu>0$ be its coefficient of variation, and let $\pi\in(0,1)$ be the zero-mass probability. The mixture is
+///
+/// $$
+/// \Pr(Y=0)=\pi,
+/// \qquad
+/// f_Y(y)=(1-\pi)f_\Gamma(y\mid\alpha,\beta),\quad y>0,
+/// $$
+///
+/// where
+///
+/// $$
+/// \alpha=c^{-2},
+/// \qquad
+/// \beta=\frac{1}{\mu c^2}.
+/// $$
+///
+/// Here $f_\Gamma(\\,\cdot\mid\alpha,\beta)$ is the shape/rate gamma density documented by [`crate::Gamma`]. Therefore $\mathbb{E}(Y)=(1-\pi)\mu$. The default parameterization models the component mean, component CV, and zero-mass probability; use [`ZagaTotalMeanCvZeroProbability`] to model the unconditional mean instead.
+///
+/// The natural-scale carrier retains historical field names: [`ZagaTheta::mu`] is $\mu$, [`ZagaTheta::sigma`] is the component CV $c$, and [`ZagaTheta::nu`] is the zero probability $\pi$. [`ZagaEta`] uses the same field-to-symbol mapping for their predictors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

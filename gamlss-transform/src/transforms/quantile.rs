@@ -7,10 +7,22 @@ use crate::transforms::{
 
 /// Empirical quantile transform to approximately uniform values.
 ///
-/// Fitted values are mapped to empirical probabilities in `(0, 1)`. New values
-/// outside the fitted target range are clamped to the fitted boundary
-/// probabilities, and inverse values outside that probability range are
-/// clamped to the fitted target range.
+/// Sort $n$ fitted observations and let $v_1<\cdots<v_m$ be their $m$ unique values. A value $v_j$ occupying one-based ranks $r_j,\ldots,s_j$ receives the average-rank plotting position
+///
+/// $$
+/// p_j=\frac{r_j+s_j-1}{2n}.
+/// $$
+///
+/// Thus an untied rank $r$ receives $(r-\tfrac12)/n$, while ties share one probability. For $1\le j<m$, values and probabilities between adjacent fitted knots use linear interpolation:
+///
+/// $$
+/// P(y)=p_j+\frac{y-v_j}{v_{j+1}-v_j}(p_{j+1}-p_j),
+/// \qquad
+/// Q(p)=v_j+\frac{p-p_j}{p_{j+1}-p_j}(v_{j+1}-v_j).
+/// $$
+///
+/// [`QuantileUniform::transform`] evaluates $P(y)$ and [`QuantileUniform::inverse`] evaluates $Q(p)$. Values below $v_1$ or above $v_m$ are clamped to $p_1$ or $p_m$; inverse probabilities are clamped symmetrically to $v_1$ or $v_m$. Because $0<p_1\le p_m<1$, fitted outputs remain finite and lie strictly inside the unit interval.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QuantileUniform;
 
@@ -64,10 +76,14 @@ impl TargetTransform for QuantileUniform {
 
 /// Empirical quantile transform to approximately standard-normal values.
 ///
-/// This uses the same empirical state as [`QuantileUniform`] and maps
-/// probabilities through the standard-normal quantile. Inverse values are
-/// converted back through the standard-normal CDF and clamped to the fitted
-/// empirical probability range.
+/// This uses the same empirical state as [`QuantileUniform`] and maps probabilities through the standard-normal quantile:
+///
+/// $$
+/// T(y)=\Phi^{-1}(P(y)), \qquad
+/// T^{-1}(z)=Q(\Phi(z)),
+/// $$
+///
+/// Here $\Phi$ is the standard-normal CDF, $P,Q$ are the empirical maps documented on [`QuantileUniform`], and $z=T(y)$ is the normal-score value. The empirical endpoint clamping makes both directions finite for finite fitted states.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QuantileNormal;
 
@@ -124,6 +140,9 @@ impl TargetTransform for QuantileNormal {
 }
 
 /// State for empirical quantile transforms.
+///
+/// With the one-based mathematical indexing above, `values[j - 1]` and `probabilities[j - 1]` store $(v_j,p_j)$. Both vectors are strictly increasing, have the same non-zero length $m$, and probabilities lie strictly inside $(0,1)$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuantileState {
     /// Sorted unique original-scale values.

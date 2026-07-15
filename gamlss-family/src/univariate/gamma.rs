@@ -21,7 +21,29 @@ mod mean_cv;
 mod mean_shape;
 mod shape_rate;
 
-/// Gamma family implementation carrier.
+/// Gamma family implementation carrier using the shape/rate kernel.
+///
+/// For shape $\alpha>0$, rate $\beta>0$, and $y>0$, the density is
+///
+/// $$
+/// f(y\mid\alpha,\beta)
+/// = \frac{\beta^\alpha}{\Gamma(\alpha)}
+///   y^{\alpha-1}\exp(-\beta y).
+/// $$
+///
+/// Here $\Gamma$ is the gamma function.
+///
+/// Consequently,
+///
+/// $$
+/// \mathbb{E}(Y)=\frac{\alpha}{\beta},
+/// \qquad
+/// \operatorname{Var}(Y)=\frac{\alpha}{\beta^2}.
+/// $$
+///
+/// [`ShapeRate`], [`MeanShape`], and [`MeanCv`] select the public natural-scale parameterization while sharing this kernel.
+///
+/// In the canonical carrier, [`GammaShapeRateTheta::shape`] is $\alpha$ and [`GammaShapeRateTheta::rate`] is $\beta$. The other parameterizations document their exact conversion to these two fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gamma<Param = ShapeRate, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,

@@ -18,9 +18,31 @@ mod mean_size;
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
 
-/// Negative binomial family parameterized by positive mean and shape.
+/// Negative binomial family parameterized by mean $\mu>0$ and shape $r>0$.
 ///
-/// The variance is `mu + mu^2 / shape`.
+/// For a count $y\in\\{0,1,2,\ldots\\}$, its probability mass is
+///
+/// $$
+/// \Pr(Y=y\mid\mu,r)
+/// = \frac{\Gamma(y+r)}{\Gamma(r)\\,\Gamma(y+1)}
+///   \left(\frac{r}{r+\mu}\right)^r
+///   \left(\frac{\mu}{r+\mu}\right)^y.
+/// $$
+///
+/// Here $\Gamma$ is the gamma function and $r$ is commonly called the size parameter.
+///
+/// The natural-scale moments are
+///
+/// $$
+/// \mathbb{E}(Y)=\mu,
+/// \qquad
+/// \operatorname{Var}(Y)=\mu+\frac{\mu^2}{r}.
+/// $$
+///
+/// The default [`NegativeBinomialMeanSize`] alias uses log links for both parameters.
+///
+/// The implementation calls $r$ “shape”: [`NegativeBinomialTheta::mu`] stores $\mu$, [`NegativeBinomialTheta::shape`] stores $r$, and the matching [`NegativeBinomialEta`] fields hold $\eta_\mu,\eta_r$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomial<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,

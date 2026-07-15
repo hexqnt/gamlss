@@ -1,6 +1,17 @@
 use crate::transforms::{TargetTransform, TransformError, validate_non_empty_finite};
 
-/// Max-absolute transform: `y / max(abs(y))`.
+/// Max-absolute transform fitted from the training target.
+///
+/// With $s=\max_i|y_i|$,
+///
+/// $$
+/// T(y)=\frac{y}{s},
+/// \qquad
+/// T^{-1}(z)=sz.
+/// $$
+///
+/// [`MaxAbsScaleState::scale`] stores $s$ and $z=T(y)$ is the transform-scale value. All-zero training targets use $s=1$ so that the transform remains invertible.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MaxAbsScale;
 

@@ -4,15 +4,22 @@ use crate::{FourierError, SplineRowBasis};
 
 /// Fourier predictor for seasonal/periodic covariates.
 ///
-/// For `order = K` builds columns
-/// `sin(2πkx / period)` and `cos(2πkx / period)`, `k = 1..=K`.
-/// If `include_intercept = true`, the first coefficient is the intercept.
-/// The local coefficient vector has order:
-/// `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`.
+/// Let $K$ be `order`, $P>0$ be `period`, and let $c$ equal one when `include_intercept` is true and zero otherwise. The implementation uses
 ///
-/// Unlike a dense design matrix, this predictor does not materialize the
-/// basis: values are computed directly in [`PredictorBlock::eta_row`] and
-/// [`PredictorBlock::add_gradient`].
+/// $$
+/// \begin{aligned}
+/// c&=\begin{cases}1,&\text{with intercept},\\\\0,&\text{without intercept},\end{cases} \\\\
+/// \eta(x)&=c\beta_0+\sum_{k=1}^{K}\left\lbrack
+/// \beta_{c+2k-2}\sin\left(\frac{2\pi kx}{P}\right)
+/// \mathbin{+}\beta_{c+2k-1}\cos\left(\frac{2\pi kx}{P}\right)
+/// \right\rbrack.
+/// \end{aligned}
+/// $$
+///
+/// Thus the local coefficient vector has $c+2K$ entries ordered as `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`. When $c=0$, the product $c\beta_0$ contributes zero and index zero belongs to the first sine coefficient.
+///
+/// Unlike a dense design matrix, this predictor does not materialize the basis: values are computed directly in [`PredictorBlock::eta_row`] and [`PredictorBlock::add_gradient`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct FourierDesign {
     x: Vec<f64>,

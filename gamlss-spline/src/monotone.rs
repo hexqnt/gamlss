@@ -22,6 +22,20 @@ impl MonotoneDirection {
 }
 
 /// Hard-monotone I-spline predictor using softplus-constrained increments.
+///
+/// Let $M$ be [`MonotoneISplineDesign::n_increments`], let $I_i(x)$ be basis index $i$ from [`ISplineBasis`], and let the unconstrained coefficient slice be $\boldsymbol\beta=(\beta_0,\ldots,\beta_M)$. The implementation uses
+///
+/// $$
+/// \begin{aligned}
+/// a_i &= \operatorname{softplus}(\beta_{i+1})>0,\qquad 0\le i<M, \\\\
+/// \eta(x) &= \beta_0+s\sum_{i=0}^{M-1}a_i I_i(x),
+/// \qquad
+/// s=\begin{cases}1,&\text{increasing},\\\\-1,&\text{decreasing}.\end{cases}
+/// \end{aligned}
+/// $$
+///
+/// Thus `beta[0]` is an unconstrained intercept and `beta[i + 1]` controls basis index $i$. Because $I_i^{\prime}(x)\ge0$, this construction enforces $s\\,\eta^{\prime}(x)=\sum_i a_i I_i^{\prime}(x)\ge0$ for every coefficient vector; no penalty or post-fit projection is needed.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonotoneISplineDesign {
     x: Vec<f64>,

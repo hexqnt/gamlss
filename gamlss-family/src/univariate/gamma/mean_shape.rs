@@ -5,7 +5,17 @@ use gamlss_core::{
 
 use super::{Gamma, GammaShapeRateTheta};
 
-/// Gamma distribution parameterized by mean and shape.
+/// Gamma distribution parameterized by mean $\mu>0$ and shape $\alpha>0$.
+///
+/// It maps to the shared shape/rate kernel as
+///
+/// $$
+/// \beta=\frac{\alpha}{\mu},
+/// \qquad
+/// \operatorname{Var}(Y)=\frac{\mu^2}{\alpha}.
+/// $$
+///
+/// The default log links give $\mu=\exp(\eta_\mu)$ and $\alpha=\exp(\eta_\alpha)$.
 pub type GammaMeanShape = Gamma<MeanShape, Log, Log>;
 /// Gamma mean/shape parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

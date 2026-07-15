@@ -11,9 +11,31 @@ const LAMBDA_EPSILON: f64 = 1.0e-12;
 
 /// Yeo-Johnson transform with a fitted lambda parameter for finite targets.
 ///
-/// The lambda parameter is fitted by deterministic profile-likelihood search on
-/// `[-5, 5]`. [`TargetTransform::checked_inverse`] rejects transform-scale
-/// values outside the lambda-specific inverse domain.
+/// The forward transform is defined on all finite $y$ by
+///
+/// $$
+/// T_\lambda(y)=
+/// \begin{cases}
+/// \dfrac{(y+1)^\lambda-1}{\lambda}, & y\ge0,\ \lambda\ne0, \\\\
+/// \log(y+1), & y\ge0,\ \lambda=0, \\\\
+/// \mathord{-}\dfrac{(1-y)^{2-\lambda}-1}{2-\lambda}, & y<0,\ \lambda\ne2, \\\\
+/// \mathord{-}\log(1-y), & y<0,\ \lambda=2.
+/// \end{cases}
+/// $$
+///
+/// Its inverse is
+///
+/// $$
+/// T_\lambda^{-1}(z)=
+/// \begin{cases}
+/// (1+\lambda z)^{1/\lambda}-1, & z\ge0,\ \lambda\ne0, \\\\
+/// \exp(z)-1, & z\ge0,\ \lambda=0, \\\\
+/// 1-\left\lbrack1-(2-\lambda)z\right\rbrack^{1/(2-\lambda)}, & z<0,\ \lambda\ne2, \\\\
+/// 1-\exp(-z), & z<0,\ \lambda=2.
+/// \end{cases}
+/// $$
+///
+/// Here $z=T_\lambda(y)$ is the transform-scale value and $\lambda$ is persisted in [`YeoJohnsonState::lambda`]. Since the transform is increasing and fixes zero, the inverse branch condition $z\ge0$ corresponds to the forward condition $y\ge0$. Numerically, values within $10^{-12}$ of the exceptional lambdas use the corresponding logarithmic branch. [`YeoJohnson::fit`] selects $\lambda$ by deterministic profile-likelihood search on $\lbrack-5,5\rbrack$, and [`TargetTransform::checked_inverse`] enforces the lambda-specific inverse domain.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct YeoJohnson;
 
@@ -44,8 +66,7 @@ impl TargetTransform for YeoJohnson {
 
 /// Yeo-Johnson transform with a lambda fixed at `NUMERATOR / DENOMINATOR`.
 ///
-/// The transform accepts all finite targets. [`TargetTransform::checked_inverse`]
-/// rejects transform-scale values outside the lambda-specific inverse domain.
+/// This applies the [`YeoJohnson`] equations with $\lambda=\mathtt{NUMERATOR}/\mathtt{DENOMINATOR}$. The transform accepts all finite targets, and [`TargetTransform::checked_inverse`] rejects transform-scale values outside the lambda-specific inverse domain.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct YeoJohnsonFixed<const NUMERATOR: i32, const DENOMINATOR: i32 = 1>(PhantomData<()>);
 

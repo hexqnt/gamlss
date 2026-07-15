@@ -5,6 +5,15 @@ use crate::row_basis::SplineRowBasis;
 use crate::{SplineError, SplineOrder};
 
 /// Metadata for a cyclic spline over a physical period.
+///
+/// A coordinate $x$ is converted to the phase
+///
+/// $$
+/// \phi(x)=\frac{x-x_0}{P},
+/// $$
+///
+/// Here $x_0$ is [`PeriodicSplineSpec::origin`] and $P>0$ is [`PeriodicSplineSpec::period`]. [`PeriodicSplineSpec::design`] passes this unwrapped phase to [`CyclicSplineDesign`], which applies reduction modulo one; therefore $\eta(x+P)=\eta(x)$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PeriodicSplineSpec {
     cyclic: CyclicSplineSpec,
@@ -69,6 +78,12 @@ impl PeriodicSplineSpec {
 }
 
 /// Periodic spline predictor over physical coordinates.
+///
+/// Unlike [`CyclicSplineDesign`], this design stores original coordinates and evaluates the cyclic basis at $(x-x_0)/P$. Derivatives obey
+///
+/// $$
+/// \frac{d\eta}{dx}=\frac{1}{P}\frac{d\eta}{d\phi}.
+/// $$
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeriodicSplineDesign {
     x: Vec<f64>,

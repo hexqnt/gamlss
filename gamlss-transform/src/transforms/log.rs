@@ -3,6 +3,16 @@ use crate::transforms::{
 };
 
 /// Log transform for strictly positive targets.
+///
+/// $$
+/// T(y)=\log y,
+/// \qquad
+/// T^{-1}(z)=e^z,
+/// \qquad y>0.
+/// $$
+///
+/// Here $z=T(y)$ is the value passed to [`TargetTransform::inverse`]. The transform is stateless and maps $(0,\infty)$ onto $\mathbb{R}$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Log;
 

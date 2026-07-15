@@ -21,6 +21,20 @@ mod mean_log_sd;
 mod median_log_sd;
 
 /// Log-normal family implementation carrier.
+///
+/// All parameterizations map to the location-scale model for $\log Y$:
+///
+/// $$
+/// \begin{aligned}
+/// \log Y &\sim \mathcal N(m,s^2), \qquad y>0,\ s>0, \\\\
+/// f(y\mid m,s) &= \frac{1}{ys\sqrt{2\pi}}
+/// \exp\\!\left[-\frac{(\log y-m)^2}{2s^2}\right].
+/// \end{aligned}
+/// $$
+///
+/// Its median is $\exp(m)$, while $\mathbb{E}(Y)=\exp(m+s^2/2)$ and $\operatorname{Var}(Y)=(\exp(s^2)-1)\exp(2m+s^2)$.
+///
+/// In the canonical carrier, [`LogNormalLogLocationLogSdTheta::log_location`] stores $m$ and [`LogNormalLogLocationLogSdTheta::log_sd`] stores $s$. Here `log_sd` means “SD of the log-transformed response”, not $\log s$.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
@@ -178,13 +192,32 @@ impl_log_normal_helpers!(MeanCv, MeanLink, CvLink);
 impl_log_normal_helpers!(MedianLogSd, MedianLink, LogSdLink);
 impl_log_normal_helpers!(LogLocationLogSd, LocationLink, LogSdLink);
 
-/// Log-normal distribution parameterized by mean and log standard deviation.
+/// Log-normal distribution parameterized by mean $\mu>0$ and log-scale SD $s>0$.
+///
+/// [`LogNormalMeanLogSdTheta::mean`] stores $\mu$ and [`LogNormalMeanLogSdTheta::log_sd`] stores $s$. The canonical log-location is $m=\log\mu-s^2/2$; the default log links apply to the `mean` and `log_sd` predictor fields.
+#[allow(clippy::doc_markdown)]
 pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
-/// Log-normal distribution parameterized by mean and coefficient of variation.
+/// Log-normal distribution parameterized by mean $\mu>0$ and coefficient of variation $c>0$.
+///
+/// Here $c=\sqrt{\operatorname{Var}(Y)}/\mathbb{E}(Y)$.
+///
+/// $$
+/// s^2=\log(1+c^2), \qquad m=\log\mu-\frac{s^2}{2},
+/// \qquad \operatorname{Var}(Y)=\mu^2c^2.
+/// $$
+///
+/// Both parameters use log links by default.
+///
+/// In code, $\mu$ and $c$ are the `mean` and `cv` fields of [`LogNormalMeanCvTheta`] and [`LogNormalMeanCvEta`].
 pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
-/// Log-normal distribution parameterized by median and log standard deviation.
+/// Log-normal distribution parameterized by median $q_{0.5}>0$ and log-scale SD $s>0$.
+///
+/// The canonical log-location is $m=\log q_{0.5}$. The natural and eta carriers use the field names `median` and `log_sd`; both predictors use log links by default.
 pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
-/// Log-normal distribution parameterized by log-location and log standard deviation.
+/// Log-normal distribution parameterized directly by log-location $m\in\mathbb{R}$ and log-scale SD $s>0$.
+///
+/// The corresponding code fields are `log_location` and `log_sd`. Their default links are identity and log, respectively: $m=\eta_m$ and $s=\exp(\eta_s)$.
+#[allow(clippy::doc_markdown)]
 pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;
 
 /// Backward-compatible eta alias for log-location/log-SD log-normal.

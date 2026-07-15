@@ -11,10 +11,19 @@ use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_val
 
 use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 
-/// Negative binomial distribution parameterized by mean and dispersion.
+/// Negative binomial distribution parameterized by mean $\mu>0$ and dispersion $\phi>0$.
 ///
-/// The variance is `mean + dispersion * mean^2`; this is equivalent to the
-/// mean/size parameterization with `size = 1 / dispersion`.
+/// This is equivalent to the mean/size kernel under
+///
+/// $$
+/// r=\phi^{-1},
+/// \qquad
+/// \mathbb{E}(Y)=\mu,
+/// \qquad
+/// \operatorname{Var}(Y)=\mu+\phi\mu^2.
+/// $$
+///
+/// The default log links give $\mu=\exp(\eta_\mu)$ and $\phi=\exp(\eta_\phi)$.
 pub type NegativeBinomialMeanDispersion = NegativeBinomialDispersion<Log, Log>;
 
 define_two_positive_parameter_blocks! {

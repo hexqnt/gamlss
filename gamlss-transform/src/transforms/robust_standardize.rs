@@ -2,7 +2,27 @@ use crate::transforms::{
     TargetTransform, TransformError, median_sorted, quantile_sorted, validate_non_empty_finite,
 };
 
-/// Robust standardization transform: `(y - median) / IQR`.
+/// Robust standardization by the training median and interquartile range.
+///
+/// Sort the $n$ training targets as $y_{(1)}\le\cdots\le y_{(n)}$. For probability $p$, this implementation defines $Q_p$ by
+///
+/// $$
+/// h_p=1+p(n-1),\qquad
+/// j=\lfloor h_p\rfloor,\qquad
+/// k=\lceil h_p\rceil,\qquad
+/// Q_p=(1-h_p+j)y_{(j)}+(h_p-j)y_{(k)}.
+/// $$
+///
+/// With $c=Q_{0.5}$ and $s=Q_{0.75}-Q_{0.25}$,
+///
+/// $$
+/// T(y)=\frac{y-c}{s},
+/// \qquad
+/// T^{-1}(z)=sz+c.
+/// $$
+///
+/// [`RobustStandardizeState::center`] stores $c$ and [`RobustStandardizeState::scale`] stores $s$; $z=T(y)$ is the transform-scale value. Fitting rejects $s=0$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RobustStandardize;
 

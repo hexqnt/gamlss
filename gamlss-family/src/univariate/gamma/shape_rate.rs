@@ -7,7 +7,9 @@ use crate::initial::positive_floor;
 
 use super::Gamma;
 
-/// Gamma distribution parameterized by shape and rate.
+/// Gamma distribution parameterized directly by shape $\alpha$ and rate $\beta$.
+///
+/// The default log links give $\alpha=\exp(\eta_\alpha)$ and $\beta=\exp(\eta_\beta)$.
 pub type GammaShapeRate = Gamma<ShapeRate, Log, Log>;
 
 /// Backward-compatible eta alias for the shape/rate gamma.
@@ -15,6 +17,8 @@ pub type GammaEta = GammaShapeRateEta;
 /// Backward-compatible theta alias for the shape/rate gamma.
 pub type GammaTheta = GammaShapeRateTheta;
 /// Gamma shape/rate parameterization marker.
+///
+/// This is the canonical parameterization used by the shared [`Gamma`] kernel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShapeRate;
 

@@ -14,10 +14,20 @@ use crate::initial::{robust_location_scale, weighted_values};
 /// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type LaplaceMuSigma = Laplace<Identity, Log>;
 
-/// Laplace location-scale family.
+/// Laplace family parameterized by location $\mu\in\mathbb{R}$ and scale $\sigma>0$.
 ///
-/// `MuLink` and `SigmaLink` control the link functions. Defaults to
-/// `Identity` for `mu` and `Log` for `sigma` (positive link).
+/// Its density is
+///
+/// $$
+/// f(y\mid\mu,\sigma)
+/// =\frac{1}{2\sigma}\exp\left(-\frac{|y-\mu|}{\sigma}\right),
+/// \qquad y\in\mathbb{R}.
+/// $$
+///
+/// The natural-scale moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=2\sigma^2$.
+///
+/// The symbols $\mu$ and $\sigma$ correspond to the same-named fields of [`LaplaceTheta`]. `MuLink` and `SigmaLink` control their links; the default [`LaplaceMuSigma`] alias gives $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Laplace<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

@@ -21,7 +21,18 @@ const DIRECT_BESSEL_MU_LIMIT: f64 = 350.0;
 /// Poisson distribution with log link for mean.
 pub type PoissonMean = Poisson<Log>;
 
-/// Poisson family parameterized by positive mean.
+/// Poisson family parameterized by mean $\mu>0$.
+///
+/// For $y\in\\{0,1,2,\ldots\\}$, the probability mass is
+///
+/// $$
+/// \Pr(Y=y\mid\mu)=\frac{e^{-\mu}\mu^y}{y!}.
+/// $$
+///
+/// Its moments are $\mathbb{E}(Y)=\operatorname{Var}(Y)=\mu$. The default [`PoissonMean`] alias uses $\mu=\exp(\eta_\mu)$.
+///
+/// In code, [`PoissonTheta::mu`] stores $\mu$ and [`PoissonEta::mu`] stores $\eta_\mu$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Poisson<MuLink = Log> {
     marker: PhantomData<MuLink>,

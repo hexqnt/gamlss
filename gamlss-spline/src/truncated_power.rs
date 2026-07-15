@@ -4,10 +4,22 @@ use crate::{SplineError, SplineOrder, SplineRowBasis};
 
 /// Truncated power regression spline basis.
 ///
-/// For degree `p`, the coefficient order is:
-/// `[intercept?, x, x^2, ..., x^p, (x-k_1)_+^p, ..., (x-k_m)_+^p]`.
-/// The knot vector contains the truncated-power knots `k_i`; it must be finite
-/// and strictly increasing.
+/// For degree $p$ and strictly increasing knots $k_{1}<\cdots<k_{m}$, the basis is
+///
+/// $$
+/// B(x)=\left(1,\ x,\ x^2,\ldots,x^p,
+/// \max(x-k_{1},0)^p,\ldots,\max(x-k_{m},0)^p\right).
+/// $$
+///
+/// With `include_intercept = true`, a coefficient vector ordered as $(\beta_0,\beta_1,\ldots,\beta_p,\gamma_1,\ldots,\gamma_m)$ represents
+///
+/// $$
+/// \eta(x)=\beta_0+\sum_{r=1}^{p}\beta_r x^r
+/// \mathbin{+}\sum_{j=1}^{m}\gamma_j\max(x-k_{j},0)^p.
+/// $$
+///
+/// With `include_intercept = false`, the $\beta_0$ term and leading basis value are omitted, so the stored order begins with the coefficient of $x$. Thus [`TruncatedPowerBasis::n_basis`] is $p+m+1$ with an intercept and $p+m$ without one. Here $p=\mathtt{order.degree()}$ and $m=\mathtt{knots.len()}$. Away from a knot, $\frac{d}{dx}\max(x-k,0)^p=p\max(x-k,0)^{p-1}$ on the active side and zero otherwise.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TruncatedPowerBasis {
     knots: Vec<f64>,
@@ -107,7 +119,7 @@ impl TruncatedPowerBasis {
         &self.knots
     }
 
-    /// Spline order.
+    /// Spline order; its degree is the $p$ used in the basis formula.
     #[must_use]
     #[inline]
     pub const fn order(&self) -> SplineOrder {

@@ -15,9 +15,11 @@ use crate::initial::{
 
 use super::InverseGaussian;
 
-/// Inverse Gaussian distribution with log links for mean and shape.
+/// Inverse Gaussian distribution with mean $\mu>0$ and shape $\lambda>0$.
+///
+/// The code fields are `mu` and `shape`, so $\eta_\lambda$ denotes [`InverseGaussianEta::shape`]. The default links give $\mu=\exp(\eta_\mu)$ and $\lambda=\exp(\eta_\lambda)$.
 pub type InverseGaussianMuShape = InverseGaussian<Log, Log>;
-/// Inverse Gaussian distribution with log links for mean and shape.
+/// Alias for [`InverseGaussianMuShape`].
 pub type InverseGaussianMeanShape = InverseGaussianMuShape;
 
 define_two_positive_parameter_blocks! {

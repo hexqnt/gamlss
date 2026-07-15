@@ -14,15 +14,33 @@ mod dynamic;
 mod fixed;
 mod stddev;
 
-/// Student's t distribution with `Identity` link for `mu` and `Log` link
-/// for `sigma`.
+/// Student's t location-scale distribution with fixed degrees of freedom $\tau>0$.
+///
+/// Construct it with [`StudentT::try_new`]; [`Default`] uses $\tau=5$. The natural and eta fields are `mu` and `sigma`, and the default links give $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
 pub type StudentTMuSigma = StudentT<Identity, Log>;
-/// Student's t location-scale distribution with estimated degrees of freedom `tau > 0`.
+/// Student's t location-scale distribution with estimated degrees of freedom $\tau>0$.
+///
+/// The natural and eta carriers use the fields `mu`, `sigma`, and `tau`. Their default links give $\mu=\eta_\mu$, $\sigma=\exp(\eta_\sigma)$, and $\tau=\exp(\eta_\tau)$.
 pub type StudentTMuSigmaTau = StudentTDynamic<Identity, Log, Log>;
-/// Student's t distribution parameterized by mean, standard deviation, and `tau > 2`.
+/// Student's t distribution parameterized by mean, standard deviation, and $\tau>2$.
+///
+/// Here the natural field `sigma` stores the standard deviation $s$, not the location-scale parameter below. The eta fields are also named `mu`, `sigma`, and `tau`; their default links give $\mu=\eta_\mu$, $s=\exp(\eta_\sigma)$, and $\tau=2+\exp(\eta_\tau)$.
+#[allow(clippy::doc_markdown)]
 pub type StudentTMuSdTau = StudentTStdDev<Identity, Log, LogPlus<2>>;
 
 /// Student's t distribution parameters on the natural location-scale surface.
+///
+/// With degrees of freedom $\tau>0$, location $\mu\in\mathbb{R}$, and scale $\sigma>0$, the density is
+///
+/// $$
+/// f(y\mid\mu,\sigma,\tau)=
+/// \frac{\Gamma((\tau+1)/2)}
+/// {\Gamma(\tau/2)\sqrt{\tau\pi}\\,\sigma}
+/// \left(1+\frac{1}{\tau}
+/// \left(\frac{y-\mu}{\sigma}\right)^2\right)^{-(\tau+1)/2}.
+/// $$
+///
+/// [`StudentTTheta`] stores only $\mu$ and $\sigma$. The fixed family supplies $\tau$ from [`StudentT::degrees_of_freedom`], while [`StudentTMuSigmaTauTheta::tau`] supplies it for the dynamic family. Here $\Gamma$ is the gamma function. The mean is $\mu$ for $\tau>1$ and the variance is $\tau\sigma^2/(\tau-2)$ for $\tau>2$; hence `sigma` is a scale, not in general the standard deviation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentTTheta {
     /// Location parameter.

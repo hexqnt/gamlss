@@ -4,6 +4,16 @@ use crate::SplineError;
 use crate::row_basis::SplineRowBasis;
 
 /// M-spline basis with normalized non-negative basis functions.
+///
+/// For degree $p$ and the B-spline $B_{i,p}$ on the same knot vector $\boldsymbol t$, this implementation uses
+///
+/// $$
+/// M_{i,p}(x)
+/// =\frac{p+1}{t_{i+p+1}-t_i}B_{i,p}(x).
+/// $$
+///
+/// A zero denominator produces the zero basis function. Otherwise $M_{i,p}(x)\ge0$ and its integral over $\lbrack t_i,t_{i+p+1}\rbrack$ is one. The symbols $p$ and $\boldsymbol t$ correspond to [`MSplineBasis::degree`] and [`MSplineBasis::knots`]; degrees above three are rejected.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MSplineBasis {
     knots: Vec<f64>,

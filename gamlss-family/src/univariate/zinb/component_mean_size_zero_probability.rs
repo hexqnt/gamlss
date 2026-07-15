@@ -14,7 +14,10 @@ use crate::initial::{
 
 use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 
-/// ZINB distribution with log/log/logit links.
+/// ZINB distribution parameterized by component mean $\mu$, size $r$, and structural-zero probability $\pi$.
+///
+/// The eta fields `mu`, `shape`, and `nu` represent $\eta_\mu,\eta_r,\eta_\pi$, respectively. The default links give $\mu=\exp(\eta_\mu)$, $r=\exp(\eta_r)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+#[allow(clippy::doc_markdown)]
 pub type ZinbMeanSizeZeroProbability = Zinb<Log, Log, Logit>;
 /// Explicit alias for the component-mean/size/zero-probability ZINB kernel parameterization.
 pub type ZinbComponentMeanSizeZeroProbability = ZinbMeanSizeZeroProbability;

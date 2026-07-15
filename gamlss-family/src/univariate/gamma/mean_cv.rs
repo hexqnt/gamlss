@@ -8,7 +8,22 @@ use crate::initial::positive_floor;
 
 use super::{Gamma, GammaShapeRateTheta};
 
-/// Gamma distribution parameterized by mean and coefficient of variation.
+/// Gamma distribution parameterized by mean $\mu>0$ and coefficient of variation $c>0$.
+///
+/// Here $c=\sqrt{\operatorname{Var}(Y)}/\mathbb{E}(Y)$.
+///
+/// It maps to the shared shape/rate kernel as
+///
+/// $$
+/// \alpha=c^{-2},
+/// \qquad
+/// \beta=\frac{1}{\mu c^2},
+/// \qquad
+/// \operatorname{Var}(Y)=\mu^2c^2.
+/// $$
+///
+/// The default log links give $\mu=\exp(\eta_\mu)$ and $c=\exp(\eta_c)$.
+#[allow(clippy::doc_markdown)]
 pub type GammaMeanCv = Gamma<MeanCv, Log, Log>;
 /// Gamma mean/coefficient-of-variation parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

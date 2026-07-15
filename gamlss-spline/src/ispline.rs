@@ -5,6 +5,17 @@ use crate::mspline::MSplineBasis;
 use crate::row_basis::SplineRowBasis;
 
 /// I-spline basis built by integrating normalized M-splines.
+///
+/// For degree $p$, knot vector $\boldsymbol t$, and a corresponding non-degenerate M-spline basis function,
+///
+/// $$
+/// I_{i,p}(x)=\int_{t_i}^{x}M_{i,p}(u)\\,du,
+/// \qquad
+/// \frac{d}{dx}I_{i,p}(x)=M_{i,p}(x).
+/// $$
+///
+/// Since each M-spline is non-negative, the derivative displayed above is non-negative. The implementation returns zero at and below $t_i$ and one at and above $t_{i+p+1}$; a degenerate support $t_i=t_{i+p+1}$ returns zero. Consequently every basis function is non-decreasing and lies in $\lbrack 0,1\rbrack$. The symbols $p$ and $\boldsymbol t$ correspond to [`ISplineBasis::degree`] and [`ISplineBasis::knots`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ISplineBasis {
     mspline: MSplineBasis,

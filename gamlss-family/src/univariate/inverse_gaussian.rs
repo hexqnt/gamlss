@@ -15,6 +15,19 @@ mod mean_cv;
 mod mean_shape;
 
 /// Inverse Gaussian family parameterized by positive mean and shape.
+///
+/// For mean $\mu>0$ and shape $\lambda>0$, the density is
+///
+/// $$
+/// f(y\mid\mu,\lambda)=
+/// \sqrt{\frac{\lambda}{2\pi y^3}}
+/// \exp\\!\left[-\frac{\lambda(y-\mu)^2}{2\mu^2y}\right],
+/// \qquad y>0.
+/// $$
+///
+/// The moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=\mu^3/\lambda$.
+///
+/// The canonical Rust carrier retains the generic name `shape` for $\lambda$: [`InverseGaussianTheta::mu`] stores $\mu$ and [`InverseGaussianTheta::shape`] stores $\lambda$.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,

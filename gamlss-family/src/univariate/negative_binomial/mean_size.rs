@@ -11,7 +11,10 @@ use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_val
 
 use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 
-/// Negative binomial distribution with log links for mean and shape.
+/// Negative binomial distribution with log links for mean $\mu$ and size $r$.
+///
+/// Thus $\mu=\exp(\eta_\mu)$ and $r=\exp(\eta_r)$ in the parameterization documented by [`NegativeBinomial`].
+#[allow(clippy::doc_markdown)]
 pub type NegativeBinomialMeanSize = NegativeBinomial<Log, Log>;
 
 /// Predictors for the negative binomial family on the link scale.

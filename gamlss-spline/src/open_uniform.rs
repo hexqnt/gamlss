@@ -6,8 +6,29 @@ use crate::{SplineError, SplineOrder};
 
 /// Metadata for an open-uniform spline predictor.
 ///
-/// Stores only the basis shape and scaling range, so it can be reused for
-/// building designs on training and new data.
+/// Stores only the basis shape and scaling range, so it can be reused for building designs on training and new data.
+///
+/// Let $a$ be [`OpenUniformSplineBasis::min`], $b$ be [`OpenUniformSplineBasis::max`], $K$ be [`OpenUniformSplineBasis::n_basis`], and $p=\mathtt{order.degree()}$. Coordinates are normalized as $u=(x-a)/(b-a)$, and $q=K-p$ equal intervals define the clamped knot vector
+///
+/// $$
+/// t_i=
+/// \begin{cases}
+/// 0, & i\le p,\\\\
+/// (i-p)/q, & p<i<K,\\\\
+/// 1, & i\ge K.
+/// \end{cases}
+/// $$
+///
+/// For $0<u<1$, the predictor is $\eta(x)=\sum_{j=0}^{K-1}\beta_jB_{j,p}(u)$ and only $p+1$ adjacent B-spline weights are evaluated. At and beyond the normalized boundaries, the implementation uses the following linear continuation:
+///
+/// $$
+/// \eta(x(u))=
+/// \begin{cases}
+/// \beta_0+pq\\,u(\beta_1-\beta_0), & u\le0,\\\\
+/// \beta_{K-1}+pq\\,(u-1)(\beta_{K-1}-\beta_{K-2}), & u\ge1.
+/// \end{cases}
+/// $$
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OpenUniformSplineBasis {
     min: f64,
@@ -163,9 +184,7 @@ impl OpenUniformSplineBasis {
 
 /// Open-uniform spline predictor with local sparse row computation.
 ///
-/// Unlike [`crate::BSplineBasis`], stores the original data and computes
-/// basis functions "on the fly" via a compact `LocalBasis`, without
-/// materializing the full design matrix.
+/// Unlike [`crate::BSplineBasis`], stores the original data and computes basis functions "on the fly" via a compact `LocalBasis`, without materializing the full design matrix. See [`OpenUniformSplineBasis`] for the knot construction and extrapolation rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenUniformSplineDesign {
     x: Vec<f64>,
@@ -231,6 +250,8 @@ impl OpenUniformSplineDesign {
 
     /// Derivative of the predictor contribution with respect to the original
     /// coordinate `x`.
+    ///
+    /// The normalized-basis derivative is scaled by $du/dx=1/(\text{max}-\text{min})$.
     #[must_use]
     #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {

@@ -21,10 +21,22 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 
 /// Zero-inflated negative binomial family.
 ///
-/// The default parameterization models the negative-binomial component mean,
-/// component size, and zero-inflation probability. Use
-/// [`ZinbTotalMeanSizeZeroProbability`] for the derived unconditional-mean
-/// parameterization.
+/// Let $q_r(y\mid\mu)$ denote the negative-binomial probability mass with component mean $\mu>0$ and size $r>0$, and let $\pi\in(0,1)$ be the structural-zero probability. Then
+///
+/// $$
+/// \Pr(Y=0)=\pi+(1-\pi)q_r(0\mid\mu),
+/// $$
+///
+/// and, for $y\in\\{1,2,\ldots\\}$,
+///
+/// $$
+/// \Pr(Y=y)=(1-\pi)q_r(y\mid\mu).
+/// $$
+///
+/// Thus $\mathbb{E}(Y)=(1-\pi)\mu$. The default parameterization models the component mean, component size, and structural-zero probability; use [`ZinbTotalMeanSizeZeroProbability`] to model the unconditional mean instead.
+///
+/// The canonical carrier uses [`ZinbTheta::mu`] for $\mu$, [`ZinbTheta::shape`] for the NB size $r$, and [`ZinbTheta::nu`] for $\pi$. [`ZinbEta`] uses the same historical field names for $\eta_\mu,\eta_r,\eta_\pi$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zinb<MuLink = Log, ShapeLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, ShapeLink, NuLink)>,

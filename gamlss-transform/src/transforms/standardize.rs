@@ -1,6 +1,25 @@
 use crate::transforms::{TargetTransform, TransformError, validate_non_empty_finite};
 
-/// Standardization transform: `(y - center) / scale`.
+/// Standardization by the training mean and root-mean-square deviation.
+///
+/// For $n$ training targets,
+///
+/// $$
+/// c=\frac{1}{n}\sum_{i=1}^{n}y_i,
+/// \qquad
+/// s=\sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i-c)^2},
+/// $$
+///
+/// and the persisted transform is
+///
+/// $$
+/// T(y)=\frac{y-c}{s},
+/// \qquad
+/// T^{-1}(z)=sz+c.
+/// $$
+///
+/// The fitted state stores $c$ in [`StandardizeState::center`] and $s$ in [`StandardizeState::scale`]; $z=T(y)$ is the transform-scale value. The scale uses the population denominator $n$, not the sample denominator $n-1$, and fitting rejects $s=0$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Standardize;
 

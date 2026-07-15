@@ -7,7 +7,10 @@ use crate::initial::{positive_floor, weighted_mean, weighted_values};
 
 use super::{Exponential, ExponentialMeanTheta};
 
-/// Exponential distribution parameterized by rate.
+/// Exponential distribution parameterized directly by rate $\lambda>0$.
+///
+/// The default log link gives $\lambda=\exp(\eta_\lambda)$.
+#[allow(clippy::doc_markdown)]
 pub type ExponentialRate = Exponential<RateParam, Log>;
 /// Exponential rate parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

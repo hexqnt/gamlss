@@ -14,12 +14,18 @@ use super::{
     student_t_standard_cdf, student_t_standard_quantile,
 };
 
-/// Dynamic-DF Student's t family where `sigma` is the standard deviation.
+/// Dynamic-DF Student's t family where the natural `sigma` field is the standard deviation.
 ///
-/// This is often a more convenient parameterization for residual models and
-/// volatility-style targets than the canonical Student-t scale. Internally it
-/// maps `sigma` to the location-scale Student-t scale by
-/// `scale = sigma * sqrt((tau - 2) / tau)`, so `tau` must be greater than two.
+/// In the equations, $s$ denotes [`StudentTMuSdTauTheta::sigma`] and $\sigma_{\mathrm{scale}}$ denotes the internal [`StudentTTheta::sigma`]. The conversion is
+///
+/// $$
+/// \sigma_{\mathrm{scale}}
+/// =s\sqrt{\frac{\tau-2}{\tau}}, \qquad
+/// \operatorname{Var}(Y)=s^2,\qquad \tau>2.
+/// $$
+///
+/// The matching eta field is also named `sigma`, so the default links are $s=\exp(\eta_\sigma)$ and $\tau=2+\exp(\eta_\tau)$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTStdDev<
     MuLink = gamlss_core::Identity,

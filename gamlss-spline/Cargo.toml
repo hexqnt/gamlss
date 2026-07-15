@@ -10,7 +10,16 @@ documentation = "https://docs.rs/gamlss-spline"
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "benches/**/*", "Cargo.toml", "README.md"]
+include = [
+    "src/**/*",
+    "benches/**/*",
+    "Cargo.toml",
+    "README.md",
+    "katex-header.html",
+]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
 
 [dependencies]
 gamlss-core.workspace = true

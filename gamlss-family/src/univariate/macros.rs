@@ -23,7 +23,7 @@
 /// \end{aligned}
 /// $$
 ///
-/// After family-specific code computes the natural-scale NLL derivatives
+/// Let $L$ denote the family-specific negative log-likelihood for one observation. After family code computes its natural-scale derivatives
 ///
 /// $$
 /// \nabla_{\boldsymbol{\theta}} L

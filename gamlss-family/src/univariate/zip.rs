@@ -25,9 +25,21 @@ pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 
 /// Zero-inflated Poisson family.
 ///
-/// The default parameterization models the Poisson component mean and the
-/// zero-inflation probability. Use [`ZipTotalMeanZeroProbability`] for the
-/// derived unconditional-mean parameterization.
+/// Let $\lambda>0$ be the Poisson component mean and $\pi\in(0,1)$ the structural-zero probability. Then
+///
+/// $$
+/// \Pr(Y=0)=\pi+(1-\pi)e^{-\lambda},
+/// $$
+///
+/// and, for $y\in\\{1,2,\ldots\\}$,
+///
+/// $$
+/// \Pr(Y=y)=(1-\pi)\frac{e^{-\lambda}\lambda^y}{y!}.
+/// $$
+///
+/// Therefore $\mathbb{E}(Y)=(1-\pi)\lambda$. The default parameterization models $\lambda$ and $\pi$ directly; use [`ZipTotalMeanZeroProbability`] to model the unconditional mean instead.
+///
+/// The canonical carrier retains historical field names: [`ZipTheta::mu`] stores the Poisson component mean $\lambda$, [`ZipTheta::sigma`] stores the zero probability $\pi$, and [`ZipEta`] uses `mu` and `sigma` for their predictors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zip<Param = ComponentMeanZeroProbability, MeanLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(Param, MeanLink, ZeroProbabilityLink)>,

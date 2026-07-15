@@ -16,9 +16,7 @@ use super::{
 
 /// Student's t location-scale family with a fixed number of degrees of freedom.
 ///
-/// `MuLink` and `SigmaLink` control the link functions for the location and
-/// scale parameters respectively. Defaults to `Identity` for `mu` and `Log`
-/// for `sigma`.
+/// `MuLink` and `SigmaLink` control the link functions for the location and scale parameters respectively. Defaults to `Identity` for `mu` and `Log` for `sigma`. For the density and moment conditions, see [`StudentTTheta`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = gamlss_core::Identity, SigmaLink = gamlss_core::Log> {
     degrees_of_freedom: f64,

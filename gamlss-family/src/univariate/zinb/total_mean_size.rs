@@ -17,7 +17,20 @@ use crate::initial::{
 
 use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 
-/// ZINB distribution parameterized by total mean, NB size, and zero probability.
+/// ZINB distribution parameterized by unconditional mean $m$, NB size $r$, and structural-zero probability $\pi$.
+///
+/// The negative-binomial component mean is derived as
+///
+/// $$
+/// \mu=\frac{m}{1-\pi},
+/// \qquad
+/// \mathbb{E}(Y)=m.
+/// $$
+///
+/// The default links are $m=\exp(\eta_m)$, $r=\exp(\eta_r)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+///
+/// These symbols correspond to the `total_mean`, `size`, and `zero_probability` fields of [`ZinbTotalMeanSizeZeroProbabilityTheta`] and [`ZinbTotalMeanSizeZeroProbabilityEta`].
+#[allow(clippy::doc_markdown)]
 pub type ZinbTotalMeanSizeZeroProbability = ZinbTotalMeanSize<Log, Log, Logit>;
 
 /// Predictors for ZINB total-mean/size/zero-probability on the link scale.

@@ -14,7 +14,20 @@ use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_
 use super::ComponentMeanZeroProbability;
 use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 
-/// ZIP distribution parameterized by total mean and zero-inflation probability.
+/// ZIP distribution parameterized by unconditional mean $m>0$ and structural-zero probability $\pi\in(0,1)$.
+///
+/// The Poisson component mean is derived as
+///
+/// $$
+/// \lambda=\frac{m}{1-\pi},
+/// \qquad
+/// \mathbb{E}(Y)=m.
+/// $$
+///
+/// The default links are $m=\exp(\eta_m)$ and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+///
+/// [`ZipTotalMeanZeroProbabilityTheta`] stores $m$ in `total_mean` and $\pi$ in `zero_probability`. For backward compatibility, the shared [`ZipEta`] stores their predictors $\eta_m,\eta_\pi$ in its `mu` and `sigma` fields.
+#[allow(clippy::doc_markdown)]
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;
 
 /// ZIP total-mean/zero-probability parameterization marker.

@@ -11,7 +11,12 @@ use crate::initial::{
 
 use super::{InverseGaussian, InverseGaussianTheta};
 
-/// Inverse Gaussian distribution with log links for mean and coefficient of variation.
+/// Inverse Gaussian distribution with mean $\mu>0$ and coefficient of variation $c>0$.
+///
+/// Here $c=\sqrt{\operatorname{Var}(Y)}/\mathbb{E}(Y)$.
+///
+/// The natural fields [`InverseGaussianMeanCvTheta::mean`] and [`InverseGaussianMeanCvTheta::cv`] map to the canonical carrier through $\lambda=\mu/c^2$, so $\operatorname{Var}(Y)=\mu^2c^2$. The default links give $\mu=\exp(\eta_\mu)$ and $c=\exp(\eta_c)$.
+#[allow(clippy::doc_markdown)]
 pub type InverseGaussianMeanCv = InverseGaussianCv<Log, Log>;
 
 define_two_positive_parameter_blocks! {

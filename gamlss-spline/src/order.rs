@@ -1,4 +1,6 @@
-/// Supported spline degrees/orders for efficient local basis computation.
+/// Supported polynomial degrees for efficient local basis computation.
+///
+/// The public type retains the name “order”, but [`SplineOrder::degree`] returns the numeric enum value: one for linear, two for quadratic, and three for cubic splines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplineOrder {
     /// Linear B-spline.

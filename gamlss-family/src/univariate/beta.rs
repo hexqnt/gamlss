@@ -19,7 +19,37 @@ use crate::initial::{
 /// Beta distribution with logit link for mean and log link for precision.
 pub type BetaMeanPrecision = Beta<Logit, Log>;
 
-/// Beta family parameterized by mean in `(0, 1)` and positive precision.
+/// Beta family parameterized by mean $\mu\in(0,1)$ and precision $\phi>0$.
+///
+/// The corresponding beta shape parameters are
+///
+/// $$
+/// \alpha=\mu\phi,
+/// \qquad
+/// \beta=(1-\mu)\phi,
+/// $$
+///
+/// giving the density
+///
+/// $$
+/// f(y\mid\mu,\phi)
+/// =\frac{y^{\alpha-1}(1-y)^{\beta-1}}{\mathrm{B}(\alpha,\beta)},
+/// \qquad 0<y<1.
+/// $$
+///
+/// Here $\mathrm{B}$ is the beta function; the precision satisfies $\phi=\alpha+\beta$ and the mean satisfies $\mu=\alpha/(\alpha+\beta)$.
+///
+/// The natural-scale moments are
+///
+/// $$
+/// \mathbb{E}(Y)=\mu,
+/// \qquad
+/// \operatorname{Var}(Y)=\frac{\mu(1-\mu)}{\phi+1}.
+/// $$
+///
+/// The default [`BetaMeanPrecision`] alias uses $\mu=\operatorname{logit}^{-1}(\eta_\mu)$ and $\phi=\exp(\eta_\phi)$.
+///
+/// These symbols map directly to [`BetaTheta::mu`], [`BetaTheta::precision`], [`BetaEta::mu`], and [`BetaEta::precision`].
 ///
 /// The mean link must guarantee values in `(0, 1)`.
 ///
@@ -29,6 +59,7 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 ///
 /// let _ = Beta::<Identity, Log>::new();
 /// ```
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,

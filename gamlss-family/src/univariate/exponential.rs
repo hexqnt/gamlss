@@ -12,7 +12,26 @@ pub use rate::{ExponentialRate, ExponentialRateEta, ExponentialRateTheta, RatePa
 mod mean;
 mod rate;
 
-/// Exponential family implementation carrier.
+/// Exponential family implementation carrier using the rate kernel.
+///
+/// For rate $\lambda>0$ and $y\ge0$, the density is
+///
+/// $$
+/// f(y\mid\lambda)=\lambda e^{-\lambda y}.
+/// $$
+///
+/// Consequently,
+///
+/// $$
+/// \mathbb{E}(Y)=\frac{1}{\lambda},
+/// \qquad
+/// \operatorname{Var}(Y)=\frac{1}{\lambda^2}.
+/// $$
+///
+/// [`RateParam`] and [`MeanParam`] select the public natural-scale parameterization while sharing this kernel.
+///
+/// The rate parameterization stores $\lambda$ in [`ExponentialRateTheta::rate`]; the mean parameterization stores $\mu=\lambda^{-1}$ in [`ExponentialMeanTheta::mean`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exponential<Param = RateParam, Link = Log> {
     marker: PhantomData<(Param, Link)>,

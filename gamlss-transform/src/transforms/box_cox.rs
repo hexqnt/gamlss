@@ -11,9 +11,27 @@ const LAMBDA_EPSILON: f64 = 1.0e-12;
 
 /// Box-Cox transform with a fitted lambda parameter for strictly positive targets.
 ///
-/// The lambda parameter is fitted by deterministic profile-likelihood search on
-/// `[-5, 5]`. [`TargetTransform::checked_inverse`] rejects transform-scale
-/// values outside the inverse domain for non-zero lambdas.
+/// For $y>0$, the forward transform is
+///
+/// $$
+/// T_\lambda(y)=
+/// \begin{cases}
+/// \dfrac{y^\lambda-1}{\lambda}, & \lambda\ne0, \\\\
+/// \log(y), & \lambda=0.
+/// \end{cases}
+/// $$
+///
+/// Its inverse is
+///
+/// $$
+/// T_\lambda^{-1}(z)=
+/// \begin{cases}
+/// (1+\lambda z)^{1/\lambda}, & \lambda\ne0, \\\\
+/// \exp(z), & \lambda=0,
+/// \end{cases}
+/// $$
+///
+/// Here $z=T_\lambda(y)$ is the transform-scale value and $\lambda$ is persisted in [`BoxCoxState::lambda`]. For $\lambda\ne0$, inversion requires $1+\lambda z>0$. Numerically, $|\lambda|\le10^{-12}$ uses the logarithmic branch. [`BoxCox::fit`] selects $\lambda$ by deterministic profile-likelihood search on $\lbrack-5,5\rbrack$, and [`TargetTransform::checked_inverse`] enforces the inverse domain.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BoxCox;
 
@@ -49,9 +67,7 @@ impl TargetTransform for BoxCox {
 
 /// Box-Cox transform with a lambda fixed at `NUMERATOR / DENOMINATOR`.
 ///
-/// Targets must be strictly positive. [`TargetTransform::checked_inverse`]
-/// rejects transform-scale values outside the inverse domain for non-zero
-/// lambdas.
+/// This applies the [`BoxCox`] equations with $\lambda=\mathtt{NUMERATOR}/\mathtt{DENOMINATOR}$. Targets must be strictly positive, and [`TargetTransform::checked_inverse`] rejects transform-scale values outside the inverse domain for non-zero lambdas.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BoxCoxFixed<const NUMERATOR: i32, const DENOMINATOR: i32 = 1>(PhantomData<()>);
 

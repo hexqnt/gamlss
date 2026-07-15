@@ -8,6 +8,23 @@ const FIRST_DIFFERENCE_COEFFICIENTS: [f64; 2] = [-1.0, 1.0];
 const SECOND_DIFFERENCE_COEFFICIENTS: [f64; 3] = [1.0, -2.0, 1.0];
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
+///
+/// For a coefficient slice $\boldsymbol\beta=(\beta_0,\ldots,\beta_{n-1})$ and difference order $m<n$, define
+///
+/// $$
+/// \Delta^m\beta_i = \sum_{j=0}^{m}(-1)^{m-j}\binom{m}{j}\beta_{i+j}.
+/// $$
+///
+/// Here $\binom{m}{j}$ is a binomial coefficient.
+///
+/// The penalty value is the mean squared non-wrapping difference,
+///
+/// $$
+/// J_m(\boldsymbol\beta)= \frac{\lambda}{n-m}\sum_{i=0}^{n-m-1}\left(\Delta^m\beta_i\right)^2.
+/// $$
+///
+/// In code, $n=\mathtt{beta.len()}$, $m$ is [`DifferencePenalty::order`], and $\lambda$ is [`DifferencePenalty::lambda`]. The $n-m$ denominator is the number of non-wrapping differences and makes $\lambda$ approximately scale-stable as $n$ changes.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DifferencePenalty {
     /// Penalty weight.
@@ -194,8 +211,20 @@ impl MatrixPenalty for PreparedDifferencePenalty {
 
 /// Cyclic finite-difference penalty for periodic coefficient vectors.
 ///
-/// Differs from [`DifferencePenalty`] in that differences are taken modulo
-/// the vector length (wrap-around).
+/// For the same $\boldsymbol\beta$, $m$, and $\lambda$ notation as [`DifferencePenalty`], cyclic indexing replaces $\beta_{i+j}$ with $\beta_{(i+j)\bmod n}$ and includes one difference starting at every coefficient:
+///
+/// $$
+/// J_m^{\mathrm{cyclic}}(\boldsymbol\beta)
+/// = \frac{\lambda}{n}
+///   \sum_{i=0}^{n-1}
+///   \left[
+///     \sum_{j=0}^{m}(-1)^{m-j}\binom{m}{j}
+///     \beta_{(i+j)\bmod n}
+///   \right]^2.
+/// $$
+///
+/// The denominator is $n$ because there is one wrapped difference per coefficient. In code, $m$ and $\lambda$ are [`CyclicDifferencePenalty::order`] and [`CyclicDifferencePenalty::lambda`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CyclicDifferencePenalty {
     /// Penalty weight.

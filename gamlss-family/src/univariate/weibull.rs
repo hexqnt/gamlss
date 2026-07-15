@@ -21,6 +21,27 @@ mod scale_shape;
 const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
 
 /// Weibull family implementation carrier.
+///
+/// The shared scale-shape density is
+///
+/// $$
+/// f(y\mid a,k)=\frac{k}{a}\left(\frac{y}{a}\right)^{k-1}
+/// \exp\\!\left[-\left(\frac{y}{a}\right)^k\right],
+/// \qquad y>0,\ a>0,\ k>0.
+/// $$
+///
+/// Here $\Gamma$ is the gamma function.
+///
+/// Its first two moments are
+///
+/// $$
+/// \mathbb{E}(Y)=a\Gamma\\!\left(1+\frac1k\right), \qquad
+/// \operatorname{Var}(Y)=a^2\left\lbrack
+/// \Gamma\\!\left(1+\frac2k\right)-\Gamma^2\\!\left(1+\frac1k\right)
+/// \right\rbrack.
+/// $$
+///
+/// The shared carrier uses [`WeibullScaleShapeTheta::scale`] for $a$ and [`WeibullScaleShapeTheta::shape`] for $k$. The mean/shape parameterization converts its natural parameters to this $(a,k)$ pair before evaluating the likelihood.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
