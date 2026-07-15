@@ -97,5 +97,9 @@ approx.workspace = true
 argmin = "0.11.0"
 argmin-math = { version = "0.5.1", features = ["vec"] }
 
+[[example]]
+name = "simple_multivariate_fit"
+required-features = ["multivariate"]
+
 [lints]
 workspace = true
