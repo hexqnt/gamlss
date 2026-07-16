@@ -24,6 +24,12 @@ use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 /// $$
 ///
 /// The default log links give $\mu=\exp(\eta_\mu)$ and $\phi=\exp(\eta_\phi)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/negative_binomial_mean_dispersion.svg")
+)]
 pub type NegativeBinomialMeanDispersion = NegativeBinomialDispersion<Log, Log>;
 
 define_two_positive_parameter_blocks! {

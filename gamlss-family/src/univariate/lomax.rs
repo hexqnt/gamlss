@@ -14,6 +14,12 @@ use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 pub type LomaxShapeScale = Lomax<Log, Log>;
 
 /// Lomax (Pareto type II) family parameterized by positive shape and scale.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/lomax.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lomax<ShapeLink = Log, ScaleLink = Log> {
     marker: PhantomData<(ShapeLink, ScaleLink)>,

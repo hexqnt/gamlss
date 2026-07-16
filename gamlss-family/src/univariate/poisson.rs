@@ -32,6 +32,12 @@ pub type PoissonMean = Poisson<Log>;
 /// Its moments are $\mathbb{E}(Y)=\operatorname{Var}(Y)=\mu$. The default [`PoissonMean`] alias uses $\mu=\exp(\eta_\mu)$.
 ///
 /// In code, [`PoissonTheta::mu`] stores $\mu$ and [`PoissonEta::mu`] stores $\eta_\mu$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/poisson.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Poisson<MuLink = Log> {

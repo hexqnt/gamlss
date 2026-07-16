@@ -40,6 +40,12 @@ pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 /// Therefore $\mathbb{E}(Y)=(1-\pi)\lambda$. The default parameterization models $\lambda$ and $\pi$ directly; use [`ZipTotalMeanZeroProbability`] to model the unconditional mean instead.
 ///
 /// The canonical carrier retains historical field names: [`ZipTheta::mu`] stores the Poisson component mean $\lambda$, [`ZipTheta::sigma`] stores the zero probability $\pi$, and [`ZipEta`] uses `mu` and `sigma` for their predictors.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/zip.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zip<Param = ComponentMeanZeroProbability, MeanLink = Log, ZeroProbabilityLink = Logit> {
     marker: PhantomData<(Param, MeanLink, ZeroProbabilityLink)>,

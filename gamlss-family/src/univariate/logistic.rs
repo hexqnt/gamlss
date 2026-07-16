@@ -26,6 +26,12 @@ pub type LogisticMuSigma = Logistic<Identity, Log>;
 /// The natural-scale moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=\pi^2\sigma^2/3$. The default [`LogisticMuSigma`] alias uses $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
 ///
 /// The symbols $\mu,\sigma$ and predictors $\eta_\mu,\eta_\sigma$ correspond to the same-named fields of [`LogisticTheta`] and [`LogisticEta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/logistic.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Logistic<MuLink = Identity, SigmaLink = Log> {

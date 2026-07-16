@@ -25,6 +25,12 @@ use super::{
 /// $$
 ///
 /// The matching eta field is also named `sigma`, so the default links are $s=\exp(\eta_\sigma)$ and $\tau=2+\exp(\eta_\tau)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/student_t_stddev.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTStdDev<

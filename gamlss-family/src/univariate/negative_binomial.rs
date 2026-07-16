@@ -42,6 +42,12 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 /// The default [`NegativeBinomialMeanSize`] alias uses log links for both parameters.
 ///
 /// The implementation calls $r$ “shape”: [`NegativeBinomialTheta::mu`] stores $\mu$, [`NegativeBinomialTheta::shape`] stores $r$, and the matching [`NegativeBinomialEta`] fields hold $\eta_\mu,\eta_r$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/negative_binomial.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomial<MuLink = Log, ShapeLink = Log> {

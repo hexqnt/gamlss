@@ -1,2 +1,2 @@
 [build]
-rustdocflags = ["--html-in-header", "gamlss-family/katex-header.html"]
+rustdocflags = ["--html-in-header", "doc-assets/katex-header.html"]

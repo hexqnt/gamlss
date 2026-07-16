@@ -27,6 +27,12 @@ pub type LaplaceMuSigma = Laplace<Identity, Log>;
 /// The natural-scale moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=2\sigma^2$.
 ///
 /// The symbols $\mu$ and $\sigma$ correspond to the same-named fields of [`LaplaceTheta`]. `MuLink` and `SigmaLink` control their links; the default [`LaplaceMuSigma`] alias gives $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/laplace.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Laplace<MuLink = Identity, SigmaLink = Log> {

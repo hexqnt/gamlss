@@ -10,6 +10,12 @@ use super::{Exponential, ExponentialMeanTheta};
 /// Exponential distribution parameterized directly by rate $\lambda>0$.
 ///
 /// The default log link gives $\lambda=\exp(\eta_\lambda)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/exponential.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type ExponentialRate = Exponential<RateParam, Log>;
 /// Exponential rate parameterization marker.

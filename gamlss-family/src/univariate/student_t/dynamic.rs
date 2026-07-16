@@ -17,6 +17,12 @@ use super::{
 /// Student's t location-scale family with estimated degrees of freedom.
 ///
 /// The natural parameters are location $\mu\in\mathbb{R}$, scale $\sigma>0$, and degrees of freedom $\tau>0$. The fields of [`StudentTMuSigmaTauTheta`] use these same names; for the density and moment conditions, see [`StudentTTheta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/student_t.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTDynamic<
     MuLink = gamlss_core::Identity,

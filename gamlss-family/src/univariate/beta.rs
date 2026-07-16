@@ -59,6 +59,12 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 ///
 /// let _ = Beta::<Identity, Log>::new();
 /// ```
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/beta.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {

@@ -69,13 +69,16 @@ keywords.workspace = true
 categories.workspace = true
 include = [
     "src/**/*",
+    "doc-assets/*",
     "docs/**/*",
     "examples/**/*",
     "Cargo.toml",
     "README.md",
     "LICENSE*",
-
 ]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [features]
 default = ["formula"]

@@ -28,6 +28,12 @@ mod mean_shape;
 /// The moments are $\mathbb{E}(Y)=\mu$ and $\operatorname{Var}(Y)=\mu^3/\lambda$.
 ///
 /// The canonical Rust carrier retains the generic name `shape` for $\lambda$: [`InverseGaussianTheta::mu`] stores $\mu$ and [`InverseGaussianTheta::shape`] stores $\lambda$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/inverse_gaussian.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,

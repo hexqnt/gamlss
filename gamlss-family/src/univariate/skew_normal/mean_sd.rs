@@ -19,6 +19,12 @@ use super::{
 pub type SkewNormalMeanSdNu = SkewNormalMeanSd<Identity, Log, Identity>;
 
 /// Azzalini/SN1-style skew-normal family parameterized by mean and standard deviation.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/skew_normal_mean_sd.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewNormalMeanSd<MeanLink = Identity, SigmaLink = Log, NuLink = Identity> {
     marker: PhantomData<(MeanLink, SigmaLink, NuLink)>,

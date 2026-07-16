@@ -52,6 +52,12 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
 /// \qquad
 /// \sigma=\exp(\eta_\sigma).
 /// $$
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/normal.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

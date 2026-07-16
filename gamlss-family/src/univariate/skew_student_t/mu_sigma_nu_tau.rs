@@ -22,6 +22,12 @@ pub type SkewStudentTMuSigmaNuTau = SkewStudentT<Identity, Log, Identity, Log>;
 ///
 /// Its NLL gradient is analytic for location, scale and skewness. The
 /// degrees-of-freedom component currently uses a finite-difference fallback.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/skew_student_t.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewStudentT<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

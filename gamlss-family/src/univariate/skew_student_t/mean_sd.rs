@@ -23,6 +23,12 @@ pub type SkewStudentTMeanSdNuTau = SkewStudentTMeanSd<Identity, Log, Identity, L
 ///
 /// Its NLL gradient currently uses a finite-difference fallback and should be
 /// treated as a training slow path until an analytic gradient is added.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/skew_student_t_mean_sd.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewStudentTMeanSd<
     MeanLink = Identity,

@@ -19,6 +19,12 @@ pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// standard normal. Values of `nu` above or below one skew the distribution
 /// through `ln(nu)`, which keeps the default log link centered at the symmetric
 /// case.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/shash.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shash<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

@@ -27,6 +27,12 @@ pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
 /// Tweedie compound Poisson-gamma family for `1 < power < 2`.
 ///
 /// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/tweedie_mean_dispersion_power.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, DispersionLink, PowerLink)>,
@@ -577,6 +583,12 @@ impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
 /// Tweedie compound Poisson-gamma family parameterized by mean, CV, and power.
 ///
 /// Its NLL gradient is analytic and differentiates the compound Poisson-gamma series.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/tweedie_mean_cv_power.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {
     marker: PhantomData<(MeanLink, CvLink, PowerLink)>,

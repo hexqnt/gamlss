@@ -26,6 +26,12 @@ use super::{Zaga, ZagaTheta};
 /// The default links are $m=\exp(\eta_m)$, $c=\exp(\eta_c)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 ///
 /// These symbols correspond to the `total_mean`, `cv`, and `zero_probability` fields of [`ZagaTotalMeanCvZeroProbabilityTheta`] and [`ZagaTotalMeanCvZeroProbabilityEta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/zaga_total_mean_cv.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type ZagaTotalMeanCvZeroProbability = ZagaTotalMeanCv<Log, Log, Logit>;
 

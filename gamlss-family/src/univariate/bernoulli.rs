@@ -32,6 +32,12 @@ pub type BernoulliProbability = Bernoulli<Logit>;
 ///
 /// let _ = Bernoulli::<Identity>::new();
 /// ```
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/bernoulli.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bernoulli<MuLink = Logit> {

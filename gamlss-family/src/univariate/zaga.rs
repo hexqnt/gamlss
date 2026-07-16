@@ -36,6 +36,12 @@ mod total_mean_cv;
 /// Here $f_\Gamma(\\,\cdot\mid\alpha,\beta)$ is the shape/rate gamma density documented by [`crate::Gamma`]. Therefore $\mathbb{E}(Y)=(1-\pi)\mu$. The default parameterization models the component mean, component CV, and zero-mass probability; use [`ZagaTotalMeanCvZeroProbability`] to model the unconditional mean instead.
 ///
 /// The natural-scale carrier retains historical field names: [`ZagaTheta::mu`] is $\mu$, [`ZagaTheta::sigma`] is the component CV $c$, and [`ZagaTheta::nu`] is the zero probability $\pi$. [`ZagaEta`] uses the same field-to-symbol mapping for their predictors.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/zaga_component_mean_cv.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

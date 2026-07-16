@@ -10,6 +10,12 @@ use super::Gamma;
 /// Gamma distribution parameterized directly by shape $\alpha$ and rate $\beta$.
 ///
 /// The default log links give $\alpha=\exp(\eta_\alpha)$ and $\beta=\exp(\eta_\beta)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/gamma.svg")
+)]
 pub type GammaShapeRate = Gamma<ShapeRate, Log, Log>;
 
 /// Backward-compatible eta alias for the shape/rate gamma.

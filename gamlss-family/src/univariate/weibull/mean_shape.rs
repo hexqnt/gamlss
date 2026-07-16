@@ -10,6 +10,12 @@ use super::{Weibull, WeibullScaleShapeTheta};
 /// Weibull distribution parameterized by mean $\mu>0$ and shape $k>0$.
 ///
 /// It maps [`WeibullMeanShapeTheta::mean`] and [`WeibullMeanShapeTheta::shape`] to the scale-shape kernel through $a=\mu/\Gamma(1+1/k)$. The default links give $\mu=\exp(\eta_\mu)$ and $k=\exp(\eta_k)$ for the `mean` and `shape` predictor fields.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/weibull_mean_shape.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type WeibullMeanShape = Weibull<MeanShape, Log, Log>;
 /// Weibull mean/shape parameterization marker.

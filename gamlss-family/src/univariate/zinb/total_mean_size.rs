@@ -30,6 +30,12 @@ use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 /// The default links are $m=\exp(\eta_m)$, $r=\exp(\eta_r)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 ///
 /// These symbols correspond to the `total_mean`, `size`, and `zero_probability` fields of [`ZinbTotalMeanSizeZeroProbabilityTheta`] and [`ZinbTotalMeanSizeZeroProbabilityEta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/zinb_total_mean.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type ZinbTotalMeanSizeZeroProbability = ZinbTotalMeanSize<Log, Log, Logit>;
 

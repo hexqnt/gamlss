@@ -14,6 +14,12 @@ use crate::initial::{robust_location_scale, weighted_values};
 /// Johnson SU distribution with identity/log/identity/log links.
 pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 /// Johnson SU family in a location-scale-skewness-tail parameterization.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/johnson_su.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

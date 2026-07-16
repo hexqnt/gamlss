@@ -16,6 +16,12 @@ use super::{Gamma, GammaShapeRateTheta};
 /// $$
 ///
 /// The default log links give $\mu=\exp(\eta_\mu)$ and $\alpha=\exp(\eta_\alpha)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/gamma_mean_shape.svg")
+)]
 pub type GammaMeanShape = Gamma<MeanShape, Log, Log>;
 /// Gamma mean/shape parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

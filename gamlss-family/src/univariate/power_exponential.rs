@@ -22,6 +22,12 @@ pub type Ged<MuLink = Identity, SigmaLink = Log, NuLink = Log> =
 /// Default generalized error distribution alias.
 pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 /// Power exponential / generalized error distribution.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/power_exponential.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

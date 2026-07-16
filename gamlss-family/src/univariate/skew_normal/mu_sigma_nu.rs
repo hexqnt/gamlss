@@ -17,6 +17,12 @@ use super::{
 pub type SkewNormalMuSigmaNu = SkewNormal<Identity, Log, Identity>;
 
 /// Azzalini/SN1-style skew-normal family with location, scale and skewness.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/skew_normal.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewNormal<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

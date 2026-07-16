@@ -23,6 +23,12 @@ use super::{Gamma, GammaShapeRateTheta};
 /// $$
 ///
 /// The default log links give $\mu=\exp(\eta_\mu)$ and $c=\exp(\eta_c)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/gamma_mean_cv.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type GammaMeanCv = Gamma<MeanCv, Log, Log>;
 /// Gamma mean/coefficient-of-variation parameterization marker.

@@ -12,13 +12,13 @@ keywords.workspace = true
 categories.workspace = true
 include = [
     "src/**/*",
+    "doc-assets/*",
     "Cargo.toml",
     "README.md",
-    "katex-header.html",
 ]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "katex-header.html"]
+rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [dependencies]
 gamlss-special.workspace = true

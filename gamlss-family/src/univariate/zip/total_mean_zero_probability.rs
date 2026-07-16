@@ -27,6 +27,12 @@ use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 /// The default links are $m=\exp(\eta_m)$ and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 ///
 /// [`ZipTotalMeanZeroProbabilityTheta`] stores $m$ in `total_mean` and $\pi$ in `zero_probability`. For backward compatibility, the shared [`ZipEta`] stores their predictors $\eta_m,\eta_\pi$ in its `mu` and `sigma` fields.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/zip_total_mean.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;
 

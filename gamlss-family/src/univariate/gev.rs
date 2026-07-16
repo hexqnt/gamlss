@@ -14,6 +14,12 @@ const XI_EPSILON: f64 = 1.0e-8;
 /// GEV distribution with identity/log/identity links.
 pub type GevMuSigmaShape = Gev<Identity, Log, Identity>;
 /// Generalized extreme value family for block maxima.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/gev.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gev<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink)>,

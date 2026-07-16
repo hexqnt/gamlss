@@ -20,6 +20,12 @@ use crate::initial::{
 /// BEINF distribution with logit/logit/log/log links.
 pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;
 /// Beta distribution inflated at both zero and one.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/beinf.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beinf<MuLink = Logit, SigmaLink = Logit, NuLink = Log, TauLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,

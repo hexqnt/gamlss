@@ -16,6 +16,12 @@ use super::{InverseGaussian, InverseGaussianTheta};
 /// Here $c=\sqrt{\operatorname{Var}(Y)}/\mathbb{E}(Y)$.
 ///
 /// The natural fields [`InverseGaussianMeanCvTheta::mean`] and [`InverseGaussianMeanCvTheta::cv`] map to the canonical carrier through $\lambda=\mu/c^2$, so $\operatorname{Var}(Y)=\mu^2c^2$. The default links give $\mu=\exp(\eta_\mu)$ and $c=\exp(\eta_c)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/inverse_gaussian_mean_cv.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type InverseGaussianMeanCv = InverseGaussianCv<Log, Log>;
 

@@ -16,6 +16,12 @@ use crate::initial::{positive_floor, weighted_quantile, weighted_values};
 pub type GumbelMuSigma = Gumbel<Identity, Log>;
 
 /// Maximum-type Gumbel family parameterized by location and positive scale.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/gumbel.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gumbel<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,

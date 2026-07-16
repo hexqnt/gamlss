@@ -36,6 +36,12 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 /// Thus $\mathbb{E}(Y)=(1-\pi)\mu$. The default parameterization models the component mean, component size, and structural-zero probability; use [`ZinbTotalMeanSizeZeroProbability`] to model the unconditional mean instead.
 ///
 /// The canonical carrier uses [`ZinbTheta::mu`] for $\mu$, [`ZinbTheta::shape`] for the NB size $r$, and [`ZinbTheta::nu`] for $\pi$. [`ZinbEta`] uses the same historical field names for $\eta_\mu,\eta_r,\eta_\pi$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/zinb.svg")
+)]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zinb<MuLink = Log, ShapeLink = Log, NuLink = Logit> {

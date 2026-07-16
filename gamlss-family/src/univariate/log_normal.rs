@@ -195,6 +195,12 @@ impl_log_normal_helpers!(LogLocationLogSd, LocationLink, LogSdLink);
 /// Log-normal distribution parameterized by mean $\mu>0$ and log-scale SD $s>0$.
 ///
 /// [`LogNormalMeanLogSdTheta::mean`] stores $\mu$ and [`LogNormalMeanLogSdTheta::log_sd`] stores $s$. The canonical log-location is $m=\log\mu-s^2/2$; the default log links apply to the `mean` and `log_sd` predictor fields.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/log_normal_mean_log_sd.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
 /// Log-normal distribution parameterized by mean $\mu>0$ and coefficient of variation $c>0$.
@@ -209,14 +215,32 @@ pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
 /// Both parameters use log links by default.
 ///
 /// In code, $\mu$ and $c$ are the `mean` and `cv` fields of [`LogNormalMeanCvTheta`] and [`LogNormalMeanCvEta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/log_normal_mean_cv.svg")
+)]
 pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
 /// Log-normal distribution parameterized by median $q_{0.5}>0$ and log-scale SD $s>0$.
 ///
 /// The canonical log-location is $m=\log q_{0.5}$. The natural and eta carriers use the field names `median` and `log_sd`; both predictors use log links by default.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/log_normal_median_log_sd.svg")
+)]
 pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
 /// Log-normal distribution parameterized directly by log-location $m\in\mathbb{R}$ and log-scale SD $s>0$.
 ///
 /// The corresponding code fields are `log_location` and `log_sd`. Their default links are identity and log, respectively: $m=\eta_m$ and $s=\exp(\eta_s)$.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/log_normal.svg")
+)]
 #[allow(clippy::doc_markdown)]
 pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;
 
