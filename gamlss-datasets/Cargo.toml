@@ -10,6 +10,15 @@ repository.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
+build = "build.rs"
+
+[features]
+default = []
+rand = ["dep:rand", "dep:rand_distr"]
+
+[dependencies]
+rand = { workspace = true, optional = true }
+rand_distr = { workspace = true, optional = true }
 
 [lints]
 workspace = true
