@@ -19,6 +19,10 @@ rand = ["dep:rand", "dep:rand_distr"]
 [dependencies]
 rand = { workspace = true, optional = true }
 rand_distr = { workspace = true, optional = true }
+time = { version = "0.3.53", default-features = false, features = ["macros"] }
+
+[build-dependencies]
+time = { version = "0.3.53", default-features = false }
 
 [lints]
 workspace = true

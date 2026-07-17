@@ -1,17 +1,22 @@
 # gamlss-datasets
 
-Non-trivial built-in datasets and synthetic generators for the workspace examples and quick local experiments with `gamlss`.
+Built-in and synthetic datasets for workspace examples. The crate is internal (`publish = false`).
 
-The crate is internal to this repository (`publish = false`). Built-in data is authored in `data/*.csv` and compiled by `build.rs` into borrowed static slices, so loading performs no allocation or I/O. CSV values must be finite `f64` values with simple identifier column names; malformed data fails the build.
+CSV datasets are declared in `datasets.rs` and compiled into static slices. Loading performs no allocation or I/O.
 
 ```rust
-let data = gamlss_datasets::a1();
-assert_eq!(data.x.len(), data.y.len());
+datasets! {
+    measurements {
+        path: "data/measurements.csv",
+        x: Date,
+        y: [f64; 2],
+    }
+}
 ```
 
-Trivial synthetic datasets are generated from an explicit data-generating process instead of being stored as CSV fixtures.
+Supported `x` types: `f64`, `u8`, `u16`, `u32`, `u64`, `Date`, and `Time`. The `y` type is `f64` or `[f64; D]`. Multivariate responses are stored row-major as `&[[f64; D]]`. CSV starts with the `x` column followed by the `y` columns. Dates use `YYYY-MM-DD`; times use `HH:MM:SS[.fraction]`.
 
-Enable the `rand` feature for deterministic synthetic data generation:
+Enable the `rand` feature for synthetic generators:
 
 ```rust
 use gamlss_datasets::simulate::normal_linear;
