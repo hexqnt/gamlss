@@ -28,7 +28,7 @@ use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/negative_binomial_mean_dispersion.svg")
+    doc = include_str!("../../../doc-assets/distributions/negative_binomial_mean_dispersion.svg")
 )]
 pub type NegativeBinomialMeanDispersion = NegativeBinomialDispersion<Log, Log>;
 

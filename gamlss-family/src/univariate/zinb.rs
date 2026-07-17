@@ -40,7 +40,7 @@ const MAX_CDF_TERMS: u64 = 1_000_000;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/zinb.svg")
+    doc = include_str!("../../doc-assets/distributions/zinb.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

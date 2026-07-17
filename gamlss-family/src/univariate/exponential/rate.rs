@@ -14,7 +14,7 @@ use super::{Exponential, ExponentialMeanTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/exponential.svg")
+    doc = include_str!("../../../doc-assets/distributions/exponential.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type ExponentialRate = Exponential<RateParam, Log>;

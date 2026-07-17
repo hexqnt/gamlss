@@ -30,7 +30,7 @@ use super::{Zaga, ZagaTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/zaga_total_mean_cv.svg")
+    doc = include_str!("../../../doc-assets/distributions/zaga_total_mean_cv.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type ZagaTotalMeanCvZeroProbability = ZagaTotalMeanCv<Log, Log, Logit>;

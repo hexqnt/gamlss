@@ -18,7 +18,7 @@ pub type LomaxShapeScale = Lomax<Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/lomax.svg")
+    doc = include_str!("../../doc-assets/distributions/lomax.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lomax<ShapeLink = Log, ScaleLink = Log> {

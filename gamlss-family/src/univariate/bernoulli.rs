@@ -36,7 +36,7 @@ pub type BernoulliProbability = Bernoulli<Logit>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/bernoulli.svg")
+    doc = include_str!("../../doc-assets/distributions/bernoulli.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

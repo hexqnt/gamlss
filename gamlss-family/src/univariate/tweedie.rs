@@ -31,7 +31,7 @@ pub type TweedieMeanCvPower = TweedieCv<Log, Log, Logit>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/tweedie_mean_dispersion_power.svg")
+    doc = include_str!("../../doc-assets/distributions/tweedie_mean_dispersion_power.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tweedie<MeanLink = Log, DispersionLink = Log, PowerLink = Logit> {
@@ -587,7 +587,7 @@ impl From<TweedieMeanCvPowerTheta> for TweedieTheta {
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/tweedie_mean_cv_power.svg")
+    doc = include_str!("../../doc-assets/distributions/tweedie_mean_cv_power.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TweedieCv<MeanLink = Log, CvLink = Log, PowerLink = Logit> {

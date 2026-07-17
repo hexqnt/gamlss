@@ -32,7 +32,7 @@ mod mean_shape;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/inverse_gaussian.svg")
+    doc = include_str!("../../doc-assets/distributions/inverse_gaussian.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {

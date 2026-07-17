@@ -14,7 +14,7 @@ use super::{Weibull, WeibullScaleShapeTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/weibull_mean_shape.svg")
+    doc = include_str!("../../../doc-assets/distributions/weibull_mean_shape.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type WeibullMeanShape = Weibull<MeanShape, Log, Log>;

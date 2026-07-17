@@ -36,7 +36,7 @@ pub type PoissonMean = Poisson<Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/poisson.svg")
+    doc = include_str!("../../doc-assets/distributions/poisson.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

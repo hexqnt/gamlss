@@ -27,7 +27,7 @@ use super::{Gamma, GammaShapeRateTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/gamma_mean_cv.svg")
+    doc = include_str!("../../../doc-assets/distributions/gamma_mean_cv.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type GammaMeanCv = Gamma<MeanCv, Log, Log>;

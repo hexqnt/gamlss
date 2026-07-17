@@ -199,7 +199,7 @@ impl_log_normal_helpers!(LogLocationLogSd, LocationLink, LogSdLink);
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/log_normal_mean_log_sd.svg")
+    doc = include_str!("../../doc-assets/distributions/log_normal_mean_log_sd.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
@@ -219,7 +219,7 @@ pub type LogNormalMeanLogSd = LogNormal<MeanLogSd, Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/log_normal_mean_cv.svg")
+    doc = include_str!("../../doc-assets/distributions/log_normal_mean_cv.svg")
 )]
 pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
 /// Log-normal distribution parameterized by median $q_{0.5}>0$ and log-scale SD $s>0$.
@@ -229,7 +229,7 @@ pub type LogNormalMeanCv = LogNormal<MeanCv, Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/log_normal_median_log_sd.svg")
+    doc = include_str!("../../doc-assets/distributions/log_normal_median_log_sd.svg")
 )]
 pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
 /// Log-normal distribution parameterized directly by log-location $m\in\mathbb{R}$ and log-scale SD $s>0$.
@@ -239,7 +239,7 @@ pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/log_normal.svg")
+    doc = include_str!("../../doc-assets/distributions/log_normal.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;

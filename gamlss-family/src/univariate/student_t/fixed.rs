@@ -21,7 +21,7 @@ use super::{
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/student_t_fixed.svg")
+    doc = include_str!("../../../doc-assets/distributions/student_t_fixed.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = gamlss_core::Identity, SigmaLink = gamlss_core::Log> {

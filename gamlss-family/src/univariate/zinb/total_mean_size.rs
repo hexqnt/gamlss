@@ -34,7 +34,7 @@ use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/zinb_total_mean.svg")
+    doc = include_str!("../../../doc-assets/distributions/zinb_total_mean.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type ZinbTotalMeanSizeZeroProbability = ZinbTotalMeanSize<Log, Log, Logit>;

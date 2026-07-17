@@ -23,7 +23,7 @@ pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/shash.svg")
+    doc = include_str!("../../doc-assets/distributions/shash.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shash<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> {

@@ -20,7 +20,7 @@ use super::{Gamma, GammaShapeRateTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/gamma_mean_shape.svg")
+    doc = include_str!("../../../doc-assets/distributions/gamma_mean_shape.svg")
 )]
 pub type GammaMeanShape = Gamma<MeanShape, Log, Log>;
 /// Gamma mean/shape parameterization marker.

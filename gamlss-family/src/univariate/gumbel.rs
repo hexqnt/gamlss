@@ -20,7 +20,7 @@ pub type GumbelMuSigma = Gumbel<Identity, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/gumbel.svg")
+    doc = include_str!("../../doc-assets/distributions/gumbel.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gumbel<MuLink = Identity, SigmaLink = Log> {

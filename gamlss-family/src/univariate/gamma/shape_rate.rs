@@ -14,7 +14,7 @@ use super::Gamma;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/gamma.svg")
+    doc = include_str!("../../../doc-assets/distributions/gamma.svg")
 )]
 pub type GammaShapeRate = Gamma<ShapeRate, Log, Log>;
 

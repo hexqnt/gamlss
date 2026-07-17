@@ -63,7 +63,7 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/beta.svg")
+    doc = include_str!("../../doc-assets/distributions/beta.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

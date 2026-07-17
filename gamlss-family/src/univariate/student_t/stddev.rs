@@ -29,7 +29,7 @@ use super::{
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/student_t_stddev.svg")
+    doc = include_str!("../../../doc-assets/distributions/student_t_stddev.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

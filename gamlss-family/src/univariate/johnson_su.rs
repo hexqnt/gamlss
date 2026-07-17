@@ -18,7 +18,7 @@ pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/johnson_su.svg")
+    doc = include_str!("../../doc-assets/distributions/johnson_su.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JohnsonSu<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {

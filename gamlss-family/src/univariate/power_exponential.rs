@@ -26,7 +26,7 @@ pub type GedMuSigmaNu = PowerExponentialMuSigmaNu;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/power_exponential.svg")
+    doc = include_str!("../../doc-assets/distributions/power_exponential.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerExponential<MuLink = Identity, SigmaLink = Log, NuLink = Log> {

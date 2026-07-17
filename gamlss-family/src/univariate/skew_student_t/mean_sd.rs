@@ -27,7 +27,7 @@ pub type SkewStudentTMeanSdNuTau = SkewStudentTMeanSd<Identity, Log, Identity, L
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/skew_student_t_mean_sd.svg")
+    doc = include_str!("../../../doc-assets/distributions/skew_student_t_mean_sd.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewStudentTMeanSd<

@@ -12,7 +12,8 @@ keywords.workspace = true
 categories.workspace = true
 include = [
     "src/**/*",
-    "doc-assets/*",
+    "doc-assets/katex-header.html",
+    "doc-assets/distributions/*",
     "benches/**/*",
     "Cargo.toml",
     "README.md",

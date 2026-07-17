@@ -21,7 +21,7 @@ use super::{
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/student_t.svg")
+    doc = include_str!("../../../doc-assets/distributions/student_t.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudentTDynamic<

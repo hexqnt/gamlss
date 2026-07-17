@@ -40,7 +40,7 @@ mod total_mean_cv;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/zaga_component_mean_cv.svg")
+    doc = include_str!("../../doc-assets/distributions/zaga_component_mean_cv.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {

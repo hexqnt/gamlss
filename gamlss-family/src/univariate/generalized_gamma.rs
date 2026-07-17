@@ -27,7 +27,7 @@ pub type GeneralizedGammaScaleSigmaNu = GeneralizedGamma<Log, Log, Identity>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/generalized_gamma.svg")
+    doc = include_str!("../../doc-assets/distributions/generalized_gamma.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneralizedGamma<ScaleLink = Log, SigmaLink = Log, NuLink = Identity> {

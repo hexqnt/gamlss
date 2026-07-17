@@ -56,7 +56,7 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/normal.svg")
+    doc = include_str!("../../doc-assets/distributions/normal.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {

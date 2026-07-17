@@ -31,7 +31,7 @@ use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/zip_total_mean.svg")
+    doc = include_str!("../../../doc-assets/distributions/zip_total_mean.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>;

@@ -21,7 +21,7 @@ pub type SkewNormalMuSigmaNu = SkewNormal<Identity, Log, Identity>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/skew_normal.svg")
+    doc = include_str!("../../../doc-assets/distributions/skew_normal.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewNormal<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {

@@ -26,7 +26,7 @@ pub type SkewStudentTMuSigmaNuTau = SkewStudentT<Identity, Log, Identity, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/skew_student_t.svg")
+    doc = include_str!("../../../doc-assets/distributions/skew_student_t.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewStudentT<MuLink = Identity, SigmaLink = Log, NuLink = Identity, TauLink = Log> {

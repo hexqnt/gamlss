@@ -44,7 +44,7 @@ pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/zip.svg")
+    doc = include_str!("../../doc-assets/distributions/zip.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Zip<Param = ComponentMeanZeroProbability, MeanLink = Log, ZeroProbabilityLink = Logit> {

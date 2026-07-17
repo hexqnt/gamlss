@@ -24,7 +24,7 @@ pub type BeinfMuSigmaNuTau = Beinf<Logit, Logit, Log, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/beinf.svg")
+    doc = include_str!("../../doc-assets/distributions/beinf.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beinf<MuLink = Logit, SigmaLink = Logit, NuLink = Log, TauLink = Log> {

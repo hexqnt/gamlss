@@ -20,7 +20,7 @@ use super::{InverseGaussian, InverseGaussianTheta};
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/inverse_gaussian_mean_cv.svg")
+    doc = include_str!("../../../doc-assets/distributions/inverse_gaussian_mean_cv.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type InverseGaussianMeanCv = InverseGaussianCv<Log, Log>;

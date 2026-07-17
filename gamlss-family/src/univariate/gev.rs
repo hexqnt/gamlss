@@ -18,7 +18,7 @@ pub type GevMuSigmaShape = Gev<Identity, Log, Identity>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/gev.svg")
+    doc = include_str!("../../doc-assets/distributions/gev.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gev<MuLink = Identity, SigmaLink = Log, NuLink = Identity> {

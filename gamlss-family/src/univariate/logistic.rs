@@ -30,7 +30,7 @@ pub type LogisticMuSigma = Logistic<Identity, Log>;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../doc-assets/logistic.svg")
+    doc = include_str!("../../doc-assets/distributions/logistic.svg")
 )]
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

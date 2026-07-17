@@ -12,7 +12,7 @@ use super::Weibull;
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
-    doc = include_str!("../../../doc-assets/weibull.svg")
+    doc = include_str!("../../../doc-assets/distributions/weibull.svg")
 )]
 #[allow(clippy::doc_markdown)]
 pub type WeibullScaleShape = Weibull<ScaleShape, Log, Log>;
