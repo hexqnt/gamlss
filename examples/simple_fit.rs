@@ -12,11 +12,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     use gamlss::diagnostics::CdfDiagnosticsExt;
     use gamlss::family::Normal;
-    use gamlss_datasets::linear_normal;
+    use gamlss_datasets::simulate::normal_linear;
+    use rand::{SeedableRng, rngs::StdRng};
 
-    let data = linear_normal();
-    let x = data.x;
-    let y = data.y;
+    let x = [0.0, 1.0, 2.0, 3.0, 4.0];
+    let mut rng = StdRng::seed_from_u64(42);
+    let y = normal_linear(&x, 1.0, 0.4, 0.5, &mut rng)?;
     let n = y.len();
     let x_design = x.iter().map(|&x_i| [1.0, x_i]).collect::<Vec<_>>();
 
@@ -24,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sigma =
         ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(n), NoPenalty, mu.len());
     let blocks = ParameterBlocks::new((mu, sigma));
-    let mut model = Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, y)?;
+    let mut model = Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, &y)?;
 
     let mut parameters = model.initial_parameters()?;
     let mut grad = vec![0.0; model.dim()];

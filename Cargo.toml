@@ -101,7 +101,8 @@ gamlss-transform.workspace = true
 approx.workspace = true
 argmin = "0.11.0"
 argmin-math = { version = "0.5.1", features = ["vec"] }
-gamlss-datasets = { path = "gamlss-datasets" }
+gamlss-datasets = { path = "gamlss-datasets", features = ["rand"] }
+rand.workspace = true
 
 [[example]]
 name = "simple_multivariate_fit"

@@ -1,9 +1,6 @@
 use std::{env, error::Error, fmt::Write as _, fs, path::Path};
 
-const DATASETS: &[(&str, &str)] = &[
-    ("linear_normal", "data/linear_normal.csv"),
-    ("heteroscedastic_normal", "data/heteroscedastic_normal.csv"),
-];
+const DATASETS: &[(&str, &str)] = &[("a1", "data/a1.csv")];
 
 type NumericColumns = Vec<(String, Vec<f64>)>;
 

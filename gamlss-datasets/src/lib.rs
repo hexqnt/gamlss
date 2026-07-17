@@ -6,6 +6,10 @@
 //! allocation. The optional [`simulate`] module creates owned synthetic data
 //! from a parameterized data-generating process.
 
+#[allow(
+    clippy::unreadable_literal,
+    reason = "numeric literals are generated from CSV data"
+)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/built_in_datasets.rs"));
 }
@@ -13,53 +17,29 @@ mod generated {
 #[cfg(feature = "rand")]
 pub mod simulate;
 
-/// A small synthetic response with a roughly linear conditional mean.
+/// A one-dimensional regression dataset with a continuous response.
 ///
-/// The response is suitable for the introductory normal-location example:
-/// `y` is modeled by a linear predictor of `x` and an intercept-only scale.
-/// Both slices have the same length and contain only finite values.
+/// Both slices contain 2,000 aligned, finite observations.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LinearNormalDataset {
+pub struct A1Dataset {
     /// One scalar predictor per observation.
     pub x: &'static [f64],
     /// Continuous response values corresponding to [`Self::x`].
     pub y: &'static [f64],
 }
 
-/// Returns the synthetic dataset used by the `simple_fit` example.
+/// Returns the `a1` regression dataset.
 #[must_use]
-pub const fn linear_normal() -> LinearNormalDataset {
-    LinearNormalDataset {
-        x: &generated::LINEAR_NORMAL_X,
-        y: &generated::LINEAR_NORMAL_Y,
-    }
-}
-
-/// A synthetic normal response whose location and dispersion both vary with
-/// the predictor.
-///
-/// The data is intended for examples where `mu` and `sigma` receive distinct
-/// predictors. Both slices have the same length and contain only finite values.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HeteroscedasticNormalDataset {
-    /// One scalar predictor per observation.
-    pub x: &'static [f64],
-    /// Continuous response values corresponding to [`Self::x`].
-    pub y: &'static [f64],
-}
-
-/// Returns a small dataset with a changing conditional location and scale.
-#[must_use]
-pub const fn heteroscedastic_normal() -> HeteroscedasticNormalDataset {
-    HeteroscedasticNormalDataset {
-        x: &generated::HETEROSCEDASTIC_NORMAL_X,
-        y: &generated::HETEROSCEDASTIC_NORMAL_Y,
+pub const fn a1() -> A1Dataset {
+    A1Dataset {
+        x: &generated::A1_X,
+        y: &generated::A1_Y,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{heteroscedastic_normal, linear_normal};
+    use super::a1;
 
     fn assert_aligned_finite(x: &[f64], y: &[f64]) {
         assert_eq!(x.len(), y.len());
@@ -68,14 +48,9 @@ mod tests {
     }
 
     #[test]
-    fn linear_normal_has_aligned_finite_columns() {
-        let data = linear_normal();
+    fn a1_has_aligned_finite_columns() {
+        let data = a1();
         assert_aligned_finite(data.x, data.y);
-    }
-
-    #[test]
-    fn heteroscedastic_normal_has_aligned_finite_columns() {
-        let data = heteroscedastic_normal();
-        assert_aligned_finite(data.x, data.y);
+        assert_eq!(data.x.len(), 2_000);
     }
 }

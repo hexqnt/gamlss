@@ -324,6 +324,7 @@ dependencies = [
  "gamlss-special",
  "gamlss-spline",
  "gamlss-transform",
+ "rand 0.10.2",
 ]
 
 [[package]]
