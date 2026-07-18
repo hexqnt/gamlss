@@ -20,8 +20,9 @@ use gamlss_family::{
 #[cfg(feature = "multivariate")]
 use gamlss_family::{
     DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
-    FixedLowerTriangular, MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
-    MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta, PackedPartialCorr,
+    FixedLowerTriangular, FixedPartialCorrelations, MvNormalMeanStdPartialCorrDefault,
+    MvNormalMeanStdPartialCorrEta, MvStudentTCholeskyDefault, MvStudentTCholeskyEta,
+    MvStudentTCholeskyTheta,
 };
 
 #[allow(clippy::needless_pass_by_value)]
@@ -167,7 +168,7 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
         GeneralizedGammaScaleSigmaNu::new(),
         1.2,
         GeneralizedGammaTheta {
-            mu: 1.0,
+            scale: 1.0,
             sigma: 0.5,
             nu: 1.0,
         }
@@ -337,7 +338,7 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
     let eta = MvNormalMeanStdPartialCorrEta::new(
         [0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0],
-        PackedPartialCorr::try_new(vec![0.1, -0.2, 0.3]).unwrap(),
+        FixedPartialCorrelations::try_new(vec![0.1, -0.2, 0.3]).unwrap(),
     );
     let mut workspace = ();
     let theta = drd.theta(&eta, &mut workspace);
@@ -355,7 +356,7 @@ fn multivariate_prelude_exposes_new_generic_families() {
     let _ = DirichletMeanPrecision::<4>::new();
     let _ = MvNormalMeanStdPartialCorrDefault::<4>::new();
     let _ = MvStudentTCholeskyDefault::<4>::new();
-    let _ = PackedPartialCorr::<4>::zeros();
+    let _ = FixedPartialCorrelations::<4>::zeros();
 }
 
 #[cfg(feature = "multivariate")]

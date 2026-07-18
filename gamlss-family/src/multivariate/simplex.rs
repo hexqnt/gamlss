@@ -23,6 +23,24 @@ impl<const D: usize, PrecisionLink> DirichletMeanPrecision<D, PrecisionLink>
 where
     PrecisionLink: PositiveLink<f64>,
 {
+    /// Creates a stateless family value after checking the compile-time dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `D < 2`.
+    #[inline]
+    pub const fn try_new() -> Result<Self, ModelError> {
+        if D < 2 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "at least two",
+            });
+        }
+        Ok(Self {
+            marker: PhantomData,
+        })
+    }
+
     /// Creates a stateless Dirichlet mean/precision family.
     ///
     /// # Panics
@@ -456,8 +474,8 @@ fn valid_theta<const D: usize>(theta: &DirichletMeanPrecisionTheta<D>) -> bool {
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        DenseDesign, Family, Gamlss, LinearPredictorBlock, Mean, NoPenalty, ParameterBlock,
-        ParameterBlocks, Precision, SimplexLogitParameterBlock,
+        DenseDesign, Family, Gamlss, LinearPredictorBlock, Mean, ModelError, NoPenalty,
+        ParameterBlock, ParameterBlocks, Precision, SimplexLogitParameterBlock,
     };
 
     use super::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
@@ -470,6 +488,18 @@ mod tests {
         assert_relative_eq!(theta.mean.iter().sum::<f64>(), 1.0, epsilon = 1.0e-12);
         assert!(theta.mean.iter().all(|value| *value > 0.0));
         assert_relative_eq!(theta.precision, 3.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn checked_constructor_rejects_dimensions_below_two() {
+        assert_eq!(
+            DirichletMeanPrecision::<1>::try_new(),
+            Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "at least two",
+            })
+        );
+        assert!(DirichletMeanPrecision::<2>::try_new().is_ok());
     }
 
     #[test]

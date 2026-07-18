@@ -11,8 +11,7 @@ use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary};
 
 pub use mean_shape::{MeanShape, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta};
 pub use scale_shape::{
-    ScaleShape, WeibullEta, WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta,
-    WeibullTheta,
+    ScaleShape, WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta,
 };
 
 mod mean_shape;

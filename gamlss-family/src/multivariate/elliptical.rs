@@ -48,20 +48,20 @@ pub(super) fn valid_location_scale(
         })
 }
 
-/// Writes `L⁻¹(y - μ)` and returns its squared norm together with `ln(det(L))`.
-pub(super) fn standardize(
+/// Writes `L⁻¹(y - μ)`, returning whether all inputs and dimensions are valid.
+pub(super) fn forward_standardize(
     dimension: usize,
     observation: &[f64],
     location: &[f64],
     cholesky: &impl LowerTriangularMatrix,
     standardized: &mut [f64],
-) -> Option<(f64, f64)> {
+) -> bool {
     if observation.len() != dimension
         || !observation.iter().all(|value| value.is_finite())
         || !valid_location_scale(dimension, location, cholesky)
         || standardized.len() != dimension
     {
-        return None;
+        return false;
     }
 
     for ((standardized, observation), location) in standardized
@@ -77,6 +77,21 @@ pub(super) fn standardize(
             value = cholesky.lower(row, col).mul_add(-standardized_col, value);
         }
         standardized[row] = value / cholesky.lower(row, row);
+    }
+
+    true
+}
+
+/// Writes `L⁻¹(y - μ)` and returns its squared norm together with `ln(det(L))`.
+pub(super) fn standardize(
+    dimension: usize,
+    observation: &[f64],
+    location: &[f64],
+    cholesky: &impl LowerTriangularMatrix,
+    standardized: &mut [f64],
+) -> Option<(f64, f64)> {
+    if !forward_standardize(dimension, observation, location, cholesky, standardized) {
+        return None;
     }
 
     let quadratic = standardized.iter().map(|value| value * value).sum();

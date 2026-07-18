@@ -12,7 +12,7 @@ use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_
 
 #[cfg(feature = "rand")]
 use super::ComponentMeanZeroProbability;
-use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
+use super::{MAX_CDF_TERMS, Zip, ZipComponentMeanZeroProbabilityTheta};
 
 /// ZIP distribution parameterized by unconditional mean $m>0$ and structural-zero probability $\pi\in(0,1)$.
 ///
@@ -26,8 +26,6 @@ use super::{MAX_CDF_TERMS, Zip, ZipEta, ZipTheta};
 ///
 /// The default links are $m=\exp(\eta_m)$ and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 ///
-/// [`ZipTotalMeanZeroProbabilityTheta`] stores $m$ in `total_mean` and $\pi$ in `zero_probability`. For backward compatibility, the shared [`ZipEta`] stores their predictors $\eta_m,\eta_\pi$ in its `mu` and `sigma` fields.
-///
 /// ### Parameterization examples
 #[cfg_attr(
     doc,
@@ -40,6 +38,34 @@ pub type ZipTotalMeanZeroProbability = Zip<TotalMeanZeroProbability, Log, Logit>
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TotalMeanZeroProbability;
 
+/// Predictors for total-mean ZIP on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZipTotalMeanZeroProbabilityEta {
+    /// Unconditional-mean predictor.
+    pub total_mean: f64,
+    /// Zero-inflation probability predictor.
+    pub zero_probability: f64,
+}
+
+impl ParameterParts<2> for ZipTotalMeanZeroProbabilityEta {
+    #[inline]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            total_mean: values[0],
+            zero_probability: values[1],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.total_mean,
+            1 => self.zero_probability,
+            _ => unreachable!("total-mean ZIP eta only has indices 0 and 1"),
+        }
+    }
+}
+
 /// Natural-scale ZIP total-mean/zero-probability parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZipTotalMeanZeroProbabilityTheta {
@@ -51,10 +77,10 @@ pub struct ZipTotalMeanZeroProbabilityTheta {
 
 impl ZipTotalMeanZeroProbabilityTheta {
     #[inline]
-    fn component(self) -> ZipTheta {
-        ZipTheta {
-            mu: self.total_mean / (1.0 - self.zero_probability),
-            sigma: self.zero_probability,
+    fn component(self) -> ZipComponentMeanZeroProbabilityTheta {
+        ZipComponentMeanZeroProbabilityTheta {
+            component_mean: self.total_mean / (1.0 - self.zero_probability),
+            zero_probability: self.zero_probability,
         }
     }
 }
@@ -65,10 +91,10 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     #[inline]
-    fn theta_from_eta(eta: ZipEta) -> ZipTotalMeanZeroProbabilityTheta {
+    fn theta_from_eta(eta: ZipTotalMeanZeroProbabilityEta) -> ZipTotalMeanZeroProbabilityTheta {
         ZipTotalMeanZeroProbabilityTheta {
-            total_mean: MeanLink::inverse(eta.mu),
-            zero_probability: ZeroProbabilityLink::inverse(eta.sigma),
+            total_mean: MeanLink::inverse(eta.total_mean),
+            zero_probability: ZeroProbabilityLink::inverse(eta.zero_probability),
         }
     }
 }
@@ -85,9 +111,9 @@ where
     MeanLink: PositiveLink<f64>,
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    type Eta = ZipEta;
+    type Eta = ZipTotalMeanZeroProbabilityEta;
     type Theta = ZipTotalMeanZeroProbabilityTheta;
-    type GradientEta = ZipEta;
+    type GradientEta = ZipTotalMeanZeroProbabilityEta;
     type Observation<'obs> = f64;
     type Workspace = ();
     #[inline]
@@ -115,19 +141,23 @@ where
         let component = theta.component();
         let nll = Self::nll_theta(y, component);
         if !nll.is_finite() {
-            return (nll, ZipEta::from_array([f64::NAN; 2]));
+            return (
+                nll,
+                ZipTotalMeanZeroProbabilityEta::from_array([f64::NAN; 2]),
+            );
         }
         let component_gradient = Self::gradient_component_theta(y, component);
         let one_minus_zero = 1.0 - theta.zero_probability;
-        let d_total_mean = component_gradient.mu / one_minus_zero;
-        let d_zero_probability = component_gradient.mu * theta.total_mean
+        let d_total_mean = component_gradient.component_mean / one_minus_zero;
+        let d_zero_probability = component_gradient.component_mean * theta.total_mean
             / (one_minus_zero * one_minus_zero)
-            + component_gradient.sigma;
+            + component_gradient.zero_probability;
         (
             nll,
-            ZipEta {
-                mu: d_total_mean * MeanLink::derivative_inverse(eta.mu),
-                sigma: d_zero_probability * ZeroProbabilityLink::derivative_inverse(eta.sigma),
+            ZipTotalMeanZeroProbabilityEta {
+                total_mean: d_total_mean * MeanLink::derivative_inverse(eta.total_mean),
+                zero_probability: d_zero_probability
+                    * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
             },
         )
     }
@@ -157,9 +187,11 @@ where
             0.1
         };
 
-        ZipEta {
-            mu: MeanLink::initial_eta_from_theta(positive_floor(mean)),
-            sigma: ZeroProbabilityLink::initial_eta_from_theta(probability_floor(zero_rate)),
+        ZipTotalMeanZeroProbabilityEta {
+            total_mean: MeanLink::initial_eta_from_theta(positive_floor(mean)),
+            zero_probability: ZeroProbabilityLink::initial_eta_from_theta(probability_floor(
+                zero_rate,
+            )),
         }
     }
 }
@@ -183,7 +215,9 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let theta = theta.component();
-        if !is_positive_finite(theta.mu) || !is_strict_probability(theta.sigma) {
+        if !is_positive_finite(theta.component_mean)
+            || !is_strict_probability(theta.zero_probability)
+        {
             return f64::NAN;
         }
 

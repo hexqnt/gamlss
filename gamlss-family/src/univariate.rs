@@ -11,9 +11,8 @@ pub use exponential::{
     ExponentialRateEta, ExponentialRateTheta,
 };
 pub use gamma::{
-    Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape,
-    GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
-    GammaTheta,
+    Gamma, GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta,
+    GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
 };
 pub use generalized_gamma::{
     GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
@@ -28,10 +27,10 @@ pub use inverse_gaussian::{
 pub use johnson_su::{JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta};
 pub use laplace::{Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta};
 pub use log_normal::{
-    LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
+    LogNormal, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
     LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
     LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
-    LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta,
+    LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta,
 };
 pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
 pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
@@ -65,22 +64,23 @@ pub use tweedie::{
     TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
 };
 pub use weibull::{
-    Weibull, WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
-    WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta,
+    Weibull, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape,
+    WeibullScaleShapeEta, WeibullScaleShapeTheta,
 };
 pub use zaga::{
-    Zaga, ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
-    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
-    ZagaTotalMeanCvZeroProbabilityTheta,
+    Zaga, ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
+    ZagaComponentMeanCvZeroProbabilityTheta, ZagaTotalMeanCvZeroProbability,
+    ZagaTotalMeanCvZeroProbabilityEta, ZagaTotalMeanCvZeroProbabilityTheta,
 };
 pub use zinb::{
-    Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability, ZinbTheta,
-    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityEta,
-    ZinbTotalMeanSizeZeroProbabilityTheta,
+    Zinb, ZinbComponentMeanSizeZeroProbability, ZinbComponentMeanSizeZeroProbabilityEta,
+    ZinbComponentMeanSizeZeroProbabilityTheta, ZinbTotalMeanSizeZeroProbability,
+    ZinbTotalMeanSizeZeroProbabilityEta, ZinbTotalMeanSizeZeroProbabilityTheta,
 };
 pub use zip::{
-    Zip, ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
-    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+    Zip, ZipComponentMeanZeroProbability, ZipComponentMeanZeroProbabilityEta,
+    ZipComponentMeanZeroProbabilityTheta, ZipTotalMeanZeroProbability,
+    ZipTotalMeanZeroProbabilityEta, ZipTotalMeanZeroProbabilityTheta,
 };
 
 /// Beta inflated at zero and one distribution.

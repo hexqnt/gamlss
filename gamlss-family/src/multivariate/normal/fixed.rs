@@ -36,6 +36,24 @@ where
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
 {
+    /// Creates a stateless family value after checking the compile-time dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `D == 0`.
+    #[inline]
+    pub const fn try_new() -> Result<Self, ModelError> {
+        if D == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
+            marker: PhantomData,
+        })
+    }
+
     /// Creates a stateless family value.
     ///
     /// # Panics
@@ -252,28 +270,16 @@ where
         preceding: &[f64],
         theta: &Self::Theta,
     ) -> f64 {
-        if component >= D
-            || preceding.len() < component
-            || !y.is_finite()
-            || !kernel::valid_theta(D, theta.mu(), theta.cholesky())
-        {
-            return f64::NAN;
-        }
         let mut standardized = [0.0; D];
-        for row in 0..component {
-            let mut residual = preceding[row] - theta.mu()[row];
-            for col in 0..row {
-                residual -= theta.cholesky().lower(row, col) * standardized[col];
-            }
-            standardized[row] = residual / theta.cholesky().lower(row, row);
-        }
-        let conditional_mean = (0..component).fold(theta.mu()[component], |mean, col| {
-            theta
-                .cholesky()
-                .lower(component, col)
-                .mul_add(standardized[col], mean)
-        });
-        unit_normal_cdf((y - conditional_mean) / theta.cholesky().lower(component, component))
+        kernel::conditional_cdf(
+            D,
+            component,
+            y,
+            preceding,
+            theta.mu(),
+            theta.cholesky(),
+            &mut standardized,
+        )
     }
 }
 
@@ -296,10 +302,7 @@ where
                 actual: out.len(),
             });
         }
-        for component in 0..D {
-            out[component] =
-                self.conditional_cdf(component, observation[component], &observation, theta);
-        }
+        kernel::rosenblatt_into(D, &observation, theta.mu(), theta.cholesky(), out);
         Ok(())
     }
 }
@@ -565,14 +568,18 @@ impl<const D: usize> MvNormalCholeskyTheta<D> {
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        CholeskyScale, DenseDesign, Family, FixedDimensionalFamily, Gamlss, HasMarginalCdf,
-        LinearPredictorBlock, LowerTriangularParameterBlock, Mu, NoPenalty, ObjectiveScale,
-        ParameterBlocks, RidgePenalty, VectorParameterBlock,
+        CholeskyScale, DenseDesign, Family, FixedDimensionalFamily, Gamlss, HasConditionalCdf,
+        HasMarginalCdf, HasRosenblattTransform, LinearPredictorBlock,
+        LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, ObjectiveScale, ParameterBlocks,
+        RidgePenalty, VectorParameterBlock,
     };
 
     use super::{FixedLowerTriangular, MvNormalCholeskyEta, MvNormalCholeskyTheta};
     use crate::constants::HALF_LOG_2_PI;
-    use crate::multivariate::normal::MvNormalCholeskyDefault;
+    use crate::multivariate::matrix::PackedLowerTriangular;
+    use crate::multivariate::normal::{
+        DynMvNormalCholeskyDefault, DynMvNormalCholeskyTheta, MvNormalCholeskyDefault,
+    };
     use crate::{NormalMuSigma, NormalTheta};
 
     fn assert_fixed_dimensional_family<F: FixedDimensionalFamily<D>, const D: usize>() {}
@@ -626,9 +633,78 @@ mod tests {
         LinearPredictorBlock::new(DenseDesign::intercept(n))
     }
 
+    fn assert_fixed_dynamic_capabilities_match<const D: usize>() {
+        let fixed = MvNormalCholeskyDefault::<D>::new();
+        let dynamic = DynMvNormalCholeskyDefault::new(D).unwrap();
+        let mu = std::array::from_fn(|component| 0.1 * component as f64 - 0.2);
+        let mut cholesky = FixedLowerTriangular::zeros();
+        let mut packed = Vec::new();
+        for row in 0..D {
+            for col in 0..=row {
+                let value = if row == col {
+                    0.8 + 0.1 * row as f64
+                } else {
+                    0.05 * (row + col + 1) as f64
+                };
+                cholesky.set_lower(row, col, value).unwrap();
+                packed.push(value);
+            }
+        }
+        let fixed_theta = MvNormalCholeskyTheta::try_new(mu, cholesky).unwrap();
+        let dynamic_theta = DynMvNormalCholeskyTheta::try_new(
+            mu.to_vec(),
+            PackedLowerTriangular::try_new(D, packed).unwrap(),
+        )
+        .unwrap();
+        let observation = std::array::from_fn(|component| 0.3 - 0.12 * component as f64);
+
+        for component in 0..D {
+            assert_relative_eq!(
+                fixed.marginal_cdf(component, observation[component], &fixed_theta),
+                dynamic.marginal_cdf(component, observation[component], &dynamic_theta),
+                epsilon = 1.0e-12
+            );
+            assert_relative_eq!(
+                fixed.conditional_cdf(
+                    component,
+                    observation[component],
+                    &observation,
+                    &fixed_theta,
+                ),
+                dynamic.conditional_cdf(
+                    component,
+                    observation[component],
+                    &observation,
+                    &dynamic_theta,
+                ),
+                epsilon = 1.0e-12
+            );
+        }
+
+        let mut fixed_out = [0.0; D];
+        let mut dynamic_out = vec![0.0; D];
+        fixed
+            .rosenblatt_into(observation, &fixed_theta, &mut fixed_out)
+            .unwrap();
+        dynamic
+            .rosenblatt_into(&observation, &dynamic_theta, &mut dynamic_out)
+            .unwrap();
+        for (fixed, dynamic) in fixed_out.into_iter().zip(dynamic_out) {
+            assert_relative_eq!(fixed, dynamic, epsilon = 1.0e-12);
+        }
+    }
+
     #[test]
     fn marker_trait_is_implemented() {
         assert_fixed_dimensional_family::<MvNormalCholeskyDefault<3>, 3>();
+    }
+
+    #[test]
+    fn fixed_and_dynamic_cdf_capabilities_match_for_d1_through_d4() {
+        assert_fixed_dynamic_capabilities_match::<1>();
+        assert_fixed_dynamic_capabilities_match::<2>();
+        assert_fixed_dynamic_capabilities_match::<3>();
+        assert_fixed_dynamic_capabilities_match::<4>();
     }
 
     #[test]
@@ -827,6 +903,18 @@ mod tests {
     #[should_panic(expected = "multivariate normal dimension must be positive")]
     fn zero_dimension_is_invalid() {
         let _ = MvNormalCholeskyDefault::<0>::new();
+    }
+
+    #[test]
+    fn checked_constructor_rejects_zero_dimension() {
+        assert_eq!(
+            MvNormalCholeskyDefault::<0>::try_new(),
+            Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            })
+        );
+        assert!(MvNormalCholeskyDefault::<1>::try_new().is_ok());
     }
 
     #[test]

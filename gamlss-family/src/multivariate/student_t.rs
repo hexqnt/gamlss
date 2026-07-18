@@ -27,7 +27,8 @@ pub type MvStudentTCholeskyDefault<const D: usize> =
 /// `L L'` is the Student-t scale matrix, not its covariance. The covariance is
 /// defined only for `tau > 2`, when it equals `tau / (tau - 2) * L L'`. The
 /// default [`LogPlus<2>`] link keeps fitted degrees of freedom above that
-/// boundary; custom links need only satisfy the family-level `tau > 0` domain.
+/// boundary; custom links must satisfy the family-level `tau > 0` domain through
+/// [`PositiveLink`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MvStudentTCholesky<
     const D: usize,
@@ -45,8 +46,26 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
+    /// Creates a stateless family value after checking the compile-time dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `D == 0`.
+    #[inline]
+    pub const fn try_new() -> Result<Self, ModelError> {
+        if D == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
+            marker: PhantomData,
+        })
+    }
+
     /// Creates a stateless family value.
     ///
     /// # Panics
@@ -179,7 +198,7 @@ where
     MuLink: InitialEtaFromTheta<f64>,
     DiagonalLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     OffDiagonalLink: InitialEtaFromTheta<f64>,
-    TauLink: InitialEtaFromTheta<f64>,
+    TauLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -192,7 +211,7 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     type Eta = MvStudentTCholeskyEta<D>;
     type Theta = MvStudentTCholeskyTheta<D>;
@@ -244,7 +263,7 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
 }
 
@@ -254,7 +273,7 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn observation_dimension(&self) -> usize {
         D
@@ -267,7 +286,7 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || component >= D || !valid_theta(theta) {
@@ -288,7 +307,7 @@ where
     MuLink: Link<f64>,
     DiagonalLink: PositiveLink<f64>,
     OffDiagonalLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     type Sample = [f64; D];
 
@@ -329,7 +348,7 @@ where
     MuLink: InitialEtaFromTheta<f64>,
     DiagonalLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     OffDiagonalLink: InitialEtaFromTheta<f64>,
-    TauLink: InitialEtaFromTheta<f64>,
+    TauLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     type Shape = Product<LocationCholesky<D>, Scalar<Tau>>;
 
@@ -539,14 +558,26 @@ mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
         CholeskyScale, DenseDesign, Family, Gamlss, HasMarginalCdf, LinearPredictorBlock,
-        LowerTriangularParameterBlock, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Tau,
-        VectorParameterBlock,
+        LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
+        Tau, VectorParameterBlock,
     };
 
     use super::{MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta};
     use crate::multivariate::matrix::FixedLowerTriangular;
     use crate::multivariate::normal::{MvNormalCholeskyDefault, MvNormalCholeskyTheta};
     use crate::{StudentTMuSigmaTau, StudentTMuSigmaTauTheta};
+
+    #[test]
+    fn checked_constructor_rejects_zero_dimension() {
+        assert_eq!(
+            MvStudentTCholeskyDefault::<0>::try_new(),
+            Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            })
+        );
+        assert!(MvStudentTCholeskyDefault::<1>::try_new().is_ok());
+    }
 
     #[test]
     fn one_dimensional_case_matches_scalar_student_t() {

@@ -9,15 +9,16 @@ mod common;
 
 #[test]
 fn total_mean_parameterizations_match_component_equivalents() {
-    let zip_component = ZipMeanZeroProbability::new();
+    let zip_component = ZipComponentMeanZeroProbability::new();
     let zip_total = ZipTotalMeanZeroProbability::new();
-    let zip_component_theta = ZipTheta {
-        mu: 2.0,
-        sigma: 0.3,
+    let zip_component_theta = ZipComponentMeanZeroProbabilityTheta {
+        component_mean: 2.0,
+        zero_probability: 0.3,
     };
     let zip_total_theta = ZipTotalMeanZeroProbabilityTheta {
-        total_mean: (1.0 - zip_component_theta.sigma) * zip_component_theta.mu,
-        zero_probability: zip_component_theta.sigma,
+        total_mean: (1.0 - zip_component_theta.zero_probability)
+            * zip_component_theta.component_mean,
+        zero_probability: zip_component_theta.zero_probability,
     };
     assert_close(
         zip_total.nll(3.0, &zip_total_theta, &mut zip_total.workspace()),
@@ -32,17 +33,18 @@ fn total_mean_parameterizations_match_component_equivalents() {
         1.0e-12,
     );
 
-    let zaga_component = ZagaMeanSigmaZeroProbability::new();
+    let zaga_component = ZagaComponentMeanCvZeroProbability::new();
     let zaga_total = ZagaTotalMeanCvZeroProbability::new();
-    let zaga_component_theta = ZagaTheta {
-        mu: 2.0,
-        sigma: 0.6,
-        nu: 0.25,
+    let zaga_component_theta = ZagaComponentMeanCvZeroProbabilityTheta {
+        component_mean: 2.0,
+        cv: 0.6,
+        zero_probability: 0.25,
     };
     let zaga_total_theta = ZagaTotalMeanCvZeroProbabilityTheta {
-        total_mean: (1.0 - zaga_component_theta.nu) * zaga_component_theta.mu,
-        cv: zaga_component_theta.sigma,
-        zero_probability: zaga_component_theta.nu,
+        total_mean: (1.0 - zaga_component_theta.zero_probability)
+            * zaga_component_theta.component_mean,
+        cv: zaga_component_theta.cv,
+        zero_probability: zaga_component_theta.zero_probability,
     };
     assert_close(
         zaga_total.nll(1.4, &zaga_total_theta, &mut zaga_total.workspace()),
@@ -57,17 +59,18 @@ fn total_mean_parameterizations_match_component_equivalents() {
         1.0e-12,
     );
 
-    let zinb_component = ZinbMeanSizeZeroProbability::new();
+    let zinb_component = ZinbComponentMeanSizeZeroProbability::new();
     let zinb_total = ZinbTotalMeanSizeZeroProbability::new();
-    let zinb_component_theta = ZinbTheta {
-        mu: 2.0,
-        shape: 1.5,
-        nu: 0.25,
+    let zinb_component_theta = ZinbComponentMeanSizeZeroProbabilityTheta {
+        component_mean: 2.0,
+        size: 1.5,
+        zero_probability: 0.25,
     };
     let zinb_total_theta = ZinbTotalMeanSizeZeroProbabilityTheta {
-        total_mean: (1.0 - zinb_component_theta.nu) * zinb_component_theta.mu,
-        size: zinb_component_theta.shape,
-        zero_probability: zinb_component_theta.nu,
+        total_mean: (1.0 - zinb_component_theta.zero_probability)
+            * zinb_component_theta.component_mean,
+        size: zinb_component_theta.size,
+        zero_probability: zinb_component_theta.zero_probability,
     };
     assert_close(
         zinb_total.nll(3.0, &zinb_total_theta, &mut zinb_total.workspace()),

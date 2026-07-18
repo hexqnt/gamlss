@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Mu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
+    AboveTwoLink, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Mu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -45,7 +45,7 @@ impl<MuLink, SigmaLink, TauLink> StudentTStdDev<MuLink, SigmaLink, TauLink>
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     /// Creates a stateless standard-deviation Student's t family.
     #[inline]
@@ -105,7 +105,7 @@ impl<MuLink, SigmaLink, TauLink> Default for StudentTStdDev<MuLink, SigmaLink, T
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -122,7 +122,7 @@ impl<MuLink, SigmaLink, TauLink> Family for StudentTStdDev<MuLink, SigmaLink, Ta
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     type Eta = StudentTMuSdTauEta;
     type Theta = StudentTMuSdTauTheta;
@@ -163,7 +163,7 @@ impl<MuLink, SigmaLink, TauLink> InitialEtaFromObservations<3>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    TauLink: InitialEtaFromTheta<f64> + Link<f64>,
+    TauLink: InitialEtaFromTheta<f64> + AboveTwoLink<f64>,
 {
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -190,7 +190,7 @@ impl<MuLink, SigmaLink, TauLink> HasCdf for StudentTStdDev<MuLink, SigmaLink, Ta
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
@@ -208,7 +208,7 @@ impl<MuLink, SigmaLink, TauLink> HasQuantile for StudentTStdDev<MuLink, SigmaLin
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
@@ -225,7 +225,7 @@ impl<MuLink, SigmaLink, TauLink> HasCrps for StudentTStdDev<MuLink, SigmaLink, T
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
@@ -246,7 +246,7 @@ where
     Rng: rand::Rng,
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     type Sample = f64;
 

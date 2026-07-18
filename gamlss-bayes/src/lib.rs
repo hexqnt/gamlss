@@ -437,8 +437,8 @@ pub trait CoefficientPrior {
 
     /// Computes the negative log-density and adds its gradient in one operation.
     ///
-    /// The default preserves compatibility for custom priors. Implementations
-    /// can override it when value and gradient share intermediate work.
+    /// The default composes the separate value and gradient operations.
+    /// Implementations can override it when both share intermediate work.
     fn negative_log_density_and_add_gradient(
         &self,
         coefficients: &[f64],

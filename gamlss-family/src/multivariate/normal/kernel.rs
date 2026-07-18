@@ -1,5 +1,6 @@
 use crate::constants::HALF_LOG_2_PI;
 use crate::multivariate::elliptical::{self, LowerTriangularMatrix};
+use gamlss_special::unit_normal_cdf;
 
 pub(super) fn cholesky_score(
     row: usize,
@@ -71,4 +72,57 @@ pub(super) fn marginal_scale(
         })
         .sum::<f64>()
         .sqrt()
+}
+
+pub(super) fn conditional_cdf(
+    dimension: usize,
+    component: usize,
+    y: f64,
+    preceding: &[f64],
+    mu: &[f64],
+    cholesky: &impl LowerTriangularMatrix,
+    standardized: &mut [f64],
+) -> f64 {
+    if component >= dimension
+        || preceding.len() < component
+        || standardized.len() < component
+        || !y.is_finite()
+        || !valid_theta(dimension, mu, cholesky)
+    {
+        return f64::NAN;
+    }
+    for row in 0..component {
+        let mut residual = preceding[row] - mu[row];
+        for (col, standardized_col) in standardized.iter().copied().take(row).enumerate() {
+            residual = cholesky
+                .lower(row, col)
+                .mul_add(-standardized_col, residual);
+        }
+        standardized[row] = residual / cholesky.lower(row, row);
+    }
+    let conditional_mean = standardized
+        .iter()
+        .copied()
+        .take(component)
+        .enumerate()
+        .fold(mu[component], |mean, (col, standardized)| {
+            cholesky.lower(component, col).mul_add(standardized, mean)
+        });
+    unit_normal_cdf((y - conditional_mean) / cholesky.lower(component, component))
+}
+
+pub(super) fn rosenblatt_into(
+    dimension: usize,
+    observation: &[f64],
+    mu: &[f64],
+    cholesky: &impl LowerTriangularMatrix,
+    out: &mut [f64],
+) {
+    if !elliptical::forward_standardize(dimension, observation, mu, cholesky, out) {
+        out.fill(f64::NAN);
+        return;
+    }
+    for value in out {
+        *value = unit_normal_cdf(*value);
+    }
 }

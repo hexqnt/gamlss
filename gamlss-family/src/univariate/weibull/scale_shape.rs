@@ -16,10 +16,6 @@ use super::Weibull;
 )]
 #[allow(clippy::doc_markdown)]
 pub type WeibullScaleShape = Weibull<ScaleShape, Log, Log>;
-/// Backward-compatible eta alias for scale/shape Weibull.
-pub type WeibullEta = WeibullScaleShapeEta;
-/// Backward-compatible theta alias for scale/shape Weibull.
-pub type WeibullTheta = WeibullScaleShapeTheta;
 /// Weibull scale/shape parameterization marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScaleShape;

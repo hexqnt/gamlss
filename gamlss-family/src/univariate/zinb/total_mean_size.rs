@@ -15,7 +15,7 @@ use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
 
-use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
+use super::{MAX_CDF_TERMS, Zinb, ZinbComponentMeanSizeZeroProbabilityTheta};
 
 /// ZINB distribution parameterized by unconditional mean $m$, NB size $r$, and structural-zero probability $\pi$.
 ///
@@ -84,11 +84,11 @@ pub struct ZinbTotalMeanSizeZeroProbabilityTheta {
 
 impl ZinbTotalMeanSizeZeroProbabilityTheta {
     #[inline]
-    fn component(self) -> ZinbTheta {
-        ZinbTheta {
-            mu: self.total_mean / (1.0 - self.zero_probability),
-            shape: self.size,
-            nu: self.zero_probability,
+    fn component(self) -> ZinbComponentMeanSizeZeroProbabilityTheta {
+        ZinbComponentMeanSizeZeroProbabilityTheta {
+            component_mean: self.total_mean / (1.0 - self.zero_probability),
+            size: self.size,
+            zero_probability: self.zero_probability,
         }
     }
 }
@@ -190,15 +190,15 @@ where
 
         let component_gradient = Zinb::<Log, Log, Logit>::gradient_component_theta(y, component);
         let one_minus_zero = 1.0 - theta.zero_probability;
-        let d_total_mean = component_gradient.mu / one_minus_zero;
-        let d_zero_probability = component_gradient.mu * theta.total_mean
+        let d_total_mean = component_gradient.component_mean / one_minus_zero;
+        let d_zero_probability = component_gradient.component_mean * theta.total_mean
             / (one_minus_zero * one_minus_zero)
-            + component_gradient.nu;
+            + component_gradient.zero_probability;
         (
             nll,
             ZinbTotalMeanSizeZeroProbabilityEta {
                 total_mean: d_total_mean * MeanLink::derivative_inverse(eta.total_mean),
-                size: component_gradient.shape * SizeLink::derivative_inverse(eta.size),
+                size: component_gradient.size * SizeLink::derivative_inverse(eta.size),
                 zero_probability: d_zero_probability
                     * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
             },
@@ -270,9 +270,9 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let theta = theta.component();
-        if !is_positive_finite(theta.mu)
-            || !is_positive_finite(theta.shape)
-            || !is_strict_probability(theta.nu)
+        if !is_positive_finite(theta.component_mean)
+            || !is_positive_finite(theta.size)
+            || !is_strict_probability(theta.zero_probability)
         {
             return f64::NAN;
         }

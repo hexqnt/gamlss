@@ -1,4 +1,12 @@
 //! Multivariate distribution families.
+//!
+//! Fixed-dimensional families use array-based observation and parameter
+//! carriers and are intended for dimensions known at compile time, especially
+//! small and medium `D`. Runtime-dimensional families use borrowed observation
+//! slices and packed owned parameter storage. At recoverable API boundaries,
+//! prefer each fixed family's checked `try_new`; `new` remains a convenience for
+//! compile-time dimensions that are programmer-controlled and documents its
+//! panic condition.
 
 pub use independent::IndependentVec;
 pub use matrix::{FixedLowerTriangular, PackedLowerTriangular};

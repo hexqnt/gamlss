@@ -269,7 +269,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
     assert_eq!(
         theta(
             &GammaShapeRate::new(),
-            GammaEta {
+            GammaShapeRateEta {
                 shape: 0.0,
                 rate: 0.0,
             },
@@ -313,7 +313,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
     assert_eq!(
         theta(
             &LogNormalLogLocationLogSd::new(),
-            LogNormalEta {
+            LogNormalLogLocationLogSdEta {
                 log_location: 0.0,
                 log_sd: 0.0,
             },
@@ -368,7 +368,7 @@ fn theta_construction_from_eta_stays_inside_expected_domains() {
     assert_eq!(
         theta(
             &WeibullScaleShape::new(),
-            WeibullEta {
+            WeibullScaleShapeEta {
                 shape: 0.0,
                 scale: 0.0,
             },

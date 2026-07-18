@@ -25,7 +25,7 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = MvStudentTCholeskyDefault::<3>::new();
     let _ = DirichletMeanPrecision::<3>::new();
     let _ = FixedLowerTriangular::<2>::zeros();
-    let _ = PackedPartialCorr::<3>::zeros();
+    let _ = FixedPartialCorrelations::<3>::zeros();
     let _ = PackedLowerTriangular::try_new(2, vec![1.0, 0.0, 1.0]).unwrap();
     let _ = gamlss::family::DynMvNormalCholeskyDefault::new(2).unwrap();
     let _ = gamlss::family::MvNormalCholeskyDefault::<2>::new();
@@ -33,7 +33,7 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = gamlss::family::MvStudentTCholeskyDefault::<3>::new();
     let _ = gamlss::family::DirichletMeanPrecision::<3>::new();
     let _ = gamlss::family::FixedLowerTriangular::<2>::zeros();
-    let _ = gamlss::family::PackedPartialCorr::<3>::zeros();
+    let _ = gamlss::family::FixedPartialCorrelations::<3>::zeros();
     let _ = gamlss::family::PackedLowerTriangular::try_new(2, vec![1.0, 0.0, 1.0]).unwrap();
 }
 

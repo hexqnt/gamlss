@@ -5,7 +5,7 @@ use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 use gamlss_special::{digamma, ln_gamma, regularized_gamma_lower};
 
 pub use component_mean_cv_zero_probability::{
-    ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability,
+    ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
 };
 pub use total_mean_cv::{
     ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
@@ -35,7 +35,7 @@ mod total_mean_cv;
 ///
 /// Here $f_\Gamma(\\,\cdot\mid\alpha,\beta)$ is the shape/rate gamma density documented by [`crate::Gamma`]. Therefore $\mathbb{E}(Y)=(1-\pi)\mu$. The default parameterization models the component mean, component CV, and zero-mass probability; use [`ZagaTotalMeanCvZeroProbability`] to model the unconditional mean instead.
 ///
-/// The natural-scale carrier retains historical field names: [`ZagaTheta::mu`] is $\mu$, [`ZagaTheta::sigma`] is the component CV $c$, and [`ZagaTheta::nu`] is the zero probability $\pi$. [`ZagaEta`] uses the same field-to-symbol mapping for their predictors.
+/// The default component parameterization uses [`ZagaComponentMeanCvZeroProbabilityTheta`]; use [`ZagaTotalMeanCvZeroProbability`] when the first modeled parameter should be the unconditional mean.
 ///
 /// ### Parameterization examples
 #[cfg_attr(
@@ -43,15 +43,16 @@ mod total_mean_cv;
     doc = include_str!("../../doc-assets/distributions/zaga_component_mean_cv.svg")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Zaga<MuLink = Log, SigmaLink = Log, NuLink = Logit> {
-    marker: PhantomData<(MuLink, SigmaLink, NuLink)>,
+pub struct Zaga<ComponentMeanLink = Log, CvLink = Log, ZeroProbabilityLink = Logit> {
+    marker: PhantomData<(ComponentMeanLink, CvLink, ZeroProbabilityLink)>,
 }
 
-impl<MuLink, SigmaLink, NuLink> Zaga<MuLink, SigmaLink, NuLink>
+impl<ComponentMeanLink, CvLink, ZeroProbabilityLink>
+    Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     /// Creates a stateless ZAGA family.
     #[inline]
@@ -63,9 +64,9 @@ where
     }
 
     #[inline]
-    fn gamma_shape_rate(theta: ZagaTheta) -> (f64, f64) {
-        let shape = 1.0 / (theta.sigma * theta.sigma);
-        let rate = 1.0 / (theta.sigma * theta.sigma * theta.mu);
+    fn gamma_shape_rate(theta: ZagaComponentMeanCvZeroProbabilityTheta) -> (f64, f64) {
+        let shape = 1.0 / (theta.cv * theta.cv);
+        let rate = 1.0 / (theta.cv * theta.cv * theta.component_mean);
         (shape, rate)
     }
 
@@ -76,33 +77,36 @@ where
     }
 
     #[inline]
-    pub(super) fn nll_theta(y: f64, theta: ZagaTheta) -> f64 {
+    pub(super) fn nll_theta(y: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
         if y < 0.0
             || !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || theta.nu <= 0.0
-            || theta.nu >= 1.0
-            || !theta.nu.is_finite()
+            || theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.cv <= 0.0
+            || !theta.cv.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::INFINITY;
         }
         if y == 0.0 {
-            return -theta.nu.ln();
+            return -theta.zero_probability.ln();
         }
         let (shape, rate) = Self::gamma_shape_rate(theta);
-        -(1.0 - theta.nu).ln() + Self::gamma_nll(y, shape, rate)
+        -(1.0 - theta.zero_probability).ln() + Self::gamma_nll(y, shape, rate)
     }
 
     #[inline]
-    pub(super) fn gradient_component_theta(y: f64, theta: ZagaTheta) -> ZagaTheta {
+    pub(super) fn gradient_component_theta(
+        y: f64,
+        theta: ZagaComponentMeanCvZeroProbabilityTheta,
+    ) -> ZagaComponentMeanCvZeroProbabilityTheta {
         if y == 0.0 {
-            return ZagaTheta {
-                mu: 0.0,
-                sigma: 0.0,
-                nu: -1.0 / theta.nu,
+            return ZagaComponentMeanCvZeroProbabilityTheta {
+                component_mean: 0.0,
+                cv: 0.0,
+                zero_probability: -1.0 / theta.zero_probability,
             };
         }
 
@@ -111,23 +115,23 @@ where
         let d_rate = y - shape / rate;
 
         #[allow(clippy::suboptimal_flops)]
-        ZagaTheta {
-            mu: d_rate * (-rate / theta.mu),
-            sigma: d_shape * (-2.0 * shape / theta.sigma) + d_rate * (-2.0 * rate / theta.sigma),
-            nu: 1.0 / (1.0 - theta.nu),
+        ZagaComponentMeanCvZeroProbabilityTheta {
+            component_mean: d_rate * (-rate / theta.component_mean),
+            cv: d_shape * (-2.0 * shape / theta.cv) + d_rate * (-2.0 * rate / theta.cv),
+            zero_probability: 1.0 / (1.0 - theta.zero_probability),
         }
     }
 
     #[allow(clippy::suboptimal_flops)]
-    pub(super) fn cdf_theta(y: f64, theta: ZagaTheta) -> f64 {
+    pub(super) fn cdf_theta(y: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
         if !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || theta.nu <= 0.0
-            || theta.nu >= 1.0
-            || !theta.nu.is_finite()
+            || theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.cv <= 0.0
+            || !theta.cv.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::NAN;
         }
@@ -135,28 +139,33 @@ where
             return 0.0;
         }
         if y == 0.0 {
-            return theta.nu;
+            return theta.zero_probability;
         }
         let (shape, rate) = Self::gamma_shape_rate(theta);
-        (theta.nu + (1.0 - theta.nu) * regularized_gamma_lower(shape, rate * y)).clamp(0.0, 1.0)
+        (theta.zero_probability
+            + (1.0 - theta.zero_probability) * regularized_gamma_lower(shape, rate * y))
+        .clamp(0.0, 1.0)
     }
 
     #[cfg(feature = "rand")]
-    pub(super) fn sample_component_theta<Rng>(rng: &mut Rng, theta: ZagaTheta) -> f64
+    pub(super) fn sample_component_theta<Rng>(
+        rng: &mut Rng,
+        theta: ZagaComponentMeanCvZeroProbabilityTheta,
+    ) -> f64
     where
         Rng: rand::Rng,
     {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || theta.nu <= 0.0
-            || theta.nu >= 1.0
-            || !theta.nu.is_finite()
+        if theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.cv <= 0.0
+            || !theta.cv.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::NAN;
         }
-        if crate::simulation::open_unit(rng) <= theta.nu {
+        if crate::simulation::open_unit(rng) <= theta.zero_probability {
             return 0.0;
         }
 
@@ -169,24 +178,25 @@ where
     }
 }
 
-impl<MuLink, SigmaLink, NuLink> Default for Zaga<MuLink, SigmaLink, NuLink>
+impl<ComponentMeanLink, CvLink, ZeroProbabilityLink> Default
+    for Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    SigmaLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Natural-scale ZAGA parameters.
+/// Natural-scale component-mean/CV/zero-probability ZAGA parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZagaTheta {
+pub struct ZagaComponentMeanCvZeroProbabilityTheta {
     /// Positive mean for the gamma component.
-    pub mu: f64,
+    pub component_mean: f64,
     /// Positive coefficient of variation for the gamma component.
-    pub sigma: f64,
+    pub cv: f64,
     /// Zero-mass probability in `(0, 1)`.
-    pub nu: f64,
+    pub zero_probability: f64,
 }

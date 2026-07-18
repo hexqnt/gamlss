@@ -9,8 +9,8 @@ use gamlss_core::{Identity, Log};
 pub use dynamic::{DynMvNormalCholesky, DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta};
 pub use fixed::{MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta};
 pub use mean_std_partial_corr::{
-    MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
-    MvNormalMeanStdPartialCorrTheta, PackedPartialCorr,
+    FixedPartialCorrelations, MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+    MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta,
 };
 
 mod dynamic;

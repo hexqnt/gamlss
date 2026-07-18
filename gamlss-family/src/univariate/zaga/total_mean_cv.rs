@@ -11,7 +11,7 @@ use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
 
 use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
 
-use super::{Zaga, ZagaTheta};
+use super::{Zaga, ZagaComponentMeanCvZeroProbabilityTheta};
 
 /// ZAGA distribution parameterized by unconditional mean $m$, component CV $c$, and zero-mass probability $\pi$.
 ///
@@ -80,11 +80,11 @@ pub struct ZagaTotalMeanCvZeroProbabilityTheta {
 
 impl ZagaTotalMeanCvZeroProbabilityTheta {
     #[inline]
-    fn component(self) -> ZagaTheta {
-        ZagaTheta {
-            mu: self.total_mean / (1.0 - self.zero_probability),
-            sigma: self.cv,
-            nu: self.zero_probability,
+    fn component(self) -> ZagaComponentMeanCvZeroProbabilityTheta {
+        ZagaComponentMeanCvZeroProbabilityTheta {
+            component_mean: self.total_mean / (1.0 - self.zero_probability),
+            cv: self.cv,
+            zero_probability: self.zero_probability,
         }
     }
 }
@@ -185,15 +185,15 @@ where
 
         let component_gradient = Zaga::<Log, Log, Logit>::gradient_component_theta(y, component);
         let one_minus_zero = 1.0 - theta.zero_probability;
-        let d_total_mean = component_gradient.mu / one_minus_zero;
-        let d_zero_probability = component_gradient.mu * theta.total_mean
+        let d_total_mean = component_gradient.component_mean / one_minus_zero;
+        let d_zero_probability = component_gradient.component_mean * theta.total_mean
             / (one_minus_zero * one_minus_zero)
-            + component_gradient.nu;
+            + component_gradient.zero_probability;
         (
             nll,
             ZagaTotalMeanCvZeroProbabilityEta {
                 total_mean: d_total_mean * MeanLink::derivative_inverse(eta.total_mean),
-                cv: component_gradient.sigma * CvLink::derivative_inverse(eta.cv),
+                cv: component_gradient.cv * CvLink::derivative_inverse(eta.cv),
                 zero_probability: d_zero_probability
                     * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
             },
@@ -274,19 +274,19 @@ where
             return f64::NAN;
         }
         let theta = theta.component();
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
+        if theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.cv <= 0.0
+            || !theta.cv.is_finite()
         {
             return f64::NAN;
         }
-        if p <= theta.nu {
+        if p <= theta.zero_probability {
             return 0.0;
         }
-        let shape = 1.0 / (theta.sigma * theta.sigma);
-        let rate = 1.0 / (theta.sigma * theta.sigma * theta.mu);
-        let target = (p - theta.nu) / (1.0 - theta.nu);
+        let shape = 1.0 / (theta.cv * theta.cv);
+        let rate = 1.0 / (theta.cv * theta.cv * theta.component_mean);
+        let target = (p - theta.zero_probability) / (1.0 - theta.zero_probability);
         invert_positive_cdf(target, |y| regularized_gamma_lower(shape, rate * y))
     }
 }

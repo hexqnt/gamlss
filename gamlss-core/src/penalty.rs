@@ -300,21 +300,36 @@ impl LinearForm {
         LinearFormBuilder::new()
     }
 
-    /// Converts this form into `weight * max(form(beta), 0)^2`.
+    /// Converts this form into `weight * max(form(beta), 0)^2` after validating
+    /// the form and weight.
     ///
     /// This represents a soft quadratic penalty for constraints written as
     /// `form(beta) <= 0`.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when the form contains a
+    /// non-finite scalar or `weight` is not finite and positive.
     #[inline]
-    pub const fn hinge_le(self, weight: f64) -> HingeQuadraticPenalty {
-        HingeQuadraticPenalty::new(self, weight)
+    pub fn try_hinge_le(self, weight: f64) -> Result<HingeQuadraticPenalty, ModelError> {
+        HingeQuadraticPenalty::try_new(self, weight)
     }
 
-    /// Converts this form into a relative quadratic absolute-limit penalty.
-    #[must_use]
+    /// Converts this form into a validated relative quadratic absolute-limit
+    /// penalty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when the form or scalar
+    /// parameters violate [`AbsoluteLimitPenalty::try_new`] invariants.
     #[inline]
-    pub const fn absolute_limit(self, weight: f64, scale: f64, limit: f64) -> AbsoluteLimitPenalty {
-        AbsoluteLimitPenalty::new(self, weight, scale, limit)
+    pub fn try_absolute_limit(
+        self,
+        weight: f64,
+        scale: f64,
+        limit: f64,
+    ) -> Result<AbsoluteLimitPenalty, ModelError> {
+        AbsoluteLimitPenalty::try_new(self, weight, scale, limit)
     }
 
     /// Validates that all term indices are in bounds for a beta vector of `dim`.
@@ -468,18 +483,6 @@ pub struct HingeQuadraticPenalty {
 }
 
 impl HingeQuadraticPenalty {
-    /// Creates a quadratic hinge penalty.
-    ///
-    /// This constructor is unchecked and preserves the historical defensive
-    /// evaluation behavior: non-finite or non-positive `weight` makes the
-    /// penalty contribute zero. Use [`Self::try_new`] for validated runtime
-    /// construction.
-    #[must_use]
-    #[inline]
-    pub const fn new(form: LinearForm, weight: f64) -> Self {
-        Self { form, weight }
-    }
-
     /// Creates a quadratic hinge penalty with a finite form and positive
     /// finite weight.
     ///
@@ -489,7 +492,7 @@ impl HingeQuadraticPenalty {
     /// non-finite scalar, or when `weight` is not finite and positive.
     #[inline]
     pub fn try_new(form: LinearForm, weight: f64) -> Result<Self, ModelError> {
-        let penalty = Self::new(form, weight);
+        let penalty = Self { form, weight };
         penalty.validate_parameters()?;
         Ok(penalty)
     }
@@ -517,7 +520,7 @@ impl HingeQuadraticPenalty {
     /// index outside `0..dim`.
     #[inline]
     pub fn try_new_for_dim(form: LinearForm, weight: f64, dim: usize) -> Result<Self, ModelError> {
-        let penalty = Self::new(form, weight);
+        let penalty = Self { form, weight };
         penalty.validate(dim)?;
         Ok(penalty)
     }
@@ -530,10 +533,6 @@ impl HingeQuadraticPenalty {
 
     #[inline]
     fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
-        if !self.weight.is_finite() || self.weight <= 0.0 {
-            return PenaltyContribution::ZERO;
-        }
-
         let form_value = self.form.value(beta);
         if form_value.is_nan() {
             return PenaltyContribution::new(f64::NAN, f64::NAN);
@@ -583,23 +582,6 @@ pub struct AbsoluteLimitPenalty {
 }
 
 impl AbsoluteLimitPenalty {
-    /// Creates an absolute-limit penalty.
-    ///
-    /// This constructor is unchecked and preserves the historical defensive
-    /// evaluation behavior: invalid `weight`, `scale` or `limit` makes the
-    /// penalty contribute zero. Use [`Self::try_new`] for validated runtime
-    /// construction.
-    #[must_use]
-    #[inline]
-    pub const fn new(form: LinearForm, weight: f64, scale: f64, limit: f64) -> Self {
-        Self {
-            form,
-            weight,
-            scale,
-            limit,
-        }
-    }
-
     /// Creates an absolute-limit penalty with a finite form and validated
     /// scalar parameters.
     ///
@@ -615,7 +597,12 @@ impl AbsoluteLimitPenalty {
         scale: f64,
         limit: f64,
     ) -> Result<Self, ModelError> {
-        let penalty = Self::new(form, weight, scale, limit);
+        let penalty = Self {
+            form,
+            weight,
+            scale,
+            limit,
+        };
         penalty.validate_parameters()?;
         Ok(penalty)
     }
@@ -663,7 +650,12 @@ impl AbsoluteLimitPenalty {
         limit: f64,
         dim: usize,
     ) -> Result<Self, ModelError> {
-        let penalty = Self::new(form, weight, scale, limit);
+        let penalty = Self {
+            form,
+            weight,
+            scale,
+            limit,
+        };
         penalty.validate(dim)?;
         Ok(penalty)
     }
@@ -678,16 +670,6 @@ impl AbsoluteLimitPenalty {
 
     #[inline]
     fn contribution(&self, beta: &[f64]) -> PenaltyContribution {
-        if !self.weight.is_finite()
-            || self.weight <= 0.0
-            || !self.scale.is_finite()
-            || self.scale <= 0.0
-            || !self.limit.is_finite()
-            || self.limit < 0.0
-        {
-            return PenaltyContribution::ZERO;
-        }
-
         let form_value = self.form.value(beta);
         if form_value.is_nan() {
             return PenaltyContribution::new(f64::NAN, f64::NAN);
@@ -1152,14 +1134,18 @@ mod tests {
 
     #[test]
     fn global_penalty_tuple_validates_dimensions() {
-        let valid =
-            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0), 1.0);
-        let invalid = AbsoluteLimitPenalty::new(
+        let valid = HingeQuadraticPenalty::try_new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            1.0,
+        )
+        .unwrap();
+        let invalid = AbsoluteLimitPenalty::try_new(
             LinearForm::new(vec![LinearTerm::new(2, 1.0)], 0.0),
             1.0,
             1.0,
             1.0,
-        );
+        )
+        .unwrap();
         let penalties = (valid, invalid);
 
         assert_eq!(
@@ -1169,25 +1155,24 @@ mod tests {
     }
 
     #[test]
-    fn global_penalty_validation_rejects_unchecked_invalid_invariants() {
+    fn global_penalty_constructors_reject_invalid_invariants() {
         let invalid_form = LinearForm::new(vec![LinearTerm::new(0, f64::NAN)], 0.0);
-        let invalid_hinge = HingeQuadraticPenalty::new(invalid_form, 1.0);
         assert_eq!(
-            invalid_hinge.validate(1).unwrap_err(),
+            HingeQuadraticPenalty::try_new(invalid_form, 1.0).unwrap_err(),
             ModelError::InvalidParameter {
                 parameter: "linear term weight",
                 expected: "finite",
             }
         );
 
-        let invalid_limit = AbsoluteLimitPenalty::new(
-            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
-            1.0,
-            f64::INFINITY,
-            1.0,
-        );
         assert_eq!(
-            invalid_limit.validate(1).unwrap_err(),
+            AbsoluteLimitPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                1.0,
+                f64::INFINITY,
+                1.0,
+            )
+            .unwrap_err(),
             ModelError::InvalidParameter {
                 parameter: "penalty scale",
                 expected: "finite and > 0",
@@ -1290,11 +1275,13 @@ mod tests {
             .term(0, 1.0)
             .constant(-0.5)
             .build()
-            .hinge_le(2.0);
+            .try_hinge_le(2.0)
+            .unwrap();
         let limit = LinearForm::builder()
             .term(1, -1.0)
             .build()
-            .absolute_limit(3.0, 2.0, 0.5);
+            .try_absolute_limit(3.0, 2.0, 0.5)
+            .unwrap();
         let beta = [1.0, -1.0];
 
         assert_relative_eq!(hinge.value(&beta), 0.5);
@@ -1303,13 +1290,14 @@ mod tests {
 
     #[test]
     fn hinge_quadratic_penalty_gradient_matches_finite_difference() {
-        let penalty = HingeQuadraticPenalty::new(
+        let penalty = HingeQuadraticPenalty::try_new(
             LinearForm::new(
                 vec![LinearTerm::new(0, 1.0), LinearTerm::new(2, -0.5)],
                 -0.1,
             ),
             3.0,
-        );
+        )
+        .unwrap();
         let beta = [1.0, -2.0, 0.4];
 
         assert_global_penalty_gradient_matches_finite_difference(&penalty, &beta);
@@ -1368,27 +1356,38 @@ mod tests {
 
     #[test]
     #[allow(clippy::float_cmp)]
-    fn hinge_quadratic_penalty_ignores_nonpositive_side_and_invalid_weight() {
-        let inactive =
-            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -2.0), 3.0);
-        let invalid = HingeQuadraticPenalty::new(
-            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
-            f64::NAN,
-        );
+    fn hinge_quadratic_penalty_ignores_nonpositive_side() {
+        let penalty = HingeQuadraticPenalty::try_new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], -2.0),
+            3.0,
+        )
+        .unwrap();
         let beta = [1.0];
+        let mut grad = [5.0];
 
-        for penalty in [inactive, invalid] {
-            let mut grad = [5.0];
-            assert_eq!(penalty.value(&beta), 0.0);
-            penalty.add_gradient(&beta, &mut grad);
-            assert_eq!(grad, [5.0]);
-        }
+        assert_eq!(penalty.value(&beta), 0.0);
+        penalty.add_gradient(&beta, &mut grad);
+        assert_eq!(grad, [5.0]);
+        assert_eq!(
+            HingeQuadraticPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                f64::NAN,
+            )
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty weight",
+                expected: "finite and > 0",
+            }
+        );
     }
 
     #[test]
     fn hinge_quadratic_penalty_propagates_nan_form_values() {
-        let penalty =
-            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0), 3.0);
+        let penalty = HingeQuadraticPenalty::try_new(
+            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+            3.0,
+        )
+        .unwrap();
         let beta = [f64::NAN];
         let mut grad = [0.0];
 
@@ -1399,7 +1398,7 @@ mod tests {
 
     #[test]
     fn absolute_limit_penalty_gradient_matches_finite_difference() {
-        let penalty = AbsoluteLimitPenalty::new(
+        let penalty = AbsoluteLimitPenalty::try_new(
             LinearForm::new(
                 vec![LinearTerm::new(0, 1.0), LinearTerm::new(1, -2.0)],
                 0.25,
@@ -1407,7 +1406,8 @@ mod tests {
             5.0,
             1.5,
             0.4,
-        );
+        )
+        .unwrap();
         let beta = [0.8, -0.2];
 
         assert_global_penalty_gradient_matches_finite_difference(&penalty, &beta);
@@ -1478,37 +1478,44 @@ mod tests {
 
     #[test]
     #[allow(clippy::float_cmp)]
-    fn absolute_limit_penalty_ignores_inactive_and_invalid_inputs() {
-        let inactive = AbsoluteLimitPenalty::new(
+    fn absolute_limit_penalty_ignores_inactive_inputs() {
+        let penalty = AbsoluteLimitPenalty::try_new(
             LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
             3.0,
             1.0,
             2.0,
-        );
-        let invalid = AbsoluteLimitPenalty::new(
-            LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
-            3.0,
-            f64::NAN,
-            2.0,
-        );
+        )
+        .unwrap();
         let beta = [1.0];
+        let mut grad = [5.0];
 
-        for penalty in [inactive, invalid] {
-            let mut grad = [5.0];
-            assert_eq!(penalty.value(&beta), 0.0);
-            penalty.add_gradient(&beta, &mut grad);
-            assert_eq!(grad, [5.0]);
-        }
+        assert_eq!(penalty.value(&beta), 0.0);
+        penalty.add_gradient(&beta, &mut grad);
+        assert_eq!(grad, [5.0]);
+        assert_eq!(
+            AbsoluteLimitPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
+                3.0,
+                f64::NAN,
+                2.0,
+            )
+            .unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "penalty scale",
+                expected: "finite and > 0",
+            }
+        );
     }
 
     #[test]
     fn absolute_limit_penalty_propagates_nan_form_values() {
-        let penalty = AbsoluteLimitPenalty::new(
+        let penalty = AbsoluteLimitPenalty::try_new(
             LinearForm::new(vec![LinearTerm::new(0, 1.0)], 0.0),
             3.0,
             1.0,
             0.5,
-        );
+        )
+        .unwrap();
         let beta = [f64::NAN];
         let mut grad = [0.0];
 
@@ -1520,13 +1527,18 @@ mod tests {
     #[test]
     fn global_linear_penalty_tuple_composes_values_and_gradients() {
         let penalty = (
-            HingeQuadraticPenalty::new(LinearForm::new(vec![LinearTerm::new(0, 1.0)], -0.5), 2.0),
-            AbsoluteLimitPenalty::new(
+            HingeQuadraticPenalty::try_new(
+                LinearForm::new(vec![LinearTerm::new(0, 1.0)], -0.5),
+                2.0,
+            )
+            .unwrap(),
+            AbsoluteLimitPenalty::try_new(
                 LinearForm::new(vec![LinearTerm::new(1, -1.0)], 0.0),
                 3.0,
                 2.0,
                 0.5,
-            ),
+            )
+            .unwrap(),
         );
         let beta = [1.0, -1.0];
         let mut grad = [0.0, 0.0];

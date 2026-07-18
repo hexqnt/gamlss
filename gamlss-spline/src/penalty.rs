@@ -505,32 +505,6 @@ pub struct SlopeLimitPenalty {
 }
 
 impl SlopeLimitPenalty {
-    /// Creates a slope limit penalty.
-    ///
-    /// `weight` — penalty strength, `scale` converts coefficient differences
-    /// into a physical slope, `cold_limit` and `warm_limit` — optional limits
-    /// (if `None`, the corresponding edge is not penalized).
-    ///
-    /// This constructor is unchecked and preserves the historical defensive
-    /// evaluation behavior: invalid `weight`, `scale` or limits make the
-    /// affected penalty contribution zero. Use [`Self::try_new`] for validated
-    /// runtime construction.
-    #[must_use]
-    #[inline]
-    pub const fn new(
-        weight: f64,
-        scale: f64,
-        cold_limit: Option<f64>,
-        warm_limit: Option<f64>,
-    ) -> Self {
-        Self {
-            weight,
-            scale,
-            cold_limit,
-            warm_limit,
-        }
-    }
-
     /// Creates a slope limit penalty with validated scalar parameters.
     ///
     /// # Errors
@@ -549,7 +523,12 @@ impl SlopeLimitPenalty {
         validate_positive_finite("penalty scale", scale)?;
         validate_limit("cold penalty limit", cold_limit)?;
         validate_limit("warm penalty limit", warm_limit)?;
-        Ok(Self::new(weight, scale, cold_limit, warm_limit))
+        Ok(Self {
+            weight,
+            scale,
+            cold_limit,
+            warm_limit,
+        })
     }
 
     /// Returns the penalty weight.
@@ -896,14 +875,6 @@ fn add_slope_limit_value(
     if beta.len() < 2 {
         return;
     }
-    if !penalty.weight.is_finite()
-        || penalty.weight <= 0.0
-        || !penalty.scale.is_finite()
-        || penalty.scale <= 0.0
-    {
-        return;
-    }
-
     let Some(limit) = (if cold {
         penalty.cold_limit
     } else {
@@ -911,10 +882,6 @@ fn add_slope_limit_value(
     }) else {
         return;
     };
-    if !limit.is_finite() || limit < 0.0 {
-        return;
-    }
-
     let (first, second) = if cold {
         (0, 1)
     } else {
@@ -1081,7 +1048,7 @@ mod tests {
 
     use super::{
         CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty,
-        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty,
     };
 
     fn invalid_parameter(parameter: &'static str, expected: &'static str) -> ModelError {
@@ -1158,18 +1125,12 @@ mod tests {
     }
 
     #[test]
-    fn edge_and_slope_penalty_validation_reject_unchecked_invalid_scalars() {
+    fn edge_penalty_validation_rejects_unchecked_invalid_weight() {
         assert_eq!(
             EdgeMonotonicPenalty::new(f64::NAN)
                 .validate_dim(3)
                 .unwrap_err(),
             invalid_parameter("penalty weight", "finite and > 0")
-        );
-        assert_eq!(
-            SlopeLimitPenalty::new(1.0, f64::INFINITY, Some(0.0), None)
-                .validate_dim(3)
-                .unwrap_err(),
-            invalid_parameter("penalty scale", "finite and > 0")
         );
     }
 }

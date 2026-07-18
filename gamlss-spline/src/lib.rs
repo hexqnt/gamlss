@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn slope_limit_penalty_gradient_matches_finite_difference() {
-        let penalty = SlopeLimitPenalty::new(5.0, 2.0, Some(0.4), Some(0.3));
+        let penalty = SlopeLimitPenalty::try_new(5.0, 2.0, Some(0.4), Some(0.3)).unwrap();
         let beta = vec![0.6, 0.1, -0.1, 0.4];
         assert_penalty_gradient_matches_finite_difference(&penalty, &beta);
     }
@@ -858,24 +858,6 @@ mod tests {
                 expected: "finite and >= 0",
             }
         );
-    }
-
-    #[test]
-    #[allow(clippy::float_cmp)]
-    fn slope_limit_penalty_ignores_invalid_inputs() {
-        let cases = [
-            SlopeLimitPenalty::new(f64::NAN, 2.0, Some(0.4), Some(0.3)),
-            SlopeLimitPenalty::new(5.0, f64::NAN, Some(0.4), Some(0.3)),
-            SlopeLimitPenalty::new(5.0, 2.0, Some(f64::NAN), Some(-0.3)),
-        ];
-        let beta = vec![0.6, 0.1, -0.1, 0.4];
-
-        for penalty in cases {
-            let mut grad = vec![0.0; beta.len()];
-            assert_eq!(penalty.value(&beta), 0.0);
-            penalty.add_gradient(&beta, &mut grad);
-            assert_eq!(grad, vec![0.0; beta.len()]);
-        }
     }
 
     #[test]

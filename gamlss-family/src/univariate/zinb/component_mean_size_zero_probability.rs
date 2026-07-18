@@ -1,8 +1,9 @@
 #[cfg(feature = "rand")]
 use gamlss_core::CanSimulate;
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
-    Nu, ObservationView, ParameterParts, PositiveLink, Shape, UnitIntervalLink,
+    ComponentMean, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
+    Log, Logit, ObservationView, ParameterParts, PositiveLink, Size, UnitIntervalLink,
+    ZeroProbability,
 };
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
@@ -12,95 +13,105 @@ use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
 
-use super::{MAX_CDF_TERMS, Zinb, ZinbTheta};
+use super::{MAX_CDF_TERMS, Zinb, ZinbComponentMeanSizeZeroProbabilityTheta};
 
 /// ZINB distribution parameterized by component mean $\mu$, size $r$, and structural-zero probability $\pi$.
 ///
-/// The eta fields `mu`, `shape`, and `nu` represent $\eta_\mu,\eta_r,\eta_\pi$, respectively. The default links give $\mu=\exp(\eta_\mu)$, $r=\exp(\eta_r)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+/// The default links give $\mu=\exp(\eta_\mu)$, $r=\exp(\eta_r)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
 #[allow(clippy::doc_markdown)]
-pub type ZinbMeanSizeZeroProbability = Zinb<Log, Log, Logit>;
-/// Explicit alias for the component-mean/size/zero-probability ZINB kernel parameterization.
-pub type ZinbComponentMeanSizeZeroProbability = ZinbMeanSizeZeroProbability;
+pub type ZinbComponentMeanSizeZeroProbability = Zinb<Log, Log, Logit>;
 
-/// Predictors for ZINB on the link scale.
+/// Predictors for component-mean/size/zero-probability ZINB on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZinbEta {
+pub struct ZinbComponentMeanSizeZeroProbabilityEta {
     /// Negative-binomial mean predictor.
-    pub mu: f64,
-    /// Negative-binomial shape predictor.
-    pub shape: f64,
+    pub component_mean: f64,
+    /// Negative-binomial size predictor.
+    pub size: f64,
     /// Zero-inflation probability predictor.
-    pub nu: f64,
+    pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZinbEta {
+impl ParameterParts<3> for ZinbComponentMeanSizeZeroProbabilityEta {
     fn from_array(values: [f64; 3]) -> Self {
         Self {
-            mu: values[0],
-            shape: values[1],
-            nu: values[2],
+            component_mean: values[0],
+            size: values[1],
+            zero_probability: values[2],
         }
     }
 
     fn part(&self, index: usize) -> f64 {
         match index {
-            0 => self.mu,
-            1 => self.shape,
-            2 => self.nu,
+            0 => self.component_mean,
+            1 => self.size,
+            2 => self.zero_probability,
             _ => unreachable!("zinb eta only has indices 0 through 2"),
         }
     }
 }
 
-impl<MuLink, ShapeLink, NuLink> Zinb<MuLink, ShapeLink, NuLink>
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
+    Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     #[inline]
-    fn theta_from_eta(eta: ZinbEta) -> ZinbTheta {
-        ZinbTheta {
-            mu: MuLink::inverse(eta.mu),
-            shape: ShapeLink::inverse(eta.shape),
-            nu: NuLink::inverse(eta.nu),
+    fn theta_from_eta(
+        eta: ZinbComponentMeanSizeZeroProbabilityEta,
+    ) -> ZinbComponentMeanSizeZeroProbabilityTheta {
+        ZinbComponentMeanSizeZeroProbabilityTheta {
+            component_mean: ComponentMeanLink::inverse(eta.component_mean),
+            size: SizeLink::inverse(eta.size),
+            zero_probability: ZeroProbabilityLink::inverse(eta.zero_probability),
         }
     }
 
     #[inline]
-    fn nll_and_gradient_eta_values(y: f64, eta: ZinbEta) -> (f64, ZinbEta) {
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: ZinbComponentMeanSizeZeroProbabilityEta,
+    ) -> (f64, ZinbComponentMeanSizeZeroProbabilityEta) {
         let theta = Self::theta_from_eta(eta);
         let nll = Self::nll_theta(y, theta);
         if !nll.is_finite() {
-            return (nll, ZinbEta::from_array([f64::NAN; 3]));
+            return (
+                nll,
+                ZinbComponentMeanSizeZeroProbabilityEta::from_array([f64::NAN; 3]),
+            );
         }
         let gradient = Self::gradient_component_theta(y, theta);
         (
             nll,
-            ZinbEta {
-                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                shape: gradient.shape * ShapeLink::derivative_inverse(eta.shape),
-                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            ZinbComponentMeanSizeZeroProbabilityEta {
+                component_mean: gradient.component_mean
+                    * ComponentMeanLink::derivative_inverse(eta.component_mean),
+                size: gradient.size * SizeLink::derivative_inverse(eta.size),
+                zero_probability: gradient.zero_probability
+                    * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
             },
         )
     }
 }
 
 gamlss_core::impl_scalar_compilable_family!(
-    impl<MuLink, ShapeLink, NuLink> for Zinb<MuLink, ShapeLink, NuLink>;
-    parameters = (Mu, Shape, Nu);
+    impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>;
+    parameters = (ComponentMean, Size, ZeroProbability);
     arity = 3;
 );
 
-impl<MuLink, ShapeLink, NuLink> Family for Zinb<MuLink, ShapeLink, NuLink>
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> Family
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
-    type Eta = ZinbEta;
-    type Theta = ZinbTheta;
-    type GradientEta = ZinbEta;
+    type Eta = ZinbComponentMeanSizeZeroProbabilityEta;
+    type Theta = ZinbComponentMeanSizeZeroProbabilityTheta;
+    type GradientEta = ZinbComponentMeanSizeZeroProbabilityEta;
     type Observation<'obs> = f64;
     type Workspace = ();
     #[inline]
@@ -128,11 +139,12 @@ where
     }
 }
 
-impl<MuLink, ShapeLink, NuLink> InitialEtaFromObservations<3> for Zinb<MuLink, ShapeLink, NuLink>
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> InitialEtaFromObservations<3>
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
-    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    NuLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+    ComponentMeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    SizeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
 {
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -140,7 +152,7 @@ where
     {
         let values = weighted_values::<Self, _, _>(obs, |y| is_nonnegative_integer(y).then_some(y));
         let Some(summary) = weighted_summary(&values) else {
-            return ZinbEta::from_array([0.0, 0.0, 0.0]);
+            return ZinbComponentMeanSizeZeroProbabilityEta::from_array([0.0, 0.0, 0.0]);
         };
         let mu = positive_floor(summary.mean);
         let shape = if summary.variance <= mu {
@@ -160,37 +172,39 @@ where
             0.1
         };
 
-        ZinbEta {
-            mu: MuLink::initial_eta_from_theta(mu),
-            shape: ShapeLink::initial_eta_from_theta(shape),
-            nu: NuLink::initial_eta_from_theta(probability_floor(
+        ZinbComponentMeanSizeZeroProbabilityEta {
+            component_mean: ComponentMeanLink::initial_eta_from_theta(mu),
+            size: SizeLink::initial_eta_from_theta(shape),
+            zero_probability: ZeroProbabilityLink::initial_eta_from_theta(probability_floor(
                 (zero_rate - (shape / (shape + mu)).powf(shape)).max(0.05),
             )),
         }
     }
 }
 
-impl<MuLink, ShapeLink, NuLink> HasCdf for Zinb<MuLink, ShapeLink, NuLink>
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> HasCdf
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         Self::cdf_theta(y, *theta)
     }
 }
 
-impl<MuLink, ShapeLink, NuLink> HasQuantile for Zinb<MuLink, ShapeLink, NuLink>
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> HasQuantile
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if !is_positive_finite(theta.mu)
-            || !is_positive_finite(theta.shape)
-            || !is_strict_probability(theta.nu)
+        if !is_positive_finite(theta.component_mean)
+            || !is_positive_finite(theta.size)
+            || !is_strict_probability(theta.zero_probability)
         {
             return f64::NAN;
         }
@@ -203,12 +217,13 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, ShapeLink, NuLink> CanSimulate<Rng> for Zinb<MuLink, ShapeLink, NuLink>
+impl<Rng, ComponentMeanLink, SizeLink, ZeroProbabilityLink> CanSimulate<Rng>
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
 where
     Rng: rand::Rng,
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-    NuLink: UnitIntervalLink<f64>,
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     type Sample = f64;
 
@@ -223,21 +238,21 @@ mod tests {
     use gamlss_core::CanSimulate;
 
     #[cfg(feature = "rand")]
-    use super::{ZinbMeanSizeZeroProbability, ZinbTheta};
+    use super::{ZinbComponentMeanSizeZeroProbability, ZinbComponentMeanSizeZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]
     #[test]
     fn zinb_sampling_returns_counts_and_nan_for_invalid_theta() {
         use rand::SeedableRng;
 
-        let family = ZinbMeanSizeZeroProbability::new();
+        let family = ZinbComponentMeanSizeZeroProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let sample = family.sample(
             &mut rng,
-            &ZinbTheta {
-                mu: 2.0,
-                shape: 1.5,
-                nu: 0.3,
+            &ZinbComponentMeanSizeZeroProbabilityTheta {
+                component_mean: 2.0,
+                size: 1.5,
+                zero_probability: 0.3,
             },
         );
         assert!(sample >= 0.0 && sample.fract() == 0.0);
@@ -245,10 +260,10 @@ mod tests {
             family
                 .sample(
                     &mut rng,
-                    &ZinbTheta {
-                        mu: 2.0,
-                        shape: 0.0,
-                        nu: 0.3,
+                    &ZinbComponentMeanSizeZeroProbabilityTheta {
+                        component_mean: 2.0,
+                        size: 0.0,
+                        zero_probability: 0.3,
                     }
                 )
                 .is_nan()

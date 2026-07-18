@@ -147,7 +147,13 @@ impl<const OFFSET: i64> Link<f64> for LogPlus<OFFSET> {
     #[inline]
     #[allow(clippy::cast_precision_loss)]
     fn inverse(eta: f64) -> f64 {
-        OFFSET as f64 + eta.exp()
+        let offset = OFFSET as f64;
+        let shifted = offset + eta.exp();
+        if eta.is_finite() && shifted <= offset {
+            offset.next_up()
+        } else {
+            shifted
+        }
     }
 
     #[inline]
@@ -163,6 +169,21 @@ impl<const OFFSET: i64> InitialEtaFromTheta<f64> for LogPlus<OFFSET> {
         (theta - OFFSET as f64).max(INITIAL_POSITIVE_FLOOR).ln()
     }
 }
+
+impl PositiveLink<f64> for LogPlus<2> {
+    #[inline]
+    fn derivative_log_inverse(eta: f64) -> f64 {
+        const LN_2: f64 = std::f64::consts::LN_2;
+        if eta >= LN_2 {
+            1.0 / 2.0_f64.mul_add((-eta).exp(), 1.0)
+        } else {
+            let exp_eta = eta.exp();
+            exp_eta / (2.0 + exp_eta)
+        }
+    }
+}
+
+impl AboveTwoLink<f64> for LogPlus<2> {}
 
 /// Clamped log link: `theta = exp(clamp(eta, MIN, MAX))`.
 ///
@@ -265,6 +286,20 @@ pub trait PositiveLink<S>: Link<S> {
     fn derivative_log_inverse(eta: S) -> S;
 }
 
+/// Marker for link functions that guarantee a result in `(2, +inf)`.
+///
+/// This stronger positive-domain contract is intended for degrees-of-freedom
+/// parameters whose parameterization requires a finite variance or covariance.
+/// Implementors must ensure that [`Link::inverse`] is strictly greater than two
+/// for every finite predictor value.
+///
+/// ```compile_fail
+/// use gamlss_core::{AboveTwoLink, Identity};
+/// fn requires_finite_variance_link<L: AboveTwoLink<f64>>() {}
+/// requires_finite_variance_link::<Identity>();
+/// ```
+pub trait AboveTwoLink<S>: PositiveLink<S> {}
+
 /// Marker for link functions that guarantee a result in `(0, 1)`.
 ///
 /// This contract is suitable for probability parameters, such as Bernoulli
@@ -275,7 +310,10 @@ pub trait UnitIntervalLink<S>: Link<S> {}
 mod tests {
     use approx::assert_relative_eq;
 
-    use crate::{ClampedLog, InitialEtaFromTheta, Link, Log, LogPlus, Logit, Softplus};
+    use crate::{
+        AboveTwoLink, ClampedLog, InitialEtaFromTheta, Link, Log, LogPlus, Logit, PositiveLink,
+        Softplus,
+    };
 
     #[test]
     #[allow(clippy::float_cmp)]
@@ -314,5 +352,20 @@ mod tests {
         type Clamped = ClampedLog<-2, 2>;
         assert_eq!(Clamped::initial_eta_from_theta(1.0e-20), -2.0);
         assert_eq!(Clamped::initial_eta_from_theta(1.0e20), 2.0);
+    }
+
+    #[test]
+    fn log_plus_two_satisfies_lower_bound_contracts_stably() {
+        fn assert_positive<L: PositiveLink<f64>>() {}
+        fn assert_above_two<L: AboveTwoLink<f64>>() {}
+
+        assert_positive::<LogPlus<2>>();
+        assert_above_two::<LogPlus<2>>();
+        for eta in [-1.0e3, -1.0, 0.0, 1.0, 1.0e3] {
+            let theta = LogPlus::<2>::inverse(eta);
+            assert!(theta > 2.0);
+            assert!(LogPlus::<2>::derivative_log_inverse(eta).is_finite());
+        }
+        assert!(LogPlus::<2>::inverse(0.0) > 2.0);
     }
 }

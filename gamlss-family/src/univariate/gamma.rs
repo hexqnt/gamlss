@@ -13,9 +13,7 @@ use crate::initial::{LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summa
 
 pub use mean_cv::{GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, MeanCv};
 pub use mean_shape::{GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, MeanShape};
-pub use shape_rate::{
-    GammaEta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, ShapeRate,
-};
+pub use shape_rate::{GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta, ShapeRate};
 
 mod mean_cv;
 mod mean_shape;

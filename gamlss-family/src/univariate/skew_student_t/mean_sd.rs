@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, LogPlus, Mean, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
+    AboveTwoLink, Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, LogPlus, Mean, Nu, ObservationView, ParameterParts,
+    PositiveLink, Sigma, Tau,
 };
 
 use crate::initial::{robust_location_scale, weighted_values};
@@ -44,7 +45,7 @@ where
     MeanLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     /// Creates a stateless mean/SD skew Student-t family.
     #[inline]
@@ -104,7 +105,7 @@ where
     MeanLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -123,7 +124,7 @@ where
     MeanLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     type Eta = SkewStudentTMeanSdEta;
     type Theta = SkewStudentTMeanSdTheta;
@@ -165,7 +166,7 @@ where
     MeanLink: InitialEtaFromTheta<f64> + Link<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
     NuLink: InitialEtaFromTheta<f64> + Link<f64>,
-    TauLink: InitialEtaFromTheta<f64> + Link<f64>,
+    TauLink: InitialEtaFromTheta<f64> + AboveTwoLink<f64>,
 {
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -196,7 +197,7 @@ where
     MeanLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {
@@ -219,7 +220,7 @@ where
     MeanLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
     NuLink: Link<f64>,
-    TauLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         let Some(location_scale) = theta.location_scale() else {

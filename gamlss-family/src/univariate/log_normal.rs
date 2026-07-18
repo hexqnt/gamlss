@@ -244,11 +244,6 @@ pub type LogNormalMedianLogSd = LogNormal<MedianLogSd, Log, Log>;
 #[allow(clippy::doc_markdown)]
 pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;
 
-/// Backward-compatible eta alias for log-location/log-SD log-normal.
-pub type LogNormalEta = LogNormalLogLocationLogSdEta;
-/// Backward-compatible theta alias for log-location/log-SD log-normal.
-pub type LogNormalTheta = LogNormalLogLocationLogSdTheta;
-
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;

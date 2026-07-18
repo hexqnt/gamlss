@@ -4739,30 +4739,12 @@ mod tests {
         let model =
             Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
         let penalty =
-            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+            HingeQuadraticPenalty::try_new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0)
+                .unwrap();
 
         assert_eq!(
             model.try_with_global_penalties(penalty).unwrap_err(),
             ModelError::PenaltyIndexOutOfBounds { index: 2, dim: 2 }
-        );
-    }
-
-    #[test]
-    fn try_with_global_penalties_validates_penalty_invariants() {
-        let y = vec![0.0, 0.0];
-        let x = DenseDesign::from_rows(&[[1.0, 0.0], [0.0, 1.0]]);
-        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
-        let model =
-            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
-        let penalty =
-            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(0, f64::NAN).build(), 1.0);
-
-        assert_eq!(
-            model.try_with_global_penalties(penalty).unwrap_err(),
-            ModelError::InvalidParameter {
-                parameter: "linear term weight",
-                expected: "finite",
-            }
         );
     }
 
@@ -4775,7 +4757,8 @@ mod tests {
             .unwrap()
             .into_workspace_objective();
         let penalty =
-            HingeQuadraticPenalty::new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0);
+            HingeQuadraticPenalty::try_new(LinearFormBuilder::new().term(2, 1.0).build(), 1.0)
+                .unwrap();
 
         assert_eq!(
             model.try_with_global_penalties(penalty).unwrap_err(),

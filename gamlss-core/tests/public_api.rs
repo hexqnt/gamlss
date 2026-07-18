@@ -4,12 +4,12 @@
     clippy::cast_precision_loss
 )]
 use gamlss_core::{
-    CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation, DenseRows,
-    Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations, FixedDimensionalFamily,
-    FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity, HasDeviance,
-    HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity, HasMarginalCdf,
-    HasObservationDimension, HasRosenblattTransform, InitialEtaFromObservations, LinearForm,
-    LinearFormBuilder, LocationCholesky, Log, LogLocation, LogSd, Logit,
+    AboveTwoLink, CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation,
+    DenseRows, Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations,
+    FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity,
+    HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
+    HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, InitialEtaFromObservations,
+    LinearForm, LinearFormBuilder, LocationCholesky, Log, LogLocation, LogPlus, LogSd, Logit,
     LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
     Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
     ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
@@ -411,11 +411,14 @@ fn structured_parameter_blocks_remain_root_reexports() {
 #[test]
 fn link_domain_marker_traits_remain_root_reexports() {
     fn assert_positive_link<L: PositiveLink<f64>>() {}
+    fn assert_above_two_link<L: AboveTwoLink<f64>>() {}
     fn assert_unit_interval_link<L: UnitIntervalLink<f64>>() {}
 
     assert_positive_link::<Log>();
     assert_positive_link::<Softplus>();
     assert_positive_link::<ClampedLog<-12, 12>>();
+    assert_positive_link::<LogPlus<2>>();
+    assert_above_two_link::<LogPlus<2>>();
     assert_unit_interval_link::<Logit>();
 }
 

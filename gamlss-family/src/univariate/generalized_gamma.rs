@@ -52,7 +52,7 @@ where
     #[inline]
     fn theta_from_eta(eta: GeneralizedGammaEta) -> GeneralizedGammaTheta {
         GeneralizedGammaTheta {
-            mu: ScaleLink::inverse(eta.mu),
+            scale: ScaleLink::inverse(eta.scale),
             sigma: SigmaLink::inverse(eta.sigma),
             nu: NuLink::inverse(eta.nu),
         }
@@ -63,8 +63,8 @@ where
     fn nll_theta(y: f64, theta: GeneralizedGammaTheta) -> f64 {
         if y <= 0.0
             || !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.nu.is_finite()
@@ -72,7 +72,7 @@ where
             return f64::INFINITY;
         }
         if theta.nu.abs() < NU_EPSILON {
-            let log_ratio = (y / theta.mu).ln();
+            let log_ratio = (y / theta.scale).ln();
             let z = log_ratio / theta.sigma;
             let (linear, quadratic) = Self::log_normal_limit_terms(log_ratio, theta.sigma);
             return theta.nu.mul_add(
@@ -83,7 +83,7 @@ where
 
         let abs_nu = theta.nu.abs();
         let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
-        let z = (y / theta.mu).powf(theta.nu);
+        let z = (y / theta.scale).powf(theta.nu);
         -(k * k.ln() + k * z.ln() + abs_nu.ln() - k * z - ln_gamma(k) - y.ln())
     }
 
@@ -98,7 +98,7 @@ where
 
     #[inline]
     fn gradient_theta(y: f64, theta: GeneralizedGammaTheta) -> GeneralizedGammaTheta {
-        let log_ratio = (y / theta.mu).ln();
+        let log_ratio = (y / theta.scale).ln();
         if theta.nu.abs() < NU_EPSILON {
             let sigma_squared = theta.sigma * theta.sigma;
             let log_ratio_squared = log_ratio * log_ratio;
@@ -112,7 +112,7 @@ where
                 / (12.0 * theta.sigma * sigma_squared)
                 + theta.sigma / 6.0;
             return GeneralizedGammaTheta {
-                mu: -d_nll_d_log_ratio / theta.mu,
+                scale: -d_nll_d_log_ratio / theta.scale,
                 sigma: (theta.nu * theta.nu).mul_add(
                     d_quadratic_d_sigma,
                     theta.nu.mul_add(
@@ -131,7 +131,7 @@ where
         let d_log_z = k * (z - 1.0);
 
         GeneralizedGammaTheta {
-            mu: -d_log_z * theta.nu / theta.mu,
+            scale: -d_log_z * theta.nu / theta.scale,
             sigma: d_k * (-2.0 * k / theta.sigma),
             nu: d_k * (-2.0 * k / theta.nu) + d_log_z * log_ratio - 1.0 / theta.nu,
         }
@@ -149,7 +149,7 @@ where
         (
             nll,
             GeneralizedGammaEta {
-                mu: gradient.mu * ScaleLink::derivative_inverse(eta.mu),
+                scale: gradient.scale * ScaleLink::derivative_inverse(eta.scale),
                 sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
                 nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
             },
@@ -234,7 +234,7 @@ where
         let sigma = positive_floor((summary.variance.sqrt() / scale).max(1.0e-3));
 
         GeneralizedGammaEta {
-            mu: ScaleLink::initial_eta_from_theta(scale),
+            scale: ScaleLink::initial_eta_from_theta(scale),
             sigma: SigmaLink::initial_eta_from_theta(sigma),
             nu: NuLink::initial_eta_from_theta(1.0),
         }
@@ -249,8 +249,8 @@ where
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
+            || theta.scale <= 0.0
+            || !theta.scale.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.nu.is_finite()
@@ -261,7 +261,7 @@ where
             return 0.0;
         }
         if theta.nu.abs() < NU_EPSILON {
-            let z = (y / theta.mu).ln() / theta.sigma;
+            let z = (y / theta.scale).ln() / theta.sigma;
             let correction =
                 theta.nu * theta.sigma * z.mul_add(z, 2.0) * unit_normal_log_pdf(z).exp() / 6.0;
             return (unit_normal_cdf(z) + correction).clamp(0.0, 1.0);
@@ -269,7 +269,7 @@ where
 
         let abs_nu = theta.nu.abs();
         let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
-        let x = k * (y / theta.mu).powf(theta.nu);
+        let x = k * (y / theta.scale).powf(theta.nu);
         if theta.nu > 0.0 {
             regularized_gamma_lower(k, x)
         } else {
@@ -285,8 +285,8 @@ where
     NuLink: Link<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
+        if theta.scale <= 0.0
+            || !theta.scale.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.nu.is_finite()
@@ -310,8 +310,8 @@ where
     type Sample = f64;
 
     fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
+        if theta.scale <= 0.0
+            || !theta.scale.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.nu.is_finite()
@@ -321,7 +321,7 @@ where
 
         if theta.nu.abs() < NU_EPSILON {
             let z = crate::simulation::standard_normal(rng);
-            return theta.mu * (theta.sigma * z).exp();
+            return theta.scale * (theta.sigma * z).exp();
         }
 
         let abs_nu = theta.nu.abs();
@@ -331,7 +331,7 @@ where
                 .expect("validated generalized gamma parameters must construct"),
             rng,
         );
-        theta.mu * z.powf(1.0 / theta.nu)
+        theta.scale * z.powf(1.0 / theta.nu)
     }
 }
 
@@ -343,8 +343,7 @@ pub struct GeneralizedGammaEta {
     /// This controls the positive parameter used in `(y / scale)`; it is not
     /// generally the arithmetic mean.
     ///
-    /// The field name is retained for compatibility with existing code.
-    pub mu: f64,
+    pub scale: f64,
     /// Scale predictor.
     pub sigma: f64,
     /// Shape predictor.
@@ -355,7 +354,7 @@ impl ParameterParts<3> for GeneralizedGammaEta {
     #[inline]
     fn from_array(values: [f64; 3]) -> Self {
         Self {
-            mu: values[0],
+            scale: values[0],
             sigma: values[1],
             nu: values[2],
         }
@@ -364,7 +363,7 @@ impl ParameterParts<3> for GeneralizedGammaEta {
     #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
-            0 => self.mu,
+            0 => self.scale,
             1 => self.sigma,
             2 => self.nu,
             _ => unreachable!("generalized gamma eta only has indices 0 through 2"),
@@ -380,8 +379,7 @@ pub struct GeneralizedGammaTheta {
     /// This is the positive parameter used in `(y / scale)`; it is not
     /// generally the arithmetic mean.
     ///
-    /// The field name is retained for compatibility with existing code.
-    pub mu: f64,
+    pub scale: f64,
     /// Positive scale parameter.
     pub sigma: f64,
     /// Shape parameter; `nu = 0` is the log-normal limit.
@@ -404,7 +402,7 @@ mod tests {
         let cdf = family.cdf(
             0.01,
             &GeneralizedGammaTheta {
-                mu: 1.0,
+                scale: 1.0,
                 sigma: 1.0,
                 nu: -1.0,
             },
@@ -432,7 +430,7 @@ mod tests {
         let (_, gradient) = family.nll_and_gradient_eta(
             1.0,
             &super::GeneralizedGammaEta {
-                mu: 0.0,
+                scale: 0.0,
                 sigma: 0.0,
                 nu: 0.0,
             },
@@ -452,7 +450,7 @@ mod tests {
         let sample = family.sample(
             &mut rng,
             &GeneralizedGammaTheta {
-                mu: 1.5,
+                scale: 1.5,
                 sigma: 0.7,
                 nu: 0.8,
             },
@@ -461,7 +459,7 @@ mod tests {
         let log_normal_limit = family.sample(
             &mut rng,
             &GeneralizedGammaTheta {
-                mu: 1.5,
+                scale: 1.5,
                 sigma: 0.7,
                 nu: 0.0,
             },
@@ -472,7 +470,7 @@ mod tests {
                 .sample(
                     &mut rng,
                     &GeneralizedGammaTheta {
-                        mu: 1.5,
+                        scale: 1.5,
                         sigma: 0.0,
                         nu: 0.8,
                     }

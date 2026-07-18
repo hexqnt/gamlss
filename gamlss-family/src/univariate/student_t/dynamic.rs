@@ -36,7 +36,7 @@ impl<MuLink, SigmaLink, TauLink> StudentTDynamic<MuLink, SigmaLink, TauLink>
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     /// Creates a stateless dynamic-DF Student's t family.
     #[inline]
@@ -91,7 +91,7 @@ impl<MuLink, SigmaLink, TauLink> Default for StudentTDynamic<MuLink, SigmaLink, 
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn default() -> Self {
         Self::new()
@@ -108,7 +108,7 @@ impl<MuLink, SigmaLink, TauLink> Family for StudentTDynamic<MuLink, SigmaLink, T
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     type Eta = StudentTMuSigmaTauEta;
     type Theta = StudentTMuSigmaTauTheta;
@@ -149,7 +149,7 @@ impl<MuLink, SigmaLink, TauLink> InitialEtaFromObservations<3>
 where
     MuLink: InitialEtaFromTheta<f64>,
     SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    TauLink: InitialEtaFromTheta<f64> + Link<f64>,
+    TauLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
 {
     fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
     where
@@ -176,7 +176,7 @@ impl<MuLink, SigmaLink, TauLink> HasCdf for StudentTDynamic<MuLink, SigmaLink, T
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || !valid_dynamic_theta(*theta) {
@@ -191,7 +191,7 @@ impl<MuLink, SigmaLink, TauLink> HasQuantile for StudentTDynamic<MuLink, SigmaLi
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         if !valid_dynamic_theta(*theta) {
@@ -208,7 +208,7 @@ impl<MuLink, SigmaLink, TauLink> HasCrps for StudentTDynamic<MuLink, SigmaLink, 
 where
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         if !y.is_finite() || !valid_dynamic_theta(*theta) {
@@ -226,7 +226,7 @@ where
     Rng: rand::Rng,
     MuLink: Link<f64>,
     SigmaLink: PositiveLink<f64>,
-    TauLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
 {
     type Sample = f64;
 

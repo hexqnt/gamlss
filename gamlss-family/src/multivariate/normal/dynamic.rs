@@ -482,28 +482,16 @@ where
         preceding: &[f64],
         theta: &Self::Theta,
     ) -> f64 {
-        if component >= self.dimension
-            || preceding.len() < component
-            || !y.is_finite()
-            || !kernel::valid_theta(self.dimension, theta.mu(), theta.cholesky())
-        {
-            return f64::NAN;
-        }
         let mut standardized = vec![0.0; component];
-        for row in 0..component {
-            let mut residual = preceding[row] - theta.mu()[row];
-            for col in 0..row {
-                residual -= theta.cholesky().lower(row, col) * standardized[col];
-            }
-            standardized[row] = residual / theta.cholesky().lower(row, row);
-        }
-        let conditional_mean = (0..component).fold(theta.mu()[component], |mean, col| {
-            theta
-                .cholesky()
-                .lower(component, col)
-                .mul_add(standardized[col], mean)
-        });
-        unit_normal_cdf((y - conditional_mean) / theta.cholesky().lower(component, component))
+        kernel::conditional_cdf(
+            self.dimension,
+            component,
+            y,
+            preceding,
+            theta.mu(),
+            theta.cholesky(),
+            &mut standardized,
+        )
     }
 }
 
@@ -526,10 +514,13 @@ where
                 actual: out.len(),
             });
         }
-        for component in 0..self.dimension {
-            out[component] =
-                self.conditional_cdf(component, observation[component], observation, theta);
-        }
+        kernel::rosenblatt_into(
+            self.dimension,
+            observation,
+            theta.mu(),
+            theta.cholesky(),
+            out,
+        );
         Ok(())
     }
 }

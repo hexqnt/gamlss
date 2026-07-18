@@ -10,18 +10,14 @@ pub use component_mean_zero_probability::{
     ComponentMeanZeroProbability, ZipComponentMeanZeroProbability,
 };
 pub use total_mean_zero_probability::{
-    TotalMeanZeroProbability, ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+    TotalMeanZeroProbability, ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityEta,
+    ZipTotalMeanZeroProbabilityTheta,
 };
 
 mod component_mean_zero_probability;
 mod total_mean_zero_probability;
 
 const MAX_CDF_TERMS: u64 = 1_000_000;
-
-/// ZIP distribution with log/logit links.
-///
-/// Backward-compatible alias for the component-mean ZIP parameterization.
-pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 
 /// Zero-inflated Poisson family.
 ///
@@ -39,7 +35,7 @@ pub type ZipMeanZeroProbability = ZipComponentMeanZeroProbability;
 ///
 /// Therefore $\mathbb{E}(Y)=(1-\pi)\lambda$. The default parameterization models $\lambda$ and $\pi$ directly; use [`ZipTotalMeanZeroProbability`] to model the unconditional mean instead.
 ///
-/// The canonical carrier retains historical field names: [`ZipTheta::mu`] stores the Poisson component mean $\lambda$, [`ZipTheta::sigma`] stores the zero probability $\pi$, and [`ZipEta`] uses `mu` and `sigma` for their predictors.
+/// The component-mean parameterization uses [`ZipComponentMeanZeroProbabilityTheta`]; use [`ZipTotalMeanZeroProbability`] when the first modeled parameter should be the unconditional mean.
 ///
 /// ### Parameterization examples
 #[cfg_attr(
@@ -71,79 +67,94 @@ where
     }
 
     #[inline]
-    pub(super) fn nll_theta(y: f64, theta: ZipTheta) -> f64 {
+    pub(super) fn nll_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
         if !is_nonnegative_integer(y)
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || theta.sigma >= 1.0
-            || !theta.sigma.is_finite()
+            || theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::INFINITY;
         }
         if y == 0.0 {
-            -log_add_exp(theta.sigma.ln(), (1.0 - theta.sigma).ln() - theta.mu)
+            -log_add_exp(
+                theta.zero_probability.ln(),
+                (1.0 - theta.zero_probability).ln() - theta.component_mean,
+            )
         } else {
-            -((1.0 - theta.sigma).ln() + Self::poisson_log_pmf(y, theta.mu))
+            -((1.0 - theta.zero_probability).ln() + Self::poisson_log_pmf(y, theta.component_mean))
         }
     }
 
     #[inline]
-    pub(super) fn gradient_component_theta(y: f64, theta: ZipTheta) -> ZipTheta {
+    pub(super) fn gradient_component_theta(
+        y: f64,
+        theta: ZipComponentMeanZeroProbabilityTheta,
+    ) -> ZipComponentMeanZeroProbabilityTheta {
         if y == 0.0 {
-            let q0 = (-theta.mu).exp();
-            let one_minus_q0 = -(-theta.mu).exp_m1();
-            let p0 = theta.sigma.mul_add(one_minus_q0, q0);
-            ZipTheta {
-                mu: (1.0 - theta.sigma) * q0 / p0,
-                sigma: -one_minus_q0 / p0,
+            let q0 = (-theta.component_mean).exp();
+            let one_minus_q0 = -(-theta.component_mean).exp_m1();
+            let p0 = theta.zero_probability.mul_add(one_minus_q0, q0);
+            ZipComponentMeanZeroProbabilityTheta {
+                component_mean: (1.0 - theta.zero_probability) * q0 / p0,
+                zero_probability: -one_minus_q0 / p0,
             }
         } else {
-            ZipTheta {
-                mu: 1.0 - y / theta.mu,
-                sigma: 1.0 / (1.0 - theta.sigma),
+            ZipComponentMeanZeroProbabilityTheta {
+                component_mean: 1.0 - y / theta.component_mean,
+                zero_probability: 1.0 / (1.0 - theta.zero_probability),
             }
         }
     }
 
-    pub(super) fn cdf_theta(y: f64, theta: ZipTheta) -> f64 {
+    pub(super) fn cdf_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
         if !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || theta.sigma >= 1.0
-            || !theta.sigma.is_finite()
+            || theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::NAN;
         }
         if y < 0.0 {
             return 0.0;
         }
-        let base_cdf = Poisson::<Log>::cdf_theta(y, PoissonTheta { mu: theta.mu });
-        (1.0 - theta.sigma)
-            .mul_add(base_cdf, theta.sigma)
+        let base_cdf = Poisson::<Log>::cdf_theta(
+            y,
+            PoissonTheta {
+                mu: theta.component_mean,
+            },
+        );
+        (1.0 - theta.zero_probability)
+            .mul_add(base_cdf, theta.zero_probability)
             .clamp(0.0, 1.0)
     }
 
     #[cfg(feature = "rand")]
-    pub(super) fn sample_component_theta<Rng>(rng: &mut Rng, theta: ZipTheta) -> f64
+    pub(super) fn sample_component_theta<Rng>(
+        rng: &mut Rng,
+        theta: ZipComponentMeanZeroProbabilityTheta,
+    ) -> f64
     where
         Rng: rand::Rng,
     {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || theta.sigma >= 1.0
-            || !theta.sigma.is_finite()
+        if theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
         {
             return f64::NAN;
         }
-        if crate::simulation::open_unit(rng) <= theta.sigma {
+        if crate::simulation::open_unit(rng) <= theta.zero_probability {
             return 0.0;
         }
 
         rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(theta.mu).expect("validated ZIP mean must construct"),
+            &rand_distr::Poisson::new(theta.component_mean)
+                .expect("validated ZIP mean must construct"),
             rng,
         )
     }
@@ -159,43 +170,39 @@ where
     }
 }
 
-/// Predictors for ZIP on the link scale.
+/// Predictors for component-mean ZIP on the link scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZipEta {
+pub struct ZipComponentMeanZeroProbabilityEta {
     /// Poisson mean predictor.
-    pub mu: f64,
+    pub component_mean: f64,
     /// Zero-inflation probability predictor.
-    ///
-    /// The field name is retained for compatibility with existing code.
-    pub sigma: f64,
+    pub zero_probability: f64,
 }
 
-impl ParameterParts<2> for ZipEta {
+impl ParameterParts<2> for ZipComponentMeanZeroProbabilityEta {
     #[inline]
     fn from_array(values: [f64; 2]) -> Self {
         Self {
-            mu: values[0],
-            sigma: values[1],
+            component_mean: values[0],
+            zero_probability: values[1],
         }
     }
 
     #[inline]
     fn part(&self, index: usize) -> f64 {
         match index {
-            0 => self.mu,
-            1 => self.sigma,
+            0 => self.component_mean,
+            1 => self.zero_probability,
             _ => unreachable!("zip eta only has indices 0 and 1"),
         }
     }
 }
 
-/// Natural-scale ZIP parameters.
+/// Natural-scale component-mean ZIP parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ZipTheta {
+pub struct ZipComponentMeanZeroProbabilityTheta {
     /// Positive Poisson mean.
-    pub mu: f64,
+    pub component_mean: f64,
     /// Zero-inflation probability in `(0, 1)`.
-    ///
-    /// The field name is retained for compatibility with existing code.
-    pub sigma: f64,
+    pub zero_probability: f64,
 }

@@ -2,7 +2,7 @@
 use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf,
-    HasObservationDimension, ObservationView,
+    HasObservationDimension, ModelError, ObservationView,
     shape::{Repeated, ShapeValues},
 };
 
@@ -25,6 +25,22 @@ pub struct IndependentVec<F, const D: usize> {
 }
 
 impl<F, const D: usize> IndependentVec<F, D> {
+    /// Creates an independent product family after checking the compile-time dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `D == 0`.
+    #[inline]
+    pub fn try_new(component: F) -> Result<Self, ModelError> {
+        if D == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            });
+        }
+        Ok(Self { component })
+    }
+
     /// Creates an independent product family from a scalar component family.
     ///
     /// # Panics
@@ -272,8 +288,8 @@ where
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, InitialEtaFromObservations, Mu,
-        NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
+        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, InitialEtaFromObservations,
+        ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
     };
 
     use super::IndependentVec;
@@ -284,6 +300,18 @@ mod tests {
         let family = IndependentVec::<NormalMuSigma, 2>::default();
         assert_eq!(family.component(), &NormalMuSigma::new());
         assert_eq!(family.into_component(), NormalMuSigma::new());
+    }
+
+    #[test]
+    fn checked_constructor_rejects_zero_dimension() {
+        assert_eq!(
+            IndependentVec::<NormalMuSigma, 0>::try_new(NormalMuSigma::new()),
+            Err(ModelError::InvalidParameter {
+                parameter: "dimension",
+                expected: "positive",
+            })
+        );
+        assert!(IndependentVec::<NormalMuSigma, 1>::try_new(NormalMuSigma::new()).is_ok());
     }
 
     #[test]

@@ -86,7 +86,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let gamma = GammaShapeRate::new();
-    let gamma_theta = GammaTheta {
+    let gamma_theta = GammaShapeRateTheta {
         shape: 2.3,
         rate: 1.4,
     };
@@ -143,7 +143,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let log_normal = LogNormalLogLocationLogSd::new();
-    let log_normal_theta = LogNormalTheta {
+    let log_normal_theta = LogNormalLogLocationLogSdTheta {
         log_location: 0.2,
         log_sd: 0.7,
     };
@@ -225,7 +225,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let weibull = WeibullScaleShape::new();
-    let weibull_theta = WeibullTheta {
+    let weibull_theta = WeibullScaleShapeTheta {
         shape: 1.7,
         scale: 1.2,
     };
@@ -260,7 +260,7 @@ fn tail_cdf_and_quantile_match_statrs_references() {
     }
 
     let log_normal = LogNormalLogLocationLogSd::new();
-    let log_normal_theta = LogNormalTheta {
+    let log_normal_theta = LogNormalLogLocationLogSdTheta {
         log_location: 0.2,
         log_sd: 0.7,
     };
@@ -292,11 +292,11 @@ fn tail_cdf_and_quantile_match_statrs_references() {
 fn gamma_and_beta_extreme_shape_cases_match_statrs_references() {
     let gamma = GammaShapeRate::new();
     for theta in [
-        GammaTheta {
+        GammaShapeRateTheta {
             shape: 0.15,
             rate: 2.0,
         },
-        GammaTheta {
+        GammaShapeRateTheta {
             shape: 75.0,
             rate: 3.0,
         },
