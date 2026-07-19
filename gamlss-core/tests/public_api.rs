@@ -13,10 +13,20 @@ use gamlss_core::{
     LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
     Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
     ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
-    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability, ShapeValues,
-    Sigma, Size, Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
-    VectorParameterBlock, ZeroProbability,
+    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability,
+    ScoreTilePolicy, ShapeValues, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
+    TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock, ZeroProbability,
 };
+
+#[test]
+fn score_tile_policy_remains_a_root_and_prelude_reexport() {
+    let root_policy = ScoreTilePolicy::try_max_bytes(8 * 1024 * 1024).unwrap();
+    let prelude_policy = gamlss_core::prelude::ScoreTilePolicy::try_max_rows(128).unwrap();
+
+    assert_eq!(root_policy.max_bytes(), Some(8 * 1024 * 1024));
+    assert_eq!(prelude_policy.max_rows(), Some(128));
+    assert_eq!(ScoreTilePolicy::DEFAULT_BYTE_BUDGET, 4 * 1024 * 1024);
+}
 
 #[derive(Debug, Clone, Copy)]
 struct DependentConstraintFamily;

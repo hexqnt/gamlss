@@ -904,7 +904,7 @@ mod tests {
         }
     }
 
-    fn assert_capabilities_match_cholesky<const D: usize>() {
+    fn assert_parameterization_contract_matches_cholesky<const D: usize>() {
         let family = MvNormalMeanStdPartialCorrDefault::<D>::new();
         let mut partial_corr = FixedPartialCorrelations::zeros();
         for row in 1..D {
@@ -922,6 +922,25 @@ mod tests {
         let cholesky_theta =
             MvNormalCholeskyTheta::try_new(*theta.mu(), *theta.scale_cholesky()).unwrap();
         let observation = std::array::from_fn(|component| 0.4 - 0.15 * component as f64);
+
+        assert_relative_eq!(
+            family.nll(observation, &theta, &mut family.workspace()),
+            cholesky_family.nll(
+                observation,
+                &cholesky_theta,
+                &mut cholesky_family.workspace(),
+            ),
+            epsilon = 1.0e-12
+        );
+        for row in 0..D {
+            for col in 0..D {
+                assert_relative_eq!(
+                    theta.covariance(row, col).unwrap(),
+                    cholesky_theta.covariance(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+            }
+        }
 
         for component in 0..D {
             assert_relative_eq!(
@@ -952,6 +971,24 @@ mod tests {
         for (actual, expected) in actual.into_iter().zip(expected) {
             assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
         }
+
+        let mut invalid_observation = observation;
+        invalid_observation[0] = f64::NAN;
+        let (invalid_nll, invalid_gradient) =
+            family.nll_and_gradient_eta(invalid_observation, &eta, &mut family.workspace());
+        assert!(invalid_nll.is_infinite());
+        assert!(invalid_gradient.mu.iter().all(|value| value.is_nan()));
+        assert!(invalid_gradient.sigma.iter().all(|value| value.is_nan()));
+        assert!(invalid_gradient.partial_corr.iter().all(f64::is_nan));
+        assert!(
+            cholesky_family
+                .nll(
+                    invalid_observation,
+                    &cholesky_theta,
+                    &mut cholesky_family.workspace(),
+                )
+                .is_infinite()
+        );
     }
 
     #[test]
@@ -979,11 +1016,11 @@ mod tests {
     }
 
     #[test]
-    fn conditional_and_rosenblatt_capabilities_match_cholesky_for_d1_through_d4() {
-        assert_capabilities_match_cholesky::<1>();
-        assert_capabilities_match_cholesky::<2>();
-        assert_capabilities_match_cholesky::<3>();
-        assert_capabilities_match_cholesky::<4>();
+    fn nll_geometry_invalid_domains_and_capabilities_match_cholesky_for_d1_through_d4() {
+        assert_parameterization_contract_matches_cholesky::<1>();
+        assert_parameterization_contract_matches_cholesky::<2>();
+        assert_parameterization_contract_matches_cholesky::<3>();
+        assert_parameterization_contract_matches_cholesky::<4>();
     }
 
     #[test]
@@ -1111,6 +1148,14 @@ mod tests {
                 [0.4, -0.3, 0.1],
                 [0.8_f64.ln(), 1.2_f64.ln(), 0.6_f64.ln()],
                 FixedPartialCorrelations::try_new(vec![0.2, -0.1, 0.3]).unwrap(),
+            ),
+        );
+        assert_gradient_matches_finite_difference::<4>(
+            [1.1, -0.7, 0.2, 0.8],
+            &MvNormalMeanStdPartialCorrEta::new(
+                [0.4, -0.3, 0.1, 0.25],
+                [0.8_f64.ln(), 1.2_f64.ln(), 0.6_f64.ln(), 1.1_f64.ln()],
+                FixedPartialCorrelations::try_new(vec![0.2, -0.1, 0.3, 0.15, -0.25, 0.05]).unwrap(),
             ),
         );
     }

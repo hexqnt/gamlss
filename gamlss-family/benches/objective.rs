@@ -182,9 +182,14 @@ fn benchmark_scalar(criterion: &mut Criterion, nobs: usize, ncols: usize, covera
     group.finish();
 }
 
-fn benchmark_fixed_mvn<const D: usize>(criterion: &mut Criterion, nobs: usize, coverage: Coverage) {
+fn benchmark_fixed_mvn<const D: usize>(
+    criterion: &mut Criterion,
+    nobs: usize,
+    ncols: usize,
+    coverage: Coverage,
+) {
     let observations = fixed_observations::<D>(nobs);
-    let shared_design = DenseDesign::intercept(nobs);
+    let shared_design = dense_design(nobs, ncols);
     let mu = VectorParameterBlock::<Mu, D, _, _>::new(
         array::from_fn(|_| LinearPredictorBlock::new(&shared_design)),
         NoPenalty,
@@ -205,8 +210,9 @@ fn benchmark_fixed_mvn<const D: usize>(criterion: &mut Criterion, nobs: usize, c
     .unwrap();
     let beta = vec![0.0; model.nparams()];
 
-    let mut group =
-        criterion.benchmark_group(format!("mvn_cholesky_static/d{D}/n{nobs}/shared_intercept"));
+    let mut group = criterion.benchmark_group(format!(
+        "mvn_cholesky_static/d{D}/n{nobs}/shared_dense_p{ncols}"
+    ));
     benchmark_model(&mut group, &model, &beta, coverage);
     let theta = model.predict_theta(&beta).unwrap();
     let mut rosenblatt = [0.0; D];
@@ -232,11 +238,12 @@ fn benchmark_dynamic_mvn(
     criterion: &mut Criterion,
     dimension: usize,
     nobs: usize,
+    ncols: usize,
     coverage: Coverage,
 ) {
     let flat = flat_observations(nobs, dimension);
     let observations = DenseRows::try_new(&flat, dimension).unwrap();
-    let shared_design = DenseDesign::intercept(nobs);
+    let shared_design = dense_design(nobs, ncols);
     let family = DynMvNormalCholeskyDefault::new(dimension).unwrap();
     let coordinate_count = dimension + dimension * (dimension + 1) / 2;
     let predictors = (0..coordinate_count)
@@ -247,7 +254,7 @@ fn benchmark_dynamic_mvn(
     let beta = vec![0.0; model.nparams()];
 
     let mut group = criterion.benchmark_group(format!(
-        "mvn_cholesky_dynamic/d{dimension}/n{nobs}/shared_intercept"
+        "mvn_cholesky_dynamic/d{dimension}/n{nobs}/shared_dense_p{ncols}"
     ));
     benchmark_model(&mut group, &model, &beta, coverage);
     let theta = model.predict_theta(&beta).unwrap();
@@ -376,18 +383,21 @@ fn objective_baseline(criterion: &mut Criterion) {
     benchmark_scalar(criterion, 1_000, 64, Coverage::WorkspaceHotPath);
     benchmark_scalar(criterion, 100_000, 8, Coverage::WorkspaceHotPath);
 
-    benchmark_fixed_mvn::<2>(criterion, 1_000, Coverage::Full);
-    benchmark_fixed_mvn::<8>(criterion, 1_000, Coverage::Full);
-    benchmark_dynamic_mvn(criterion, 2, 1_000, Coverage::Full);
-    benchmark_dynamic_mvn(criterion, 8, 1_000, Coverage::Full);
+    benchmark_fixed_mvn::<2>(criterion, 1_000, 1, Coverage::Full);
+    benchmark_fixed_mvn::<8>(criterion, 1_000, 1, Coverage::Full);
+    benchmark_dynamic_mvn(criterion, 2, 1_000, 1, Coverage::Full);
+    benchmark_dynamic_mvn(criterion, 8, 1_000, 1, Coverage::Full);
 
-    benchmark_fixed_mvn::<16>(criterion, 1_000, Coverage::WorkspaceHotPath);
-    benchmark_fixed_mvn::<32>(criterion, 1_000, Coverage::WorkspaceHotPath);
-    benchmark_dynamic_mvn(criterion, 16, 1_000, Coverage::WorkspaceHotPath);
-    benchmark_dynamic_mvn(criterion, 32, 1_000, Coverage::WorkspaceHotPath);
-    benchmark_dynamic_mvn(criterion, 50, 1_000, Coverage::WorkspaceHotPath);
-    benchmark_fixed_mvn::<2>(criterion, 100_000, Coverage::WorkspaceHotPath);
-    benchmark_dynamic_mvn(criterion, 2, 100_000, Coverage::WorkspaceHotPath);
+    benchmark_fixed_mvn::<8>(criterion, 1_000, 8, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 8, 1_000, 8, Coverage::WorkspaceHotPath);
+    benchmark_fixed_mvn::<16>(criterion, 1_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_fixed_mvn::<32>(criterion, 1_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 16, 1_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 32, 1_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 32, 1_000, 32, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 50, 1_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_fixed_mvn::<2>(criterion, 100_000, 1, Coverage::WorkspaceHotPath);
+    benchmark_dynamic_mvn(criterion, 2, 100_000, 1, Coverage::WorkspaceHotPath);
 
     benchmark_mean_std_partial::<4>(criterion, 1_000);
     benchmark_student_t::<4>(criterion, 1_000);

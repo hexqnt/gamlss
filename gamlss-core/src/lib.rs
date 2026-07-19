@@ -50,7 +50,8 @@ pub use model::{
     DenseRows, DynamicParameterBlocks, FiniteScalarObservations, Gamlss, GamlssBlocks,
     GradientWorkspace, ModelWorkspace, ObjectiveScale, ObservationView, ParameterAxis,
     ParameterCoefficients, ParameterDescriptor, ParameterLayout, ParameterPath, ParameterSlice,
-    PredictionView, TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties, WorkspaceGamlss,
+    PredictionView, ScoreTilePolicy, TrainingDiagnostics, UnpackedParameters, WithGlobalPenalties,
+    WorkspaceGamlss,
 };
 pub use objective::{BlockObjective, Objective};
 pub use param::{
@@ -116,11 +117,11 @@ pub mod prelude {
         ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts, ParameterPath,
         ParameterShape, ParameterSlice, PartialCorrelation, Penalty, PositiveLink, Power,
         Precision, PredictionView, PredictorBlock, Probability, Product, ProductBlock, Rate,
-        Repeated, RidgePenalty, RowMultiplier, Scalar, ScalarTuple, Scale, SegmentPenalty, Shape,
-        ShapeValues, Sigma, Simplex, SimplexLogitParameterBlock, SimulationError, Size, Softplus,
-        StrictLower, StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, TrySimulate,
-        UnitIntervalLink, UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties,
-        WorkspaceGamlss, ZeroProbability,
+        Repeated, RidgePenalty, RowMultiplier, Scalar, ScalarTuple, Scale, ScoreTilePolicy,
+        SegmentPenalty, Shape, ShapeValues, Sigma, Simplex, SimplexLogitParameterBlock,
+        SimulationError, Size, Softplus, StrictLower, StrictLowerTriangularParameterBlock,
+        SumBlock, Tau, TotalMean, TrainingDiagnostics, TransformedScalar,
+        TryAssignParameterOffsets, TrySimulate, UnitIntervalLink, UnpackedParameters, Vector,
+        VectorParameterBlock, WithGlobalPenalties, WorkspaceGamlss, ZeroProbability,
     };
 }

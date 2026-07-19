@@ -4,7 +4,7 @@ use crate::{DynamicLayoutKey, DynamicallyCompilableFamily, ModelError, Penalty, 
 
 use super::{
     GamlssBlocks, GradientWorkspace, ObservationView, ParameterDescriptor, ParameterLayout,
-    ParameterPath, ParameterSlice, validate_block_rows,
+    ParameterPath, ParameterSlice, ScoreTilePolicy, validate_block_rows,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -312,8 +312,8 @@ where
         self.add_local_penalty_gradient(beta, grad);
     }
 
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let mut workspace = GradientWorkspace::new();
+    fn gradient_workspace(&self, nobs: usize, policy: ScoreTilePolicy) -> GradientWorkspace {
+        let mut workspace = GradientWorkspace::with_score_tile_policy(policy);
         let _ = workspace.prepare_score_tile(self.coordinates.len(), nobs);
         let _ = workspace.dynamic_buffers_mut(self.coordinates.len());
         workspace

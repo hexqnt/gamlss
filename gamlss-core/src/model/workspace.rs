@@ -1,7 +1,131 @@
 use crate::{Family, ModelError};
 
-const DEFAULT_SCORE_TILE_BYTES: usize = 4 * 1024 * 1024;
-const DEFAULT_SCORE_TILE_VALUES: usize = DEFAULT_SCORE_TILE_BYTES / size_of::<f64>();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScoreTileLimit {
+    Automatic,
+    MaxBytes(usize),
+    MaxRows(usize),
+}
+
+/// Controls the bounded score storage used during gradient evaluation.
+///
+/// The default policy targets approximately four MiB of score values. Most
+/// callers should use [`Gamlss::gradient_workspace`](crate::Gamlss::gradient_workspace)
+/// or [`Gamlss::into_workspace_objective`](crate::Gamlss::into_workspace_objective)
+/// and rely on that default. Explicit policies are useful when profiling a
+/// workload or bounding worker-local memory in an executor.
+///
+/// A byte budget applies only to the score tile, not to the complete model
+/// workspace. At least one observation row is retained when observations are
+/// present, so a single score row may exceed a very small byte budget.
+///
+/// # Examples
+///
+/// ```
+/// use gamlss_core::ScoreTilePolicy;
+///
+/// let memory_bounded = ScoreTilePolicy::try_max_bytes(8 * 1024 * 1024)?;
+/// let row_bounded = ScoreTilePolicy::try_max_rows(256)?;
+/// # Ok::<(), gamlss_core::ModelError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScoreTilePolicy {
+    limit: ScoreTileLimit,
+}
+
+impl ScoreTilePolicy {
+    /// Default score payload budget used by [`Self::automatic`].
+    pub const DEFAULT_BYTE_BUDGET: usize = 4 * 1024 * 1024;
+
+    /// Uses the library default score-memory budget.
+    #[inline]
+    #[must_use]
+    pub const fn automatic() -> Self {
+        Self {
+            limit: ScoreTileLimit::Automatic,
+        }
+    }
+
+    /// Limits the score payload to approximately `bytes` bytes.
+    ///
+    /// The effective tile is also capped by the observation count. At least
+    /// one row is retained for a non-empty data set, even when one score row is
+    /// larger than `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `bytes == 0`.
+    pub const fn try_max_bytes(bytes: usize) -> Result<Self, ModelError> {
+        if bytes == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "score tile bytes",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
+            limit: ScoreTileLimit::MaxBytes(bytes),
+        })
+    }
+
+    /// Limits each score tile to at most `rows` observation rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `rows == 0`.
+    pub const fn try_max_rows(rows: usize) -> Result<Self, ModelError> {
+        if rows == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "score tile rows",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
+            limit: ScoreTileLimit::MaxRows(rows),
+        })
+    }
+
+    /// Explicit byte limit, or `None` for automatic and row-based policies.
+    #[inline]
+    #[must_use]
+    pub const fn max_bytes(self) -> Option<usize> {
+        match self.limit {
+            ScoreTileLimit::MaxBytes(bytes) => Some(bytes),
+            ScoreTileLimit::Automatic | ScoreTileLimit::MaxRows(_) => None,
+        }
+    }
+
+    /// Explicit row limit, or `None` for automatic and byte-based policies.
+    #[inline]
+    #[must_use]
+    pub const fn max_rows(self) -> Option<usize> {
+        match self.limit {
+            ScoreTileLimit::MaxRows(rows) => Some(rows),
+            ScoreTileLimit::Automatic | ScoreTileLimit::MaxBytes(_) => None,
+        }
+    }
+
+    fn requested_rows(self, coordinate_count: usize) -> usize {
+        match self.limit {
+            ScoreTileLimit::Automatic => {
+                rows_for_byte_budget(Self::DEFAULT_BYTE_BUDGET, coordinate_count)
+            }
+            ScoreTileLimit::MaxBytes(bytes) => rows_for_byte_budget(bytes, coordinate_count),
+            ScoreTileLimit::MaxRows(rows) => rows,
+        }
+    }
+}
+
+#[inline]
+fn rows_for_byte_budget(bytes: usize, coordinate_count: usize) -> usize {
+    (bytes / size_of::<f64>() / coordinate_count.max(1)).max(1)
+}
+
+impl Default for ScoreTilePolicy {
+    #[inline]
+    fn default() -> Self {
+        Self::automatic()
+    }
+}
 
 /// Reusable model scratch buffers for GAMLSS objective evaluation.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,13 +147,6 @@ where
         Self {
             family: family.workspace(),
             gradient: gradient(nobs),
-        }
-    }
-
-    pub(super) fn with_gradient(family: &F, gradient: GradientWorkspace) -> Self {
-        Self {
-            family: family.workspace(),
-            gradient,
         }
     }
 
@@ -70,7 +187,7 @@ pub struct GradientWorkspace {
     score_coordinate_count: usize,
     score_tile_rows: usize,
     score_tile_len: usize,
-    score_tile_row_limit: Option<usize>,
+    score_tile_policy: ScoreTilePolicy,
     penalty_gradient: Vec<f64>,
     dynamic_values: Vec<f64>,
     dynamic_scores: Vec<f64>,
@@ -84,33 +201,26 @@ impl GradientWorkspace {
         Self::default()
     }
 
-    /// Creates a workspace whose score tiles contain at most `tile_rows` rows.
+    /// Creates an empty workspace configured with `policy`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::InvalidParameter`] when `tile_rows == 0`.
-    pub fn try_with_tile_rows(tile_rows: usize) -> Result<Self, ModelError> {
-        if tile_rows == 0 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "score tile rows",
-                expected: "positive",
-            });
-        }
-        Ok(Self {
-            score_tile_row_limit: Some(tile_rows),
+    /// Buffers are allocated lazily by [`Self::prepare_score_tile`].
+    #[inline]
+    #[must_use]
+    pub fn with_score_tile_policy(policy: ScoreTilePolicy) -> Self {
+        Self {
+            score_tile_policy: policy,
             ..Self::default()
-        })
+        }
     }
 
     /// Prepares bounded score storage and returns the number of rows per tile.
     ///
     /// The automatic policy targets approximately four MiB and always keeps at
-    /// least one row when `nobs > 0`. An explicit limit supplied by
-    /// [`Self::try_with_tile_rows`] takes precedence.
+    /// least one row when `nobs > 0`. An explicit [`ScoreTilePolicy`] takes
+    /// precedence.
     pub fn prepare_score_tile(&mut self, coordinate_count: usize, nobs: usize) -> usize {
         let divisor = coordinate_count.max(1);
-        let automatic_rows = (DEFAULT_SCORE_TILE_VALUES / divisor).max(1);
-        let requested_rows = self.score_tile_row_limit.unwrap_or(automatic_rows);
+        let requested_rows = self.score_tile_policy.requested_rows(coordinate_count);
         let max_rows_without_overflow = usize::MAX / divisor;
         let tile_rows = requested_rows.min(max_rows_without_overflow).min(nobs);
         let score_value_count = coordinate_count * tile_rows;
@@ -163,6 +273,21 @@ impl GradientWorkspace {
         self.score_tile.len()
     }
 
+    /// Number of bytes in the prepared score payload.
+    ///
+    /// This reports `len`, not retained `Vec` capacity, and excludes all other
+    /// family and gradient workspace buffers.
+    #[must_use]
+    pub const fn score_tile_bytes(&self) -> usize {
+        self.score_tile.len() * size_of::<f64>()
+    }
+
+    /// Policy used to size score tiles.
+    #[must_use]
+    pub const fn score_tile_policy(&self) -> ScoreTilePolicy {
+        self.score_tile_policy
+    }
+
     /// Returns a zero-filled temporary buffer suitable for penalty gradients.
     pub fn penalty_gradient_mut(&mut self, len: usize) -> &mut [f64] {
         self.penalty_gradient.resize(len, 0.0);
@@ -196,7 +321,7 @@ impl GradientWorkspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_SCORE_TILE_VALUES, GradientWorkspace};
+    use super::{GradientWorkspace, ScoreTilePolicy};
     use crate::ModelError;
 
     #[test]
@@ -208,8 +333,9 @@ mod tests {
 
         let tile_rows = workspace.prepare_score_tile(coordinate_count, 100_000);
 
-        assert_eq!(tile_rows, DEFAULT_SCORE_TILE_VALUES / coordinate_count);
-        assert!(workspace.score_tile_value_count() <= DEFAULT_SCORE_TILE_VALUES);
+        let default_value_budget = ScoreTilePolicy::DEFAULT_BYTE_BUDGET / size_of::<f64>();
+        assert_eq!(tile_rows, default_value_budget / coordinate_count);
+        assert!(workspace.score_tile_value_count() <= default_value_budget);
         assert_eq!(
             workspace.score_tile_value_count(),
             coordinate_count * tile_rows
@@ -225,13 +351,44 @@ mod tests {
     }
 
     #[test]
-    fn explicit_tile_size_must_be_positive() {
+    fn explicit_tile_limits_must_be_positive() {
         assert_eq!(
-            GradientWorkspace::try_with_tile_rows(0).unwrap_err(),
+            ScoreTilePolicy::try_max_rows(0).unwrap_err(),
             ModelError::InvalidParameter {
                 parameter: "score tile rows",
                 expected: "positive",
             }
         );
+        assert_eq!(
+            ScoreTilePolicy::try_max_bytes(0).unwrap_err(),
+            ModelError::InvalidParameter {
+                parameter: "score tile bytes",
+                expected: "positive",
+            }
+        );
+    }
+
+    #[test]
+    fn byte_and_row_policies_select_expected_tile_sizes() {
+        let byte_policy = ScoreTilePolicy::try_max_bytes(80).unwrap();
+        let mut by_bytes = GradientWorkspace::with_score_tile_policy(byte_policy);
+        assert_eq!(by_bytes.prepare_score_tile(2, 100), 5);
+        assert_eq!(by_bytes.score_tile_bytes(), 80);
+        assert_eq!(by_bytes.score_tile_policy(), byte_policy);
+
+        let row_policy = ScoreTilePolicy::try_max_rows(7).unwrap();
+        let mut by_rows = GradientWorkspace::with_score_tile_policy(row_policy);
+        assert_eq!(by_rows.prepare_score_tile(2, 5), 5);
+        assert_eq!(by_rows.score_tile_policy().max_rows(), Some(7));
+        assert_eq!(by_rows.score_tile_policy().max_bytes(), None);
+    }
+
+    #[test]
+    fn byte_policy_keeps_one_row_when_a_row_exceeds_the_budget() {
+        let policy = ScoreTilePolicy::try_max_bytes(1).unwrap();
+        let mut workspace = GradientWorkspace::with_score_tile_policy(policy);
+
+        assert_eq!(workspace.prepare_score_tile(3, 10), 1);
+        assert_eq!(workspace.score_tile_bytes(), 3 * size_of::<f64>());
     }
 }

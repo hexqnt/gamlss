@@ -568,8 +568,8 @@ impl<const D: usize> MvNormalCholeskyTheta<D> {
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        CholeskyScale, DenseDesign, Family, FixedDimensionalFamily, Gamlss, HasConditionalCdf,
-        HasMarginalCdf, HasRosenblattTransform, LinearPredictorBlock,
+        CholeskyScale, DenseDesign, DynamicallyCompilableFamily, Family, FixedDimensionalFamily,
+        Gamlss, HasConditionalCdf, HasMarginalCdf, HasRosenblattTransform, LinearPredictorBlock,
         LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, ObjectiveScale, ParameterBlocks,
         RidgePenalty, VectorParameterBlock,
     };
@@ -578,7 +578,8 @@ mod tests {
     use crate::constants::HALF_LOG_2_PI;
     use crate::multivariate::matrix::PackedLowerTriangular;
     use crate::multivariate::normal::{
-        DynMvNormalCholeskyDefault, DynMvNormalCholeskyTheta, MvNormalCholeskyDefault,
+        DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta,
+        MvNormalCholeskyDefault,
     };
     use crate::{NormalMuSigma, NormalTheta};
 
@@ -694,6 +695,152 @@ mod tests {
         }
     }
 
+    fn assert_fixed_dynamic_contract_match<const D: usize>() {
+        let fixed = MvNormalCholeskyDefault::<D>::new();
+        let dynamic = DynMvNormalCholeskyDefault::new(D).unwrap();
+        let mu = std::array::from_fn(|component| 0.17 * component as f64 - 0.23);
+        let mut fixed_cholesky = FixedLowerTriangular::zeros();
+        let mut packed_cholesky = Vec::with_capacity(D * (D + 1) / 2);
+        for row in 0..D {
+            for col in 0..=row {
+                let value = if row == col {
+                    -0.18 + 0.07 * row as f64
+                } else {
+                    0.04 * (row + 2 * col + 1) as f64
+                };
+                fixed_cholesky.set_lower(row, col, value).unwrap();
+                packed_cholesky.push(value);
+            }
+        }
+        let fixed_eta = MvNormalCholeskyEta::new(mu, fixed_cholesky);
+        let dynamic_eta = DynMvNormalCholeskyEta::new(
+            mu.to_vec(),
+            PackedLowerTriangular::try_new(D, packed_cholesky.clone()).unwrap(),
+        )
+        .unwrap();
+        let observation = std::array::from_fn(|component| 0.41 - 0.13 * component as f64);
+
+        let fixed_theta = fixed.theta(&fixed_eta, &mut fixed.workspace());
+        let dynamic_theta = dynamic.theta(&dynamic_eta, &mut dynamic.workspace());
+        for component in 0..D {
+            assert_relative_eq!(
+                fixed_theta.mu()[component],
+                dynamic_theta.mu()[component],
+                epsilon = 1.0e-12
+            );
+        }
+        for row in 0..D {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    fixed_theta.cholesky().get(row, col).unwrap(),
+                    dynamic_theta.cholesky_entry(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+            }
+        }
+
+        let (fixed_nll, fixed_gradient) =
+            fixed.nll_and_gradient_eta(observation, &fixed_eta, &mut fixed.workspace());
+        let (dynamic_nll, dynamic_gradient) =
+            dynamic.nll_and_gradient_eta(&observation, &dynamic_eta, &mut dynamic.workspace());
+        assert_relative_eq!(fixed_nll, dynamic_nll, epsilon = 1.0e-12);
+        for component in 0..D {
+            assert_relative_eq!(
+                fixed_gradient.mu()[component],
+                dynamic_gradient.mu()[component],
+                epsilon = 1.0e-12
+            );
+        }
+        for row in 0..D {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    fixed_gradient.cholesky().get(row, col).unwrap(),
+                    dynamic_gradient.cholesky_entry(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+            }
+        }
+
+        let mut flat_eta = mu.to_vec();
+        flat_eta.extend_from_slice(&packed_cholesky);
+        let mut flat_gradient = vec![0.0; flat_eta.len()];
+        let flat_nll = dynamic.nll_and_gradient_eta_flat(
+            &observation,
+            &flat_eta,
+            &mut flat_gradient,
+            &mut dynamic.workspace(),
+        );
+        assert_relative_eq!(flat_nll, fixed_nll, epsilon = 1.0e-12);
+        for component in 0..D {
+            assert_relative_eq!(
+                flat_gradient[component],
+                fixed_gradient.mu()[component],
+                epsilon = 1.0e-12
+            );
+        }
+        let mut packed = D;
+        for row in 0..D {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    flat_gradient[packed],
+                    fixed_gradient.cholesky().get(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+                packed += 1;
+            }
+        }
+
+        let mut invalid_observation = observation;
+        invalid_observation[0] = f64::NAN;
+        let (fixed_invalid_nll, fixed_invalid_gradient) =
+            fixed.nll_and_gradient_eta(invalid_observation, &fixed_eta, &mut fixed.workspace());
+        let (dynamic_invalid_nll, dynamic_invalid_gradient) = dynamic.nll_and_gradient_eta(
+            &invalid_observation,
+            &dynamic_eta,
+            &mut dynamic.workspace(),
+        );
+        assert!(fixed_invalid_nll.is_infinite());
+        assert!(dynamic_invalid_nll.is_infinite());
+        assert!(
+            fixed_invalid_gradient
+                .mu()
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        assert!(
+            dynamic_invalid_gradient
+                .mu()
+                .iter()
+                .all(|value| value.is_nan())
+        );
+        for row in 0..D {
+            for col in 0..=row {
+                assert!(
+                    fixed_invalid_gradient
+                        .cholesky()
+                        .get(row, col)
+                        .unwrap()
+                        .is_nan()
+                );
+                assert!(
+                    dynamic_invalid_gradient
+                        .cholesky_entry(row, col)
+                        .unwrap()
+                        .is_nan()
+                );
+            }
+        }
+
+        let flat_invalid_nll = dynamic.nll_and_gradient_eta_flat(
+            &invalid_observation,
+            &flat_eta,
+            &mut flat_gradient,
+            &mut dynamic.workspace(),
+        );
+        assert!(flat_invalid_nll.is_infinite());
+        assert!(flat_gradient.iter().all(|value| value.is_nan()));
+    }
+
     #[test]
     fn marker_trait_is_implemented() {
         assert_fixed_dimensional_family::<MvNormalCholeskyDefault<3>, 3>();
@@ -705,6 +852,14 @@ mod tests {
         assert_fixed_dynamic_capabilities_match::<2>();
         assert_fixed_dynamic_capabilities_match::<3>();
         assert_fixed_dynamic_capabilities_match::<4>();
+    }
+
+    #[test]
+    fn fixed_dynamic_theta_nll_gradient_and_invalid_domains_match_for_d1_through_d4() {
+        assert_fixed_dynamic_contract_match::<1>();
+        assert_fixed_dynamic_contract_match::<2>();
+        assert_fixed_dynamic_contract_match::<3>();
+        assert_fixed_dynamic_contract_match::<4>();
     }
 
     #[test]
@@ -746,6 +901,20 @@ mod tests {
             ),
             1.0e-6,
             1.0e-6,
+        );
+        finite_difference_gradient::<4>(
+            [1.7, -0.8, 0.2, 0.9],
+            MvNormalCholeskyEta::new(
+                [0.4, -0.3, 0.1, 0.2],
+                FixedLowerTriangular::from_lower_rows([
+                    [-0.2, 0.0, 0.0, 0.0],
+                    [0.25, 0.1, 0.0, 0.0],
+                    [-0.1, 0.2, 0.3, 0.0],
+                    [0.05, -0.15, 0.12, -0.05],
+                ]),
+            ),
+            1.0e-6,
+            2.0e-6,
         );
     }
 

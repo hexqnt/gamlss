@@ -827,17 +827,31 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_gradient_matches_finite_difference() {
-        finite_difference_dynamic_gradient(
-            &[1.7, -0.8, 0.2],
-            &DynMvNormalCholeskyEta::new(
-                vec![0.4, -0.3, 0.1],
-                PackedLowerTriangular::try_new(3, vec![-0.2, 0.25, 0.1, -0.1, 0.2, 0.3]).unwrap(),
+    fn dynamic_gradient_matches_finite_difference_for_d1_through_d4() {
+        for dimension in 1..=4 {
+            let observation = (0..dimension)
+                .map(|component| 1.1 - 0.37 * component as f64)
+                .collect::<Vec<_>>();
+            let mu = (0..dimension)
+                .map(|component| 0.4 - 0.16 * component as f64)
+                .collect();
+            let mut cholesky = Vec::with_capacity(dimension * (dimension + 1) / 2);
+            for row in 0..dimension {
+                for col in 0..=row {
+                    cholesky.push(if row == col {
+                        -0.2 + 0.09 * row as f64
+                    } else {
+                        0.05 * (row + col + 1) as f64
+                    });
+                }
+            }
+            let eta = DynMvNormalCholeskyEta::new(
+                mu,
+                PackedLowerTriangular::try_new(dimension, cholesky).unwrap(),
             )
-            .unwrap(),
-            1.0e-6,
-            1.0e-6,
-        );
+            .unwrap();
+            finite_difference_dynamic_gradient(&observation, &eta, 1.0e-6, 2.0e-6);
+        }
     }
 
     #[test]

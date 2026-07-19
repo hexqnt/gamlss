@@ -229,29 +229,31 @@ pub trait DynamicallyCompilableFamily: Family {
     /// Writes a materialized family gradient into flat coordinate order.
     fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]);
 
-    /// NLL directly from flat eta coordinates.
+    /// Computes NLL directly from flat eta coordinates.
+    ///
+    /// Runtime-dimensional families must implement this operation without
+    /// materializing [`Self::Eta`]. Compiled value and pointwise paths call it
+    /// once per active observation and rely on the caller-owned workspace for
+    /// reusable storage.
     fn nll_eta_flat(
         &self,
         observation: Self::Observation<'_>,
         values: &[f64],
         workspace: &mut Self::Workspace,
-    ) -> f64 {
-        self.nll_eta(observation, &self.eta_from_flat(values), workspace)
-    }
+    ) -> f64;
 
-    /// Fused NLL and in-place flat gradient from flat eta coordinates.
+    /// Computes fused NLL and an in-place flat gradient from flat eta coordinates.
+    ///
+    /// Runtime-dimensional families must implement this hot-path operation
+    /// without materializing [`Self::Eta`] or [`Self::GradientEta`]. `gradient`
+    /// uses the same coordinate order as `values` and must be fully overwritten.
     fn nll_and_gradient_eta_flat(
         &self,
         observation: Self::Observation<'_>,
         values: &[f64],
         gradient: &mut [f64],
         workspace: &mut Self::Workspace,
-    ) -> f64 {
-        let (nll, materialized) =
-            self.nll_and_gradient_eta(observation, &self.eta_from_flat(values), workspace);
-        self.gradient_to_flat(&materialized, gradient);
-        nll
-    }
+    ) -> f64;
 
     /// Semantic role and nested path for one flat coordinate.
     fn dynamic_parameter_coordinate(&self, index: usize) -> (&'static str, ParameterPath);

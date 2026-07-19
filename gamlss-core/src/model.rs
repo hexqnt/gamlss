@@ -13,7 +13,7 @@ pub use layout::{
     ParameterSlice, TrainingDiagnostics, UnpackedParameters,
 };
 pub use observation::{DenseRows, FiniteScalarObservations, ObservationView};
-pub use workspace::{GradientWorkspace, ModelWorkspace};
+pub use workspace::{GradientWorkspace, ModelWorkspace, ScoreTilePolicy};
 
 mod dynamic;
 mod executor;
@@ -248,42 +248,51 @@ where
         self.blocks.try_initial_parameters(&self.family, &self.obs)
     }
 
-    /// Creates reusable objective buffers sized for this model.
+    /// Creates reusable objective buffers sized for this model using the
+    /// default [`ScoreTilePolicy`].
+    ///
+    /// Use [`Self::gradient_workspace_with_policy`] when an explicit score
+    /// memory or row budget is required.
     #[must_use]
     pub fn gradient_workspace(&self) -> ModelWorkspace<F>
     where
         F: Family,
     {
-        ModelWorkspace::new(&self.family, self.obs.len(), |nobs| {
-            self.blocks.gradient_workspace(nobs)
-        })
+        self.gradient_workspace_with_policy(ScoreTilePolicy::default())
     }
 
-    /// Creates reusable objective buffers with an explicit upper bound on rows
-    /// per score tile.
+    /// Creates reusable objective buffers with an explicit score-tile policy.
     ///
-    /// This is primarily useful for memory-constrained workloads and executor
-    /// tests. The default [`Self::gradient_workspace`] chooses a tile size from
-    /// a fixed score-memory budget.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::InvalidParameter`] when `tile_rows == 0`.
-    pub fn try_gradient_workspace_with_tile_rows(
-        &self,
-        tile_rows: usize,
-    ) -> Result<ModelWorkspace<F>, ModelError>
+    /// Most callers should use [`Self::gradient_workspace`]. A custom policy is
+    /// useful when profiling tile sizes or bounding worker-local score memory.
+    #[must_use]
+    pub fn gradient_workspace_with_policy(&self, policy: ScoreTilePolicy) -> ModelWorkspace<F>
     where
         F: Family,
     {
-        let gradient = GradientWorkspace::try_with_tile_rows(tile_rows)?;
-        Ok(ModelWorkspace::with_gradient(&self.family, gradient))
+        ModelWorkspace::new(&self.family, self.obs.len(), |nobs| {
+            self.blocks.gradient_workspace(nobs, policy)
+        })
     }
 
-    /// Wraps the model as an objective with reusable gradient buffers.
+    /// Wraps the model as an objective with reusable gradient buffers using the
+    /// default [`ScoreTilePolicy`].
+    ///
+    /// Use [`Self::into_workspace_objective_with_policy`] to tune the score
+    /// tile for a measured workload or worker-local memory budget.
     #[must_use]
     pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
-        let workspace = self.gradient_workspace();
+        self.into_workspace_objective_with_policy(ScoreTilePolicy::default())
+    }
+
+    /// Wraps the model as an objective with reusable gradient buffers and an
+    /// explicit score-tile policy.
+    #[must_use]
+    pub fn into_workspace_objective_with_policy(
+        self,
+        policy: ScoreTilePolicy,
+    ) -> WorkspaceGamlss<F, Blocks, Obs> {
+        let workspace = self.gradient_workspace_with_policy(policy);
         WorkspaceGamlss {
             model: self,
             workspace,
@@ -1371,11 +1380,22 @@ where
     Blocks: GamlssBlocks<F>,
     for<'row> Obs: ObservationView<'row, Observation = F::Observation<'row>>,
 {
-    /// Creates a workspace-backed objective from a compiled model.
+    /// Creates a workspace-backed objective from a compiled model using the
+    /// default [`ScoreTilePolicy`].
+    ///
+    /// Use [`Self::new_with_policy`] when an explicit score memory or row
+    /// budget is required.
     #[must_use]
     #[inline]
     pub fn new(model: Gamlss<F, Blocks, Obs>) -> Self {
         model.into_workspace_objective()
+    }
+
+    /// Creates a workspace-backed objective with an explicit score-tile policy.
+    #[must_use]
+    #[inline]
+    pub fn new_with_policy(model: Gamlss<F, Blocks, Obs>, policy: ScoreTilePolicy) -> Self {
+        model.into_workspace_objective_with_policy(policy)
     }
 
     /// Returns the wrapped model.
@@ -1829,8 +1849,8 @@ where
         self.train_nll(family, obs, beta) + self.penalty_value(beta)
     }
     /// Creates reusable buffers for repeated gradient evaluations.
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let mut workspace = GradientWorkspace::new();
+    fn gradient_workspace(&self, nobs: usize, policy: ScoreTilePolicy) -> GradientWorkspace {
+        let mut workspace = GradientWorkspace::with_score_tile_policy(policy);
         let _ = workspace.prepare_score_tile(self.block_ranges().len(), nobs);
         workspace
     }
@@ -2023,8 +2043,8 @@ where
         self.as_inner().add_penalty_gradient(beta, grad);
     }
 
-    fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
-        let mut workspace = GradientWorkspace::new();
+    fn gradient_workspace(&self, nobs: usize, policy: ScoreTilePolicy) -> GradientWorkspace {
+        let mut workspace = GradientWorkspace::with_score_tile_policy(policy);
         let _ = workspace.prepare_score_tile(self.as_inner().leaf_count(), nobs);
         workspace
     }
@@ -2296,8 +2316,8 @@ mod tests {
         LinearPredictorBlock, Lower, LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, Nu,
         Objective, ObjectiveScale, ObservationView, OffsetBlock, ParameterAxis, ParameterBlock,
         ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterPath,
-        ParameterSlice, PredictorBlock, Product, RidgePenalty, Scalar, Sigma, SumBlock, Tau,
-        Vector, VectorParameterBlock,
+        ParameterSlice, PredictorBlock, Product, RidgePenalty, Scalar, ScoreTilePolicy, Sigma,
+        SumBlock, Tau, Vector, VectorParameterBlock,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -2526,6 +2546,26 @@ mod tests {
                 (first - observation).powi(2),
                 0.5 * (second - observation).powi(2),
             )
+        }
+
+        fn nll_and_gradient_eta_flat(
+            &self,
+            observation: Self::Observation<'_>,
+            values: &[f64],
+            gradient: &mut [f64],
+            workspace: &mut Self::Workspace,
+        ) -> f64 {
+            let [first, second] = values else {
+                gradient.fill(f64::NAN);
+                return f64::INFINITY;
+            };
+            let [first_gradient, second_gradient] = gradient else {
+                gradient.fill(f64::NAN);
+                return f64::INFINITY;
+            };
+            *first_gradient = *first - observation;
+            *second_gradient = *second - observation;
+            self.nll_eta_flat(observation, values, workspace)
         }
 
         fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]) {
@@ -3229,9 +3269,8 @@ mod tests {
         assert_relative_eq!(grad[1], 0.0);
 
         for tile_rows in [1, 2] {
-            let mut workspace = model
-                .try_gradient_workspace_with_tile_rows(tile_rows)
-                .unwrap();
+            let policy = ScoreTilePolicy::try_max_rows(tile_rows).unwrap();
+            let mut workspace = model.gradient_workspace_with_policy(policy);
             grad.fill(f64::NAN);
             let value = model
                 .try_value_gradient_into_workspace(&beta, &mut grad, &mut workspace)
@@ -3818,6 +3857,35 @@ mod tests {
     }
 
     #[test]
+    fn score_tile_policy_flows_into_workspace_and_objective() {
+        let y = vec![1.0; 7];
+        let x = DenseDesign::intercept(y.len());
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
+        let policy = ScoreTilePolicy::try_max_bytes(2 * size_of::<f64>()).unwrap();
+
+        let default_workspace = model.gradient_workspace();
+        assert_eq!(
+            default_workspace.gradient().score_tile_policy(),
+            ScoreTilePolicy::automatic()
+        );
+        assert_eq!(default_workspace.gradient().score_tile_rows(), y.len());
+
+        let custom_workspace = model.gradient_workspace_with_policy(policy);
+        assert_eq!(custom_workspace.gradient().score_tile_policy(), policy);
+        assert_eq!(custom_workspace.gradient().score_tile_rows(), 2);
+        assert_eq!(
+            custom_workspace.gradient().score_tile_bytes(),
+            2 * size_of::<f64>()
+        );
+
+        let objective = model.into_workspace_objective_with_policy(policy);
+        assert_eq!(objective.workspace().gradient().score_tile_policy(), policy);
+        assert_eq!(objective.workspace().gradient().score_tile_rows(), 2);
+    }
+
+    #[test]
     fn static_executor_is_additive_across_score_tile_sizes() {
         let y = vec![1.0, -0.5, 2.0, 0.25, 3.0, -1.0, 1.5];
         let weights = vec![0.5, 0.0, 2.0, 1.5, 0.25, 3.0, 0.75];
@@ -3845,9 +3913,8 @@ mod tests {
             .unwrap();
 
         for tile_rows in [1, 2, 3, 5, 20] {
-            let mut workspace = model
-                .try_gradient_workspace_with_tile_rows(tile_rows)
-                .unwrap();
+            let policy = ScoreTilePolicy::try_max_rows(tile_rows).unwrap();
+            let mut workspace = model.gradient_workspace_with_policy(policy);
             for _ in 0..2 {
                 let mut gradient = [f64::NAN; 2];
                 let value = model
@@ -3894,9 +3961,8 @@ mod tests {
             .unwrap();
 
         for tile_rows in [1, 2, 3, 5, 20] {
-            let mut workspace = model
-                .try_gradient_workspace_with_tile_rows(tile_rows)
-                .unwrap();
+            let policy = ScoreTilePolicy::try_max_rows(tile_rows).unwrap();
+            let mut workspace = model.gradient_workspace_with_policy(policy);
             let mut gradient = [f64::NAN; 2];
             let value = model
                 .try_value_gradient_into_workspace(&beta, &mut gradient, &mut workspace)
