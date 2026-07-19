@@ -108,5 +108,9 @@ rand.workspace = true
 name = "simple_multivariate_fit"
 required-features = ["multivariate", "rand"]
 
+[[example]]
+name = "faithful_mixture_fit"
+required-features = ["multivariate"]
+
 [lints]
 workspace = true

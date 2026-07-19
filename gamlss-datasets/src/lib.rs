@@ -75,7 +75,7 @@ impl<X, Y> Dataset<X, Y> {
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
-    use super::{Dataset, Date, Month, Time, a1};
+    use super::{Dataset, Date, Month, Time, a1, faithful};
 
     fn assert_aligned_finite(x: &[f64], y: &[f64]) {
         assert_eq!(x.len(), y.len());
@@ -88,6 +88,19 @@ mod tests {
         let data = a1();
         assert_aligned_finite(data.x, data.y);
         assert_eq!(data.x.len(), 2_000);
+    }
+
+    #[test]
+    fn faithful_has_observation_ids_and_bivariate_responses() {
+        let data = faithful();
+
+        assert_eq!(data.x.len(), 272);
+        assert_eq!(data.x.len(), data.y.len());
+        assert_eq!(data.x[0], 1);
+        assert_eq!(data.x[271], 272);
+        assert_eq!(data.y[0], [3.6, 79.0]);
+        assert_eq!(data.y[271], [4.467, 74.0]);
+        assert!(data.y.iter().flatten().all(|value| value.is_finite()));
     }
 
     #[test]
