@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::{is_positive_finite, is_probability};
 
@@ -131,7 +131,7 @@ macro_rules! impl_exponential_helpers {
         }
 
         #[cfg(feature = "rand")]
-        impl<Rng, Link> CanSimulate<Rng> for Exponential<$param, Link>
+        impl<Rng, Link> TrySimulate<Rng> for Exponential<$param, Link>
         where
             Rng: rand::Rng,
             Exponential<$param, Link>: for<'obs> Family<Observation<'obs> = f64>,
@@ -139,16 +139,21 @@ macro_rules! impl_exponential_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+            fn try_sample(
+                &self,
+                rng: &mut Rng,
+                theta: &Self::Theta,
+            ) -> Result<f64, SimulationError> {
                 let theta = (*theta).into();
                 if !Self::valid_rate(theta) {
-                    return f64::NAN;
+                    return Err(SimulationError::InvalidParameters("Exponential theta"));
                 }
 
-                rand_distr::Distribution::sample(
-                    &rand_distr::Exp::new(theta.rate)
-                        .expect("validated exponential rate must construct"),
-                    rng,
+                let distribution = rand_distr::Exp::new(theta.rate)
+                    .map_err(|_| SimulationError::BackendRejected("Exponential rate"))?;
+                crate::simulation::ensure_finite(
+                    rand_distr::Distribution::sample(&distribution, rng),
+                    "Exponential sample",
                 )
             }
         }
@@ -162,7 +167,7 @@ impl_exponential_helpers!(RateParam);
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{ExponentialMean, ExponentialMeanTheta, ExponentialRate, ExponentialRateTheta};
@@ -253,17 +258,19 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn exponential_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn exponential_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = ExponentialMean::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, &ExponentialMeanTheta { mean: 0.5 });
+        let sample = family
+            .try_sample(&mut rng, &ExponentialMeanTheta { mean: 0.5 })
+            .unwrap();
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(&mut rng, &ExponentialMeanTheta { mean: 0.0 })
-                .is_nan()
+                .try_sample(&mut rng, &ExponentialMeanTheta { mean: 0.0 })
+                .is_err()
         );
     }
 }

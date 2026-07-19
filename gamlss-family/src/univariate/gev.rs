@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
 
@@ -280,7 +280,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng> for Gev<MuLink, SigmaLink, NuLink>
+impl<Rng, MuLink, SigmaLink, NuLink> TrySimulate<Rng> for Gev<MuLink, SigmaLink, NuLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -289,8 +289,15 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        crate::simulation::sample_quantile(rng, self, theta)
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        if !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || !theta.nu.is_finite()
+        {
+            return Err(SimulationError::InvalidParameters("GEV theta"));
+        }
+        crate::simulation::try_sample_quantile(rng, self, theta, "GEV quantile")
     }
 }
 
@@ -340,39 +347,40 @@ pub struct GevTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::{SimulationError, TrySimulate};
 
     #[cfg(feature = "rand")]
     use super::{GevMuSigmaShape, GevTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn gev_sampling_returns_supported_values_and_nan_for_invalid_theta() {
+    fn gev_sampling_returns_supported_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = GevMuSigmaShape::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &GevTheta {
-                mu: 0.4,
-                sigma: 1.5,
-                nu: 0.2,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &GevTheta {
+                    mu: 0.4,
+                    sigma: 1.5,
+                    nu: 0.2,
+                },
+            )
+            .unwrap();
         assert!(sample.is_finite());
         assert!(sample >= 0.4 - 1.5 / 0.2);
-        assert!(
-            family
-                .sample(
-                    &mut rng,
-                    &GevTheta {
-                        mu: 0.4,
-                        sigma: 0.0,
-                        nu: 0.2,
-                    }
-                )
-                .is_nan()
+        assert_eq!(
+            family.try_sample(
+                &mut rng,
+                &GevTheta {
+                    mu: 0.4,
+                    sigma: 0.0,
+                    nu: 0.2,
+                }
+            ),
+            Err(SimulationError::InvalidParameters("GEV theta"))
         );
     }
 }

@@ -365,6 +365,13 @@ macro_rules! impl_scalar_compilable_family {
 /// Error returned when a distribution cannot generate a sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationError {
+    /// The number of parameter values does not match the output buffer length.
+    SampleCountMismatch {
+        /// Number of supplied natural-scale parameter values.
+        theta_count: usize,
+        /// Number of caller-provided sample slots.
+        output_count: usize,
+    },
     /// Natural-scale parameters are outside the sampler's domain.
     InvalidParameters(&'static str),
     /// The random backend rejected otherwise representable parameters.
@@ -375,12 +382,24 @@ pub enum SimulationError {
 
 impl std::fmt::Display for SimulationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (kind, detail) = match self {
-            Self::InvalidParameters(detail) => ("invalid simulation parameters", detail),
-            Self::BackendRejected(detail) => ("sampling backend rejected parameters", detail),
-            Self::NumericalFailure(detail) => ("numerical simulation failure", detail),
-        };
-        write!(formatter, "{kind}: {detail}")
+        match self {
+            Self::SampleCountMismatch {
+                theta_count,
+                output_count,
+            } => write!(
+                formatter,
+                "simulation sample count mismatch: {theta_count} parameter values for {output_count} output slots"
+            ),
+            Self::InvalidParameters(detail) => {
+                write!(formatter, "invalid simulation parameters: {detail}")
+            }
+            Self::BackendRejected(detail) => {
+                write!(formatter, "sampling backend rejected parameters: {detail}")
+            }
+            Self::NumericalFailure(detail) => {
+                write!(formatter, "numerical simulation failure: {detail}")
+            }
+        }
     }
 }
 
@@ -738,32 +757,103 @@ pub trait HasCrps: Family {
     fn crps(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
-/// Fallible distribution helper for compositional simulation.
+/// Distribution helper for fallible simulation.
+///
+/// Implementations must return an error rather than an invalid sentinel such
+/// as `NaN`. Consequently, every value returned through `Ok` must be a valid
+/// observation for the supplied natural-scale parameters.
 pub trait TrySimulate<Rng>: Family {
     /// Generated sample representation.
+    ///
+    /// Scalar families commonly use `f64`; multivariate families may use
+    /// arrays or dynamically allocated vectors.
     type Sample;
 
     /// Attempts to generate one sample for natural-scale parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulationError`] when the parameters are outside the
+    /// sampler's domain, the random backend rejects them, or the generated
+    /// arithmetic is non-finite.
     fn try_sample(
         &self,
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError>;
-}
 
-/// Infallible distribution helper for simulation.
-///
-/// Composition should prefer [`TrySimulate`]. This trait remains a separate
-/// convenience surface because not every sample representation has an honest
-/// invalid sentinel.
-pub trait CanSimulate<Rng>: Family {
-    /// Generated sample representation.
+    /// Attempts to generate one sample into caller-provided storage.
     ///
-    /// Scalar families usually use `f64`; multivariate families can use arrays
-    /// or custom row-value structs.
-    type Sample;
-    /// Generates one sample for natural-scale parameters.
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample;
+    /// The default implementation replaces `out` with [`Self::try_sample`].
+    /// Families with dynamically sized samples can override this method to
+    /// reuse allocations owned by `out`. On error, an overriding
+    /// implementation may leave `out` partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::try_sample`].
+    #[inline]
+    fn try_sample_into(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut Self::Sample,
+    ) -> Result<(), SimulationError> {
+        *out = self.try_sample(rng, theta)?;
+        Ok(())
+    }
+
+    /// Attempts to fill caller-provided storage with independent samples.
+    ///
+    /// If generation fails, the successfully generated prefix remains in
+    /// `out`; the element at which generation failed may be partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced while generating an element.
+    #[inline]
+    fn try_fill(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut [Self::Sample],
+    ) -> Result<(), SimulationError> {
+        for sample in out {
+            self.try_sample_into(rng, theta, sample)?;
+        }
+        Ok(())
+    }
+
+    /// Attempts to generate one sample for each natural-scale parameter value.
+    ///
+    /// `thetas` and `out` must have equal lengths. A length mismatch is
+    /// detected before the output buffer or random-number generator is used.
+    /// If sample generation subsequently fails, the successfully generated
+    /// prefix remains in `out`; the failing element may be partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulationError::SampleCountMismatch`] when the slice lengths
+    /// differ, or the first error produced while generating an element.
+    #[inline]
+    fn try_fill_varying(
+        &self,
+        rng: &mut Rng,
+        thetas: &[Self::Theta],
+        out: &mut [Self::Sample],
+    ) -> Result<(), SimulationError> {
+        if thetas.len() != out.len() {
+            return Err(SimulationError::SampleCountMismatch {
+                theta_count: thetas.len(),
+                output_count: out.len(),
+            });
+        }
+
+        for (theta, sample) in thetas.iter().zip(out) {
+            self.try_sample_into(rng, theta, sample)?;
+        }
+        Ok(())
+    }
 }
 
 /// Distribution helper for per-observation deviance.

@@ -4,12 +4,16 @@ use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{student_t_cdf_standardized, student_t_log_pdf_standardized};
 
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 
+#[cfg(feature = "rand")]
+use super::try_sample_location_scale;
 use super::{cdf_location_scale, nll_location_scale, quantile_location_scale, skew_argument};
 
 /// Skew Student-t distribution with identity/log/identity/log links.
@@ -221,6 +225,27 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         quantile_location_scale(p, theta.mu, theta.sigma, theta.nu, theta.tau)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
+    for SkewStudentT<MuLink, SigmaLink, NuLink, TauLink>
+where
+    Rng: rand::Rng,
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        try_sample_location_scale(rng, theta.mu, theta.sigma, theta.nu, theta.tau)
     }
 }
 

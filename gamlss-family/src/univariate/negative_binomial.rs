@@ -243,7 +243,7 @@ pub struct NegativeBinomialTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasQuantile};
     use statrs::distribution::{DiscreteCDF, NegativeBinomial as StatrsNegativeBinomial};
 
@@ -511,29 +511,31 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn negative_binomial_sampling_returns_counts_and_nan_for_invalid_theta() {
+    fn negative_binomial_sampling_returns_counts_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = NegativeBinomialMeanSize::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &NegativeBinomialTheta {
-                mu: 2.0,
-                shape: 1.5,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &NegativeBinomialTheta {
+                    mu: 2.0,
+                    shape: 1.5,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.fract() == 0.0);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &NegativeBinomialTheta {
                         mu: 0.0,
                         shape: 1.5
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

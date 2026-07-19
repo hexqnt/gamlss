@@ -133,10 +133,10 @@ where
     }
 
     #[cfg(feature = "rand")]
-    pub(super) fn sample_component_theta<Rng>(
+    pub(super) fn try_sample_component_theta<Rng>(
         rng: &mut Rng,
         theta: ZipComponentMeanZeroProbabilityTheta,
-    ) -> f64
+    ) -> Result<f64, gamlss_core::SimulationError>
     where
         Rng: rand::Rng,
     {
@@ -146,17 +146,15 @@ where
             || theta.zero_probability >= 1.0
             || !theta.zero_probability.is_finite()
         {
-            return f64::NAN;
+            return Err(gamlss_core::SimulationError::InvalidParameters("ZIP theta"));
         }
         if crate::simulation::open_unit(rng) <= theta.zero_probability {
-            return 0.0;
+            return Ok(0.0);
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(theta.component_mean)
-                .expect("validated ZIP mean must construct"),
-            rng,
-        )
+        let distribution = rand_distr::Poisson::new(theta.component_mean)
+            .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZIP Poisson mean"))?;
+        Ok(rand_distr::Distribution::sample(&distribution, rng))
     }
 }
 

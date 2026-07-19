@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
@@ -241,7 +241,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink, TauLink> CanSimulate<Rng>
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
     for JohnsonSu<MuLink, SigmaLink, NuLink, TauLink>
 where
     Rng: rand::Rng,
@@ -252,7 +252,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.mu.is_finite()
@@ -260,13 +260,18 @@ where
             || theta.tau <= 0.0
             || !theta.tau.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Johnson SU theta"));
         }
 
         let z = crate::simulation::standard_normal(rng);
-        theta
+        let sample = theta
             .sigma
-            .mul_add(((z - theta.nu) / theta.tau).sinh(), theta.mu)
+            .mul_add(((z - theta.nu) / theta.tau).sinh(), theta.mu);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure("Johnson SU transform"))
+        }
     }
 }
 
@@ -322,21 +327,21 @@ pub struct JohnsonSuTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
 
     #[cfg(feature = "rand")]
     use super::{JohnsonSuMuSigmaNuTau, JohnsonSuTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn johnson_su_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn johnson_su_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = JohnsonSuMuSigmaNuTau::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &JohnsonSuTheta {
                         mu: 0.4,
@@ -345,11 +350,11 @@ mod tests {
                         tau: 0.8,
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &JohnsonSuTheta {
                         mu: 0.4,
@@ -358,7 +363,7 @@ mod tests {
                         tau: 0.8,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

@@ -1,10 +1,10 @@
-#[cfg(feature = "rand")]
-use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasCdf, HasMarginalCdf,
     HasObservationDimension, ModelError, ObservationView,
     shape::{Repeated, ShapeValues},
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 /// Independent fixed-size product of one scalar family.
 ///
@@ -220,18 +220,6 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, F, const D: usize> CanSimulate<Rng> for IndependentVec<F, D>
-where
-    F: for<'obs> Family<Observation<'obs> = f64> + CanSimulate<Rng>,
-{
-    type Sample = [F::Sample; D];
-
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
-        std::array::from_fn(|component| self.component.sample(rng, &theta[component]))
-    }
-}
-
-#[cfg(feature = "rand")]
 impl<Rng, F, const D: usize> TrySimulate<Rng> for IndependentVec<F, D>
 where
     F: for<'obs> Family<Observation<'obs> = f64> + TrySimulate<Rng>,
@@ -250,6 +238,19 @@ where
         samples
             .try_into()
             .map_err(|_| SimulationError::NumericalFailure("independent-product sample dimension"))
+    }
+
+    fn try_sample_into(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut Self::Sample,
+    ) -> Result<(), SimulationError> {
+        for (component, component_theta) in theta.iter().enumerate() {
+            self.component
+                .try_sample_into(rng, component_theta, &mut out[component])?;
+        }
+        Ok(())
     }
 }
 

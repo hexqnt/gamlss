@@ -86,7 +86,7 @@ where
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{
@@ -378,30 +378,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn inverse_gaussian_sampling_returns_positive_values_and_nan_for_invalid_theta() {
+    fn inverse_gaussian_sampling_returns_positive_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = InverseGaussianMuShape::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &InverseGaussianTheta {
-                mu: 1.5,
-                shape: 0.8,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &InverseGaussianTheta {
+                    mu: 1.5,
+                    shape: 0.8,
+                },
+            )
+            .unwrap();
 
         assert!(sample > 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &InverseGaussianTheta {
                         mu: 0.0,
                         shape: 1.0,
                     },
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

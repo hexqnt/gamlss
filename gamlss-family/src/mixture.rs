@@ -54,21 +54,19 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
-        if C < 2 || !valid_weights(&theta.weights) {
-            return Err(SimulationError::InvalidParameters("mixture weights"));
-        }
-
-        let draw = rng.random::<f64>();
-        let mut cumulative = 0.0;
-        let mut selected = C - 1;
-        for (index, weight) in theta.weights.iter().copied().enumerate() {
-            cumulative += weight;
-            if draw < cumulative {
-                selected = index;
-                break;
-            }
-        }
+        let selected = try_select_component(rng, &theta.weights)?;
         self.component.try_sample(rng, &theta.components[selected])
+    }
+
+    fn try_sample_into(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut Self::Sample,
+    ) -> Result<(), SimulationError> {
+        let selected = try_select_component(rng, &theta.weights)?;
+        self.component
+            .try_sample_into(rng, &theta.components[selected], out)
     }
 }
 
@@ -453,6 +451,32 @@ fn valid_weights(weights: &[f64]) -> bool {
         && (sum - 1.0).abs() <= tolerance
 }
 
+#[cfg(feature = "rand")]
+fn try_select_component<Rng, const C: usize>(
+    rng: &mut Rng,
+    weights: &[f64; C],
+) -> Result<usize, SimulationError>
+where
+    Rng: rand::Rng,
+{
+    if C < 2 || !valid_weights(weights) {
+        return Err(SimulationError::InvalidParameters("mixture weights"));
+    }
+
+    let draw = rng.random::<f64>();
+    let mut cumulative = 0.0;
+    for (index, weight) in weights.iter().copied().enumerate() {
+        cumulative += weight;
+        if draw < cumulative {
+            return Ok(index);
+        }
+    }
+
+    // Valid weights sum to one within rounding tolerance. Assign the tiny
+    // residual interval, if any, to the final component.
+    Ok(C - 1)
+}
+
 fn log_sum_exp(values: &[f64]) -> f64 {
     let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if !max.is_finite() {
@@ -475,6 +499,8 @@ mod tests {
     };
 
     use super::{Mixture, MixtureEta, MixtureTheta};
+    #[cfg(feature = "rand")]
+    use crate::{BernoulliProbability, BernoulliTheta};
     use crate::{ExponentialRate, ExponentialRateEta, NormalEta, NormalMuSigma, NormalTheta};
 
     #[test]
@@ -585,6 +611,43 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn bernoulli_mixture_samples_and_fills_caller_storage() {
+        use gamlss_core::TrySimulate;
+        use rand::SeedableRng;
+
+        let family = Mixture::<_, 2>::try_new(BernoulliProbability::new()).unwrap();
+        let theta = MixtureTheta {
+            weights: [0.4, 0.6],
+            components: [BernoulliTheta { mu: 0.2 }, BernoulliTheta { mu: 0.8 }],
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(19);
+        let mut samples = [f64::NAN; 32];
+
+        family.try_fill(&mut rng, &theta, &mut samples).unwrap();
+
+        assert!(
+            samples
+                .iter()
+                .all(|sample| *sample == 0.0 || *sample == 1.0)
+        );
+
+        let invalid_theta = MixtureTheta {
+            weights: [0.4, 0.5],
+            components: theta.components,
+        };
+        let mut out = 7.0;
+        assert_eq!(
+            family.try_sample_into(&mut rng, &invalid_theta, &mut out),
+            Err(gamlss_core::SimulationError::InvalidParameters(
+                "mixture weights"
+            ))
+        );
+        assert_eq!(out, 7.0);
     }
 
     #[test]

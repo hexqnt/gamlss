@@ -104,19 +104,26 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
 
 #[cfg(feature = "rand")]
 #[inline]
-fn sample_location_scale<Rng>(rng: &mut Rng, mu: f64, sigma: f64, nu: f64) -> f64
+fn try_sample_location_scale<Rng>(
+    rng: &mut Rng,
+    mu: f64,
+    sigma: f64,
+    nu: f64,
+) -> Result<f64, gamlss_core::SimulationError>
 where
     Rng: rand::Rng,
 {
     if !valid_location_scale(mu, sigma, nu) {
-        return f64::NAN;
+        return Err(gamlss_core::SimulationError::InvalidParameters(
+            "skew-normal location/scale",
+        ));
     }
 
     let delta = nu / nu.hypot(1.0);
     let u = crate::simulation::standard_normal(rng).abs();
     let v = crate::simulation::standard_normal(rng);
     let standardized = (1.0 - delta * delta).max(0.0).sqrt().mul_add(v, delta * u);
-    sigma.mul_add(standardized, mu)
+    crate::simulation::ensure_finite(sigma.mul_add(standardized, mu), "skew-normal transform")
 }
 
 #[inline]

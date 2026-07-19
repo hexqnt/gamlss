@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     CholeskyScale, DynamicLayoutKey, DynamicallyCompilableFamily, Family, HasConditionalCdf,
     HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, Identity, Link, Log,
     ModelError, Mu, ParameterAxis, ParameterName, ParameterPath, PositiveLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::unit_normal_cdf;
 
 use crate::multivariate::{
@@ -526,38 +526,6 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, DiagonalLink, OffDiagonalLink> CanSimulate<Rng>
-    for DynMvNormalCholesky<MuLink, DiagonalLink, OffDiagonalLink>
-where
-    Rng: rand::Rng,
-    MuLink: Link<f64>,
-    DiagonalLink: PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
-{
-    type Sample = Vec<f64>;
-
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
-        if !kernel::valid_theta(self.dimension, &theta.mu, &theta.cholesky) {
-            return vec![f64::NAN; self.dimension];
-        }
-
-        let standard = rand_distr::StandardNormal;
-        let mut z = vec![0.0; self.dimension];
-        for value in &mut z {
-            *value = rand_distr::Distribution::sample(&standard, rng);
-        }
-
-        let mut out = theta.mu.clone();
-        for row in 0..self.dimension {
-            for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                out[row] += theta.cholesky.lower(row, col) * z_col;
-            }
-        }
-        out
-    }
-}
-
-#[cfg(feature = "rand")]
 impl<Rng, MuLink, DiagonalLink, OffDiagonalLink> TrySimulate<Rng>
     for DynMvNormalCholesky<MuLink, DiagonalLink, OffDiagonalLink>
 where
@@ -573,20 +541,39 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
+        let mut out = Vec::with_capacity(self.dimension);
+        self.try_sample_into(rng, theta, &mut out)?;
+        Ok(out)
+    }
+
+    fn try_sample_into(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut Self::Sample,
+    ) -> Result<(), SimulationError> {
         if !kernel::valid_theta(self.dimension, &theta.mu, &theta.cholesky) {
             return Err(SimulationError::InvalidParameters("dynamic MVN theta"));
         }
         let standard = rand_distr::StandardNormal;
-        let z: Vec<f64> = (0..self.dimension)
-            .map(|_| rand_distr::Distribution::sample(&standard, rng))
-            .collect();
-        let mut out = theta.mu.clone();
-        for row in 0..self.dimension {
-            for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                out[row] += theta.cholesky.lower(row, col) * z_col;
-            }
+        out.resize(self.dimension, 0.0);
+        for value in out.iter_mut() {
+            *value = rand_distr::Distribution::sample(&standard, rng);
         }
-        Ok(out)
+        for row in (0..self.dimension).rev() {
+            let mut value = theta.mu[row];
+            for (col, z_col) in out.iter().copied().take(row + 1).enumerate() {
+                value += theta.cholesky.lower(row, col) * z_col;
+            }
+            out[row] = value;
+        }
+        if out.iter().all(|value| value.is_finite()) {
+            Ok(())
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "dynamic MVN Cholesky transform",
+            ))
+        }
     }
 }
 
@@ -994,19 +981,25 @@ mod tests {
     #[cfg(feature = "rand")]
     #[test]
     fn sampling_returns_finite_values_for_valid_theta() {
-        use gamlss_core::CanSimulate;
+        use gamlss_core::TrySimulate;
 
         let family = DynMvNormalCholeskyDefault::new(2).unwrap();
         let mut rng = rand::rng();
-        let valid = family.sample(
-            &mut rng,
-            &DynMvNormalCholeskyTheta::try_new(
-                vec![0.0, 1.0],
-                PackedLowerTriangular::try_new(2, vec![2.0, 3.0, 4.0]).unwrap(),
-            )
-            .unwrap(),
-        );
+        let theta = DynMvNormalCholeskyTheta::try_new(
+            vec![0.0, 1.0],
+            PackedLowerTriangular::try_new(2, vec![2.0, 3.0, 4.0]).unwrap(),
+        )
+        .unwrap();
+        let valid = family.try_sample(&mut rng, &theta).unwrap();
         assert_eq!(valid.len(), 2);
         assert!(valid.iter().all(|value| value.is_finite()));
+
+        let mut reused = vec![f64::NAN; 2];
+        let allocation = reused.as_ptr();
+        family
+            .try_sample_into(&mut rng, &theta, &mut reused)
+            .unwrap();
+        assert_eq!(reused.as_ptr(), allocation);
+        assert!(reused.iter().all(|value| value.is_finite()));
     }
 }

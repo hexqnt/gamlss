@@ -5,11 +5,15 @@ use gamlss_core::{
     InitialEtaFromTheta, Link, Log, LogPlus, Mean, Nu, ObservationView, ParameterParts,
     PositiveLink, Sigma, Tau,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::numeric::finite_difference_gradient_eta;
 
 use super::mu_sigma_nu_tau::SkewStudentTTheta;
+#[cfg(feature = "rand")]
+use super::try_sample_location_scale;
 use super::{
     cdf_location_scale, mean_sd_to_location_scale, nll_location_scale, quantile_location_scale,
 };
@@ -229,6 +233,38 @@ where
 
         quantile_location_scale(
             p,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    Rng: rand::Rng,
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        let Some(location_scale) = theta.location_scale() else {
+            return Err(SimulationError::InvalidParameters(
+                "mean/SD skew Student-t theta",
+            ));
+        };
+        try_sample_location_scale(
+            rng,
             location_scale.mu,
             location_scale.sigma,
             location_scale.nu,

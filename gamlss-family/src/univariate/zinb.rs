@@ -161,10 +161,10 @@ where
     }
 
     #[cfg(feature = "rand")]
-    pub(super) fn sample_component_theta<Rng>(
+    pub(super) fn try_sample_component_theta<Rng>(
         rng: &mut Rng,
         theta: ZinbComponentMeanSizeZeroProbabilityTheta,
-    ) -> f64
+    ) -> Result<f64, gamlss_core::SimulationError>
     where
         Rng: rand::Rng,
     {
@@ -176,21 +176,20 @@ where
             || theta.zero_probability >= 1.0
             || !theta.zero_probability.is_finite()
         {
-            return f64::NAN;
+            return Err(gamlss_core::SimulationError::InvalidParameters(
+                "ZINB theta",
+            ));
         }
         if crate::simulation::open_unit(rng) <= theta.zero_probability {
-            return 0.0;
+            return Ok(0.0);
         }
 
-        let lambda = rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(theta.size, theta.component_mean / theta.size)
-                .expect("validated ZINB gamma-poisson parameters must construct"),
-            rng,
-        );
-        rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(lambda).expect("validated ZINB poisson mean must construct"),
-            rng,
-        )
+        let mixing = rand_distr::Gamma::new(theta.size, theta.component_mean / theta.size)
+            .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZINB gamma mixture"))?;
+        let lambda = rand_distr::Distribution::sample(&mixing, rng);
+        let count = rand_distr::Poisson::new(lambda)
+            .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZINB Poisson mean"))?;
+        Ok(rand_distr::Distribution::sample(&count, rng))
     }
 }
 

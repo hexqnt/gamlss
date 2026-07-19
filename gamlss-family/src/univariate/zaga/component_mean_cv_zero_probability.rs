@@ -1,10 +1,10 @@
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     ComponentMean, Cv, Family, HasCdf, HasQuantile, InitialEtaFromObservations,
     InitialEtaFromTheta, Log, Logit, ObservationView, ParameterParts, PositiveLink,
     UnitIntervalLink, ZeroProbability,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
 
@@ -223,7 +223,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, ComponentMeanLink, CvLink, ZeroProbabilityLink> CanSimulate<Rng>
+impl<Rng, ComponentMeanLink, CvLink, ZeroProbabilityLink> TrySimulate<Rng>
     for Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
 where
     Rng: rand::Rng,
@@ -233,38 +233,40 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        Self::sample_component_theta(rng, *theta)
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        Self::try_sample_component_theta(rng, *theta)
     }
 }
 
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
 
     #[cfg(feature = "rand")]
     use super::{ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn zaga_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+    fn zaga_sampling_returns_nonnegative_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = ZagaComponentMeanCvZeroProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &ZagaComponentMeanCvZeroProbabilityTheta {
-                component_mean: 1.5,
-                cv: 0.7,
-                zero_probability: 0.2,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &ZagaComponentMeanCvZeroProbabilityTheta {
+                    component_mean: 1.5,
+                    cv: 0.7,
+                    zero_probability: 0.2,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &ZagaComponentMeanCvZeroProbabilityTheta {
                         component_mean: 1.5,
@@ -272,7 +274,7 @@ mod tests {
                         zero_probability: 0.2,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

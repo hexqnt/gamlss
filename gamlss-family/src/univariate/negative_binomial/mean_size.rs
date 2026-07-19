@@ -1,9 +1,9 @@
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
     ObservationView, ParameterParts, PositiveLink, Shape,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
@@ -186,7 +186,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for NegativeBinomial<MuLink, ShapeLink>
+impl<Rng, MuLink, ShapeLink> TrySimulate<Rng> for NegativeBinomial<MuLink, ShapeLink>
 where
     Rng: rand::Rng,
     MuLink: PositiveLink<f64>,
@@ -194,23 +194,22 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.mu <= 0.0
             || !theta.mu.is_finite()
             || theta.shape <= 0.0
             || !theta.shape.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters(
+                "Negative binomial theta",
+            ));
         }
 
-        let lambda = rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape)
-                .expect("validated gamma-poisson parameters must construct"),
-            rng,
-        );
-        rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(lambda).expect("validated poisson mean must construct"),
-            rng,
-        )
+        let mixing = rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape)
+            .map_err(|_| SimulationError::BackendRejected("Negative binomial gamma mixture"))?;
+        let lambda = rand_distr::Distribution::sample(&mixing, rng);
+        let count = rand_distr::Poisson::new(lambda)
+            .map_err(|_| SimulationError::BackendRejected("Negative binomial Poisson mean"))?;
+        Ok(rand_distr::Distribution::sample(&count, rng))
     }
 }

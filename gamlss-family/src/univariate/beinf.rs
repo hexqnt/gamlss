@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
     Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau, UnitIntervalLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     bernoulli_kl, digamma_minus_ln, invert_bounded_cdf, ln_gamma_stirling_residual,
@@ -384,7 +384,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink, TauLink> CanSimulate<Rng>
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
     for Beinf<MuLink, SigmaLink, NuLink, TauLink>
 where
     Rng: rand::Rng,
@@ -395,8 +395,11 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        crate::simulation::sample_quantile(rng, self, theta)
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        if Self::parts(*theta).is_none() {
+            return Err(SimulationError::InvalidParameters("BEINF theta"));
+        }
+        crate::simulation::try_sample_quantile(rng, self, theta, "BEINF quantile")
     }
 }
 
@@ -464,9 +467,9 @@ pub struct BeinfTheta {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
     use gamlss_core::Family;
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
 
     use super::{BeinfMuSigmaNuTau, BeinfTheta};
     use crate::{BetaMeanPrecision, BetaTheta};
@@ -513,33 +516,36 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn beinf_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
+    fn beinf_sampling_returns_unit_interval_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = BeinfMuSigmaNuTau::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &BeinfTheta {
-                mu: 0.4,
-                sigma: 0.2,
-                nu: 0.3,
-                tau: 0.4,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &BeinfTheta {
+                    mu: 0.4,
+                    sigma: 0.2,
+                    nu: 0.3,
+                    tau: 0.4,
+                },
+            )
+            .unwrap();
         assert!((0.0..=1.0).contains(&sample));
-        assert!(
-            family
-                .sample(
-                    &mut rng,
-                    &BeinfTheta {
-                        mu: 0.4,
-                        sigma: 0.0,
-                        nu: 0.3,
-                        tau: 0.4,
-                    }
-                )
-                .is_nan()
+        assert_eq!(
+            family.try_sample(
+                &mut rng,
+                &BeinfTheta {
+                    mu: 0.4,
+                    sigma: 0.0,
+                    nu: 0.3,
+                    tau: 0.4,
+                }
+            ),
+            Err(gamlss_core::SimulationError::InvalidParameters(
+                "BEINF theta"
+            ))
         );
     }
 }

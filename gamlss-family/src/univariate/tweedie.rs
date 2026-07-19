@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
     Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, UnitIntervalLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     digamma, invert_positive_cdf, ln_gamma, log_add_exp, regularized_gamma_lower,
@@ -311,28 +311,29 @@ where
     }
 
     #[cfg(feature = "rand")]
-    fn sample_theta<Rng>(rng: &mut Rng, theta: TweedieTheta) -> f64
+    fn try_sample_theta<Rng>(rng: &mut Rng, theta: TweedieTheta) -> Result<f64, SimulationError>
     where
         Rng: rand::Rng,
     {
         let Some(params) = Self::compound(theta) else {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Tweedie theta"));
         };
 
-        let count = rand_distr::Distribution::sample(
-            &rand_distr::Poisson::new(params.lambda)
-                .expect("validated Tweedie Poisson rate must construct"),
-            rng,
-        );
+        let poisson = rand_distr::Poisson::new(params.lambda)
+            .map_err(|_| SimulationError::BackendRejected("Tweedie Poisson rate"))?;
+        let count = rand_distr::Distribution::sample(&poisson, rng);
         if count == 0.0 {
-            return 0.0;
+            return Ok(0.0);
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(count * params.alpha, 1.0 / params.rate)
-                .expect("validated Tweedie gamma parameters must construct"),
-            rng,
-        )
+        let gamma = rand_distr::Gamma::new(count * params.alpha, 1.0 / params.rate)
+            .map_err(|_| SimulationError::BackendRejected("Tweedie gamma"))?;
+        let sample = rand_distr::Distribution::sample(&gamma, rng);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure("Tweedie gamma sample"))
+        }
     }
 
     #[inline]
@@ -462,7 +463,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MeanLink, DispersionLink, PowerLink> CanSimulate<Rng>
+impl<Rng, MeanLink, DispersionLink, PowerLink> TrySimulate<Rng>
     for Tweedie<MeanLink, DispersionLink, PowerLink>
 where
     Rng: rand::Rng,
@@ -472,8 +473,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        Self::sample_theta(rng, *theta)
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        Self::try_sample_theta(rng, *theta)
     }
 }
 
@@ -756,7 +757,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MeanLink, CvLink, PowerLink> CanSimulate<Rng> for TweedieCv<MeanLink, CvLink, PowerLink>
+impl<Rng, MeanLink, CvLink, PowerLink> TrySimulate<Rng> for TweedieCv<MeanLink, CvLink, PowerLink>
 where
     Rng: rand::Rng,
     MeanLink: PositiveLink<f64>,
@@ -765,8 +766,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::sample_theta(rng, (*theta).into())
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        Tweedie::<Log, Log, Logit>::try_sample_theta(rng, (*theta).into())
     }
 }
 
@@ -823,7 +824,7 @@ impl TweedieMeanCvPowerTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf};
 
     #[cfg(feature = "rand")]
@@ -846,23 +847,25 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn tweedie_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+    fn tweedie_sampling_returns_nonnegative_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = TweedieMeanDispersionPower::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &TweedieTheta {
-                mean: 2.0,
-                dispersion: 0.5,
-                power: 1.5,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &TweedieTheta {
+                    mean: 2.0,
+                    dispersion: 0.5,
+                    power: 1.5,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &TweedieTheta {
                         mean: 2.0,
@@ -870,29 +873,31 @@ mod tests {
                         power: 2.0,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 
     #[cfg(feature = "rand")]
     #[test]
-    fn tweedie_cv_sampling_returns_nonnegative_values_and_nan_for_invalid_theta() {
+    fn tweedie_cv_sampling_returns_nonnegative_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = TweedieMeanCvPower::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &TweedieMeanCvPowerTheta {
-                mean: 2.0,
-                cv: 0.7,
-                power: 1.5,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &TweedieMeanCvPowerTheta {
+                    mean: 2.0,
+                    cv: 0.7,
+                    power: 1.5,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &TweedieMeanCvPowerTheta {
                         mean: 2.0,
@@ -900,7 +905,7 @@ mod tests {
                         power: 2.0,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

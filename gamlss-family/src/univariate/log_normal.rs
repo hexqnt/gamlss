@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Identity, Log};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
@@ -162,7 +162,7 @@ macro_rules! impl_log_normal_helpers {
         }
 
         #[cfg(feature = "rand")]
-        impl<Rng, $first, $second> CanSimulate<Rng> for LogNormal<$param, $first, $second>
+        impl<Rng, $first, $second> TrySimulate<Rng> for LogNormal<$param, $first, $second>
         where
             Rng: rand::Rng,
             LogNormal<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
@@ -171,16 +171,21 @@ macro_rules! impl_log_normal_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+            fn try_sample(
+                &self,
+                rng: &mut Rng,
+                theta: &Self::Theta,
+            ) -> Result<f64, SimulationError> {
                 let theta = (*theta).into();
                 if !Self::valid_log_location_log_sd(theta) {
-                    return f64::NAN;
+                    return Err(SimulationError::InvalidParameters("Log-normal theta"));
                 }
 
-                rand_distr::Distribution::sample(
-                    &rand_distr::LogNormal::new(theta.log_location, theta.log_sd)
-                        .expect("validated log-normal parameters must construct"),
-                    rng,
+                let distribution = rand_distr::LogNormal::new(theta.log_location, theta.log_sd)
+                    .map_err(|_| SimulationError::BackendRejected("Log-normal location/scale"))?;
+                crate::simulation::ensure_finite(
+                    rand_distr::Distribution::sample(&distribution, rng),
+                    "Log-normal sample",
                 )
             }
         }
@@ -248,7 +253,7 @@ pub type LogNormalLogLocationLogSd = LogNormal<LogLocationLogSd, Identity, Log>;
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
@@ -467,18 +472,20 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn log_normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn log_normal_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = LogNormalMeanLogSd::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &LogNormalMeanLogSdTheta {
-                mean: 1.5,
-                log_sd: 0.8,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &LogNormalMeanLogSdTheta {
+                    mean: 1.5,
+                    log_sd: 0.8,
+                },
+            )
+            .unwrap();
         assert!(sample > 0.0 && sample.is_finite());
     }
 }

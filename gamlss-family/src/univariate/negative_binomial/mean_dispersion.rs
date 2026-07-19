@@ -4,6 +4,8 @@ use gamlss_core::{
     Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     Mean, ObservationView, ParameterParts, PositiveLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
@@ -214,5 +216,24 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             NegativeBinomial::<Log, Log>::cdf_theta(count as f64, theta)
         })
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, DispersionLink> TrySimulate<Rng>
+    for NegativeBinomialDispersion<MeanLink, DispersionLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        NegativeBinomial::<Log, Log>::new().try_sample(rng, &theta.mean_size())
     }
 }

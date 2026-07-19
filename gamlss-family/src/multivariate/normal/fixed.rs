@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasConditionalCdf, HasMarginalCdf,
     HasObservationDimension, HasRosenblattTransform, Identity, InitialEtaFromTheta, Link,
     LocationCholesky, Log, ModelError, ObservationView, PositiveLink, shape::ShapeValues,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::unit_normal_cdf;
 
 use crate::multivariate::matrix::FixedLowerTriangular;
@@ -308,38 +308,6 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, const D: usize, MuLink, DiagonalLink, OffDiagonalLink> CanSimulate<Rng>
-    for MvNormalCholesky<D, MuLink, DiagonalLink, OffDiagonalLink>
-where
-    Rng: rand::Rng,
-    MuLink: Link<f64>,
-    DiagonalLink: PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
-{
-    type Sample = [f64; D];
-
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
-        if !kernel::valid_theta(D, &theta.mu, &theta.cholesky) {
-            return [f64::NAN; D];
-        }
-
-        let standard = rand_distr::StandardNormal;
-        let mut z = [0.0; D];
-        for value in &mut z {
-            *value = rand_distr::Distribution::sample(&standard, rng);
-        }
-
-        let mut out = theta.mu;
-        for row in 0..D {
-            for (col, z_col) in z.iter().copied().take(row + 1).enumerate() {
-                out[row] += theta.cholesky.lower(row, col) * z_col;
-            }
-        }
-        out
-    }
-}
-
-#[cfg(feature = "rand")]
 impl<Rng, const D: usize, MuLink, DiagonalLink, OffDiagonalLink> TrySimulate<Rng>
     for MvNormalCholesky<D, MuLink, DiagonalLink, OffDiagonalLink>
 where
@@ -366,7 +334,11 @@ where
                 out[row] += theta.cholesky.lower(row, col) * z_col;
             }
         }
-        Ok(out)
+        if out.iter().all(|value| value.is_finite()) {
+            Ok(out)
+        } else {
+            Err(SimulationError::NumericalFailure("MVN Cholesky transform"))
+        }
     }
 }
 
@@ -1243,28 +1215,30 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn sampling_returns_finite_values_or_nan_for_invalid_theta() {
-        use gamlss_core::CanSimulate;
+    fn sampling_returns_finite_values_and_errors_for_invalid_theta() {
+        use gamlss_core::TrySimulate;
 
         let family = MvNormalCholeskyDefault::<2>::new();
         let mut rng = rand::rng();
-        let valid = family.sample(
-            &mut rng,
-            &MvNormalCholeskyTheta::try_new(
-                [0.0, 1.0],
-                FixedLowerTriangular::from_lower_rows([[2.0, 0.0], [3.0, 4.0]]),
+        let valid = family
+            .try_sample(
+                &mut rng,
+                &MvNormalCholeskyTheta::try_new(
+                    [0.0, 1.0],
+                    FixedLowerTriangular::from_lower_rows([[2.0, 0.0], [3.0, 4.0]]),
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        );
+            .unwrap();
         assert!(valid.iter().all(|value| value.is_finite()));
 
-        let invalid = family.sample(
+        let invalid = family.try_sample(
             &mut rng,
             &MvNormalCholeskyTheta::from_parts_unchecked(
                 [0.0, 1.0],
                 FixedLowerTriangular::from_lower_rows([[2.0, 0.0], [3.0, 0.0]]),
             ),
         );
-        assert!(invalid.iter().all(|value| value.is_nan()));
+        assert!(invalid.is_err());
     }
 }

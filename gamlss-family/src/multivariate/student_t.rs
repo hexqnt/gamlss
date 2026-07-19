@@ -328,6 +328,11 @@ where
             ));
         };
         let scale = (theta.tau / rand_distr::Distribution::sample(&chi_squared, rng)).sqrt();
+        if !scale.is_finite() {
+            return Err(SimulationError::NumericalFailure(
+                "multivariate Student-t scale mixture",
+            ));
+        }
         let mut z = [0.0; D];
         for value in &mut z {
             *value = rand_distr::Distribution::sample(&normal, rng);
@@ -335,10 +340,16 @@ where
         let mut out = theta.mu;
         for row in 0..D {
             for col in 0..=row {
-                out[row] += scale * theta.cholesky.get(row, col).unwrap() * z[col];
+                out[row] += scale * theta.cholesky.lower(row, col) * z[col];
             }
         }
-        Ok(out)
+        if out.iter().all(|value| value.is_finite()) {
+            Ok(out)
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "multivariate Student-t transform",
+            ))
+        }
     }
 }
 

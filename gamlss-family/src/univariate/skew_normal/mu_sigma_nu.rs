@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
 
@@ -181,7 +181,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng> for SkewNormal<MuLink, SigmaLink, NuLink>
+impl<Rng, MuLink, SigmaLink, NuLink> TrySimulate<Rng> for SkewNormal<MuLink, SigmaLink, NuLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -190,8 +190,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        super::sample_location_scale(rng, theta.mu, theta.sigma, theta.nu)
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        super::try_sample_location_scale(rng, theta.mu, theta.sigma, theta.nu)
     }
 }
 
@@ -241,21 +241,21 @@ pub struct SkewNormalTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
 
     #[cfg(feature = "rand")]
     use super::{SkewNormalMuSigmaNu, SkewNormalTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn skew_normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn skew_normal_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = SkewNormalMuSigmaNu::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &SkewNormalTheta {
                         mu: 0.4,
@@ -263,11 +263,11 @@ mod tests {
                         nu: 2.0,
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &SkewNormalTheta {
                         mu: 0.4,
@@ -275,7 +275,7 @@ mod tests {
                         nu: 2.0,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

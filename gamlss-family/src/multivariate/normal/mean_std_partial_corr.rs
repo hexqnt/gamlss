@@ -7,14 +7,14 @@
 
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasConditionalCdf, HasMarginalCdf,
     HasObservationDimension, HasRosenblattTransform, Identity, InitialEtaFromTheta, Link, Log,
     ModelError, Mu, ObservationView, PartialCorrelation, PositiveLink, Sigma,
     shape::{Product, ShapeValues, StrictLower, Vector, strict_lower_triangular_packed_len},
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::unit_normal_cdf;
 
 use crate::multivariate::matrix::FixedLowerTriangular;
@@ -376,7 +376,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, const D: usize, MuLink, SigmaLink> CanSimulate<Rng>
+impl<Rng, const D: usize, MuLink, SigmaLink> TrySimulate<Rng>
     for MvNormalMeanStdPartialCorr<D, MuLink, SigmaLink>
 where
     Rng: rand::Rng,
@@ -385,9 +385,15 @@ where
 {
     type Sample = [f64; D];
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Self::Sample {
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
         if !valid_theta(theta) {
-            return [f64::NAN; D];
+            return Err(SimulationError::InvalidParameters(
+                "MVN mean/SD/partial-correlation theta",
+            ));
         }
         let standard = rand_distr::StandardNormal;
         let mut z = [0.0; D];
@@ -400,7 +406,13 @@ where
                 out[row] += theta.scale_cholesky.lower(row, col) * z[col];
             }
         }
-        out
+        if out.iter().all(|value| value.is_finite()) {
+            Ok(out)
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "MVN mean/SD/partial-correlation transform",
+            ))
+        }
     }
 }
 

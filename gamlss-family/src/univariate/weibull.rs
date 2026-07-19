@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{ln_gamma, regularized_gamma_lower};
 
@@ -197,7 +197,7 @@ macro_rules! impl_weibull_helpers {
         }
 
         #[cfg(feature = "rand")]
-        impl<Rng, $first, $second> CanSimulate<Rng> for Weibull<$param, $first, $second>
+        impl<Rng, $first, $second> TrySimulate<Rng> for Weibull<$param, $first, $second>
         where
             Rng: rand::Rng,
             Weibull<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
@@ -206,16 +206,21 @@ macro_rules! impl_weibull_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+            fn try_sample(
+                &self,
+                rng: &mut Rng,
+                theta: &Self::Theta,
+            ) -> Result<f64, SimulationError> {
                 let theta = (*theta).into();
                 if !Self::valid_scale_shape(theta) {
-                    return f64::NAN;
+                    return Err(SimulationError::InvalidParameters("Weibull theta"));
                 }
 
-                rand_distr::Distribution::sample(
-                    &rand_distr::Weibull::new(theta.scale, theta.shape)
-                        .expect("validated weibull parameters must construct"),
-                    rng,
+                let distribution = rand_distr::Weibull::new(theta.scale, theta.shape)
+                    .map_err(|_| SimulationError::BackendRejected("Weibull scale/shape"))?;
+                crate::simulation::ensure_finite(
+                    rand_distr::Distribution::sample(&distribution, rng),
+                    "Weibull sample",
                 )
             }
         }
@@ -229,7 +234,7 @@ impl_weibull_helpers!(ScaleShape, ScaleLink, ShapeLink);
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{
@@ -361,18 +366,20 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn weibull_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn weibull_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = WeibullMeanShape::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &WeibullMeanShapeTheta {
-                mean: 1.2,
-                shape: 1.5,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &WeibullMeanShapeTheta {
+                    mean: 1.2,
+                    shape: 1.5,
+                },
+            )
+            .unwrap();
         assert!(sample > 0.0 && sample.is_finite());
     }
 }

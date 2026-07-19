@@ -4,6 +4,8 @@ use gamlss_core::{
     Cv, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     Mean, ObservationView, ParameterParts, PositiveLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
@@ -215,5 +217,23 @@ where
 {
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         InverseGaussian::<Log, Log>::new().crps(y, &theta.mean_shape())
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, CvLink> TrySimulate<Rng> for InverseGaussianCv<MeanLink, CvLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        InverseGaussian::<Log, Log>::new().try_sample(rng, &theta.mean_shape())
     }
 }

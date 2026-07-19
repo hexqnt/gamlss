@@ -1,9 +1,9 @@
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
     ObservationView, ParameterParts, PositiveLink, Shape,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     integrate_finite, invert_positive_cdf, unit_normal_cdf, unit_normal_log_sf, unit_normal_sf,
@@ -237,7 +237,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, ShapeLink> CanSimulate<Rng> for InverseGaussian<MuLink, ShapeLink>
+impl<Rng, MuLink, ShapeLink> TrySimulate<Rng> for InverseGaussian<MuLink, ShapeLink>
 where
     Rng: rand::Rng,
     MuLink: PositiveLink<f64>,
@@ -245,19 +245,20 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.mu <= 0.0
             || !theta.mu.is_finite()
             || theta.shape <= 0.0
             || !theta.shape.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Inverse Gaussian theta"));
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::InverseGaussian::new(theta.mu, theta.shape)
-                .expect("validated inverse Gaussian parameters must construct"),
-            rng,
+        let distribution = rand_distr::InverseGaussian::new(theta.mu, theta.shape)
+            .map_err(|_| SimulationError::BackendRejected("Inverse Gaussian mean/shape"))?;
+        crate::simulation::ensure_finite(
+            rand_distr::Distribution::sample(&distribution, rng),
+            "Inverse Gaussian sample",
         )
     }
 }

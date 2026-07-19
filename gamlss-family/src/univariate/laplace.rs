@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
     InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::constants::LOG_2;
 use crate::domain::{is_finite_location_scale, is_probability};
@@ -248,7 +248,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Laplace<MuLink, SigmaLink>
+impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for Laplace<MuLink, SigmaLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -257,14 +257,17 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if !Self::valid_theta(*theta) {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Laplace theta"));
         }
 
         let centered = crate::simulation::open_unit(rng) - 0.5;
         let tail_probability: f64 = 1.0 - 2.0 * centered.abs();
-        theta.mu - theta.sigma * centered.signum() * tail_probability.ln()
+        crate::simulation::ensure_finite(
+            theta.mu - theta.sigma * centered.signum() * tail_probability.ln(),
+            "Laplace transform",
+        )
     }
 }
 
@@ -309,7 +312,7 @@ pub struct LaplaceTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{LaplaceEta, LaplaceMuSigma, LaplaceTheta};
@@ -499,32 +502,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn laplace_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn laplace_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = LaplaceMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &LaplaceTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &LaplaceTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

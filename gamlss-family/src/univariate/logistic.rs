@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
     InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
@@ -247,7 +247,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Logistic<MuLink, SigmaLink>
+impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for Logistic<MuLink, SigmaLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -256,13 +256,16 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if !Self::valid_theta(*theta) {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Logistic theta"));
         }
 
         let uniform: f64 = rand_distr::Distribution::sample(&rand_distr::Open01, rng);
-        theta.mu + theta.sigma * (uniform / (1.0_f64 - uniform)).ln()
+        crate::simulation::ensure_finite(
+            theta.mu + theta.sigma * (uniform / (1.0_f64 - uniform)).ln(),
+            "Logistic transform",
+        )
     }
 }
 
@@ -307,7 +310,7 @@ pub struct LogisticTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{LogisticMuSigma, LogisticTheta};
@@ -445,32 +448,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn logistic_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn logistic_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = LogisticMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &LogisticTheta {
                         mu: 0.4,
                         sigma: 1.5
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &LogisticTheta {
                         mu: 0.4,
                         sigma: 0.0
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

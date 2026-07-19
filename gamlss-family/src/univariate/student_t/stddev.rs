@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     AboveTwoLink, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
     InitialEtaFromTheta, Link, Mu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
 
@@ -240,7 +240,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, TauLink> CanSimulate<Rng>
+impl<Rng, MuLink, SigmaLink, TauLink> TrySimulate<Rng>
     for StudentTStdDev<MuLink, SigmaLink, TauLink>
 where
     Rng: rand::Rng,
@@ -251,17 +251,20 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         let Some(location_scale) = theta.location_scale() else {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters(
+                "standard-deviation Student-t theta",
+            ));
         };
 
-        let z = rand_distr::Distribution::sample(
-            &rand_distr::StudentT::new(theta.tau)
-                .expect("validated degrees_of_freedom must construct"),
-            rng,
-        );
-        theta.mu + location_scale.sigma * z
+        let distribution = rand_distr::StudentT::new(theta.tau)
+            .map_err(|_| SimulationError::BackendRejected("Student-t degrees of freedom"))?;
+        let z = rand_distr::Distribution::sample(&distribution, rng);
+        crate::simulation::ensure_finite(
+            theta.mu + location_scale.sigma * z,
+            "standard-deviation Student-t transform",
+        )
     }
 }
 

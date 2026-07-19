@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Nu, ObservationView, ParameterParts, PositiveLink, Scale, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
@@ -299,7 +299,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, ScaleLink, SigmaLink, NuLink> CanSimulate<Rng>
+impl<Rng, ScaleLink, SigmaLink, NuLink> TrySimulate<Rng>
     for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
 where
     Rng: rand::Rng,
@@ -309,29 +309,39 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.scale <= 0.0
             || !theta.scale.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.nu.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters(
+                "generalized gamma theta",
+            ));
         }
 
         if theta.nu.abs() < NU_EPSILON {
             let z = crate::simulation::standard_normal(rng);
-            return theta.scale * (theta.sigma * z).exp();
+            return crate::simulation::ensure_finite(
+                theta.scale * (theta.sigma * z).exp(),
+                "generalized gamma log-normal limit",
+            );
         }
 
         let abs_nu = theta.nu.abs();
         let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
-        let z = rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(k, 1.0 / k)
-                .expect("validated generalized gamma parameters must construct"),
-            rng,
-        );
-        theta.scale * z.powf(1.0 / theta.nu)
+        let distribution = rand_distr::Gamma::new(k, 1.0 / k)
+            .map_err(|_| SimulationError::BackendRejected("generalized gamma shape/scale"))?;
+        let z = rand_distr::Distribution::sample(&distribution, rng);
+        let sample = theta.scale * z.powf(1.0 / theta.nu);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "generalized gamma transform",
+            ))
+        }
     }
 }
 
@@ -390,7 +400,7 @@ pub struct GeneralizedGammaTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf};
 
     use super::{GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta};
@@ -442,32 +452,36 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn generalized_gamma_sampling_returns_positive_values_and_nan_for_invalid_theta() {
+    fn generalized_gamma_sampling_returns_positive_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = GeneralizedGammaScaleSigmaNu::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &GeneralizedGammaTheta {
-                scale: 1.5,
-                sigma: 0.7,
-                nu: 0.8,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &GeneralizedGammaTheta {
+                    scale: 1.5,
+                    sigma: 0.7,
+                    nu: 0.8,
+                },
+            )
+            .unwrap();
         assert!(sample > 0.0 && sample.is_finite());
-        let log_normal_limit = family.sample(
-            &mut rng,
-            &GeneralizedGammaTheta {
-                scale: 1.5,
-                sigma: 0.7,
-                nu: 0.0,
-            },
-        );
+        let log_normal_limit = family
+            .try_sample(
+                &mut rng,
+                &GeneralizedGammaTheta {
+                    scale: 1.5,
+                    sigma: 0.7,
+                    nu: 0.0,
+                },
+            )
+            .unwrap();
         assert!(log_normal_limit > 0.0 && log_normal_limit.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &GeneralizedGammaTheta {
                         scale: 1.5,
@@ -475,7 +489,7 @@ mod tests {
                         nu: 0.8,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

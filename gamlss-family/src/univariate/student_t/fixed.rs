@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     ModelError, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
 
@@ -221,7 +221,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for StudentT<MuLink, SigmaLink>
+impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for StudentT<MuLink, SigmaLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -230,17 +230,15 @@ where
     type Sample = f64;
 
     #[allow(clippy::suboptimal_flops)]
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.sigma <= 0.0 || !theta.sigma.is_finite() || !theta.mu.is_finite() {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Student-t theta"));
         }
 
-        let z = rand_distr::Distribution::sample(
-            &rand_distr::StudentT::new(self.degrees_of_freedom)
-                .expect("validated degrees_of_freedom must construct"),
-            rng,
-        );
-        theta.mu + theta.sigma * z
+        let distribution = rand_distr::StudentT::new(self.degrees_of_freedom)
+            .map_err(|_| SimulationError::BackendRejected("Student-t degrees of freedom"))?;
+        let z = rand_distr::Distribution::sample(&distribution, rng);
+        crate::simulation::ensure_finite(theta.mu + theta.sigma * z, "Student-t transform")
     }
 }
 

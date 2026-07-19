@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     ObservationView, ParameterParts, PositiveLink, Scale, Shape,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
@@ -203,7 +203,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, ShapeLink, ScaleLink> CanSimulate<Rng> for Lomax<ShapeLink, ScaleLink>
+impl<Rng, ShapeLink, ScaleLink> TrySimulate<Rng> for Lomax<ShapeLink, ScaleLink>
 where
     Rng: rand::Rng,
     ShapeLink: PositiveLink<f64>,
@@ -211,13 +211,18 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if !Self::valid_theta(*theta) {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Lomax theta"));
         }
 
         let uniform: f64 = rand_distr::Distribution::sample(&rand_distr::Open01, rng);
-        theta.scale * ((-uniform).ln_1p() / -theta.shape).exp_m1()
+        let sample = theta.scale * ((-uniform).ln_1p() / -theta.shape).exp_m1();
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure("Lomax transform"))
+        }
     }
 }
 
@@ -244,7 +249,7 @@ define_two_positive_parameter_blocks! {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{LomaxShapeScale, LomaxTheta};
@@ -330,29 +335,31 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn lomax_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn lomax_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = LomaxShapeScale::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &LomaxTheta {
-                shape: 1.5,
-                scale: 0.8,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &LomaxTheta {
+                    shape: 1.5,
+                    scale: 0.8,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &LomaxTheta {
                         shape: 0.0,
                         scale: 0.8
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

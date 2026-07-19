@@ -1,9 +1,9 @@
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
     ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
@@ -229,7 +229,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MeanLink, ZeroProbabilityLink> CanSimulate<Rng>
+impl<Rng, MeanLink, ZeroProbabilityLink> TrySimulate<Rng>
     for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>
 where
     Rng: rand::Rng,
@@ -238,8 +238,8 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        Zip::<ComponentMeanZeroProbability, Log, Logit>::sample_component_theta(
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        Zip::<ComponentMeanZeroProbability, Log, Logit>::try_sample_component_theta(
             rng,
             theta.component(),
         )
@@ -249,36 +249,38 @@ where
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
 
     #[cfg(feature = "rand")]
     use super::{ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn total_mean_zip_sampling_returns_counts_and_nan_for_invalid_theta() {
+    fn total_mean_zip_sampling_returns_counts_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = ZipTotalMeanZeroProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &ZipTotalMeanZeroProbabilityTheta {
-                total_mean: 2.0,
-                zero_probability: 0.3,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &ZipTotalMeanZeroProbabilityTheta {
+                    total_mean: 2.0,
+                    zero_probability: 0.3,
+                },
+            )
+            .unwrap();
         assert!(sample >= 0.0 && sample.fract() == 0.0);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &ZipTotalMeanZeroProbabilityTheta {
                         total_mean: 2.0,
                         zero_probability: 1.0,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

@@ -1,13 +1,13 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::{CanSimulate, SimulationError, TrySimulate};
 use gamlss_core::{
     DesignMatrix, Family, Gamlss, HasCdf, HasCrps, HasDeviance, HasInitialEta, HasQuantile,
     Identity, InitialEtaFromObservations, InitialEtaFromTheta, LinearPredictorBlock, Link, Log,
     ModelError, Mu, NoPenalty, ObservationView, ParameterBlock, ParameterBlocks, ParameterParts,
     Penalty, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
@@ -274,28 +274,6 @@ impl HasInitialEta for Normal<Identity, Log> {
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Normal<MuLink, SigmaLink>
-where
-    Rng: rand::Rng,
-    MuLink: Link<f64>,
-    SigmaLink: PositiveLink<f64>,
-{
-    type Sample = f64;
-
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
-        if !Self::valid_theta(*theta) {
-            return f64::NAN;
-        }
-
-        rand_distr::Distribution::sample(
-            &rand_distr::Normal::new(theta.mu, theta.sigma)
-                .expect("validated normal parameters must construct"),
-            rng,
-        )
-    }
-}
-
-#[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for Normal<MuLink, SigmaLink>
 where
     Rng: rand::Rng,
@@ -314,7 +292,10 @@ where
         }
         let distribution = rand_distr::Normal::new(theta.mu, theta.sigma)
             .map_err(|_| SimulationError::BackendRejected("Normal location/scale"))?;
-        Ok(rand_distr::Distribution::sample(&distribution, rng))
+        crate::simulation::ensure_finite(
+            rand_distr::Distribution::sample(&distribution, rng),
+            "Normal sample",
+        )
     }
 }
 
@@ -437,7 +418,7 @@ where
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{
         DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
         HasLogDensity, HasQuantile, NoPenalty, Objective,
@@ -738,32 +719,105 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn normal_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn normal_sampling_returns_finite_values_and_errors_for_invalid_theta() {
+        use gamlss_core::SimulationError;
         use rand::SeedableRng;
 
         let family = NormalMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &super::NormalTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &super::NormalTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
                 )
-                .is_nan()
+                .is_err()
         );
+
+        let mut samples = [f64::NAN; 8];
+        family
+            .try_fill(
+                &mut rng,
+                &super::NormalTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                },
+                &mut samples,
+            )
+            .unwrap();
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+
+        let mut unchanged = 42.0;
+        assert!(
+            family
+                .try_sample_into(
+                    &mut rng,
+                    &super::NormalTheta {
+                        mu: 0.0,
+                        sigma: 0.0,
+                    },
+                    &mut unchanged,
+                )
+                .is_err()
+        );
+        assert_eq!(unchanged.to_bits(), 42.0_f64.to_bits());
+
+        let varying_theta = [
+            super::NormalTheta {
+                mu: -100.0,
+                sigma: 0.1,
+            },
+            super::NormalTheta {
+                mu: 100.0,
+                sigma: 0.1,
+            },
+        ];
+        let mut varying_samples = [f64::NAN; 2];
+        family
+            .try_fill_varying(&mut rng, &varying_theta, &mut varying_samples)
+            .unwrap();
+        assert!(varying_samples[0] < -99.0);
+        assert!(varying_samples[1] > 99.0);
+
+        let mut rng_after_mismatch = rand::rngs::StdRng::seed_from_u64(31);
+        let mut untouched_rng = rand::rngs::StdRng::seed_from_u64(31);
+        let mut mismatched_out = [11.0, 12.0, 13.0];
+        assert_eq!(
+            family.try_fill_varying(&mut rng_after_mismatch, &varying_theta, &mut mismatched_out,),
+            Err(SimulationError::SampleCountMismatch {
+                theta_count: 2,
+                output_count: 3,
+            })
+        );
+        assert_eq!(
+            mismatched_out.map(f64::to_bits),
+            [11.0_f64, 12.0, 13.0].map(f64::to_bits)
+        );
+
+        let comparison_theta = super::NormalTheta {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+        let after_mismatch = family
+            .try_sample(&mut rng_after_mismatch, &comparison_theta)
+            .unwrap();
+        let untouched = family
+            .try_sample(&mut untouched_rng, &comparison_theta)
+            .unwrap();
+        assert_eq!(after_mismatch.to_bits(), untouched.to_bits());
     }
 }

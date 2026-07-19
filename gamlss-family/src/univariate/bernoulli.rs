@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
     Mu, ObservationView, ParameterParts, UnitIntervalLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::probability_floor;
 
@@ -232,23 +232,24 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink> CanSimulate<Rng> for Bernoulli<MuLink>
+impl<Rng, MuLink> TrySimulate<Rng> for Bernoulli<MuLink>
 where
     Rng: rand::Rng,
     MuLink: UnitIntervalLink<f64>,
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.mu <= 0.0 || theta.mu >= 1.0 || !theta.mu.is_finite() {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Bernoulli theta"));
         }
 
-        f64::from(rand_distr::Distribution::sample(
-            &rand_distr::Bernoulli::new(theta.mu)
-                .expect("validated bernoulli probability must construct"),
+        let distribution = rand_distr::Bernoulli::new(theta.mu)
+            .map_err(|_| SimulationError::BackendRejected("Bernoulli probability"))?;
+        Ok(f64::from(rand_distr::Distribution::sample(
+            &distribution,
             rng,
-        ))
+        )))
     }
 }
 
@@ -285,7 +286,7 @@ pub struct BernoulliTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{BernoulliProbability, BernoulliTheta};
@@ -374,17 +375,19 @@ mod tests {
     #[cfg(feature = "rand")]
     #[test]
     #[allow(clippy::float_cmp)]
-    fn bernoulli_sampling_returns_binary_values_and_nan_for_invalid_theta() {
+    fn bernoulli_sampling_returns_binary_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = BernoulliProbability::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, &BernoulliTheta { mu: 0.4 });
+        let sample = family
+            .try_sample(&mut rng, &BernoulliTheta { mu: 0.4 })
+            .unwrap();
         assert!(sample == 0.0 || sample == 1.0);
         assert!(
             family
-                .sample(&mut rng, &BernoulliTheta { mu: 1.0 })
-                .is_nan()
+                .try_sample(&mut rng, &BernoulliTheta { mu: 1.0 })
+                .is_err()
         );
     }
 }

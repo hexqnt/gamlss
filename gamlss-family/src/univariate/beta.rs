@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     Logit, Mu, ObservationView, ParameterParts, PositiveLink, Precision, UnitIntervalLink,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     bernoulli_kl, digamma_minus_ln, integrate_finite, invert_bounded_cdf,
@@ -333,7 +333,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, PrecisionLink> CanSimulate<Rng> for Beta<MuLink, PrecisionLink>
+impl<Rng, MuLink, PrecisionLink> TrySimulate<Rng> for Beta<MuLink, PrecisionLink>
 where
     Rng: rand::Rng,
     MuLink: UnitIntervalLink<f64>,
@@ -341,22 +341,21 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.mu <= 0.0
             || theta.mu >= 1.0
             || !theta.mu.is_finite()
             || theta.precision <= 0.0
             || !theta.precision.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Beta theta"));
         }
 
         let alpha = theta.mu * theta.precision;
         let beta = (1.0 - theta.mu) * theta.precision;
-        rand_distr::Distribution::sample(
-            &rand_distr::Beta::new(alpha, beta).expect("validated beta parameters must construct"),
-            rng,
-        )
+        let distribution = rand_distr::Beta::new(alpha, beta)
+            .map_err(|_| SimulationError::BackendRejected("Beta shape parameters"))?;
+        Ok(rand_distr::Distribution::sample(&distribution, rng))
     }
 }
 
@@ -401,7 +400,7 @@ pub struct BetaTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{Beta as StatrsBeta, ContinuousCDF};
 
@@ -595,30 +594,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn beta_sampling_returns_unit_interval_values_and_nan_for_invalid_theta() {
+    fn beta_sampling_returns_unit_interval_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = BetaMeanPrecision::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(
-            &mut rng,
-            &BetaTheta {
-                mu: 0.4,
-                precision: 3.0,
-            },
-        );
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &BetaTheta {
+                    mu: 0.4,
+                    precision: 3.0,
+                },
+            )
+            .unwrap();
 
         assert!(sample > 0.0 && sample < 1.0);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &BetaTheta {
                         mu: 0.0,
                         precision: 3.0,
                     },
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

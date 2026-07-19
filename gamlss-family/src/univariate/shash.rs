@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
@@ -266,7 +266,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink, TauLink> CanSimulate<Rng>
+impl<Rng, MuLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
     for Shash<MuLink, SigmaLink, NuLink, TauLink>
 where
     Rng: rand::Rng,
@@ -277,7 +277,7 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || !theta.mu.is_finite()
@@ -286,13 +286,18 @@ where
             || theta.tau <= 0.0
             || !theta.tau.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("SHASH theta"));
         }
 
         let z = crate::simulation::standard_normal(rng);
-        theta
+        let sample = theta
             .sigma
-            .mul_add(((z.asinh() + theta.nu.ln()) / theta.tau).sinh(), theta.mu)
+            .mul_add(((z.asinh() + theta.nu.ln()) / theta.tau).sinh(), theta.mu);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure("SHASH transform"))
+        }
     }
 }
 
@@ -348,21 +353,21 @@ pub struct ShashTheta {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
 
     #[cfg(feature = "rand")]
     use super::{ShashMuSigmaNuTau, ShashTheta};
 
     #[cfg(feature = "rand")]
     #[test]
-    fn shash_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn shash_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = ShashMuSigmaNuTau::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &ShashTheta {
                         mu: 0.4,
@@ -371,11 +376,11 @@ mod tests {
                         tau: 0.8,
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &ShashTheta {
                         mu: 0.4,
@@ -384,7 +389,7 @@ mod tests {
                         tau: 0.8,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

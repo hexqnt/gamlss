@@ -104,6 +104,42 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
     invert_real_cdf(p, |y| cdf_location_scale(y, mu, sigma, nu, tau))
 }
 
+#[cfg(feature = "rand")]
+fn try_sample_location_scale<Rng>(
+    rng: &mut Rng,
+    mu: f64,
+    sigma: f64,
+    nu: f64,
+    tau: f64,
+) -> Result<f64, gamlss_core::SimulationError>
+where
+    Rng: rand::Rng,
+{
+    if !valid_location_scale(mu, sigma, nu, tau) {
+        return Err(gamlss_core::SimulationError::InvalidParameters(
+            "skew Student-t location/scale",
+        ));
+    }
+
+    let chi_squared = rand_distr::ChiSquared::new(tau).map_err(|_| {
+        gamlss_core::SimulationError::BackendRejected("skew Student-t degrees of freedom")
+    })?;
+    let mixing = rand_distr::Distribution::sample(&chi_squared, rng);
+    let denominator = (mixing / tau).sqrt();
+    let delta = nu / nu.hypot(1.0);
+    let u = crate::simulation::standard_normal(rng).abs();
+    let v = crate::simulation::standard_normal(rng);
+    let numerator = (1.0 - delta * delta).max(0.0).sqrt().mul_add(v, delta * u);
+    let sample = sigma.mul_add(numerator / denominator, mu);
+    if sample.is_finite() {
+        Ok(sample)
+    } else {
+        Err(gamlss_core::SimulationError::NumericalFailure(
+            "skew Student-t scale mixture",
+        ))
+    }
+}
+
 #[inline]
 #[allow(clippy::suboptimal_flops)]
 fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option<(f64, f64)> {
@@ -134,6 +170,8 @@ fn mean_sd_to_location_scale(mean: f64, sigma: f64, nu: f64, tau: f64) -> Option
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasQuantile};
 
     use super::{SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau};
@@ -213,5 +251,54 @@ mod tests {
 
         assert!(actual.is_finite(), "nll was {actual}");
         assert_relative_eq!(actual, expected, epsilon = 1.0e-14);
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn both_skew_student_t_parameterizations_support_fallible_sampling() {
+        use rand::SeedableRng;
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(23);
+        let location_scale = SkewStudentTMuSigmaNuTau::new();
+        let sample = location_scale
+            .try_sample(
+                &mut rng,
+                &crate::SkewStudentTTheta {
+                    mu: 0.0,
+                    sigma: 1.0,
+                    nu: 1.5,
+                    tau: 5.0,
+                },
+            )
+            .unwrap();
+        assert!(sample.is_finite());
+
+        let mean_sd = SkewStudentTMeanSdNuTau::new();
+        assert!(
+            mean_sd
+                .try_sample(
+                    &mut rng,
+                    &SkewStudentTMeanSdTheta {
+                        mean: 0.0,
+                        sigma: 1.0,
+                        nu: 1.5,
+                        tau: 5.0,
+                    },
+                )
+                .is_ok_and(f64::is_finite)
+        );
+        assert!(
+            mean_sd
+                .try_sample(
+                    &mut rng,
+                    &SkewStudentTMeanSdTheta {
+                        mean: 0.0,
+                        sigma: 1.0,
+                        nu: 1.5,
+                        tau: 2.0,
+                    },
+                )
+                .is_err()
+        );
     }
 }

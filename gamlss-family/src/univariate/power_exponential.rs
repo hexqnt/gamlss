@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
     Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     digamma, invert_real_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
@@ -268,7 +268,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink, NuLink> CanSimulate<Rng>
+impl<Rng, MuLink, SigmaLink, NuLink> TrySimulate<Rng>
     for PowerExponential<MuLink, SigmaLink, NuLink>
 where
     Rng: rand::Rng,
@@ -278,24 +278,30 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if !theta.mu.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
             || theta.nu <= 0.0
             || !theta.nu.is_finite()
         {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters(
+                "power exponential theta",
+            ));
         }
 
-        let radius = rand_distr::Distribution::sample(
-            &rand_distr::Gamma::new(1.0 / theta.nu, 1.0)
-                .expect("validated power exponential shape must construct"),
-            rng,
-        )
-        .powf(1.0 / theta.nu);
-        (crate::simulation::fair_sign(rng) * Self::scale_c(theta.nu) * theta.sigma)
-            .mul_add(radius, theta.mu)
+        let distribution = rand_distr::Gamma::new(1.0 / theta.nu, 1.0)
+            .map_err(|_| SimulationError::BackendRejected("power exponential shape"))?;
+        let radius = rand_distr::Distribution::sample(&distribution, rng).powf(1.0 / theta.nu);
+        let sample = (crate::simulation::fair_sign(rng) * Self::scale_c(theta.nu) * theta.sigma)
+            .mul_add(radius, theta.mu);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "power exponential transform",
+            ))
+        }
     }
 }
 
@@ -344,9 +350,9 @@ pub struct PowerExponentialTheta {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
     use gamlss_core::HasCdf;
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
 
     use super::{PowerExponentialMuSigmaNu, PowerExponentialTheta};
 
@@ -368,14 +374,14 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn power_exponential_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn power_exponential_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = PowerExponentialMuSigmaNu::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &PowerExponentialTheta {
                         mu: 0.4,
@@ -383,11 +389,11 @@ mod tests {
                         nu: 1.4,
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &PowerExponentialTheta {
                         mu: 0.4,
@@ -395,7 +401,7 @@ mod tests {
                         nu: 1.4,
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }

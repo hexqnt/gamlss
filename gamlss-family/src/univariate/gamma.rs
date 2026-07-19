@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile, Log, ObservationView};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
     digamma_minus_ln, invert_positive_cdf, ln_beta, ln_gamma_stirling_residual,
@@ -211,7 +211,7 @@ macro_rules! impl_gamma_helpers {
         }
 
         #[cfg(feature = "rand")]
-        impl<Rng, $first, $second> CanSimulate<Rng> for Gamma<$param, $first, $second>
+        impl<Rng, $first, $second> TrySimulate<Rng> for Gamma<$param, $first, $second>
         where
             Rng: rand::Rng,
             Gamma<$param, $first, $second>: for<'obs> Family<Observation<'obs> = f64>,
@@ -219,16 +219,21 @@ macro_rules! impl_gamma_helpers {
         {
             type Sample = f64;
 
-            fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+            fn try_sample(
+                &self,
+                rng: &mut Rng,
+                theta: &Self::Theta,
+            ) -> Result<f64, SimulationError> {
                 let theta = (*theta).into();
                 if !Self::valid_shape_rate(theta) {
-                    return f64::NAN;
+                    return Err(SimulationError::InvalidParameters("Gamma theta"));
                 }
 
-                rand_distr::Distribution::sample(
-                    &rand_distr::Gamma::new(theta.shape, 1.0 / theta.rate)
-                        .expect("validated gamma parameters must construct"),
-                    rng,
+                let distribution = rand_distr::Gamma::new(theta.shape, 1.0 / theta.rate)
+                    .map_err(|_| SimulationError::BackendRejected("Gamma shape/rate"))?;
+                crate::simulation::ensure_finite(
+                    rand_distr::Distribution::sample(&distribution, rng),
+                    "Gamma sample",
                 )
             }
         }
@@ -243,7 +248,7 @@ impl_gamma_helpers!(ShapeRate, ShapeLink, RateLink);
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, Gamma as StatrsGamma};
 
@@ -456,17 +461,19 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn gamma_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn gamma_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = GammaMeanCv::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let sample = family.sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.7 });
+        let sample = family
+            .try_sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.7 })
+            .unwrap();
         assert!(sample > 0.0 && sample.is_finite());
         assert!(
             family
-                .sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.0 })
-                .is_nan()
+                .try_sample(&mut rng, &GammaMeanCvTheta { mean: 1.5, cv: 0.0 })
+                .is_err()
         );
     }
 }

@@ -189,7 +189,7 @@ pub(super) fn student_t_crps_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
     use statrs::distribution::{ContinuousCDF, StudentsT};
 
@@ -552,32 +552,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn student_t_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn student_t_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = StudentTMuSigma::try_new(5.0).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &StudentTTheta {
                         mu: 0.0,
                         sigma: 1.0
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &StudentTTheta {
                         mu: 0.0,
                         sigma: 0.0
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 

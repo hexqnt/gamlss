@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-#[cfg(feature = "rand")]
-use gamlss_core::CanSimulate;
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
     InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::exponential_integral_e1;
 
 use crate::constants::{EULER_MASCHERONI, LOG_2};
@@ -230,7 +230,7 @@ where
 }
 
 #[cfg(feature = "rand")]
-impl<Rng, MuLink, SigmaLink> CanSimulate<Rng> for Gumbel<MuLink, SigmaLink>
+impl<Rng, MuLink, SigmaLink> TrySimulate<Rng> for Gumbel<MuLink, SigmaLink>
 where
     Rng: rand::Rng,
     MuLink: Link<f64>,
@@ -238,15 +238,16 @@ where
 {
     type Sample = f64;
 
-    fn sample(&self, rng: &mut Rng, theta: &Self::Theta) -> f64 {
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
         if !Self::valid_theta(*theta) {
-            return f64::NAN;
+            return Err(SimulationError::InvalidParameters("Gumbel theta"));
         }
 
-        rand_distr::Distribution::sample(
-            &rand_distr::Gumbel::new(theta.mu, theta.sigma)
-                .expect("validated gumbel parameters must construct"),
-            rng,
+        let distribution = rand_distr::Gumbel::new(theta.mu, theta.sigma)
+            .map_err(|_| SimulationError::BackendRejected("Gumbel location/scale"))?;
+        crate::simulation::ensure_finite(
+            rand_distr::Distribution::sample(&distribution, rng),
+            "Gumbel sample",
         )
     }
 }
@@ -292,7 +293,7 @@ pub struct GumbelTheta {
 mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
-    use gamlss_core::CanSimulate;
+    use gamlss_core::TrySimulate;
     use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{GumbelMuSigma, GumbelTheta};
@@ -429,32 +430,32 @@ mod tests {
 
     #[cfg(feature = "rand")]
     #[test]
-    fn gumbel_sampling_returns_finite_values_and_nan_for_invalid_theta() {
+    fn gumbel_sampling_returns_finite_values_and_errors_for_invalid_theta() {
         use rand::SeedableRng;
 
         let family = GumbelMuSigma::new();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &GumbelTheta {
                         mu: 0.4,
                         sigma: 1.5
                     }
                 )
-                .is_finite()
+                .is_ok_and(f64::is_finite)
         );
         assert!(
             family
-                .sample(
+                .try_sample(
                     &mut rng,
                     &GumbelTheta {
                         mu: 0.4,
                         sigma: 0.0
                     }
                 )
-                .is_nan()
+                .is_err()
         );
     }
 }
