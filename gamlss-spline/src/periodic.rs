@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::cyclic::{CyclicSplineDesign, CyclicSplineSpec};
@@ -168,25 +170,21 @@ impl PredictorBlock for PeriodicSplineDesign {
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        self.phase_design.add_gradient(scores, beta, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient(
+    fn add_gradient_range(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: &[f64],
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(multiplier.len(), PredictorBlock::nrows(self));
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+        self.phase_design
+            .add_gradient_range(rows, scores, beta, grad);
     }
 
     #[inline]
-    fn add_weighted_gradient_by<M>(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         beta: &[f64],
@@ -195,6 +193,6 @@ impl PredictorBlock for PeriodicSplineDesign {
         M: RowMultiplier + ?Sized,
     {
         self.phase_design
-            .add_weighted_gradient_by(scores, multiplier, beta, grad);
+            .add_weighted_gradient_by_range(rows, scores, multiplier, beta, grad);
     }
 }

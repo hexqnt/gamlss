@@ -4,7 +4,7 @@ use crate::{DynamicLayoutKey, DynamicallyCompilableFamily, ModelError, Penalty, 
 
 use super::{
     GamlssBlocks, GradientWorkspace, ObservationView, ParameterDescriptor, ParameterLayout,
-    ParameterPath, ParameterSlice, add_into, validate_block_rows,
+    ParameterPath, ParameterSlice, validate_block_rows,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -314,11 +314,7 @@ where
 
     fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
         let mut workspace = GradientWorkspace::new();
-        workspace.prepare(self.coordinates.len());
-        for (index, coordinate) in self.coordinates.iter().enumerate() {
-            workspace.prepare_row_gradient(index, nobs);
-            let _ = workspace.local_gradient_mut(index, coordinate.range.len());
-        }
+        let _ = workspace.prepare_score_tile(self.coordinates.len(), nobs);
         let _ = workspace.dynamic_buffers_mut(self.coordinates.len());
         workspace
     }
@@ -335,20 +331,23 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        workspace.prepare(self.coordinates.len());
-        for (index, coordinate) in self.coordinates.iter().enumerate() {
-            workspace.prepare_row_gradient(index, obs.len());
-            let _ = workspace.local_gradient_mut(index, coordinate.range.len());
-        }
-
+        let tile_rows = workspace.prepare_score_tile(self.coordinates.len(), obs.len());
         let mut loss = 0.0;
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            {
-                let (values, scores) = workspace.dynamic_buffers_mut(self.coordinates.len());
+
+        let mut tile_start = 0;
+        while tile_start < obs.len() {
+            let tile_end = tile_start.saturating_add(tile_rows).min(obs.len());
+            let rows = tile_start..tile_end;
+            workspace.set_score_tile_len(rows.len());
+
+            for (tile_row, row) in rows.clone().enumerate() {
+                let weight = obs.weight_at(row);
                 if weight == 0.0 {
-                    scores.fill(0.0);
-                } else {
+                    workspace.fill_score_row(tile_row, 0.0);
+                    continue;
+                }
+                {
+                    let (values, scores) = workspace.dynamic_buffers_mut(self.coordinates.len());
                     self.fill_values(beta, row, values);
                     loss = weight.mul_add(
                         family.nll_and_gradient_eta_flat(
@@ -360,17 +359,18 @@ where
                         loss,
                     );
                 }
+                workspace.store_weighted_dynamic_scores(tile_row, weight);
             }
-            workspace.store_dynamic_scores(row, weight);
-        }
 
-        for (index, coordinate) in self.coordinates.iter().enumerate() {
-            let (scores, local) =
-                workspace.row_gradient_and_local_gradient_mut(index, coordinate.range.len());
-            coordinate
-                .predictor
-                .add_gradient(scores, &beta[coordinate.range.clone()], local);
-            add_into(&mut grad[coordinate.range.clone()], local);
+            for (index, coordinate) in self.coordinates.iter().enumerate() {
+                coordinate.predictor.add_gradient_range(
+                    rows.clone(),
+                    workspace.scores(index),
+                    &beta[coordinate.range.clone()],
+                    &mut grad[coordinate.range.clone()],
+                );
+            }
+            tile_start = tile_end;
         }
         self.add_local_penalty_gradient(beta, grad);
         loss + self.local_penalty_value(beta)

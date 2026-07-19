@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::SplineError;
@@ -139,14 +141,16 @@ where
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.nrows);
+    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(grad.len(), self.nparams);
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             self.for_each_row_basis(row, |index, weight| {
                 grad[index] = score.mul_add(weight, grad[index]);
             });
@@ -154,20 +158,9 @@ where
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(multiplier.len(), self.nrows);
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by<M>(
-        &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         _: &[f64],
@@ -175,13 +168,15 @@ where
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.nrows);
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(grad.len(), self.nparams);
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;

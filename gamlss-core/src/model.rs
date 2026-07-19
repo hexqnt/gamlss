@@ -259,6 +259,27 @@ where
         })
     }
 
+    /// Creates reusable objective buffers with an explicit upper bound on rows
+    /// per score tile.
+    ///
+    /// This is primarily useful for memory-constrained workloads and executor
+    /// tests. The default [`Self::gradient_workspace`] chooses a tile size from
+    /// a fixed score-memory budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidParameter`] when `tile_rows == 0`.
+    pub fn try_gradient_workspace_with_tile_rows(
+        &self,
+        tile_rows: usize,
+    ) -> Result<ModelWorkspace<F>, ModelError>
+    where
+        F: Family,
+    {
+        let gradient = GradientWorkspace::try_with_tile_rows(tile_rows)?;
+        Ok(ModelWorkspace::with_gradient(&self.family, gradient))
+    }
+
     /// Wraps the model as an objective with reusable gradient buffers.
     #[must_use]
     pub fn into_workspace_objective(self) -> WorkspaceGamlss<F, Blocks, Obs> {
@@ -1810,12 +1831,7 @@ where
     /// Creates reusable buffers for repeated gradient evaluations.
     fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
         let mut workspace = GradientWorkspace::new();
-        let ranges = self.block_ranges();
-        workspace.prepare(ranges.len());
-        for (index, range) in ranges.iter().enumerate() {
-            workspace.prepare_row_gradient(index, nobs);
-            let _ = workspace.local_gradient_mut(index, range.len());
-        }
+        let _ = workspace.prepare_score_tile(self.block_ranges().len(), nobs);
         workspace
     }
     /// Adds the weighted gradient, reusing temporary buffers from `workspace`.
@@ -2009,10 +2025,7 @@ where
 
     fn gradient_workspace(&self, nobs: usize) -> GradientWorkspace {
         let mut workspace = GradientWorkspace::new();
-        workspace.prepare(self.as_inner().leaf_count());
-        let mut cursor = 0;
-        self.as_inner()
-            .prepare_workspace(nobs, &mut workspace, &mut cursor);
+        let _ = workspace.prepare_score_tile(self.as_inner().leaf_count(), nobs);
         workspace
     }
 
@@ -2028,33 +2041,36 @@ where
     where
         Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
     {
-        workspace.prepare(self.as_inner().leaf_count());
-        let mut cursor = 0;
-        self.as_inner()
-            .prepare_workspace(obs.len(), workspace, &mut cursor);
+        let tile_rows = workspace.prepare_score_tile(self.as_inner().leaf_count(), obs.len());
         let mut loss = 0.0;
 
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            if weight == 0.0 {
-                let scores = <F::Shape as crate::shape::ParameterShape>::zeros();
+        let mut tile_start = 0;
+        while tile_start < obs.len() {
+            let tile_end = tile_start.saturating_add(tile_rows).min(obs.len());
+            let rows = tile_start..tile_end;
+            workspace.set_score_tile_len(rows.len());
+
+            for (tile_row, row) in rows.clone().enumerate() {
+                let weight = obs.weight_at(row);
+                if weight == 0.0 {
+                    workspace.fill_score_row(tile_row, 0.0);
+                    continue;
+                }
+                let eta = F::eta_from_shape(self.as_inner().values_row(beta, row));
+                let (nll, gradient) =
+                    family.nll_and_gradient_eta(obs.observation_at(row), &eta, family_workspace);
+                loss = weight.mul_add(nll, loss);
+                let scores = F::gradient_to_shape(&gradient);
                 let mut cursor = 0;
                 self.as_inner()
-                    .set_scores(&scores, row, 0.0, workspace, &mut cursor);
-                continue;
+                    .set_scores(&scores, tile_row, weight, workspace, &mut cursor);
             }
-            let eta = F::eta_from_shape(self.as_inner().values_row(beta, row));
-            let (nll, gradient) =
-                family.nll_and_gradient_eta(obs.observation_at(row), &eta, family_workspace);
-            loss = weight.mul_add(nll, loss);
-            let scores = F::gradient_to_shape(&gradient);
+
             let mut cursor = 0;
             self.as_inner()
-                .set_scores(&scores, row, weight, workspace, &mut cursor);
+                .backprop(rows, beta, grad, workspace, &mut cursor);
+            tile_start = tile_end;
         }
-
-        let mut cursor = 0;
-        self.as_inner().backprop(beta, grad, workspace, &mut cursor);
         self.as_inner().add_penalty_gradient(beta, grad);
         loss + self.as_inner().penalty_value(beta)
     }
@@ -2166,17 +2182,6 @@ fn validate_non_overlapping_ranges(
     Ok(())
 }
 
-/// Element-wise adds `values` to `out`.
-///
-/// The caller must guarantee `out.len() == values.len()`.
-fn add_into(out: &mut [f64], values: &[f64]) {
-    debug_assert_eq!(out.len(), values.len());
-
-    for (out_value, value) in out.iter_mut().zip(values) {
-        *out_value += value;
-    }
-}
-
 fn observation_weight_sum<Obs>(obs: &Obs) -> f64
 where
     for<'row> Obs: ObservationView<'row>,
@@ -2280,6 +2285,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use approx::assert_relative_eq;
 
     use crate::{
@@ -3220,6 +3227,21 @@ mod tests {
         assert!(grad.iter().all(|value| value.is_finite()));
         assert_relative_eq!(grad[0], 0.0);
         assert_relative_eq!(grad[1], 0.0);
+
+        for tile_rows in [1, 2] {
+            let mut workspace = model
+                .try_gradient_workspace_with_tile_rows(tile_rows)
+                .unwrap();
+            grad.fill(f64::NAN);
+            let value = model
+                .try_value_gradient_into_workspace(&beta, &mut grad, &mut workspace)
+                .unwrap();
+
+            assert_relative_eq!(value, 0.0);
+            assert!(grad.iter().all(|value| value.is_finite()));
+            assert_relative_eq!(grad[0], 0.0);
+            assert_relative_eq!(grad[1], 0.0);
+        }
     }
 
     #[test]
@@ -3796,6 +3818,106 @@ mod tests {
     }
 
     #[test]
+    fn static_executor_is_additive_across_score_tile_sizes() {
+        let y = vec![1.0, -0.5, 2.0, 0.25, 3.0, -1.0, 1.5];
+        let weights = vec![0.5, 0.0, 2.0, 1.5, 0.25, 3.0, 0.75];
+        let x = DenseDesign::from_rows(&[
+            [1.0, -1.0],
+            [1.0, 0.0],
+            [1.0, 0.5],
+            [1.0, 1.0],
+            [1.0, 1.5],
+            [1.0, 2.0],
+            [1.0, 3.0],
+        ]);
+        let mu = ParameterBlock::<Mu, _, _>::linear(x, RidgePenalty::new_unchecked(0.2), 0);
+        let model = Gamlss::try_new_weighted(
+            FixedSigmaNormal,
+            ParameterBlocks::from_assigned((mu,)),
+            &y,
+            &weights,
+        )
+        .unwrap();
+        let beta = [0.4, -0.3];
+        let mut expected_gradient = [0.0; 2];
+        let expected_value = model
+            .try_value_gradient_into(&beta, &mut expected_gradient)
+            .unwrap();
+
+        for tile_rows in [1, 2, 3, 5, 20] {
+            let mut workspace = model
+                .try_gradient_workspace_with_tile_rows(tile_rows)
+                .unwrap();
+            for _ in 0..2 {
+                let mut gradient = [f64::NAN; 2];
+                let value = model
+                    .try_value_gradient_into_workspace(&beta, &mut gradient, &mut workspace)
+                    .unwrap();
+
+                assert_relative_eq!(value, expected_value, epsilon = 1.0e-12);
+                for (actual, expected) in gradient.iter().zip(expected_gradient) {
+                    assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+                }
+                assert_eq!(
+                    workspace.gradient().score_tile_rows(),
+                    tile_rows.min(y.len())
+                );
+                assert_eq!(
+                    workspace.gradient().score_tile_value_count(),
+                    tile_rows.min(y.len())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dynamic_executor_is_additive_across_score_tile_sizes() {
+        let family = RuntimeLayoutMock {
+            key: 41,
+            reverse: false,
+            whole_paths: false,
+            initial_count: 2,
+        };
+        let y = [1.0, -0.5, 2.0, 0.25, 3.0, -1.0, 1.5];
+        let weights = [0.5, 0.0, 2.0, 1.5, 0.25, 3.0, 0.75];
+        let model = Gamlss::try_new_weighted(
+            family,
+            runtime_layout_blocks(&family, y.len()),
+            &y,
+            &weights,
+        )
+        .unwrap();
+        let beta = [0.4, -0.3];
+        let mut expected_gradient = [0.0; 2];
+        let expected_value = model
+            .try_value_gradient_into(&beta, &mut expected_gradient)
+            .unwrap();
+
+        for tile_rows in [1, 2, 3, 5, 20] {
+            let mut workspace = model
+                .try_gradient_workspace_with_tile_rows(tile_rows)
+                .unwrap();
+            let mut gradient = [f64::NAN; 2];
+            let value = model
+                .try_value_gradient_into_workspace(&beta, &mut gradient, &mut workspace)
+                .unwrap();
+
+            assert_relative_eq!(value, expected_value, epsilon = 1.0e-12);
+            for (actual, expected) in gradient.iter().zip(expected_gradient) {
+                assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+            }
+            assert_eq!(
+                workspace.gradient().score_tile_rows(),
+                tile_rows.min(y.len())
+            );
+            assert_eq!(
+                workspace.gradient().score_tile_value_count(),
+                2 * tile_rows.min(y.len())
+            );
+        }
+    }
+
+    #[test]
     fn dynamic_workspace_value_and_pointwise_paths_stay_flat() {
         let family = RuntimeLayoutMock {
             key: usize::MAX,
@@ -4000,7 +4122,13 @@ mod tests {
         }
 
         #[allow(clippy::suboptimal_flops)]
-        fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
+        fn add_gradient_range(
+            &self,
+            _: Range<usize>,
+            scores: &[f64],
+            beta: &[f64],
+            grad: &mut [f64],
+        ) {
             debug_assert_eq!(grad.len(), 1);
             grad[0] += scores.iter().sum::<f64>() * sigmoid(beta[0]);
         }

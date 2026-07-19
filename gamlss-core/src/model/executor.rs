@@ -11,8 +11,7 @@ use crate::{
 };
 
 use super::{
-    GradientWorkspace, ParameterAxis, ParameterDescriptor, ParameterPath, add_into,
-    validate_block_rows,
+    GradientWorkspace, ParameterAxis, ParameterDescriptor, ParameterPath, validate_block_rows,
 };
 
 /// Sealed execution contract between static shape topology and concrete blocks.
@@ -25,20 +24,20 @@ pub trait ShapeBlocks<S: ParameterShape> {
     fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]);
     fn set_initial(&self, values: &S::Values, beta: &mut [f64]);
     fn leaf_count(&self) -> usize;
-    fn prepare_workspace(&self, nobs: usize, workspace: &mut GradientWorkspace, cursor: &mut usize);
     fn set_scores(
         &self,
         scores: &S::Values,
-        row: usize,
+        tile_row: usize,
         weight: f64,
         workspace: &mut GradientWorkspace,
         cursor: &mut usize,
     );
     fn backprop(
         &self,
+        rows: Range<usize>,
         beta: &[f64],
         grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
+        workspace: &GradientWorkspace,
         cursor: &mut usize,
     );
     fn visit_descriptors<V>(&self, prefix: &ParameterPath, cursor: &mut usize, visit: &mut V)
@@ -86,24 +85,26 @@ where
     fn leaf_count(&self) -> usize {
         1
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        w.prepare_row_gradient(*c, n);
-        let _ = w.local_gradient_mut(*c, self.len());
-        *c += 1;
-    }
     fn set_scores(
         &self,
         s: &f64,
-        row: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
-        w.set_row_gradient(*c, row, weight * *s);
+        w.set_score(*c, tile_row, weight * *s);
         *c += 1;
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
-        backprop_leaf(self.x(), self.range(), beta, grad, w, *c);
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
+        backprop_leaf(self.x(), rows, self.range(), beta, grad, w, *c);
         *c += 1;
     }
     fn visit_descriptors<V>(&self, p: &ParameterPath, c: &mut usize, v: &mut V)
@@ -127,16 +128,19 @@ where
 
 fn backprop_leaf<X: PredictorBlock>(
     predictor: &X,
+    rows: Range<usize>,
     range: Range<usize>,
     beta: &[f64],
     grad: &mut [f64],
-    workspace: &mut GradientWorkspace,
+    workspace: &GradientWorkspace,
     cursor: usize,
 ) {
-    let beta_block = &beta[range.clone()];
-    let (scores, local) = workspace.row_gradient_and_local_gradient_mut(cursor, range.len());
-    predictor.add_gradient(scores, beta_block, local);
-    add_into(&mut grad[range], local);
+    predictor.add_gradient_range(
+        rows,
+        workspace.scores(cursor),
+        &beta[range.clone()],
+        &mut grad[range],
+    );
 }
 
 macro_rules! impl_scalar_tuple_blocks {
@@ -185,20 +189,12 @@ macro_rules! impl_scalar_tuple_blocks {
 
             fn leaf_count(&self) -> usize { $k }
 
-            fn prepare_workspace(&self, nobs: usize, workspace: &mut GradientWorkspace, cursor: &mut usize) {
-                $(
-                    workspace.prepare_row_gradient(*cursor, nobs);
-                    let _ = workspace.local_gradient_mut(*cursor, self.$index.len());
-                    *cursor += 1;
-                )+
+            fn set_scores(&self, scores: &[f64; $k], tile_row: usize, weight: f64, workspace: &mut GradientWorkspace, cursor: &mut usize) {
+                $(workspace.set_score(*cursor, tile_row, weight * scores[$index]); *cursor += 1;)+
             }
 
-            fn set_scores(&self, scores: &[f64; $k], row: usize, weight: f64, workspace: &mut GradientWorkspace, cursor: &mut usize) {
-                $(workspace.set_row_gradient(*cursor, row, weight * scores[$index]); *cursor += 1;)+
-            }
-
-            fn backprop(&self, beta: &[f64], grad: &mut [f64], workspace: &mut GradientWorkspace, cursor: &mut usize) {
-                $(backprop_leaf(self.$index.x(), self.$index.range(), beta, grad, workspace, *cursor); *cursor += 1;)+
+            fn backprop(&self, rows: Range<usize>, beta: &[f64], grad: &mut [f64], workspace: &GradientWorkspace, cursor: &mut usize) {
+                $(backprop_leaf(self.$index.x(), rows.clone(), self.$index.range(), beta, grad, workspace, *cursor); *cursor += 1;)+
             }
 
             fn visit_descriptors<V>(&self, prefix: &ParameterPath, cursor: &mut usize, visit: &mut V)
@@ -271,29 +267,37 @@ where
     fn leaf_count(&self) -> usize {
         D
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        for i in 0..D {
-            w.prepare_row_gradient(*c, n);
-            let _ = w.local_gradient_mut(*c, self.component_range(i).unwrap().len());
-            *c += 1;
-        }
-    }
     fn set_scores(
         &self,
         s: &[f64; D],
-        r: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
         for value in s {
-            w.set_row_gradient(*c, r, weight * value);
+            w.set_score(*c, tile_row, weight * value);
             *c += 1;
         }
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
         for (i, x) in self.components().iter().enumerate() {
-            backprop_leaf(x, self.component_range(i).unwrap(), beta, grad, w, *c);
+            backprop_leaf(
+                x,
+                rows.clone(),
+                self.component_range(i).unwrap(),
+                beta,
+                grad,
+                w,
+                *c,
+            );
             *c += 1;
         }
     }
@@ -384,23 +388,10 @@ macro_rules! impl_triangular_shape_blocks {
             fn leaf_count(&self) -> usize {
                 self.entries().len()
             }
-            fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-                let mut i = 0;
-                for r in 0..D {
-                    let end = if $strict { r } else { r + 1 };
-                    for col in 0..end {
-                        w.prepare_row_gradient(*c, n);
-                        let _ = w.local_gradient_mut(*c, self.entry_range(r, col).unwrap().len());
-                        *c += 1;
-                        i += 1;
-                    }
-                }
-                debug_assert_eq!(i, self.entries().len());
-            }
             fn set_scores(
                 &self,
                 s: &[[f64; D]; D],
-                row: usize,
+                tile_row: usize,
                 weight: f64,
                 w: &mut GradientWorkspace,
                 c: &mut usize,
@@ -408,16 +399,17 @@ macro_rules! impl_triangular_shape_blocks {
                 for r in 0..D {
                     let end = if $strict { r } else { r + 1 };
                     for col in 0..end {
-                        w.set_row_gradient(*c, row, weight * s[r][col]);
+                        w.set_score(*c, tile_row, weight * s[r][col]);
                         *c += 1;
                     }
                 }
             }
             fn backprop(
                 &self,
+                rows: Range<usize>,
                 beta: &[f64],
                 grad: &mut [f64],
-                w: &mut GradientWorkspace,
+                w: &GradientWorkspace,
                 c: &mut usize,
             ) {
                 let mut i = 0;
@@ -426,6 +418,7 @@ macro_rules! impl_triangular_shape_blocks {
                     for col in 0..end {
                         backprop_leaf(
                             &self.entries()[i],
+                            rows.clone(),
                             self.entry_range(r, col).unwrap(),
                             beta,
                             grad,
@@ -522,29 +515,37 @@ where
     fn leaf_count(&self) -> usize {
         self.logits().len()
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        for i in 0..self.logits().len() {
-            w.prepare_row_gradient(*c, n);
-            let _ = w.local_gradient_mut(*c, self.logit_range(i).unwrap().len());
-            *c += 1;
-        }
-    }
     fn set_scores(
         &self,
         s: &[f64; C],
-        row: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
         for value in s.iter().take(self.logits().len()) {
-            w.set_row_gradient(*c, row, weight * value);
+            w.set_score(*c, tile_row, weight * value);
             *c += 1;
         }
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
         for (i, x) in self.logits().iter().enumerate() {
-            backprop_leaf(x, self.logit_range(i).unwrap(), beta, grad, w, *c);
+            backprop_leaf(
+                x,
+                rows.clone(),
+                self.logit_range(i).unwrap(),
+                beta,
+                grad,
+                w,
+                *c,
+            );
             *c += 1;
         }
     }
@@ -609,24 +610,27 @@ where
     fn leaf_count(&self) -> usize {
         self.0.leaf_count() + self.1.leaf_count()
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        self.0.prepare_workspace(n, w, c);
-        self.1.prepare_workspace(n, w, c);
-    }
     fn set_scores(
         &self,
         s: &(A::Values, B::Values),
-        r: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
-        self.0.set_scores(&s.0, r, weight, w, c);
-        self.1.set_scores(&s.1, r, weight, w, c);
+        self.0.set_scores(&s.0, tile_row, weight, w, c);
+        self.1.set_scores(&s.1, tile_row, weight, w, c);
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
-        self.0.backprop(beta, grad, w, c);
-        self.1.backprop(beta, grad, w, c);
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
+        self.0.backprop(rows.clone(), beta, grad, w, c);
+        self.1.backprop(rows, beta, grad, w, c);
     }
     fn visit_descriptors<V>(&self, p: &ParameterPath, c: &mut usize, v: &mut V)
     where
@@ -693,27 +697,29 @@ where
     fn leaf_count(&self) -> usize {
         self.0.leaf_count() + self.1.leaf_count() + self.2.leaf_count()
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        self.0.prepare_workspace(n, w, c);
-        self.1.prepare_workspace(n, w, c);
-        self.2.prepare_workspace(n, w, c);
-    }
     fn set_scores(
         &self,
         s: &((A::Values, B::Values), C::Values),
-        r: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
-        self.0.set_scores(&s.0.0, r, weight, w, c);
-        self.1.set_scores(&s.0.1, r, weight, w, c);
-        self.2.set_scores(&s.1, r, weight, w, c);
+        self.0.set_scores(&s.0.0, tile_row, weight, w, c);
+        self.1.set_scores(&s.0.1, tile_row, weight, w, c);
+        self.2.set_scores(&s.1, tile_row, weight, w, c);
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
-        self.0.backprop(beta, grad, w, c);
-        self.1.backprop(beta, grad, w, c);
-        self.2.backprop(beta, grad, w, c);
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
+        self.0.backprop(rows.clone(), beta, grad, w, c);
+        self.1.backprop(rows.clone(), beta, grad, w, c);
+        self.2.backprop(rows, beta, grad, w, c);
     }
     fn visit_descriptors<V>(&self, p: &ParameterPath, c: &mut usize, v: &mut V)
     where
@@ -769,26 +775,28 @@ where
     fn leaf_count(&self) -> usize {
         self.iter().map(ShapeBlocks::leaf_count).sum()
     }
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        for b in self {
-            b.prepare_workspace(n, w, c);
-        }
-    }
     fn set_scores(
         &self,
         s: &[A::Values; C],
-        r: usize,
+        tile_row: usize,
         weight: f64,
         w: &mut GradientWorkspace,
         c: &mut usize,
     ) {
         for (i, b) in self.iter().enumerate() {
-            b.set_scores(&s[i], r, weight, w, c);
+            b.set_scores(&s[i], tile_row, weight, w, c);
         }
     }
-    fn backprop(&self, beta: &[f64], grad: &mut [f64], w: &mut GradientWorkspace, c: &mut usize) {
+    fn backprop(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        grad: &mut [f64],
+        w: &GradientWorkspace,
+        c: &mut usize,
+    ) {
         for b in self {
-            b.backprop(beta, grad, w, c);
+            b.backprop(rows.clone(), beta, grad, w, c);
         }
     }
     fn visit_descriptors<V>(&self, p: &ParameterPath, c: &mut usize, v: &mut V)
@@ -853,14 +861,10 @@ where
         <B as ShapeBlocks<A>>::leaf_count(self)
     }
 
-    fn prepare_workspace(&self, n: usize, w: &mut GradientWorkspace, c: &mut usize) {
-        <B as ShapeBlocks<A>>::prepare_workspace(self, n, w, c);
-    }
-
     fn set_scores(
         &self,
         scores: &[A::Values; C],
-        row: usize,
+        tile_row: usize,
         weight: f64,
         workspace: &mut GradientWorkspace,
         cursor: &mut usize,
@@ -869,17 +873,18 @@ where
         for score in scores {
             A::add_assign(&mut total, score);
         }
-        <B as ShapeBlocks<A>>::set_scores(self, &total, row, weight, workspace, cursor);
+        <B as ShapeBlocks<A>>::set_scores(self, &total, tile_row, weight, workspace, cursor);
     }
 
     fn backprop(
         &self,
+        rows: Range<usize>,
         beta: &[f64],
         grad: &mut [f64],
-        workspace: &mut GradientWorkspace,
+        workspace: &GradientWorkspace,
         cursor: &mut usize,
     ) {
-        <B as ShapeBlocks<A>>::backprop(self, beta, grad, workspace, cursor);
+        <B as ShapeBlocks<A>>::backprop(self, rows, beta, grad, workspace, cursor);
     }
 
     fn visit_descriptors<V>(&self, prefix: &ParameterPath, cursor: &mut usize, visit: &mut V)

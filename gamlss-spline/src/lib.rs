@@ -1288,6 +1288,19 @@ mod tests {
 
         predictor.add_gradient(scores, beta, &mut grad);
 
+        let split = predictor.nrows() / 2;
+        let mut tiled_grad = vec![0.0; beta.len()];
+        predictor.add_gradient_range(0..split, &scores[..split], beta, &mut tiled_grad);
+        predictor.add_gradient_range(
+            split..predictor.nrows(),
+            &scores[split..],
+            beta,
+            &mut tiled_grad,
+        );
+        for (actual, expected) in tiled_grad.iter().zip(&grad) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+        }
+
         for index in 0..beta.len() {
             let mut plus = beta.to_vec();
             plus[index] += eps;

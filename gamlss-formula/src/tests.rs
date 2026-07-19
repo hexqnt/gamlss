@@ -612,11 +612,27 @@ fn monotone_weighted_gradient_skips_zero_score_multiplier_rows() {
     let beta = vec![0.0; nparams];
     let mut expected = vec![0.0; nparams];
     let mut weighted = vec![0.0; nparams];
+    let mut tiled_weighted = vec![0.0; nparams];
 
     block.add_gradient(&scores, &beta, &mut expected);
     block.add_weighted_gradient(&scores, &multiplier, &beta, &mut weighted);
+    block.add_weighted_gradient_by_range(
+        0..1,
+        &scores[..1],
+        multiplier.as_slice(),
+        &beta,
+        &mut tiled_weighted,
+    );
+    block.add_weighted_gradient_by_range(
+        1..3,
+        &scores[1..],
+        multiplier.as_slice(),
+        &beta,
+        &mut tiled_weighted,
+    );
 
     assert_eq!(weighted, expected);
+    assert_eq!(tiled_weighted, expected);
     assert!(weighted.iter().all(|value| value.is_finite()));
 }
 

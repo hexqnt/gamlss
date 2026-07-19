@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gamlss_core::{Link, PredictorBlock, RowMultiplier, Softplus};
 
 use crate::SplineError;
@@ -133,33 +135,31 @@ impl PredictorBlock for MonotoneISplineDesign {
         eta
     }
 
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.x.len());
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert!(rows.end <= self.x.len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             self.add_row_gradient(row, score, beta, grad);
         }
     }
 
-    fn add_weighted_gradient(
-        &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(multiplier.len(), self.x.len());
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-    }
-
     #[inline]
-    fn add_weighted_gradient_by<M>(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         beta: &[f64],
@@ -167,14 +167,16 @@ impl PredictorBlock for MonotoneISplineDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert!(rows.end <= self.x.len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;

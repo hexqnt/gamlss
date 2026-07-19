@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::ModelError;
 
 /// Simple dense matrix in row-major order.
@@ -194,18 +196,21 @@ impl DesignMatrix for DenseDesign {
     }
 
     #[inline]
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-        debug_assert_eq!(weights.len(), self.nrows);
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(weights.len(), rows.len());
         debug_assert_eq!(out.len(), self.ncols);
 
         if self.ncols == 0 {
             return;
         }
 
+        let start = rows.start * self.ncols;
+        let end = rows.end * self.ncols;
         for (weight, row_values) in weights
             .iter()
             .copied()
-            .zip(self.values.chunks_exact(self.ncols))
+            .zip(self.values[start..end].chunks_exact(self.ncols))
         {
             if weight == 0.0 {
                 continue;
@@ -238,36 +243,36 @@ impl DesignMatrix for DenseDesign {
     }
 
     #[inline]
-    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
-        debug_assert_eq!(weights.len(), self.nrows);
-        debug_assert_eq!(multiplier.len(), self.nrows);
-        debug_assert_eq!(out.len(), self.ncols);
-
-        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
-    }
-
-    #[inline]
-    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
-    where
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(weights.len(), self.nrows);
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(weights.len(), rows.len());
         debug_assert_eq!(out.len(), self.ncols);
 
         if self.ncols == 0 {
             return;
         }
 
-        for (row, (weight, row_values)) in weights
+        let start = rows.start * self.ncols;
+        let end = rows.end * self.ncols;
+        for (offset, (weight, row_values)) in weights
             .iter()
             .copied()
-            .zip(self.values.chunks_exact(self.ncols))
+            .zip(self.values[start..end].chunks_exact(self.ncols))
             .enumerate()
         {
             if weight == 0.0 {
                 continue;
             }
 
+            let row = rows.start + offset;
             let scaled_weight = weight * multiplier.multiplier_at(row);
             if scaled_weight == 0.0 {
                 continue;
@@ -317,12 +322,12 @@ impl RowMultiplier for UnitRowMultiplier {
 
 /// Minimal design matrix contract for the model hot path.
 ///
-/// Implementations must interpret `beta` as a vector of length `ncols()` and
-/// `weights` as a vector of length `nrows()`. Methods are not required to
-/// re-check lengths in release builds, so the calling code validates sizes
-/// upfront. Weighted operations must treat an exactly zero row weight as
-/// disabling that row: they should not read its row multiplier or design
-/// values.
+/// Implementations must interpret `beta` as a vector of length `ncols()`.
+/// Whole-matrix operations receive `nrows()` weights; range operations receive
+/// one weight per selected row. Methods are not required to re-check lengths in
+/// release builds, so calling code validates sizes upfront. Weighted operations
+/// must treat an exactly zero row weight as disabling that row: they should not
+/// read its row multiplier or design values.
 pub trait DesignMatrix {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -330,8 +335,18 @@ pub trait DesignMatrix {
     fn ncols(&self) -> usize;
     /// Dot product of row `row` with `beta`.
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Adds `X[rows, :]^T weights` into `out`.
+    ///
+    /// `weights` contains one value per selected row. Implementations must be
+    /// additive across disjoint contiguous ranges so the compiled executor can
+    /// evaluate gradients with bounded-memory score tiles.
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]);
     /// Adds `X^T weights` into `out`.
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
+    #[inline]
+    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_t_mul_vec_range(0..self.nrows(), weights, out);
+    }
     /// Writes a constant predictor start into `out` when this matrix has an
     /// intercept-like coefficient.
     ///
@@ -345,28 +360,48 @@ pub trait DesignMatrix {
     }
     /// Adds `X^T (weights * multiplier)` into `out`.
     ///
-    /// Default implementation materializes scaled weights. Matrix
-    /// implementations used in hot paths should override this method when they
-    /// can fuse scaling into their transpose multiply.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_t_mul_vec_by_range`].
     #[inline]
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), multiplier.len());
-
-        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_weighted_t_mul_vec_by_range(0..self.nrows(), weights, multiplier, out);
     }
 
     /// Adds `X^T (weights * multiplier(row))` into `out`.
     ///
-    /// This variant lets nested predictor blocks provide a lazily evaluated
-    /// row multiplier and avoid materializing scaled weights. Matrix
-    /// implementations with direct row access should override this method.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_t_mul_vec_by_range`].
     #[inline]
     fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_weights = scale_active_rows(weights, multiplier);
-        self.add_t_mul_vec(&scaled_weights, out);
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_weighted_t_mul_vec_by_range(0..self.nrows(), weights, multiplier, out);
+    }
+
+    /// Adds `X[rows, :]^T (weights * multiplier(row))` into `out`.
+    ///
+    /// `weights` is range-local, while `multiplier` continues to use absolute
+    /// observation indices. The default materializes range-local scaled
+    /// weights; implementations with direct row access should override this
+    /// method to fuse scaling into their transpose multiply.
+    #[inline]
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(weights.len(), rows.len());
+        let scaled_weights = scale_active_rows_range(weights, rows.clone(), multiplier);
+        self.add_t_mul_vec_range(rows, &scaled_weights, out);
     }
 
     /// Adds `X^T diag(weights) X` into `out`.
@@ -450,8 +485,8 @@ where
     }
 
     #[inline]
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-        T::add_t_mul_vec(*self, weights, out);
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+        T::add_t_mul_vec_range(*self, rows, weights, out);
     }
 
     #[inline]
@@ -460,16 +495,16 @@ where
     }
 
     #[inline]
-    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
-        T::add_weighted_t_mul_vec(*self, weights, multiplier, out);
-    }
-
-    #[inline]
-    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
-    where
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
         M: RowMultiplier + ?Sized,
     {
-        T::add_weighted_t_mul_vec_by(*self, weights, multiplier, out);
+        T::add_weighted_t_mul_vec_by_range(*self, rows, weights, multiplier, out);
     }
 
     #[inline]
@@ -504,14 +539,28 @@ pub(crate) fn scale_active_rows<M>(values: &[f64], multiplier: &M) -> Vec<f64>
 where
     M: RowMultiplier + ?Sized,
 {
+    scale_active_rows_range(values, 0..values.len(), multiplier)
+}
+
+#[inline]
+pub(crate) fn scale_active_rows_range<M>(
+    values: &[f64],
+    rows: Range<usize>,
+    multiplier: &M,
+) -> Vec<f64>
+where
+    M: RowMultiplier + ?Sized,
+{
+    debug_assert_eq!(values.len(), rows.len());
     values
         .iter()
         .copied()
         .enumerate()
-        .map(|(row, value)| {
+        .map(|(offset, value)| {
             if value == 0.0 {
                 0.0
             } else {
+                let row = rows.start + offset;
                 value * multiplier.multiplier_at(row)
             }
         })
@@ -572,6 +621,8 @@ fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usiz
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use super::{DenseDesign, DesignMatrix, RowMultiplier};
     use approx::assert_relative_eq;
 
@@ -763,8 +814,8 @@ mod tests {
                 self.0.dot_row(row, beta)
             }
 
-            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-                self.0.add_t_mul_vec(weights, out);
+            fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec_range(rows, weights, out);
             }
         }
 
@@ -803,8 +854,8 @@ mod tests {
                 self.0.dot_row(row, beta)
             }
 
-            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-                self.0.add_t_mul_vec(weights, out);
+            fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec_range(rows, weights, out);
             }
         }
 

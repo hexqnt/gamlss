@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use gamlss_core::{DenseDesign, DesignMatrix, Link, ModelError, PredictorBlock, Softplus};
+use gamlss_core::{
+    DenseDesign, DesignMatrix, Link, ModelError, PredictorBlock, RowMultiplier, Softplus,
+};
 use gamlss_spline::{ISplineBasis, MonotoneDirection};
 
 /// Formula predictor composed from a dense linear design, optional row offsets,
@@ -55,8 +57,9 @@ impl FormulaPredictorBlock {
 
     fn add_monotone_gradient(
         segment: &MonotoneSegment,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: Option<&[f64]>,
+        mut multiplier_at: impl FnMut(usize) -> f64,
         beta: &[f64],
         grad: &mut [f64],
     ) {
@@ -64,59 +67,38 @@ impl FormulaPredictorBlock {
         debug_assert_eq!(grad.len(), segment.range.len());
         debug_assert!(!beta.is_empty());
         debug_assert_eq!(segment.basis.n_basis() + 1, beta.len());
-        debug_assert_eq!(scores.len(), segment.values.len());
+        debug_assert!(rows.end <= segment.values.len());
+        debug_assert_eq!(scores.len(), rows.len());
 
         let sign = monotone_sign(segment.direction);
         let (intercept_grad, grad_tail) = grad
             .split_first_mut()
             .expect("monotone segment gradient has an intercept coefficient");
         let beta_tail = &beta[1..];
-        match multiplier {
-            Some(multiplier) => {
-                debug_assert_eq!(multiplier.len(), scores.len());
-                for (row, (score, value)) in scores
-                    .iter()
-                    .copied()
-                    .zip(segment.values.iter().copied())
-                    .enumerate()
-                {
-                    if score == 0.0 {
-                        continue;
-                    }
-
-                    let score = score * multiplier[row];
-                    if score == 0.0 {
-                        continue;
-                    }
-
-                    add_monotone_gradient_row(
-                        &segment.basis,
-                        value,
-                        score,
-                        sign,
-                        beta_tail,
-                        intercept_grad,
-                        grad_tail,
-                    );
-                }
+        for (offset, (score, value)) in scores
+            .iter()
+            .copied()
+            .zip(segment.values[rows.clone()].iter().copied())
+            .enumerate()
+        {
+            if score == 0.0 {
+                continue;
             }
-            None => {
-                for (score, value) in scores.iter().copied().zip(segment.values.iter().copied()) {
-                    if score == 0.0 {
-                        continue;
-                    }
 
-                    add_monotone_gradient_row(
-                        &segment.basis,
-                        value,
-                        score,
-                        sign,
-                        beta_tail,
-                        intercept_grad,
-                        grad_tail,
-                    );
-                }
+            let score = score * multiplier_at(rows.start + offset);
+            if score == 0.0 {
+                continue;
             }
+
+            add_monotone_gradient_row(
+                &segment.basis,
+                value,
+                score,
+                sign,
+                beta_tail,
+                intercept_grad,
+                grad_tail,
+            );
         }
     }
 }
@@ -144,44 +126,61 @@ impl PredictorBlock for FormulaPredictorBlock {
         eta
     }
 
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.nrows());
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams);
         debug_assert_eq!(grad.len(), self.nparams);
 
         let dense_ncols = self.dense.ncols();
-        self.dense.add_t_mul_vec(scores, &mut grad[..dense_ncols]);
+        self.dense
+            .add_t_mul_vec_range(rows.clone(), scores, &mut grad[..dense_ncols]);
         for segment in &self.monotone {
             Self::add_monotone_gradient(
                 segment,
+                rows.clone(),
                 scores,
-                None,
+                |_| 1.0,
                 &beta[segment.range.clone()],
                 &mut grad[segment.range.clone()],
             );
         }
     }
 
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: &[f64],
+        multiplier: &M,
         beta: &[f64],
         grad: &mut [f64],
-    ) {
-        debug_assert_eq!(scores.len(), self.nrows());
-        debug_assert_eq!(multiplier.len(), self.nrows());
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams);
         debug_assert_eq!(grad.len(), self.nparams);
 
         let dense_ncols = self.dense.ncols();
-        self.dense
-            .add_weighted_t_mul_vec(scores, multiplier, &mut grad[..dense_ncols]);
+        self.dense.add_weighted_t_mul_vec_by_range(
+            rows.clone(),
+            scores,
+            multiplier,
+            &mut grad[..dense_ncols],
+        );
         for segment in &self.monotone {
             Self::add_monotone_gradient(
                 segment,
+                rows.clone(),
                 scores,
-                Some(multiplier),
+                |row| multiplier.multiplier_at(row),
                 &beta[segment.range.clone()],
                 &mut grad[segment.range.clone()],
             );

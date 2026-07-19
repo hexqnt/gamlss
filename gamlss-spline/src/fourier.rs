@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gamlss_core::{PredictorBlock, RowMultiplier};
 
 use crate::{FourierError, SplineRowBasis};
@@ -166,33 +168,24 @@ impl PredictorBlock for FourierDesign {
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.x.len());
+    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        debug_assert!(rows.end <= self.x.len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(grad.len(), self.nparams);
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             self.add_row_gradient(row, score, grad);
         }
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(multiplier.len(), self.x.len());
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by<M>(
-        &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         _: &[f64],
@@ -200,13 +193,15 @@ impl PredictorBlock for FourierDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert!(rows.end <= self.x.len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(grad.len(), self.nparams);
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;
