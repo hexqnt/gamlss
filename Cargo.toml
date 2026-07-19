@@ -106,7 +106,7 @@ rand.workspace = true
 
 [[example]]
 name = "simple_multivariate_fit"
-required-features = ["multivariate"]
+required-features = ["multivariate", "rand"]
 
 [lints]
 workspace = true
