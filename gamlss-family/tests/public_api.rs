@@ -272,6 +272,88 @@ fn existing_mean_style_aliases_construct_without_type_annotations() {
 }
 
 #[test]
+fn new_univariate_families_are_root_and_prelude_reexports() {
+    use gamlss_family::prelude::*;
+
+    assert!(finite_nll(
+        GeometricMean::new(),
+        2.0,
+        GeometricTheta { mean: 1.5 }
+    ));
+    assert!(finite_nll(
+        RayleighScale::new(),
+        1.2,
+        RayleighTheta { scale: 1.0 }
+    ));
+    assert!(finite_nll(
+        LogLogisticScaleShape::new(),
+        1.2,
+        LogLogisticTheta {
+            scale: 1.0,
+            shape: 2.0,
+        }
+    ));
+    assert!(finite_nll(
+        ChiDegreesOfFreedom::new(),
+        1.2,
+        ChiTheta {
+            degrees_of_freedom: 3.0,
+        }
+    ));
+    assert!(finite_nll(
+        ChiSquaredDegreesOfFreedom::new(),
+        1.2,
+        ChiSquaredTheta {
+            degrees_of_freedom: 3.0,
+        }
+    ));
+    assert!(finite_nll(
+        GeneralizedParetoScaleShape::new(),
+        1.2,
+        GeneralizedParetoTheta {
+            scale: 1.0,
+            shape: 0.1,
+        }
+    ));
+
+    let fixed = BinomialFixedTrialsProbability::try_new(10).unwrap();
+    assert!(
+        fixed
+            .nll(4.0, &BinomialTheta { probability: 0.4 }, &mut ())
+            .is_finite()
+    );
+    assert!(
+        BinomialVaryingTrialsProbability::new()
+            .nll([4.0, 10.0], &BinomialTheta { probability: 0.4 }, &mut (),)
+            .is_finite()
+    );
+    assert!(
+        BetaBinomialMeanPrecision::new()
+            .nll(
+                [4.0, 10.0],
+                &BetaBinomialTheta {
+                    probability: 0.4,
+                    precision: 8.0,
+                },
+                &mut (),
+            )
+            .is_finite()
+    );
+    let categorical = Categorical::<3>::new();
+    assert!(
+        categorical
+            .nll(
+                1.0,
+                &CategoricalTheta {
+                    probabilities: [0.2, 0.3, 0.5],
+                },
+                &mut (),
+            )
+            .is_finite()
+    );
+}
+
+#[test]
 fn univariate_namespace_exposes_distribution_modules() {
     assert!(finite_nll(
         gamlss_family::univariate::normal::NormalMuSigma::new(),
@@ -286,6 +368,15 @@ fn univariate_namespace_exposes_distribution_modules() {
         1.2,
         gamlss_family::univariate::gamma::GammaMeanCvTheta { mean: 1.0, cv: 0.5 }
     ));
+    let _ = gamlss_family::univariate::geometric::GeometricMean::new();
+    let _ = gamlss_family::univariate::rayleigh::RayleighScale::new();
+    let _ = gamlss_family::univariate::binomial::BinomialVaryingTrialsProbability::new();
+    let _ = gamlss_family::univariate::categorical::Categorical::<3>::new();
+    let _ = gamlss_family::univariate::log_logistic::LogLogisticScaleShape::new();
+    let _ = gamlss_family::univariate::chi_squared::ChiSquaredDegreesOfFreedom::new();
+    let _ = gamlss_family::univariate::chi::ChiDegreesOfFreedom::new();
+    let _ = gamlss_family::univariate::beta_binomial::BetaBinomialMeanPrecision::new();
+    let _ = gamlss_family::univariate::generalized_pareto::GeneralizedParetoScaleShape::new();
 }
 
 #[cfg(feature = "multivariate")]

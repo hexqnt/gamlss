@@ -118,6 +118,104 @@ fn tweedie_mean_cv_matches_mean_dispersion_equivalent() {
 }
 
 #[test]
+fn log_logistic_matches_exponentiated_logistic() {
+    let log_logistic = LogLogisticScaleShape::new();
+    let logistic = LogisticMuSigma::new();
+    let theta = LogLogisticTheta {
+        scale: 1.4,
+        shape: 2.3,
+    };
+    let transformed_theta = LogisticTheta {
+        mu: theta.scale.ln(),
+        sigma: 1.0 / theta.shape,
+    };
+    for y in [0.05_f64, 0.4, 1.4, 3.0, 20.0] {
+        assert_close(
+            log_logistic.nll(y, &theta, &mut ()),
+            logistic.nll(y.ln(), &transformed_theta, &mut ()) + y.ln(),
+            0.0,
+            2.0e-13,
+        );
+        assert_close(
+            log_logistic.cdf(y, &theta),
+            logistic.cdf(y.ln(), &transformed_theta),
+            0.0,
+            1.0e-14,
+        );
+    }
+    for probability in [0.01_f64, 0.2, 0.5, 0.8, 0.99] {
+        assert_close(
+            log_logistic.quantile(probability, &theta),
+            logistic.quantile(probability, &transformed_theta).exp(),
+            1.0e-13,
+            1.0e-13,
+        );
+    }
+}
+
+#[test]
+fn positive_shape_generalized_pareto_matches_lomax() {
+    let generalized_pareto = GeneralizedParetoScaleShape::new();
+    let lomax = LomaxShapeScale::new();
+    let theta = GeneralizedParetoTheta {
+        scale: 1.7,
+        shape: 0.4,
+    };
+    let lomax_theta = LomaxTheta {
+        shape: 1.0 / theta.shape,
+        scale: theta.scale / theta.shape,
+    };
+    for y in [0.0_f64, 0.1, 1.0, 5.0, 50.0] {
+        assert_close(
+            generalized_pareto.nll(y, &theta, &mut ()),
+            lomax.nll(y, &lomax_theta, &mut ()),
+            0.0,
+            2.0e-13,
+        );
+        assert_close(
+            generalized_pareto.cdf(y, &theta),
+            lomax.cdf(y, &lomax_theta),
+            0.0,
+            1.0e-14,
+        );
+    }
+    for probability in [0.01_f64, 0.2, 0.5, 0.8, 0.99] {
+        assert_close(
+            generalized_pareto.quantile(probability, &theta),
+            lomax.quantile(probability, &lomax_theta),
+            1.0e-13,
+            1.0e-13,
+        );
+    }
+}
+
+#[test]
+fn chi_matches_square_root_of_chi_squared() {
+    let chi = ChiDegreesOfFreedom::new();
+    let chi_squared = ChiSquaredDegreesOfFreedom::new();
+    let chi_theta = ChiTheta {
+        degrees_of_freedom: 3.7,
+    };
+    let chi_squared_theta = ChiSquaredTheta {
+        degrees_of_freedom: chi_theta.degrees_of_freedom,
+    };
+    for y in [0.05_f64, 0.4, 1.0, 3.0, 10.0] {
+        assert_close(
+            chi.nll(y, &chi_theta, &mut ()),
+            chi_squared.nll(y * y, &chi_squared_theta, &mut ()) - (2.0 * y).ln(),
+            0.0,
+            1.0e-13,
+        );
+        assert_close(
+            chi.cdf(y, &chi_theta),
+            chi_squared.cdf(y * y, &chi_squared_theta),
+            0.0,
+            1.0e-14,
+        );
+    }
+}
+
+#[test]
 fn student_t_dynamic_matches_fixed_df_equivalent() {
     let dynamic = StudentTMuSigmaTau::new();
     let fixed = StudentTMuSigma::try_new(5.0).unwrap();

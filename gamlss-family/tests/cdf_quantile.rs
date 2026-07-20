@@ -34,11 +34,16 @@ proptest! {
         assert_continuous_inverse(&StudentTMuSigma::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-6);
 
         assert_continuous_inverse(&ExponentialRate::new(), p, ExponentialRateTheta { rate: shape }, 2.0e-10);
+        assert_continuous_inverse(&RayleighScale::new(), p, RayleighTheta { scale }, 2.0e-10);
+        assert_continuous_inverse(&ChiDegreesOfFreedom::new(), p, ChiTheta { degrees_of_freedom: shape }, 2.0e-7);
+        assert_continuous_inverse(&ChiSquaredDegreesOfFreedom::new(), p, ChiSquaredTheta { degrees_of_freedom: shape }, 2.0e-7);
         assert_continuous_inverse(&GammaShapeRate::new(), p, GammaShapeRateTheta { shape, rate: scale }, 2.0e-7);
         assert_continuous_inverse(&InverseGaussianMuShape::new(), p, InverseGaussianTheta { mu: scale, shape }, 2.0e-7);
+        assert_continuous_inverse(&LogLogisticScaleShape::new(), p, LogLogisticTheta { scale, shape }, 2.0e-10);
         assert_continuous_inverse(&LogNormalLogLocationLogSd::new(), p, LogNormalLogLocationLogSdTheta { log_location: location, log_sd: scale }, 2.0e-7);
         assert_continuous_inverse(&LomaxShapeScale::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
         assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullScaleShapeTheta { shape, scale }, 2.0e-10);
+        assert_continuous_inverse(&GeneralizedParetoScaleShape::new(), p, GeneralizedParetoTheta { scale, shape }, 2.0e-10);
 
         assert_continuous_inverse(&BetaMeanPrecision::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 5.0e-6);
     }
@@ -51,6 +56,8 @@ proptest! {
         bernoulli_mu in 0.01_f64..0.99,
     ) {
         assert_discrete_inverse(&BernoulliProbability::new(), p, BernoulliTheta { mu: bernoulli_mu });
+        assert_discrete_inverse(&BinomialFixedTrialsProbability::try_new(40).unwrap(), p, BinomialTheta { probability: bernoulli_mu });
+        assert_discrete_inverse(&GeometricMean::new(), p, GeometricTheta { mean: mu });
         assert_discrete_inverse(&PoissonMean::new(), p, PoissonTheta { mu });
         assert_discrete_inverse(&NegativeBinomialMeanSize::new(), p, NegativeBinomialTheta { mu, shape });
     }
@@ -123,6 +130,46 @@ fn continuous_density_integrates_approximately_to_one() {
         },
         1.0e-4,
         7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &RayleighScale::new(),
+        RayleighTheta { scale: 1.3 },
+        1.0e-4,
+        2.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &LogLogisticScaleShape::new(),
+        LogLogisticTheta {
+            scale: 1.3,
+            shape: 2.4,
+        },
+        1.0e-4,
+        1.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ChiDegreesOfFreedom::new(),
+        ChiTheta {
+            degrees_of_freedom: 3.7,
+        },
+        1.0e-4,
+        7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ChiSquaredDegreesOfFreedom::new(),
+        ChiSquaredTheta {
+            degrees_of_freedom: 4.5,
+        },
+        1.0e-4,
+        7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GeneralizedParetoScaleShape::new(),
+        GeneralizedParetoTheta {
+            scale: 1.3,
+            shape: 0.2,
+        },
+        1.0e-4,
+        2.0e-4,
     );
     assert_density_integrates_over_quantile_bracket(
         &GumbelMuSigma::new(),
@@ -219,6 +266,18 @@ fn discrete_mass_sums_approximately_to_one() {
             shape: 2.5,
         },
         1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &GeometricMean::new(),
+        GeometricTheta { mean: 3.0 },
+        1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &BinomialFixedTrialsProbability::try_new(20).unwrap(),
+        BinomialTheta { probability: 0.35 },
+        1.0,
         2.0e-12,
     );
 }

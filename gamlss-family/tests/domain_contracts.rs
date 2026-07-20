@@ -234,6 +234,101 @@ fn extended_family_invalid_domains_return_non_finite_likelihoods() {
 }
 
 #[test]
+fn new_univariate_family_boundaries_follow_public_contracts() {
+    let geometric = GeometricMean::new();
+    let geometric_theta = GeometricTheta { mean: 2.0 };
+    assert!(nll(&geometric, 0.5, &geometric_theta).is_infinite());
+    assert_eq!(geometric.cdf(-1.0, &geometric_theta), 0.0);
+    assert!(geometric.quantile(1.0, &geometric_theta).is_infinite());
+
+    let rayleigh = RayleighScale::new();
+    let rayleigh_theta = RayleighTheta { scale: 1.0 };
+    assert!(nll(&rayleigh, 0.0, &rayleigh_theta).is_infinite());
+    assert_eq!(rayleigh.cdf(0.0, &rayleigh_theta), 0.0);
+    assert!(rayleigh.quantile(1.0, &rayleigh_theta).is_infinite());
+
+    let log_logistic = LogLogisticScaleShape::new();
+    let log_logistic_theta = LogLogisticTheta {
+        scale: 1.0,
+        shape: 2.0,
+    };
+    assert!(nll(&log_logistic, 0.0, &log_logistic_theta).is_infinite());
+    assert_eq!(log_logistic.cdf(0.0, &log_logistic_theta), 0.0);
+    assert_eq!(log_logistic.quantile(0.0, &log_logistic_theta), 0.0);
+    assert!(
+        log_logistic
+            .quantile(1.0, &log_logistic_theta)
+            .is_infinite()
+    );
+
+    let chi = ChiDegreesOfFreedom::new();
+    let chi_theta = ChiTheta {
+        degrees_of_freedom: 3.0,
+    };
+    assert!(nll(&chi, 0.0, &chi_theta).is_infinite());
+    assert_eq!(chi.cdf(0.0, &chi_theta), 0.0);
+    assert!(
+        chi.cdf(
+            1.0,
+            &ChiTheta {
+                degrees_of_freedom: 0.0,
+            },
+        )
+        .is_nan()
+    );
+
+    let chi_squared = ChiSquaredDegreesOfFreedom::new();
+    let chi_squared_theta = ChiSquaredTheta {
+        degrees_of_freedom: 3.0,
+    };
+    assert!(nll(&chi_squared, 0.0, &chi_squared_theta).is_infinite());
+    assert_eq!(chi_squared.cdf(0.0, &chi_squared_theta), 0.0);
+
+    let generalized_pareto = GeneralizedParetoScaleShape::new();
+    let generalized_pareto_theta = GeneralizedParetoTheta {
+        scale: 2.0,
+        shape: -0.5,
+    };
+    assert!(nll(&generalized_pareto, 4.0, &generalized_pareto_theta).is_infinite());
+    assert_eq!(generalized_pareto.cdf(4.0, &generalized_pareto_theta), 1.0);
+    assert_eq!(
+        generalized_pareto.quantile(1.0, &generalized_pareto_theta),
+        4.0
+    );
+
+    let binomial = BinomialVaryingTrialsProbability::new();
+    let binomial_theta = BinomialTheta { probability: 0.4 };
+    assert!(
+        binomial
+            .nll([2.5, 10.0], &binomial_theta, &mut ())
+            .is_infinite()
+    );
+    assert!(binomial.cdf([2.0, -1.0], &binomial_theta).is_nan());
+
+    let beta_binomial = BetaBinomialMeanPrecision::new();
+    let beta_binomial_theta = BetaBinomialTheta {
+        probability: 0.4,
+        precision: 5.0,
+    };
+    assert!(
+        beta_binomial
+            .nll([11.0, 10.0], &beta_binomial_theta, &mut ())
+            .is_infinite()
+    );
+
+    let categorical = Categorical::<3>::new();
+    let categorical_theta = CategoricalTheta {
+        probabilities: [0.2, 0.3, 0.5],
+    };
+    assert!(
+        categorical
+            .nll(3.0, &categorical_theta, &mut ())
+            .is_infinite()
+    );
+    assert!(categorical.quantile(f64::NAN, &categorical_theta).is_nan());
+}
+
+#[test]
 fn theta_construction_from_eta_stays_inside_expected_domains() {
     assert_eq!(
         theta(&BernoulliProbability::new(), BernoulliEta { mu: 0.0 }).mu,

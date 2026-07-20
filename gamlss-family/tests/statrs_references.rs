@@ -8,11 +8,12 @@
 use gamlss_core::{HasCdf, HasDensity, HasQuantile};
 use gamlss_family::*;
 use statrs::distribution::{
-    Bernoulli as StatrsBernoulli, Beta as StatrsBeta, ContinuousCDF, Discrete, DiscreteCDF,
-    Exp as StatrsExp, Gamma as StatrsGamma, Gumbel as StatrsGumbel, Laplace as StatrsLaplace,
-    LogNormal as StatrsLogNormal, NegativeBinomial as StatrsNegativeBinomial,
-    Normal as StatrsNormal, Poisson as StatrsPoisson, StudentsT as StatrsStudentsT,
-    Weibull as StatrsWeibull,
+    Bernoulli as StatrsBernoulli, Beta as StatrsBeta, Binomial as StatrsBinomial,
+    ChiSquared as StatrsChiSquared, ContinuousCDF, Discrete, DiscreteCDF, Exp as StatrsExp,
+    Gamma as StatrsGamma, Geometric as StatrsGeometric, Gumbel as StatrsGumbel,
+    Laplace as StatrsLaplace, LogNormal as StatrsLogNormal,
+    NegativeBinomial as StatrsNegativeBinomial, Normal as StatrsNormal, Poisson as StatrsPoisson,
+    StudentsT as StatrsStudentsT, Weibull as StatrsWeibull,
 };
 
 use common::{
@@ -202,6 +203,70 @@ fn cdf_quantile_and_density_match_statrs_references() {
         &statrs_negative_binomial,
         0_u64..16,
         1.0e-12,
+    );
+
+    let binomial = BinomialFixedTrialsProbability::try_new(12).unwrap();
+    let binomial_theta = BinomialTheta { probability: 0.35 };
+    let statrs_binomial = StatrsBinomial::new(binomial_theta.probability, 12).unwrap();
+    assert_discrete_statrs_reference(
+        &binomial,
+        binomial_theta,
+        &statrs_binomial,
+        0_u64..=12,
+        2.0e-12,
+    );
+
+    let geometric = GeometricMean::new();
+    let geometric_theta = GeometricTheta { mean: 2.5 };
+    let statrs_geometric = StatrsGeometric::new(1.0 / (1.0 + geometric_theta.mean)).unwrap();
+    for failures in 0_u64..12 {
+        assert_close(
+            geometric.density(failures as f64, &geometric_theta),
+            statrs_geometric.pmf(failures + 1),
+            0.0,
+            1.0e-14,
+        );
+        assert_close(
+            geometric.cdf(failures as f64, &geometric_theta),
+            statrs_geometric.cdf(failures + 1),
+            0.0,
+            1.0e-14,
+        );
+    }
+
+    let rayleigh = RayleighScale::new();
+    let rayleigh_theta = RayleighTheta { scale: 1.3 };
+    let statrs_rayleigh =
+        StatrsWeibull::new(2.0, std::f64::consts::SQRT_2 * rayleigh_theta.scale).unwrap();
+    assert_continuous_statrs_reference(
+        &rayleigh,
+        rayleigh_theta,
+        &statrs_rayleigh,
+        &POSITIVE_REFERENCE_POINTS,
+        ContinuousReferenceTolerances {
+            cdf_abs: 1.0e-14,
+            density_rel: 1.0e-13,
+            density_abs: 1.0e-14,
+            quantile_abs: 1.0e-12,
+        },
+    );
+
+    let chi_squared = ChiSquaredDegreesOfFreedom::new();
+    let chi_squared_theta = ChiSquaredTheta {
+        degrees_of_freedom: 4.5,
+    };
+    let statrs_chi_squared = StatrsChiSquared::new(chi_squared_theta.degrees_of_freedom).unwrap();
+    assert_continuous_statrs_reference(
+        &chi_squared,
+        chi_squared_theta,
+        &statrs_chi_squared,
+        &POSITIVE_REFERENCE_POINTS,
+        ContinuousReferenceTolerances {
+            cdf_abs: 2.0e-10,
+            density_rel: 1.0e-12,
+            density_abs: 1.0e-13,
+            quantile_abs: 2.0e-8,
+        },
     );
 
     let student_t = StudentTMuSigma::default();

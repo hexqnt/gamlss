@@ -230,6 +230,14 @@ impl ParameterName for Shape {
     const NAME: &'static str = "shape";
 }
 
+/// Marker for a degrees-of-freedom parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DegreesOfFreedom;
+
+impl ParameterName for DegreesOfFreedom {
+    const NAME: &'static str = "degrees_of_freedom";
+}
+
 /// Marker for a negative-binomial size parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Size;
@@ -1243,15 +1251,14 @@ pub trait ParameterName {
     const NAME: &'static str;
 }
 
-/// Contract implemented for typed parameter block tuples up to arity 8 and
-/// repeated block arrays.
+/// Contract implemented for supported typed parameter block trees.
 pub trait AssignParameterOffsets: Sized {
     /// Returns `self` with sequential offsets starting at `start`.
     #[must_use]
     fn assign_offsets(self, start: usize) -> Self;
 }
 
-/// Fallible tuple contract for assigning typed parameter block offsets.
+/// Fallible contract for assigning typed parameter block offsets.
 pub trait TryAssignParameterOffsets: Sized {
     /// Returns `self` with sequential offsets starting at `start`.
     ///
@@ -1260,6 +1267,37 @@ pub trait TryAssignParameterOffsets: Sized {
     /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
     /// fit in `usize`.
     fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
+}
+
+impl<P, const D: usize, X, Penalty> AssignParameterOffsets
+    for SimplexLogitParameterBlock<P, D, X, Penalty>
+{
+    #[inline]
+    fn assign_offsets(self, start: usize) -> Self {
+        start
+            .checked_add(self.len())
+            .expect("simplex-logit parameter block layout must fit in usize");
+        self.with_offset(start)
+    }
+}
+
+impl<P, const D: usize, X, Penalty> TryAssignParameterOffsets
+    for SimplexLogitParameterBlock<P, D, X, Penalty>
+where
+    P: ParameterName,
+{
+    #[inline]
+    fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError> {
+        let len = self.len();
+        start
+            .checked_add(len)
+            .ok_or(ModelError::BlockRangeOverflow {
+                parameter: P::NAME,
+                offset: start,
+                len,
+            })?;
+        Ok(self.with_offset(start))
+    }
 }
 
 macro_rules! impl_assign_offsets {
@@ -1659,7 +1697,8 @@ mod tests {
     use crate::{DenseDesign, LinearPredictorBlock, NoPenalty};
 
     use super::{
-        Mu, Nu, ParameterBlock, ParameterBlocks, Precision, Rate, Scale, Shape, Sigma, Tau,
+        Mu, Nu, ParameterBlock, ParameterBlocks, Precision, Probability, Rate, Scale, Shape, Sigma,
+        SimplexLogitParameterBlock, Tau,
     };
 
     #[test]
@@ -1749,6 +1788,31 @@ mod tests {
             ParameterBlocks::try_with_start(usize::MAX, (mu,)).unwrap_err(),
             crate::ModelError::BlockRangeOverflow {
                 parameter: "mu",
+                offset: usize::MAX,
+                len: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn parameter_blocks_assign_single_simplex_and_report_overflow() {
+        let simplex = || {
+            SimplexLogitParameterBlock::<Probability, 3, _, _>::new(
+                vec![
+                    LinearPredictorBlock::new(DenseDesign::intercept(1)),
+                    LinearPredictorBlock::new(DenseDesign::intercept(1)),
+                ],
+                NoPenalty,
+                99,
+            )
+        };
+
+        let assigned = ParameterBlocks::new(simplex()).into_inner();
+        assert_eq!(assigned.range(), 0..2);
+        assert_eq!(
+            ParameterBlocks::try_with_start(usize::MAX, simplex()).unwrap_err(),
+            crate::ModelError::BlockRangeOverflow {
+                parameter: "probability",
                 offset: usize::MAX,
                 len: 2,
             }

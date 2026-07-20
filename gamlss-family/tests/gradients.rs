@@ -27,11 +27,16 @@ proptest! {
         assert_gradient_matches_finite_difference::<_, 2>(&StudentTMuSigma::default(), y_real, [eta1, eta2]);
 
         assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&RayleighScale::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&ChiDegreesOfFreedom::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&ChiSquaredDegreesOfFreedom::new(), y_positive, [eta1]);
         assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&InverseGaussianMuShape::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LogLogisticScaleShape::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LogNormalLogLocationLogSd::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LomaxShapeScale::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&WeibullScaleShape::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&GeneralizedParetoScaleShape::new(), y_positive, [eta1, eta2.abs()]);
 
         assert_gradient_matches_finite_difference::<_, 2>(&BetaMeanPrecision::new(), y_unit, [eta1, eta2]);
     }
@@ -44,6 +49,8 @@ proptest! {
         eta2 in -3.0_f64..3.0,
     ) {
         assert_gradient_matches_finite_difference::<_, 1>(&BernoulliProbability::new(), f64::from(binary), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&BinomialFixedTrialsProbability::try_new(50).unwrap(), f64::from(count), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&GeometricMean::new(), f64::from(count), [eta1]);
         assert_gradient_matches_finite_difference::<_, 1>(&PoissonMean::new(), f64::from(count), [eta1]);
         assert_gradient_matches_finite_difference::<_, 2>(&NegativeBinomialMeanSize::new(), f64::from(count), [eta1, eta2]);
     }

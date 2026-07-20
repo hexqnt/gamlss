@@ -4,8 +4,8 @@
     clippy::cast_precision_loss
 )]
 use gamlss_core::{
-    AboveTwoLink, CholeskyScale, ClampedLog, ComponentMean, Cv, DenseDesign, DenseInformation,
-    DenseRows, Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations,
+    AboveTwoLink, CholeskyScale, ClampedLog, ComponentMean, Cv, DegreesOfFreedom, DenseDesign,
+    DenseInformation, DenseRows, Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations,
     FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity,
     HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
     HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, InitialEtaFromObservations,
@@ -382,6 +382,7 @@ fn semantic_parameter_markers_remain_root_reexports() {
     assert_eq!(LogSd::NAME, "log_sd");
     assert_eq!(LogLocation::NAME, "log_location");
     assert_eq!(Dispersion::NAME, "dispersion");
+    assert_eq!(DegreesOfFreedom::NAME, "degrees_of_freedom");
     assert_eq!(Size::NAME, "size");
     assert_eq!(Probability::NAME, "probability");
     assert_eq!(ZeroProbability::NAME, "zero_probability");
