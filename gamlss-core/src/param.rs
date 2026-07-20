@@ -1269,30 +1269,6 @@ where
     }
 }
 
-/// Stable public name for a distribution parameter marker.
-pub trait ParameterName {
-    /// Name used in parameter layouts and unpacked coefficient views.
-    const NAME: &'static str;
-}
-
-/// Contract implemented for supported typed parameter block trees.
-pub trait AssignParameterOffsets: Sized {
-    /// Returns `self` with sequential offsets starting at `start`.
-    #[must_use]
-    fn assign_offsets(self, start: usize) -> Self;
-}
-
-/// Fallible contract for assigning typed parameter block offsets.
-pub trait TryAssignParameterOffsets: Sized {
-    /// Returns `self` with sequential offsets starting at `start`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
-    /// fit in `usize`.
-    fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
-}
-
 impl<P, const D: usize, X, Penalty> AssignParameterOffsets
     for SimplexLogitParameterBlock<P, D, X, Penalty>
 {
@@ -1322,6 +1298,30 @@ where
             })?;
         Ok(self.with_offset(start))
     }
+}
+
+/// Stable public name for a distribution parameter marker.
+pub trait ParameterName {
+    /// Name used in parameter layouts and unpacked coefficient views.
+    const NAME: &'static str;
+}
+
+/// Contract implemented for supported typed parameter block trees.
+pub trait AssignParameterOffsets: Sized {
+    /// Returns `self` with sequential offsets starting at `start`.
+    #[must_use]
+    fn assign_offsets(self, start: usize) -> Self;
+}
+
+/// Fallible contract for assigning typed parameter block offsets.
+pub trait TryAssignParameterOffsets: Sized {
+    /// Returns `self` with sequential offsets starting at `start`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BlockRangeOverflow`] if a block range would not
+    /// fit in `usize`.
+    fn try_assign_offsets(self, start: usize) -> Result<Self, ModelError>;
 }
 
 macro_rules! impl_assign_offsets {

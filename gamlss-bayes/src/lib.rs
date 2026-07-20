@@ -291,6 +291,32 @@ where
     }
 }
 
+impl<F, Blocks, Obs, Prior> Objective for PosteriorPotential<F, Blocks, Obs, Prior>
+where
+    F: Family,
+    Blocks: GamlssBlocks<F>,
+    for<'obs> Obs: ObservationView<'obs, Observation = F::Observation<'obs>>,
+    Prior: CoefficientPrior,
+{
+    type Error = ModelError;
+
+    fn dim(&self) -> usize {
+        self.model.nparams()
+    }
+
+    fn value(&mut self, coefficients: &[f64]) -> Result<f64, Self::Error> {
+        self.try_value(coefficients)
+    }
+
+    fn value_gradient(
+        &mut self,
+        coefficients: &[f64],
+        gradient: &mut [f64],
+    ) -> Result<f64, Self::Error> {
+        self.try_value_gradient_into(coefficients, gradient)
+    }
+}
+
 /// Posterior potential with reusable likelihood buffers.
 ///
 /// This is the primary objective adapter for repeated HMC, VI, or optimizer
@@ -390,32 +416,6 @@ where
             gradient,
             &mut self.workspace,
         )
-    }
-}
-
-impl<F, Blocks, Obs, Prior> Objective for PosteriorPotential<F, Blocks, Obs, Prior>
-where
-    F: Family,
-    Blocks: GamlssBlocks<F>,
-    for<'obs> Obs: ObservationView<'obs, Observation = F::Observation<'obs>>,
-    Prior: CoefficientPrior,
-{
-    type Error = ModelError;
-
-    fn dim(&self) -> usize {
-        self.model.nparams()
-    }
-
-    fn value(&mut self, coefficients: &[f64]) -> Result<f64, Self::Error> {
-        self.try_value(coefficients)
-    }
-
-    fn value_gradient(
-        &mut self,
-        coefficients: &[f64],
-        gradient: &mut [f64],
-    ) -> Result<f64, Self::Error> {
-        self.try_value_gradient_into(coefficients, gradient)
     }
 }
 

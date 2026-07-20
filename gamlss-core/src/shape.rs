@@ -8,6 +8,18 @@ mod sealed {
     pub trait Sealed {}
 }
 
+/// A location vector paired with a lower-triangular Cholesky-scale subtree.
+///
+/// This geometry is shared by elliptical multivariate families such as the
+/// multivariate normal and Student-t families.
+pub type LocationCholesky<const D: usize> = Product<Vector<Mu, D>, Lower<CholeskyScale, D>>;
+
+/// Materialized scalar values carried by parameter shape `S`.
+///
+/// This alias keeps family codecs and generic helpers from repeating the
+/// associated-type projection `<S as ParameterShape>::Values`.
+pub type ShapeValues<S> = <S as ParameterShape>::Values;
+
 /// One scalar predictor coordinate with semantic role `P`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scalar<P>(PhantomData<P>);
@@ -109,57 +121,6 @@ impl<P, const D: usize> ParameterShape for Vector<P, D> {
 }
 
 impl<P, const D: usize> sealed::Sealed for Vector<P, D> {}
-
-/// Checked number of entries in a packed lower-triangular matrix.
-#[must_use]
-pub const fn lower_triangular_packed_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_add(1) {
-        Some(next) => match dimension.checked_mul(next) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => None,
-    }
-}
-
-/// Checked row-major packed lower-triangular index for `(row, col)`.
-#[must_use]
-pub const fn lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
-    if col > row {
-        return None;
-    }
-    match row.checked_add(1) {
-        Some(next) => match row.checked_mul(next) {
-            Some(product) => (product / 2).checked_add(col),
-            None => None,
-        },
-        None => None,
-    }
-}
-
-/// Checked number of entries in a packed strict-lower-triangular matrix.
-#[must_use]
-pub const fn strict_lower_triangular_packed_len(dimension: usize) -> Option<usize> {
-    match dimension.checked_sub(1) {
-        Some(previous) => match dimension.checked_mul(previous) {
-            Some(product) => Some(product / 2),
-            None => None,
-        },
-        None => Some(0),
-    }
-}
-
-/// Checked row-major packed strict-lower-triangular index for `(row, col)`.
-#[must_use]
-pub const fn strict_lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
-    if col >= row {
-        return None;
-    }
-    match row.checked_mul(row - 1) {
-        Some(product) => (product / 2).checked_add(col),
-        None => None,
-    }
-}
 
 /// Row-major lower-triangular scalar coordinates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -299,12 +260,6 @@ impl<A: ParameterShape, B: ParameterShape> ParameterShape for Product<A, B> {
 
 impl<A: ParameterShape, B: ParameterShape> sealed::Sealed for Product<A, B> {}
 
-/// A location vector paired with a lower-triangular Cholesky-scale subtree.
-///
-/// This geometry is shared by elliptical multivariate families such as the
-/// multivariate normal and Student-t families.
-pub type LocationCholesky<const D: usize> = Product<Vector<Mu, D>, Lower<CholeskyScale, D>>;
-
 /// `C` independent repetitions of one shape subtree.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Repeated<A, const C: usize>(PhantomData<A>);
@@ -391,11 +346,56 @@ pub trait ParameterShape: sealed::Sealed {
     fn add_to_first(values: &mut Self::Values, delta: f64);
 }
 
-/// Materialized scalar values carried by parameter shape `S`.
-///
-/// This alias keeps family codecs and generic helpers from repeating the
-/// associated-type projection `<S as ParameterShape>::Values`.
-pub type ShapeValues<S> = <S as ParameterShape>::Values;
+/// Checked number of entries in a packed lower-triangular matrix.
+#[must_use]
+pub const fn lower_triangular_packed_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_add(1) {
+        Some(next) => match dimension.checked_mul(next) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// Checked row-major packed lower-triangular index for `(row, col)`.
+#[must_use]
+pub const fn lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
+    if col > row {
+        return None;
+    }
+    match row.checked_add(1) {
+        Some(next) => match row.checked_mul(next) {
+            Some(product) => (product / 2).checked_add(col),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// Checked number of entries in a packed strict-lower-triangular matrix.
+#[must_use]
+pub const fn strict_lower_triangular_packed_len(dimension: usize) -> Option<usize> {
+    match dimension.checked_sub(1) {
+        Some(previous) => match dimension.checked_mul(previous) {
+            Some(product) => Some(product / 2),
+            None => None,
+        },
+        None => Some(0),
+    }
+}
+
+/// Checked row-major packed strict-lower-triangular index for `(row, col)`.
+#[must_use]
+pub const fn strict_lower_triangular_packed_index(row: usize, col: usize) -> Option<usize> {
+    if col >= row {
+        return None;
+    }
+    match row.checked_mul(row - 1) {
+        Some(product) => (product / 2).checked_add(col),
+        None => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {

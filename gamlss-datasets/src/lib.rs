@@ -6,6 +6,10 @@
 //! allocation. The optional [`simulate`] module creates owned synthetic data
 //! from a parameterized data-generating process.
 
+pub use time::{Date, Month, Time};
+
+pub use generated::*;
+
 #[allow(
     clippy::unreadable_literal,
     reason = "numeric literals are generated from CSV data"
@@ -14,12 +18,8 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/built_in_datasets.rs"));
 }
 
-pub use generated::*;
-
 #[cfg(feature = "rand")]
 pub mod simulate;
-
-pub use time::{Date, Month, Time};
 
 /// A regression dataset with type-defined predictors and responses.
 ///

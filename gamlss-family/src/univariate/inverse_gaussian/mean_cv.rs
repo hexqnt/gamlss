@@ -46,16 +46,6 @@ define_two_positive_parameter_blocks! {
     }
 }
 
-impl InverseGaussianMeanCvTheta {
-    #[inline]
-    fn mean_shape(self) -> InverseGaussianTheta {
-        InverseGaussianTheta {
-            mu: self.mean,
-            shape: (self.mean / self.cv) / self.cv,
-        }
-    }
-}
-
 /// Inverse Gaussian mean/CV implementation carrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseGaussianCv<MeanLink = Log, CvLink = Log> {
@@ -89,6 +79,16 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl InverseGaussianMeanCvTheta {
+    #[inline]
+    fn mean_shape(self) -> InverseGaussianTheta {
+        InverseGaussianTheta {
+            mu: self.mean,
+            shape: (self.mean / self.cv) / self.cv,
+        }
     }
 }
 

@@ -23,6 +23,9 @@ use crate::{
     univariate::{Poisson, PoissonTheta},
 };
 
+/// Default-link common-shock multivariate Poisson family.
+pub type MvPoissonCommonShockDefault<const D: usize> = MvPoissonCommonShock<D, Log, Log>;
+
 #[derive(Debug, Clone, Copy)]
 struct LatentPosteriorSummary {
     log_kernel_sum: f64,
@@ -34,9 +37,6 @@ struct CountMomentSummary<const D: usize> {
     marginal_mean: [f64; D],
     average_pair_covariance: Option<f64>,
 }
-
-/// Default-link common-shock multivariate Poisson family.
-pub type MvPoissonCommonShockDefault<const D: usize> = MvPoissonCommonShock<D, Log, Log>;
 
 /// Multivariate Poisson model with one common latent count.
 ///

@@ -22,6 +22,8 @@ pub enum GenerationError {
     NonFiniteResponse { index: usize, value: f64 },
 }
 
+impl Error for GenerationError {}
+
 impl fmt::Display for GenerationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -52,8 +54,6 @@ impl fmt::Display for GenerationError {
         }
     }
 }
-
-impl Error for GenerationError {}
 
 /// Samples one normal response per covariate.
 ///

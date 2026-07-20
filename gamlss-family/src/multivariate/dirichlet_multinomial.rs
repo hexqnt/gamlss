@@ -511,16 +511,6 @@ where
     }
 }
 
-fn degenerate_count_cdf(y: f64, count: f64) -> f64 {
-    if !y.is_finite() {
-        f64::NAN
-    } else if y < count {
-        0.0
-    } else {
-        1.0
-    }
-}
-
 impl<const K: usize, PrecisionLink> HasConditionalCdf
     for DirichletMultinomialFixedTrials<K, PrecisionLink>
 where
@@ -626,6 +616,16 @@ where
             "Dirichlet-multinomial conditional binomial",
             "Dirichlet-multinomial sequential sampling",
         )
+    }
+}
+
+fn degenerate_count_cdf(y: f64, count: f64) -> f64 {
+    if !y.is_finite() {
+        f64::NAN
+    } else if y < count {
+        0.0
+    } else {
+        1.0
     }
 }
 

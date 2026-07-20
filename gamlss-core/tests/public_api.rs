@@ -19,6 +19,15 @@ use gamlss_core::{
     ZeroProbability,
 };
 
+#[derive(Debug, Clone, Copy)]
+struct DependentConstraintFamily;
+
+impl DependentConstraintFamily {
+    fn target(observation: &[f64]) -> f64 {
+        observation.iter().sum::<f64>() / observation.len() as f64
+    }
+}
+
 #[test]
 fn score_tile_policy_remains_a_root_and_prelude_reexport() {
     let root_policy = ScoreTilePolicy::try_max_bytes(8 * 1024 * 1024).unwrap();
@@ -27,15 +36,6 @@ fn score_tile_policy_remains_a_root_and_prelude_reexport() {
     assert_eq!(root_policy.max_bytes(), Some(8 * 1024 * 1024));
     assert_eq!(prelude_policy.max_rows(), Some(128));
     assert_eq!(ScoreTilePolicy::DEFAULT_BYTE_BUDGET, 4 * 1024 * 1024);
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DependentConstraintFamily;
-
-impl DependentConstraintFamily {
-    fn target(observation: &[f64]) -> f64 {
-        observation.iter().sum::<f64>() / observation.len() as f64
-    }
 }
 
 gamlss_core::impl_scalar_compilable_family!(

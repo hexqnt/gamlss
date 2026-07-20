@@ -7,6 +7,13 @@
 //! exchangeable mixture components do not start at the same solution.
 #![allow(clippy::cast_precision_loss)]
 
+#[derive(Clone, Copy)]
+struct EmpiricalComponent {
+    count: usize,
+    mean: [f64; 2],
+    cholesky: [f64; 3],
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::array;
 
@@ -129,13 +136,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ANCHOR_END: diagnostics
 
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct EmpiricalComponent {
-    count: usize,
-    mean: [f64; 2],
-    cholesky: [f64; 3],
 }
 
 fn empirical_component(

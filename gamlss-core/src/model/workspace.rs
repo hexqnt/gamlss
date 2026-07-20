@@ -115,11 +115,6 @@ impl ScoreTilePolicy {
     }
 }
 
-#[inline]
-fn rows_for_byte_budget(bytes: usize, coordinate_count: usize) -> usize {
-    (bytes / size_of::<f64>() / coordinate_count.max(1)).max(1)
-}
-
 impl Default for ScoreTilePolicy {
     #[inline]
     fn default() -> Self {
@@ -317,6 +312,11 @@ impl GradientWorkspace {
             self.set_score(index, tile_row, weight * score);
         }
     }
+}
+
+#[inline]
+fn rows_for_byte_budget(bytes: usize, coordinate_count: usize) -> usize {
+    (bytes / size_of::<f64>() / coordinate_count.max(1)).max(1)
 }
 
 #[cfg(test)]

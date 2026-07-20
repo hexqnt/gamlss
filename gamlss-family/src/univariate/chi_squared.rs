@@ -63,6 +63,15 @@ where
     }
 }
 
+impl<DofLink> Default for ChiSquared<DofLink>
+where
+    DofLink: PositiveLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[inline]
 fn log_observation_over_dof(y: f64, dof: f64) -> f64 {
     let ratio = y / dof;
@@ -94,15 +103,6 @@ pub(super) fn chi_squared_nll(y: f64, dof: f64) -> f64 {
 #[inline]
 pub(super) fn chi_squared_d_dof(y: f64, dof: f64) -> f64 {
     0.5 * (digamma_minus_ln(0.5 * dof) - log_observation_over_dof(y, dof))
-}
-
-impl<DofLink> Default for ChiSquared<DofLink>
-where
-    DofLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 gamlss_core::impl_scalar_compilable_family!(

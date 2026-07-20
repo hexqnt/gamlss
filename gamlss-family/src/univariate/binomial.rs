@@ -14,6 +14,11 @@ use gamlss_special::{
 use crate::domain::{is_probability, is_strict_probability};
 use crate::initial::probability_floor;
 
+/// Fixed-trials binomial family with the default logit probability link.
+pub type BinomialFixedTrialsProbability = BinomialFixedTrials<Logit>;
+/// Varying-trials binomial family with the default logit probability link.
+pub type BinomialVaryingTrialsProbability = BinomialVaryingTrials<Logit>;
+
 /// Binomial family with one fixed positive number of trials for every row.
 ///
 /// ### Parameterization examples
@@ -26,6 +31,43 @@ use crate::initial::probability_floor;
 pub struct BinomialFixedTrials<ProbabilityLink = Logit> {
     trials: u32,
     marker: PhantomData<ProbabilityLink>,
+}
+
+impl<ProbabilityLink> BinomialFixedTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    /// Creates a fixed-trials family after validating `trials > 0`.
+    pub const fn try_new(trials: u32) -> Result<Self, ModelError> {
+        if trials == 0 {
+            return Err(ModelError::InvalidParameter {
+                parameter: "binomial trials",
+                expected: "positive",
+            });
+        }
+        Ok(Self {
+            trials,
+            marker: PhantomData,
+        })
+    }
+
+    /// Returns the common number of trials.
+    #[must_use]
+    pub const fn trials(&self) -> u32 {
+        self.trials
+    }
+
+    #[inline]
+    fn trials_f64(&self) -> f64 {
+        f64::from(self.trials)
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: BinomialEta) -> BinomialTheta {
+        BinomialTheta {
+            probability: ProbabilityLink::inverse(eta.probability),
+        }
+    }
 }
 
 /// Binomial family whose observations carry `[successes, trials]`.
@@ -41,10 +83,34 @@ pub struct BinomialVaryingTrials<ProbabilityLink = Logit> {
     marker: PhantomData<ProbabilityLink>,
 }
 
-/// Fixed-trials binomial family with the default logit probability link.
-pub type BinomialFixedTrialsProbability = BinomialFixedTrials<Logit>;
-/// Varying-trials binomial family with the default logit probability link.
-pub type BinomialVaryingTrialsProbability = BinomialVaryingTrials<Logit>;
+impl<ProbabilityLink> BinomialVaryingTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    /// Creates a stateless varying-trials binomial family.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: BinomialEta) -> BinomialTheta {
+        BinomialTheta {
+            probability: ProbabilityLink::inverse(eta.probability),
+        }
+    }
+}
+
+impl<ProbabilityLink> Default for BinomialVaryingTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BinomialKernel;
@@ -108,72 +174,6 @@ impl BinomialKernel {
             return 1.0;
         }
         regularized_beta(trials - successes, successes + 1.0, 1.0 - probability)
-    }
-}
-
-impl<ProbabilityLink> BinomialFixedTrials<ProbabilityLink>
-where
-    ProbabilityLink: UnitIntervalLink<f64>,
-{
-    /// Creates a fixed-trials family after validating `trials > 0`.
-    pub const fn try_new(trials: u32) -> Result<Self, ModelError> {
-        if trials == 0 {
-            return Err(ModelError::InvalidParameter {
-                parameter: "binomial trials",
-                expected: "positive",
-            });
-        }
-        Ok(Self {
-            trials,
-            marker: PhantomData,
-        })
-    }
-
-    /// Returns the common number of trials.
-    #[must_use]
-    pub const fn trials(&self) -> u32 {
-        self.trials
-    }
-
-    #[inline]
-    fn trials_f64(&self) -> f64 {
-        f64::from(self.trials)
-    }
-
-    #[inline]
-    fn theta_from_eta(eta: BinomialEta) -> BinomialTheta {
-        BinomialTheta {
-            probability: ProbabilityLink::inverse(eta.probability),
-        }
-    }
-}
-
-impl<ProbabilityLink> BinomialVaryingTrials<ProbabilityLink>
-where
-    ProbabilityLink: UnitIntervalLink<f64>,
-{
-    /// Creates a stateless varying-trials binomial family.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn theta_from_eta(eta: BinomialEta) -> BinomialTheta {
-        BinomialTheta {
-            probability: ProbabilityLink::inverse(eta.probability),
-        }
-    }
-}
-
-impl<ProbabilityLink> Default for BinomialVaryingTrials<ProbabilityLink>
-where
-    ProbabilityLink: UnitIntervalLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -281,57 +281,12 @@ where
     }
 }
 
-impl<ProbabilityLink> InitialEtaFromObservations<1> for BinomialVaryingTrials<ProbabilityLink>
-where
-    ProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
-{
-    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
-    where
-        Obs: ObservationView<'obs, Observation = [f64; 2]> + 'obs,
-    {
-        let mut successes = 0.0;
-        let mut total_trials = 0.0;
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            let [value, trials] = obs.observation_at(row);
-            if weight > 0.0 && BinomialKernel::valid_observation(value, trials) {
-                successes = weight.mul_add(value, successes);
-                total_trials = weight.mul_add(trials, total_trials);
-            }
-        }
-        initial_eta::<ProbabilityLink>(successes, total_trials)
-    }
-}
-
-fn initial_eta<ProbabilityLink>(successes: f64, trials: f64) -> BinomialEta
-where
-    ProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
-{
-    let probability = if trials > 0.0 {
-        probability_floor((successes + 0.5) / (trials + 1.0))
-    } else {
-        0.5
-    };
-    BinomialEta {
-        probability: ProbabilityLink::initial_eta_from_theta(probability),
-    }
-}
-
 impl<ProbabilityLink> HasCdf for BinomialFixedTrials<ProbabilityLink>
 where
     ProbabilityLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, successes: f64, theta: &Self::Theta) -> f64 {
         BinomialKernel::cdf(successes, self.trials_f64(), theta.probability)
-    }
-}
-
-impl<ProbabilityLink> HasCdf for BinomialVaryingTrials<ProbabilityLink>
-where
-    ProbabilityLink: UnitIntervalLink<f64>,
-{
-    fn cdf(&self, observation: [f64; 2], theta: &Self::Theta) -> f64 {
-        BinomialKernel::cdf(observation[0], observation[1], theta.probability)
     }
 }
 
@@ -376,6 +331,37 @@ where
     }
 }
 
+impl<ProbabilityLink> InitialEtaFromObservations<1> for BinomialVaryingTrials<ProbabilityLink>
+where
+    ProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = [f64; 2]> + 'obs,
+    {
+        let mut successes = 0.0;
+        let mut total_trials = 0.0;
+        for row in 0..obs.len() {
+            let weight = obs.weight_at(row);
+            let [value, trials] = obs.observation_at(row);
+            if weight > 0.0 && BinomialKernel::valid_observation(value, trials) {
+                successes = weight.mul_add(value, successes);
+                total_trials = weight.mul_add(trials, total_trials);
+            }
+        }
+        initial_eta::<ProbabilityLink>(successes, total_trials)
+    }
+}
+
+impl<ProbabilityLink> HasCdf for BinomialVaryingTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn cdf(&self, observation: [f64; 2], theta: &Self::Theta) -> f64 {
+        BinomialKernel::cdf(observation[0], observation[1], theta.probability)
+    }
+}
+
 /// Link-scale probability predictor shared by binomial families.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BinomialEta {
@@ -402,6 +388,20 @@ impl ParameterParts<1> for BinomialEta {
 pub struct BinomialTheta {
     /// Success probability in `(0, 1)`.
     pub probability: f64,
+}
+
+fn initial_eta<ProbabilityLink>(successes: f64, trials: f64) -> BinomialEta
+where
+    ProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+{
+    let probability = if trials > 0.0 {
+        probability_floor((successes + 0.5) / (trials + 1.0))
+    } else {
+        0.5
+    };
+    BinomialEta {
+        probability: ProbabilityLink::initial_eta_from_theta(probability),
+    }
 }
 
 #[cfg(test)]

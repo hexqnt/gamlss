@@ -369,27 +369,6 @@ impl_compilable!(MultinomialVaryingTrials, |_family: &Self| {
     Self::try_new().map(|_| ())
 });
 
-fn binomial_cdf_allow_degenerate(successes: f64, trials: f64, probability: f64) -> f64 {
-    if !successes.is_finite()
-        || !is_nonnegative_integer(trials)
-        || !(0.0..=1.0).contains(&probability)
-        || !probability.is_finite()
-    {
-        return f64::NAN;
-    }
-    if successes < 0.0 {
-        return 0.0;
-    }
-    let successes = successes.floor();
-    if successes >= trials || trials == 0.0 || probability <= 0.0 {
-        return 1.0;
-    }
-    if probability >= 1.0 {
-        return 0.0;
-    }
-    BinomialKernel::cdf(successes, trials, probability)
-}
-
 impl<const K: usize> HasMarginalCdf for MultinomialFixedTrials<K> {
     fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
         let Some(probability) = theta.probability(component) else {
@@ -485,6 +464,27 @@ where
             "Multinomial sequential sampling",
         )
     }
+}
+
+fn binomial_cdf_allow_degenerate(successes: f64, trials: f64, probability: f64) -> f64 {
+    if !successes.is_finite()
+        || !is_nonnegative_integer(trials)
+        || !(0.0..=1.0).contains(&probability)
+        || !probability.is_finite()
+    {
+        return f64::NAN;
+    }
+    if successes < 0.0 {
+        return 0.0;
+    }
+    let successes = successes.floor();
+    if successes >= trials || trials == 0.0 || probability <= 0.0 {
+        return 1.0;
+    }
+    if probability >= 1.0 {
+        return 0.0;
+    }
+    BinomialKernel::cdf(successes, trials, probability)
 }
 
 #[cfg(test)]

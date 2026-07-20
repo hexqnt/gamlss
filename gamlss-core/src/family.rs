@@ -49,6 +49,47 @@ impl<const K: usize> DenseInformation<K> {
     }
 }
 
+/// Exact family-local identity of a runtime predictor topology.
+///
+/// The key is compared only between instances of the same concrete family
+/// type. Its parts must encode every instance setting that changes coordinate
+/// ordering or meaning, even when the total coordinate count stays unchanged.
+/// It is construction-time metadata and is never inspected in the row hot path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct DynamicLayoutKey {
+    parts: Vec<usize>,
+}
+
+impl DynamicLayoutKey {
+    /// Creates a family-local layout key from exact structural parts.
+    #[must_use]
+    #[inline]
+    pub const fn new(parts: Vec<usize>) -> Self {
+        Self { parts }
+    }
+
+    /// Creates a key for a topology determined by one runtime dimension.
+    #[must_use]
+    #[inline]
+    pub fn from_dimension(dimension: usize) -> Self {
+        Self::new(vec![dimension])
+    }
+
+    /// Returns the exact family-local structural parts.
+    #[must_use]
+    #[inline]
+    pub fn parts(&self) -> &[usize] {
+        &self.parts
+    }
+
+    /// Consumes the key and returns its structural parts.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> Vec<usize> {
+        self.parts
+    }
+}
+
 /// Distribution contract for the compiled GAMLSS objective.
 ///
 /// The predictor layer is responsible for computing raw link-scale
@@ -164,47 +205,6 @@ pub trait CompilableFamily: Family {
     /// Validates family-instance invariants required by compiled fitting.
     fn validate_compiled(&self) -> Result<(), ModelError> {
         Ok(())
-    }
-}
-
-/// Exact family-local identity of a runtime predictor topology.
-///
-/// The key is compared only between instances of the same concrete family
-/// type. Its parts must encode every instance setting that changes coordinate
-/// ordering or meaning, even when the total coordinate count stays unchanged.
-/// It is construction-time metadata and is never inspected in the row hot path.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct DynamicLayoutKey {
-    parts: Vec<usize>,
-}
-
-impl DynamicLayoutKey {
-    /// Creates a family-local layout key from exact structural parts.
-    #[must_use]
-    #[inline]
-    pub const fn new(parts: Vec<usize>) -> Self {
-        Self { parts }
-    }
-
-    /// Creates a key for a topology determined by one runtime dimension.
-    #[must_use]
-    #[inline]
-    pub fn from_dimension(dimension: usize) -> Self {
-        Self::new(vec![dimension])
-    }
-
-    /// Returns the exact family-local structural parts.
-    #[must_use]
-    #[inline]
-    pub fn parts(&self) -> &[usize] {
-        &self.parts
-    }
-
-    /// Consumes the key and returns its structural parts.
-    #[must_use]
-    #[inline]
-    pub fn into_parts(self) -> Vec<usize> {
-        self.parts
     }
 }
 

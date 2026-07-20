@@ -8,11 +8,11 @@ use gamlss_core::{
 };
 use gamlss_family::DynMvNormalCholeskyDefault;
 
-#[global_allocator]
-static ALLOCATOR: dhat::Alloc = dhat::Alloc;
-
 const USAGE: &str =
     "usage: objective_memory [dimension] [nobs] [ncols] [warm|cold|retained|run] [iterations]";
+
+#[global_allocator]
+static ALLOCATOR: dhat::Alloc = dhat::Alloc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {

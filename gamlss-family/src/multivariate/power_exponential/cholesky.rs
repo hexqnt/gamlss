@@ -8,7 +8,6 @@
 
 use std::marker::PhantomData;
 
-use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasObservationDimension, Identity,
     InitialEtaFromTheta, Link, LocationCholesky, Log, ModelError, ObservationView, PositiveLink,
@@ -19,6 +18,7 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use super::{direct_power_score, radial_nll_constant};
+use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
 
 /// Default-link multivariate power-exponential with Cholesky scale.
 pub type MvPowerExponentialCholeskyDefault<const D: usize> =

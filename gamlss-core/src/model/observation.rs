@@ -1,6 +1,6 @@
-use crate::ModelError;
-
 use std::num::NonZeroUsize;
+
+use crate::ModelError;
 
 /// Borrowed equal-width rows over one contiguous flat observation buffer.
 ///

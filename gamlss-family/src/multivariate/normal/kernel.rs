@@ -1,6 +1,7 @@
+use gamlss_special::unit_normal_cdf;
+
 use crate::constants::HALF_LOG_2_PI;
 use crate::multivariate::elliptical::{self, LowerTriangularMatrix};
-use gamlss_special::unit_normal_cdf;
 
 pub(in crate::multivariate) fn cholesky_score(
     row: usize,

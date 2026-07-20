@@ -2,40 +2,6 @@ use std::ops::Range;
 
 use crate::{ModelError, ParameterName};
 
-pub(super) struct UniqueParameterMatch<T> {
-    value: Option<T>,
-    matches: usize,
-}
-
-impl<T> UniqueParameterMatch<T> {
-    #[inline]
-    pub(super) const fn new() -> Self {
-        Self {
-            value: None,
-            matches: 0,
-        }
-    }
-
-    #[inline]
-    pub(super) fn record(&mut self, value: T) {
-        self.matches += 1;
-        if self.value.is_none() {
-            self.value = Some(value);
-        }
-    }
-
-    pub(super) fn resolve(self, name: &str) -> Result<Option<T>, ModelError> {
-        if self.matches > 1 {
-            Err(ModelError::AmbiguousParameter {
-                name: name.to_owned(),
-                matches: self.matches,
-            })
-        } else {
-            Ok(self.value)
-        }
-    }
-}
-
 /// One axis in a nested distribution-parameter path.
 ///
 /// Paths describe structure inside a named distribution parameter without
@@ -84,6 +50,40 @@ pub enum ParameterAxis {
         /// Stable hyper-parameter axis name.
         name: &'static str,
     },
+}
+
+pub(super) struct UniqueParameterMatch<T> {
+    value: Option<T>,
+    matches: usize,
+}
+
+impl<T> UniqueParameterMatch<T> {
+    #[inline]
+    pub(super) const fn new() -> Self {
+        Self {
+            value: None,
+            matches: 0,
+        }
+    }
+
+    #[inline]
+    pub(super) fn record(&mut self, value: T) {
+        self.matches += 1;
+        if self.value.is_none() {
+            self.value = Some(value);
+        }
+    }
+
+    pub(super) fn resolve(self, name: &str) -> Result<Option<T>, ModelError> {
+        if self.matches > 1 {
+            Err(ModelError::AmbiguousParameter {
+                name: name.to_owned(),
+                matches: self.matches,
+            })
+        } else {
+            Ok(self.value)
+        }
+    }
 }
 
 /// Nested position inside a distribution parameter.

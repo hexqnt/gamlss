@@ -4,9 +4,10 @@
 
 use gamlss_special::{digamma_delta, ln_gamma_delta};
 
-use crate::multivariate::elliptical::{self, LowerTriangularMatrix};
 #[cfg(feature = "rand")]
 use gamlss_core::SimulationError;
+
+use crate::multivariate::elliptical::{self, LowerTriangularMatrix};
 
 pub use cholesky::{
     MvStudentTCholesky, MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,

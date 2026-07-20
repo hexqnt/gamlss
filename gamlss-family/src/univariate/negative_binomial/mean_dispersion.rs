@@ -53,16 +53,6 @@ define_two_positive_parameter_blocks! {
     }
 }
 
-impl NegativeBinomialMeanDispersionTheta {
-    #[inline]
-    fn mean_size(self) -> NegativeBinomialTheta {
-        NegativeBinomialTheta {
-            mu: self.mean,
-            shape: 1.0 / self.dispersion,
-        }
-    }
-}
-
 /// Negative-binomial mean/dispersion implementation carrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NegativeBinomialDispersion<MeanLink = Log, DispersionLink = Log> {
@@ -97,6 +87,16 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl NegativeBinomialMeanDispersionTheta {
+    #[inline]
+    fn mean_size(self) -> NegativeBinomialTheta {
+        NegativeBinomialTheta {
+            mu: self.mean,
+            shape: 1.0 / self.dispersion,
+        }
     }
 }
 

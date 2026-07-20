@@ -30,6 +30,7 @@ use crate::multivariate::{
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
 use super::{direct_tau_score, nll_location_scale, robust_weight};
+
 /// Default-link multivariate Student-t with explicit marginal standard deviations and partial correlations.
 pub type MvStudentTMeanStdPartialCorrDefault<const D: usize> =
     MvStudentTMeanStdPartialCorr<D, Identity, Log, LogPlus<2>>;
