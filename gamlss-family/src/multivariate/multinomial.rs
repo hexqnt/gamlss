@@ -502,7 +502,7 @@ mod tests {
     use super::{
         MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
     };
-    use crate::univariate::{BinomialTheta, BinomialVaryingTrialsProbability};
+    use crate::univariate::{BinomialEta, BinomialTheta, BinomialVaryingTrialsProbability};
 
     fn direct_nll<const K: usize>(counts: [f64; K], probabilities: [f64; K]) -> f64 {
         let total = counts.iter().sum::<f64>();
@@ -563,6 +563,20 @@ mod tests {
             binomial.nll([3.0, 10.0], &binomial_theta, &mut ()),
             epsilon = 1.0e-14
         );
+
+        let multinomial_eta = MultinomialEta::new([0.3, 0.0]);
+        let binomial_eta = BinomialEta { probability: 0.3 };
+        let (multinomial_nll, multinomial_gradient) =
+            multinomial.nll_and_gradient_eta([3.0, 7.0], &multinomial_eta, &mut ());
+        let (binomial_nll, binomial_gradient) =
+            binomial.nll_and_gradient_eta([3.0, 10.0], &binomial_eta, &mut ());
+        assert_relative_eq!(multinomial_nll, binomial_nll, epsilon = 1.0e-14);
+        assert_relative_eq!(
+            multinomial_gradient.logits[0],
+            binomial_gradient.probability,
+            epsilon = 1.0e-14
+        );
+        assert_eq!(multinomial_gradient.logits[1], 0.0);
     }
 
     #[test]

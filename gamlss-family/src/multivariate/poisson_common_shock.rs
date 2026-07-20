@@ -561,7 +561,7 @@ mod tests {
     use gamlss_special::is_nonnegative_integer;
 
     use super::{MvPoissonCommonShockDefault, MvPoissonCommonShockEta, MvPoissonCommonShockTheta};
-    use crate::{PoissonMean, PoissonTheta};
+    use crate::{IndependentVec, PoissonEta, PoissonMean, PoissonTheta};
 
     #[test]
     fn bivariate_likelihood_matches_direct_latent_sum() {
@@ -604,6 +604,63 @@ mod tests {
             - family.nll_eta(observation, &minus, &mut ()))
             / (2.0 * epsilon);
         assert_relative_eq!(gradient.shared_rate, finite_difference, epsilon = 1.0e-6);
+    }
+
+    #[test]
+    fn zero_component_reduces_to_independent_poissons_plus_zero_shock_probability() {
+        let family = MvPoissonCommonShockDefault::<3>::new();
+        let independent = IndependentVec::<_, 3>::new(PoissonMean::new());
+        let eta =
+            MvPoissonCommonShockEta::new([1.2_f64.ln(), 0.7_f64.ln(), 2.1_f64.ln()], 0.4_f64.ln());
+        let independent_eta = eta.idiosyncratic_rate.map(|mu| PoissonEta { mu });
+        let observation = [0.0, 2.0, 1.0];
+        let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, &mut ());
+        let (independent_nll, independent_gradient) = independent.nll_and_gradient_eta(
+            observation,
+            &independent_eta,
+            &mut independent.workspace(),
+        );
+
+        assert_relative_eq!(nll, independent_nll + 0.4, epsilon = 1.0e-14);
+        for component in 0..3 {
+            assert_relative_eq!(
+                gradient.idiosyncratic_rate[component],
+                independent_gradient[component].mu,
+                epsilon = 1.0e-14
+            );
+        }
+        assert_relative_eq!(gradient.shared_rate, 0.4, epsilon = 1.0e-14);
+    }
+
+    #[test]
+    fn likelihood_and_gradient_are_permutation_equivariant() {
+        let family = MvPoissonCommonShockDefault::<3>::new();
+        let eta = MvPoissonCommonShockEta::new([0.2, -0.4, 0.1], -0.7);
+        let observation = [3.0, 1.0, 2.0];
+        let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, &mut ());
+
+        let permutation = [2, 0, 1];
+        let permuted_eta = MvPoissonCommonShockEta::new(
+            permutation.map(|index| eta.idiosyncratic_rate[index]),
+            eta.shared_rate,
+        );
+        let permuted_observation = permutation.map(|index| observation[index]);
+        let (permuted_nll, permuted_gradient) =
+            family.nll_and_gradient_eta(permuted_observation, &permuted_eta, &mut ());
+
+        assert_relative_eq!(permuted_nll, nll, epsilon = 1.0e-14);
+        for (component, original) in permutation.into_iter().enumerate() {
+            assert_relative_eq!(
+                permuted_gradient.idiosyncratic_rate[component],
+                gradient.idiosyncratic_rate[original],
+                epsilon = 1.0e-14
+            );
+        }
+        assert_relative_eq!(
+            permuted_gradient.shared_rate,
+            gradient.shared_rate,
+            epsilon = 1.0e-14
+        );
     }
 
     #[test]

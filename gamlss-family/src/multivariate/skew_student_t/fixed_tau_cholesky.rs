@@ -581,7 +581,9 @@ mod tests {
         SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
         multivariate::{
             matrix::FixedLowerTriangular,
-            student_t::{MvStudentTCholeskyDefault, MvStudentTCholeskyTheta},
+            student_t::{
+                MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+            },
         },
     };
 
@@ -600,6 +602,33 @@ mod tests {
             student.nll(observation, &student_theta, &mut ()),
             epsilon = 1.0e-12
         );
+
+        let eta_cholesky =
+            FixedLowerTriangular::from_lower_rows([[1.1_f64.ln(), 0.0], [0.2, 0.7_f64.ln()]]);
+        let skew_eta =
+            MvSkewStudentTFixedTauCholeskyEta::new([0.2, -0.4], eta_cholesky, [0.0, 0.0]);
+        let student_eta =
+            MvStudentTCholeskyEta::new([0.2, -0.4], eta_cholesky, (6.0_f64 - 2.0).ln());
+        let (skew_nll, skew_gradient) = skew.nll_and_gradient_eta(observation, &skew_eta, &mut ());
+        let (student_nll, student_gradient) =
+            student.nll_and_gradient_eta(observation, &student_eta, &mut ());
+        assert_relative_eq!(skew_nll, student_nll, epsilon = 1.0e-12);
+        for component in 0..2 {
+            assert_relative_eq!(
+                skew_gradient.mu()[component],
+                student_gradient.mu[component],
+                epsilon = 1.0e-12
+            );
+        }
+        for row in 0..2 {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    skew_gradient.cholesky().get(row, col).unwrap(),
+                    student_gradient.cholesky.get(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+            }
+        }
     }
 
     #[test]

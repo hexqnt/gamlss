@@ -475,6 +475,7 @@ mod tests {
         DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
         normalize_positive,
     };
+    use crate::{BetaEta, BetaMeanPrecision};
 
     #[test]
     fn softmax_eta_constructs_valid_simplex_theta() {
@@ -558,6 +559,33 @@ mod tests {
         );
         assert_eq!(theta.alpha(0), Some(2.0));
         assert_eq!(theta.alpha(3), None);
+    }
+
+    #[test]
+    fn two_components_match_beta_nll_and_gradient() {
+        let dirichlet = DirichletMeanPrecision::<2>::new();
+        let beta = BetaMeanPrecision::new();
+        let eta = DirichletMeanPrecisionEta::new([0.35, 0.0], 7.0_f64.ln());
+        let beta_eta = BetaEta {
+            mu: 0.35,
+            precision: 7.0_f64.ln(),
+        };
+        let (dirichlet_nll, dirichlet_gradient) =
+            dirichlet.nll_and_gradient_eta([0.27, 0.73], &eta, &mut ());
+        let (beta_nll, beta_gradient) = beta.nll_and_gradient_eta(0.27, &beta_eta, &mut ());
+
+        assert_relative_eq!(dirichlet_nll, beta_nll, epsilon = 1.0e-14);
+        assert_relative_eq!(
+            dirichlet_gradient.logits[0],
+            beta_gradient.mu,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            dirichlet_gradient.precision,
+            beta_gradient.precision,
+            epsilon = 2.0e-13
+        );
+        assert_relative_eq!(dirichlet_gradient.logits[1], 0.0, epsilon = 0.0);
     }
 
     #[test]

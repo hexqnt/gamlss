@@ -482,11 +482,26 @@ mod tests {
         let normal_eta =
             crate::multivariate::normal::MvNormalCholeskyEta::new(*eta.mu(), *eta.cholesky());
         let observation = [0.8, -0.1];
-        assert_relative_eq!(
-            skew.nll_eta(observation, &eta, &mut ()),
-            normal.nll_eta(observation, &normal_eta, &mut ()),
-            epsilon = 1.0e-12
-        );
+        let (skew_nll, skew_gradient) = skew.nll_and_gradient_eta(observation, &eta, &mut ());
+        let (normal_nll, normal_gradient) =
+            normal.nll_and_gradient_eta(observation, &normal_eta, &mut ());
+        assert_relative_eq!(skew_nll, normal_nll, epsilon = 1.0e-12);
+        for component in 0..2 {
+            assert_relative_eq!(
+                skew_gradient.mu()[component],
+                normal_gradient.mu()[component],
+                epsilon = 1.0e-12
+            );
+        }
+        for row in 0..2 {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    skew_gradient.cholesky().get(row, col).unwrap(),
+                    normal_gradient.cholesky().get(row, col).unwrap(),
+                    epsilon = 1.0e-12
+                );
+            }
+        }
     }
 
     #[test]

@@ -703,6 +703,61 @@ mod tests {
     }
 
     #[test]
+    fn alr_transform_preserves_normal_parameter_gradient() {
+        use crate::multivariate::{
+            matrix::FixedLowerTriangular,
+            normal::{MvNormalCholeskyDefault, MvNormalCholeskyEta},
+        };
+
+        let family = LogisticNormalAlrCholeskyDefault::<4>::new();
+        let normal = MvNormalCholeskyDefault::<3>::new();
+        let eta = LogisticNormalAlrCholeskyEta::new(
+            [0.2, -0.3, 0.4, 0.0],
+            FixedLogRatioCholesky::try_from_packed(&[-0.1, 0.25, 0.2, -0.15, 0.3, -0.25]).unwrap(),
+        );
+        let normal_eta = MvNormalCholeskyEta::new(
+            [0.2, -0.3, 0.4],
+            FixedLowerTriangular::from_lower_rows([
+                [-0.1, 0.0, 0.0],
+                [0.25, 0.2, 0.0],
+                [-0.15, 0.3, -0.25],
+            ]),
+        );
+        let observation = [0.2_f64, 0.3, 0.1, 0.4];
+        let log_ratios = [
+            (observation[0] / observation[3]).ln(),
+            (observation[1] / observation[3]).ln(),
+            (observation[2] / observation[3]).ln(),
+        ];
+        let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, &mut ());
+        let (normal_nll, normal_gradient) =
+            normal.nll_and_gradient_eta(log_ratios, &normal_eta, &mut ());
+
+        assert_relative_eq!(
+            nll,
+            normal_nll + observation.iter().copied().map(f64::ln).sum::<f64>(),
+            epsilon = 1.0e-14
+        );
+        for component in 0..3 {
+            assert_relative_eq!(
+                gradient.log_ratio_location()[component],
+                normal_gradient.mu()[component],
+                epsilon = 1.0e-14
+            );
+        }
+        for row in 0..3 {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    gradient.cholesky().get(row, col).unwrap(),
+                    normal_gradient.cholesky().get(row, col).unwrap(),
+                    epsilon = 1.0e-14
+                );
+            }
+        }
+        assert_eq!(gradient.log_ratio_location()[3], 0.0);
+    }
+
+    #[test]
     fn analytic_gradient_matches_finite_difference() {
         let family = LogisticNormalAlrCholeskyDefault::<3>::new();
         let eta = LogisticNormalAlrCholeskyEta::new(

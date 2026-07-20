@@ -620,6 +620,48 @@ mod tests {
     }
 
     #[test]
+    fn log_transform_preserves_normal_parameter_gradient() {
+        use crate::multivariate::normal::{MvNormalCholeskyDefault, MvNormalCholeskyEta};
+
+        let family = MvLogNormalCholeskyDefault::<3>::new();
+        let normal = MvNormalCholeskyDefault::<3>::new();
+        let cholesky = FixedLowerTriangular::from_lower_rows([
+            [-0.1, 0.0, 0.0],
+            [0.25, 0.2, 0.0],
+            [-0.15, 0.3, -0.25],
+        ]);
+        let eta = MvLogNormalCholeskyEta::new([0.2, -0.3, 0.4], cholesky);
+        let normal_eta = MvNormalCholeskyEta::new(*eta.log_location(), cholesky);
+        let observation = [1.4_f64, 0.7, 2.1];
+        let logged = observation.map(f64::ln);
+        let (nll, gradient) = family.nll_and_gradient_eta(observation, &eta, &mut ());
+        let (normal_nll, normal_gradient) =
+            normal.nll_and_gradient_eta(logged, &normal_eta, &mut ());
+
+        assert_relative_eq!(
+            nll,
+            normal_nll + logged.iter().sum::<f64>(),
+            epsilon = 1.0e-14
+        );
+        for component in 0..3 {
+            assert_relative_eq!(
+                gradient.log_location()[component],
+                normal_gradient.mu()[component],
+                epsilon = 1.0e-14
+            );
+        }
+        for row in 0..3 {
+            for col in 0..=row {
+                assert_relative_eq!(
+                    gradient.cholesky().get(row, col).unwrap(),
+                    normal_gradient.cholesky().get(row, col).unwrap(),
+                    epsilon = 1.0e-14
+                );
+            }
+        }
+    }
+
+    #[test]
     fn analytic_gradient_matches_finite_difference() {
         let family = MvLogNormalCholeskyDefault::<2>::new();
         let eta = MvLogNormalCholeskyEta::new(

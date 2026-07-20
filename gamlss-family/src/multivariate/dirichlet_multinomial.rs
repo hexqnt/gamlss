@@ -640,7 +640,7 @@ mod tests {
         DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
         DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
     };
-    use crate::{BetaBinomialMeanPrecision, BetaBinomialTheta};
+    use crate::{BetaBinomialEta, BetaBinomialMeanPrecision, BetaBinomialTheta};
 
     fn assert_gradient<const K: usize, F>(
         family: &F,
@@ -704,6 +704,32 @@ mod tests {
             beta.nll([3.0, 10.0], &beta_theta, &mut ()),
             epsilon = 2.0e-14
         );
+
+        let eta = DirichletMultinomialMeanPrecisionEta::new([0.3, 0.0], 8.0_f64.ln());
+        let beta_eta = BetaBinomialEta {
+            probability: 0.3,
+            precision: 8.0_f64.ln(),
+        };
+        let (dirichlet_multinomial_nll, dirichlet_multinomial_gradient) =
+            family.nll_and_gradient_eta([3.0, 7.0], &eta, &mut ());
+        let (beta_binomial_nll, beta_binomial_gradient) =
+            beta.nll_and_gradient_eta([3.0, 10.0], &beta_eta, &mut ());
+        assert_relative_eq!(
+            dirichlet_multinomial_nll,
+            beta_binomial_nll,
+            epsilon = 2.0e-14
+        );
+        assert_relative_eq!(
+            dirichlet_multinomial_gradient.logits[0],
+            beta_binomial_gradient.probability,
+            epsilon = 2.0e-14
+        );
+        assert_relative_eq!(
+            dirichlet_multinomial_gradient.precision,
+            beta_binomial_gradient.precision,
+            epsilon = 2.0e-14
+        );
+        assert_eq!(dirichlet_multinomial_gradient.logits[1], 0.0);
     }
 
     #[test]
