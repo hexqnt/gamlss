@@ -16,7 +16,7 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::student_t_cdf_standardized;
 
-use crate::multivariate::{elliptical, matrix::FixedLowerTriangular, normal::MvNormalCholesky};
+use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
 
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
@@ -347,9 +347,8 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalCholesky::<D, MuLink, DiagonalLink, OffDiagonalLink>::new();
         (
-            normal.initial_shape(obs),
+            initial::location_cholesky::<D, MuLink, DiagonalLink, OffDiagonalLink, Obs>(obs),
             TauLink::initial_eta_from_theta(10.0),
         )
     }

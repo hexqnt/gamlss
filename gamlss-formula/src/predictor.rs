@@ -1,9 +1,7 @@
 use std::ops::Range;
 
-use gamlss_core::{
-    DenseDesign, DesignMatrix, Link, ModelError, PredictorBlock, RowMultiplier, Softplus,
-};
-use gamlss_spline::{ISplineBasis, MonotoneDirection};
+use gamlss_core::{DenseDesign, DesignMatrix, ModelError, PredictorBlock, RowMultiplier};
+use gamlss_spline::MonotoneISplineDesign;
 
 /// Formula predictor composed from a dense linear design, optional row offsets,
 /// and nonlinear monotone spline segments.
@@ -37,70 +35,6 @@ impl FormulaPredictorBlock {
     pub const fn dense(&self) -> &DenseDesign {
         &self.dense
     }
-
-    fn monotone_eta(segment: &MonotoneSegment, row: usize, beta: &[f64]) -> f64 {
-        debug_assert_eq!(beta.len(), segment.range.len());
-        debug_assert!(row < segment.values.len());
-        debug_assert!(!beta.is_empty());
-        debug_assert_eq!(segment.basis.n_basis() + 1, beta.len());
-
-        let sign = monotone_sign(segment.direction);
-        let beta_tail = &beta[1..];
-        let mut eta = beta[0];
-        segment
-            .basis
-            .for_each_basis(segment.values[row], |index, basis| {
-                eta = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, eta);
-            });
-        eta
-    }
-
-    fn add_monotone_gradient(
-        segment: &MonotoneSegment,
-        rows: Range<usize>,
-        scores: &[f64],
-        mut multiplier_at: impl FnMut(usize) -> f64,
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(beta.len(), segment.range.len());
-        debug_assert_eq!(grad.len(), segment.range.len());
-        debug_assert!(!beta.is_empty());
-        debug_assert_eq!(segment.basis.n_basis() + 1, beta.len());
-        debug_assert!(rows.end <= segment.values.len());
-        debug_assert_eq!(scores.len(), rows.len());
-
-        let sign = monotone_sign(segment.direction);
-        let (intercept_grad, grad_tail) = grad
-            .split_first_mut()
-            .expect("monotone segment gradient has an intercept coefficient");
-        let beta_tail = &beta[1..];
-        for (offset, (score, value)) in scores
-            .iter()
-            .copied()
-            .zip(segment.values[rows.clone()].iter().copied())
-            .enumerate()
-        {
-            if score == 0.0 {
-                continue;
-            }
-
-            let score = score * multiplier_at(rows.start + offset);
-            if score == 0.0 {
-                continue;
-            }
-
-            add_monotone_gradient_row(
-                &segment.basis,
-                value,
-                score,
-                sign,
-                beta_tail,
-                intercept_grad,
-                grad_tail,
-            );
-        }
-    }
 }
 
 impl PredictorBlock for FormulaPredictorBlock {
@@ -121,7 +55,7 @@ impl PredictorBlock for FormulaPredictorBlock {
             eta += offset[row];
         }
         for segment in &self.monotone {
-            eta += Self::monotone_eta(segment, row, &beta[segment.range.clone()]);
+            eta += segment.design.eta_row(row, &beta[segment.range.clone()]);
         }
         eta
     }
@@ -142,11 +76,9 @@ impl PredictorBlock for FormulaPredictorBlock {
         self.dense
             .add_t_mul_vec_range(rows.clone(), scores, &mut grad[..dense_ncols]);
         for segment in &self.monotone {
-            Self::add_monotone_gradient(
-                segment,
+            segment.design.add_gradient_range(
                 rows.clone(),
                 scores,
-                |_| 1.0,
                 &beta[segment.range.clone()],
                 &mut grad[segment.range.clone()],
             );
@@ -176,11 +108,10 @@ impl PredictorBlock for FormulaPredictorBlock {
             &mut grad[..dense_ncols],
         );
         for segment in &self.monotone {
-            Self::add_monotone_gradient(
-                segment,
+            segment.design.add_weighted_gradient_by_range(
                 rows.clone(),
                 scores,
-                |row| multiplier.multiplier_at(row),
+                multiplier,
                 &beta[segment.range.clone()],
                 &mut grad[segment.range.clone()],
             );
@@ -221,11 +152,17 @@ impl PredictorBlock for FormulaPredictorBlock {
                     second: "formula monotone",
                 });
             }
-            if segment.values.len() != nrows {
+            if segment.design.nrows() != nrows {
                 return Err(ModelError::DesignRowMismatch {
                     parameter: "formula monotone",
                     expected_rows: nrows,
-                    actual_rows: segment.values.len(),
+                    actual_rows: segment.design.nrows(),
+                });
+            }
+            if segment.design.nparams() != segment.range.len() {
+                return Err(ModelError::InvalidParameter {
+                    parameter: "formula monotone",
+                    expected: "coefficient range matching monotone design width",
                 });
             }
         }
@@ -237,33 +174,5 @@ impl PredictorBlock for FormulaPredictorBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonotoneSegment {
     pub(crate) range: Range<usize>,
-    pub(crate) values: Vec<f64>,
-    pub(crate) basis: ISplineBasis,
-    pub(crate) direction: MonotoneDirection,
-}
-
-#[allow(clippy::suboptimal_flops)]
-fn add_monotone_gradient_row(
-    basis: &ISplineBasis,
-    value: f64,
-    score: f64,
-    sign: f64,
-    beta_tail: &[f64],
-    intercept_grad: &mut f64,
-    grad_tail: &mut [f64],
-) {
-    debug_assert_eq!(beta_tail.len(), grad_tail.len());
-
-    *intercept_grad += score;
-    basis.for_each_basis(value, |index, basis_value| {
-        grad_tail[index] +=
-            score * sign * basis_value * Softplus::derivative_inverse(beta_tail[index]);
-    });
-}
-
-const fn monotone_sign(direction: MonotoneDirection) -> f64 {
-    match direction {
-        MonotoneDirection::Increasing => 1.0,
-        MonotoneDirection::Decreasing => -1.0,
-    }
+    pub(crate) design: MonotoneISplineDesign,
 }

@@ -14,15 +14,14 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::multivariate::{
-    elliptical,
-    matrix::FixedLowerTriangular,
-    normal::{
-        FixedPartialCorrelations, MvNormalMeanStdPartialCorr, kernel,
-        mean_std_partial_corr::{
-            correlation_cholesky_from_partial, covariance_from_cholesky, partial_corr_from_eta,
-            partial_corr_gradient_from_cholesky_score, scale_cholesky_from_correlation,
-        },
+    correlation::{
+        FixedPartialCorrelations, correlation_cholesky_from_partial, covariance_from_cholesky,
+        partial_corr_from_eta, partial_corr_gradient_from_cholesky_score,
+        scale_cholesky_from_correlation,
     },
+    elliptical, initial,
+    matrix::FixedLowerTriangular,
+    normal::kernel,
 };
 
 #[cfg(feature = "rand")]
@@ -327,9 +326,10 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalMeanStdPartialCorr::<D, MuLink, SigmaLink>::new();
+        let (mu, kernel_sigma, partial_corr) =
+            initial::location_scale_partial_correlation::<D, MuLink, SigmaLink, Obs>(obs);
         (
-            normal.initial_shape(obs),
+            ((mu, kernel_sigma), partial_corr),
             [ShapeLink::initial_eta_from_theta(0.0); D],
         )
     }
@@ -530,7 +530,7 @@ mod tests {
         MvSkewNormalLocationKernelStdPartialCorrEta, MvSkewNormalLocationKernelStdPartialCorrTheta,
     };
     use crate::multivariate::{
-        normal::FixedPartialCorrelations,
+        FixedPartialCorrelations,
         skew_normal::{MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyTheta},
     };
 

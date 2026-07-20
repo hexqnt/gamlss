@@ -6,11 +6,12 @@
 
 use gamlss_core::{Identity, Log};
 
+pub use super::correlation::FixedPartialCorrelations;
 pub use dynamic::{DynMvNormalCholesky, DynMvNormalCholeskyEta, DynMvNormalCholeskyTheta};
 pub use fixed::{MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta};
 pub use mean_std_partial_corr::{
-    FixedPartialCorrelations, MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
-    MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta,
+    MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
+    MvNormalMeanStdPartialCorrTheta,
 };
 
 mod dynamic;

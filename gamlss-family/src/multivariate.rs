@@ -8,6 +8,7 @@
 //! compile-time dimensions that are programmer-controlled and documents its
 //! panic condition.
 
+pub use correlation::FixedPartialCorrelations;
 pub use dirichlet_multinomial::{
     DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
     DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
@@ -49,12 +50,14 @@ pub use skew_student_t::{
 
 /// Cholesky helpers.
 pub mod cholesky;
+mod correlation;
 mod count;
 /// Overdispersed multinomial count distributions.
 pub mod dirichlet_multinomial;
 mod elliptical;
 /// Independent product construction.
 pub mod independent;
+mod initial;
 /// Multivariate log-normal distributions.
 pub mod log_normal;
 /// Logistic-normal simplex distributions.

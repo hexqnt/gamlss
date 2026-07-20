@@ -15,9 +15,8 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::ln_gamma;
 
 use crate::multivariate::{
-    elliptical,
+    elliptical, initial,
     matrix::FixedLowerTriangular,
-    normal::MvNormalCholesky,
     student_t::{nll_location_scale, valid_degrees_of_freedom},
 };
 
@@ -360,9 +359,8 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalCholesky::<D, MuLink, DiagonalLink, OffDiagonalLink>::new();
         (
-            normal.initial_shape(obs),
+            initial::location_cholesky::<D, MuLink, DiagonalLink, OffDiagonalLink, Obs>(obs),
             [ShapeLink::initial_eta_from_theta(0.0); D],
         )
     }

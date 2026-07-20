@@ -6,10 +6,9 @@ pub use multivariate::IndependentVec;
 #[cfg(feature = "multivariate")]
 pub use multivariate::normal::{
     DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-    DynMvNormalCholeskyTheta, FixedPartialCorrelations, MvNormalCholesky, MvNormalCholeskyDefault,
-    MvNormalCholeskyEta, MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr,
-    MvNormalMeanStdPartialCorrDefault, MvNormalMeanStdPartialCorrEta,
-    MvNormalMeanStdPartialCorrTheta,
+    DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
+    MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+    MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta,
 };
 #[cfg(feature = "multivariate")]
 pub use multivariate::student_t::{
@@ -22,13 +21,13 @@ pub use multivariate::{
     DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
     DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
     DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
-    FixedLogRatioCholesky, FixedLowerTriangular, LogisticNormalAlrCholesky,
-    LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta, LogisticNormalAlrCholeskyTheta,
-    MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
-    MvLogNormalCholesky, MvLogNormalCholeskyDefault, MvLogNormalCholeskyEta,
-    MvLogNormalCholeskyTheta, MvPoissonCommonShock, MvPoissonCommonShockDefault,
-    MvPoissonCommonShockEta, MvPoissonCommonShockTheta, MvPowerExponentialCholesky,
-    MvPowerExponentialCholeskyDefault, MvPowerExponentialCholeskyEta,
+    FixedLogRatioCholesky, FixedLowerTriangular, FixedPartialCorrelations,
+    LogisticNormalAlrCholesky, LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta,
+    LogisticNormalAlrCholeskyTheta, MultinomialEta, MultinomialFixedTrials, MultinomialTheta,
+    MultinomialVaryingTrials, MvLogNormalCholesky, MvLogNormalCholeskyDefault,
+    MvLogNormalCholeskyEta, MvLogNormalCholeskyTheta, MvPoissonCommonShock,
+    MvPoissonCommonShockDefault, MvPoissonCommonShockEta, MvPoissonCommonShockTheta,
+    MvPowerExponentialCholesky, MvPowerExponentialCholeskyDefault, MvPowerExponentialCholeskyEta,
     MvPowerExponentialCholeskyTheta, MvPowerExponentialMeanStdPartialCorr,
     MvPowerExponentialMeanStdPartialCorrDefault, MvPowerExponentialMeanStdPartialCorrEta,
     MvPowerExponentialMeanStdPartialCorrTheta, MvSkewNormalCholesky, MvSkewNormalCholeskyDefault,

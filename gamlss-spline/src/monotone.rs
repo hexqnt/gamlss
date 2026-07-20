@@ -88,6 +88,7 @@ impl MonotoneISplineDesign {
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.nparams());
@@ -103,6 +104,7 @@ impl MonotoneISplineDesign {
     }
 
     #[allow(clippy::suboptimal_flops)]
+    #[inline]
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;
@@ -114,14 +116,17 @@ impl MonotoneISplineDesign {
 }
 
 impl PredictorBlock for MonotoneISplineDesign {
+    #[inline]
     fn nrows(&self) -> usize {
         self.x.len()
     }
 
+    #[inline]
     fn nparams(&self) -> usize {
         1 + self.basis.n_basis()
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.nparams());
@@ -135,6 +140,7 @@ impl PredictorBlock for MonotoneISplineDesign {
         eta
     }
 
+    #[inline]
     fn add_gradient_range(
         &self,
         rows: Range<usize>,

@@ -18,15 +18,13 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::multivariate::{
-    elliptical,
-    matrix::FixedLowerTriangular,
-    normal::{
-        FixedPartialCorrelations, MvNormalMeanStdPartialCorr,
-        mean_std_partial_corr::{
-            correlation_cholesky_from_partial, covariance_from_cholesky, partial_corr_from_eta,
-            partial_corr_gradient_from_cholesky_score, scale_cholesky_from_correlation,
-        },
+    correlation::{
+        FixedPartialCorrelations, correlation_cholesky_from_partial, covariance_from_cholesky,
+        partial_corr_from_eta, partial_corr_gradient_from_cholesky_score,
+        scale_cholesky_from_correlation,
     },
+    elliptical, initial,
+    matrix::FixedLowerTriangular,
 };
 
 use super::{
@@ -373,9 +371,10 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalMeanStdPartialCorr::<D, MuLink, SigmaLink>::new();
+        let (mu, sigma, partial_corr) =
+            initial::location_scale_partial_correlation::<D, MuLink, SigmaLink, Obs>(obs);
         (
-            normal.initial_shape(obs),
+            ((mu, sigma), partial_corr),
             PowerLink::initial_eta_from_theta(2.0),
         )
     }
@@ -571,7 +570,7 @@ mod tests {
         MvPowerExponentialMeanStdPartialCorrTheta,
     };
     use crate::multivariate::{
-        normal::FixedPartialCorrelations,
+        FixedPartialCorrelations,
         power_exponential::{MvPowerExponentialCholeskyDefault, MvPowerExponentialCholeskyTheta},
     };
 

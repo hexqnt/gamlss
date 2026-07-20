@@ -18,22 +18,18 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::student_t_cdf_standardized;
 
 use crate::multivariate::{
-    elliptical,
-    matrix::FixedLowerTriangular,
-    normal::{
-        MvNormalMeanStdPartialCorr,
-        mean_std_partial_corr::{
-            correlation_cholesky_from_partial, covariance_from_cholesky, partial_corr_from_eta,
-            partial_corr_gradient_from_cholesky_score, scale_cholesky_from_correlation,
-        },
+    correlation::{
+        FixedPartialCorrelations, correlation_cholesky_from_partial, covariance_from_cholesky,
+        partial_corr_from_eta, partial_corr_gradient_from_cholesky_score,
+        scale_cholesky_from_correlation,
     },
+    elliptical, initial,
+    matrix::FixedLowerTriangular,
 };
 
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
 use super::{direct_tau_score, nll_location_scale, robust_weight};
-use crate::multivariate::normal::FixedPartialCorrelations;
-
 /// Default-link multivariate Student-t with explicit marginal standard deviations and partial correlations.
 pub type MvStudentTMeanStdPartialCorrDefault<const D: usize> =
     MvStudentTMeanStdPartialCorr<D, Identity, Log, LogPlus<2>>;
@@ -361,9 +357,10 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalMeanStdPartialCorr::<D, MuLink, SigmaLink>::new();
+        let (mu, sigma, partial_corr) =
+            initial::location_scale_partial_correlation::<D, MuLink, SigmaLink, Obs>(obs);
         (
-            normal.initial_shape(obs),
+            ((mu, sigma), partial_corr),
             TauLink::initial_eta_from_theta(10.0),
         )
     }
@@ -560,9 +557,7 @@ mod tests {
         MvStudentTMeanStdPartialCorrTheta,
     };
     use crate::multivariate::student_t::MvStudentTCholeskyDefault;
-    use crate::multivariate::{
-        normal::FixedPartialCorrelations, student_t::MvStudentTCholeskyTheta,
-    };
+    use crate::multivariate::{FixedPartialCorrelations, student_t::MvStudentTCholeskyTheta};
 
     fn example_eta() -> MvStudentTMeanStdPartialCorrEta<3> {
         MvStudentTMeanStdPartialCorrEta::new(

@@ -9,7 +9,7 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::unit_normal_cdf;
 
-use crate::multivariate::matrix::FixedLowerTriangular;
+use crate::multivariate::{initial, matrix::FixedLowerTriangular};
 
 use super::kernel;
 
@@ -366,59 +366,7 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let mut weight_sum = [0.0; D];
-        let mut means = [0.0; D];
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            if weight == 0.0 {
-                continue;
-            }
-            let observation = obs.observation_at(row);
-            for component in 0..D {
-                let value = observation[component];
-                if value.is_finite() {
-                    weight_sum[component] += weight;
-                    means[component] += weight * value;
-                }
-            }
-        }
-        for component in 0..D {
-            if weight_sum[component] > 0.0 {
-                means[component] /= weight_sum[component];
-            }
-        }
-
-        let mut variances = [0.0; D];
-        for row in 0..obs.len() {
-            let weight = obs.weight_at(row);
-            if weight == 0.0 {
-                continue;
-            }
-            let observation = obs.observation_at(row);
-            for component in 0..D {
-                let value = observation[component];
-                if value.is_finite() && weight_sum[component] > 0.0 {
-                    let residual = value - means[component];
-                    variances[component] += weight * residual * residual;
-                }
-            }
-        }
-
-        let mut vector_eta = [0.0; D];
-        let mut lower_eta = [[OffDiagonalLink::initial_eta_from_theta(0.0); D]; D];
-        for component in 0..D {
-            vector_eta[component] = MuLink::initial_eta_from_theta(means[component]);
-            let scale = if weight_sum[component] > 0.0 {
-                (variances[component] / weight_sum[component])
-                    .sqrt()
-                    .max(1.0e-6)
-            } else {
-                1.0
-            };
-            lower_eta[component][component] = DiagonalLink::initial_eta_from_theta(scale);
-        }
-
-        (vector_eta, lower_eta)
+        initial::location_cholesky::<D, MuLink, DiagonalLink, OffDiagonalLink, Obs>(obs)
     }
 }
 

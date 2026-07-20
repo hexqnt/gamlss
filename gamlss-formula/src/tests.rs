@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
 use gamlss_core::{DenseDesign, Objective, Penalty, PredictorBlock};
-use gamlss_spline::{ISplineBasis, MonotoneDirection, SplineError, SplineOrder};
+use gamlss_spline::{
+    ISplineBasis, MonotoneDirection, MonotoneISplineDesign, SplineError, SplineOrder,
+};
 
 use super::*;
 
@@ -601,9 +603,12 @@ fn monotone_weighted_gradient_skips_zero_score_multiplier_rows() {
         None,
         vec![crate::predictor::MonotoneSegment {
             range: 0..nparams,
-            values: vec![0.0, 0.5, 1.0],
-            basis,
-            direction: MonotoneDirection::Increasing,
+            design: MonotoneISplineDesign::new(
+                &[0.0, 0.5, 1.0],
+                basis,
+                MonotoneDirection::Increasing,
+            )
+            .unwrap(),
         }],
         nparams,
     );

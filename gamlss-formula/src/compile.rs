@@ -3,8 +3,8 @@ use std::ops::Range;
 
 use gamlss_core::{DenseDesign, ModelError};
 use gamlss_spline::{
-    CyclicSplineSpec, FourierDesign, ISplineBasis, OpenUniformSplineBasis, SplineRowBasis,
-    TensorSplineDesign,
+    CyclicSplineSpec, FourierDesign, ISplineBasis, MonotoneISplineDesign, OpenUniformSplineBasis,
+    SplineRowBasis, TensorSplineDesign,
 };
 
 use crate::predictor::{FormulaPredictorBlock, MonotoneSegment};
@@ -532,9 +532,11 @@ where
                 );
                 monotone.push(MonotoneSegment {
                     range: range.clone(),
-                    values: values.as_slice().to_vec(),
-                    basis: basis.clone(),
-                    direction: term.direction,
+                    design: MonotoneISplineDesign::new(
+                        values.as_slice(),
+                        basis.clone(),
+                        term.direction,
+                    )?,
                 });
                 fitted.push(FittedTerm::Monotone {
                     col: term.col,
@@ -699,9 +701,11 @@ where
                 nparams = nparams.max(range.end);
                 monotone.push(MonotoneSegment {
                     range: range.clone(),
-                    values: values.as_slice().to_vec(),
-                    basis: basis.clone(),
-                    direction: *direction,
+                    design: MonotoneISplineDesign::new(
+                        values.as_slice(),
+                        basis.clone(),
+                        *direction,
+                    )?,
                 });
             }
         }

@@ -13,11 +13,7 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use crate::multivariate::{
-    elliptical,
-    matrix::FixedLowerTriangular,
-    normal::{MvNormalCholesky, kernel},
-};
+use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular, normal::kernel};
 
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
@@ -308,9 +304,8 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalCholesky::<D, MuLink, DiagonalLink, OffDiagonalLink>::new();
         (
-            normal.initial_shape(obs),
+            initial::location_cholesky::<D, MuLink, DiagonalLink, OffDiagonalLink, Obs>(obs),
             [ShapeLink::initial_eta_from_theta(0.0); D],
         )
     }

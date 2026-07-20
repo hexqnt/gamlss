@@ -8,7 +8,7 @@
 
 use std::marker::PhantomData;
 
-use crate::multivariate::{elliptical, matrix::FixedLowerTriangular, normal::MvNormalCholesky};
+use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
 use gamlss_core::{
     CompilableFamily, Family, FixedDimensionalFamily, HasObservationDimension, Identity,
     InitialEtaFromTheta, Link, LocationCholesky, Log, ModelError, ObservationView, PositiveLink,
@@ -358,9 +358,8 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
-        let normal = MvNormalCholesky::<D, MuLink, DiagonalLink, OffDiagonalLink>::new();
         (
-            normal.initial_shape(obs),
+            initial::location_cholesky::<D, MuLink, DiagonalLink, OffDiagonalLink, Obs>(obs),
             PowerLink::initial_eta_from_theta(2.0),
         )
     }
