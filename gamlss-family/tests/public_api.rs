@@ -25,9 +25,10 @@ use gamlss_family::{
     FixedPartialCorrelations, LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyTheta,
     MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
     MvLogNormalCholeskyDefault, MvLogNormalCholeskyTheta, MvNormalMeanStdPartialCorrDefault,
-    MvNormalMeanStdPartialCorrEta, MvStudentTCholeskyDefault, MvStudentTCholeskyEta,
-    MvStudentTCholeskyTheta, MvStudentTMeanStdPartialCorrDefault,
-    MvStudentTMeanStdPartialCorrTheta,
+    MvNormalMeanStdPartialCorrEta, MvPowerExponentialCholeskyDefault,
+    MvPowerExponentialCholeskyTheta, MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyTheta,
+    MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+    MvStudentTMeanStdPartialCorrDefault, MvStudentTMeanStdPartialCorrTheta,
 };
 
 #[allow(clippy::needless_pass_by_value)]
@@ -487,6 +488,32 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
             .nll([0.2, 0.3, 0.5], &logistic_normal_theta, &mut ())
             .is_finite()
     );
+
+    let power_exponential = MvPowerExponentialCholeskyDefault::<2>::new();
+    let power_exponential_theta = MvPowerExponentialCholeskyTheta::try_new(
+        [0.0; 2],
+        FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.2, 0.8]]),
+        1.4,
+    )
+    .unwrap();
+    assert!(
+        power_exponential
+            .nll([0.1, -0.2], &power_exponential_theta, &mut ())
+            .is_finite()
+    );
+
+    let skew_normal = MvSkewNormalCholeskyDefault::<2>::new();
+    let skew_normal_theta = MvSkewNormalCholeskyTheta::try_new(
+        [0.0; 2],
+        FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.2, 0.8]]),
+        [0.5, -0.3],
+    )
+    .unwrap();
+    assert!(
+        skew_normal
+            .nll([0.1, -0.2], &skew_normal_theta, &mut ())
+            .is_finite()
+    );
     assert!(
         student
             .nll(
@@ -524,6 +551,12 @@ fn multivariate_prelude_exposes_new_generic_families() {
     let _ = MultinomialVaryingTrials::<4>::new();
     let _ = MvLogNormalCholeskyDefault::<4>::new();
     let _ = MvNormalMeanStdPartialCorrDefault::<4>::new();
+    let _ = MvPoissonCommonShockDefault::<4>::new();
+    let _ = MvPowerExponentialCholeskyDefault::<4>::new();
+    let _ = MvPowerExponentialMeanStdPartialCorrDefault::<4>::new();
+    let _ = MvSkewNormalCholeskyDefault::<4>::new();
+    let _ = MvSkewNormalLocationKernelStdPartialCorrDefault::<4>::new();
+    let _ = MvSkewStudentTFixedTauCholeskyDefault::<4>::new(5.0);
     let _ = MvStudentTCholeskyDefault::<4>::new();
     let _ = MvStudentTMeanStdPartialCorrDefault::<4>::new();
     let _ = FixedPartialCorrelations::<4>::zeros();
@@ -560,5 +593,20 @@ fn new_multivariate_modules_expose_parameterized_families() {
     let _ = gamlss_family::multivariate::log_normal::MvLogNormalCholeskyDefault::<2>::new();
     let _ =
         gamlss_family::multivariate::logistic_normal::LogisticNormalAlrCholeskyDefault::<3>::new();
+    let _ =
+        gamlss_family::multivariate::power_exponential::MvPowerExponentialCholeskyDefault::<2>::new(
+        );
+    let _ =
+        gamlss_family::multivariate::power_exponential::MvPowerExponentialMeanStdPartialCorrDefault::<
+            2,
+        >::new();
+    let _ =
+        gamlss_family::multivariate::poisson_common_shock::MvPoissonCommonShockDefault::<2>::new();
+    let _ = gamlss_family::multivariate::skew_normal::MvSkewNormalCholeskyDefault::<2>::new();
+    let _ =
+        gamlss_family::multivariate::skew_normal::MvSkewNormalLocationKernelStdPartialCorrDefault::<
+            2,
+        >::new();
+    let _ = gamlss_family::multivariate::skew_student_t::MvSkewStudentTFixedTauCholeskyDefault::<2>::new(5.0);
     let _ = gamlss_family::multivariate::student_t::MvStudentTMeanStdPartialCorrDefault::<2>::new();
 }

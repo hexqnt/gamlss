@@ -19,11 +19,11 @@ pub use mean_std_partial_corr::{
 mod cholesky;
 mod mean_std_partial_corr;
 
-fn valid_degrees_of_freedom(tau: f64) -> bool {
+pub(super) fn valid_degrees_of_freedom(tau: f64) -> bool {
     tau > 0.0 && tau.is_finite()
 }
 
-fn robust_weight(dimension: f64, tau: f64, quadratic: f64) -> f64 {
+pub(super) fn robust_weight(dimension: f64, tau: f64, quadratic: f64) -> f64 {
     let scale = tau.max(dimension).max(quadratic);
     (tau / scale + dimension / scale) / (tau / scale + quadratic / scale)
 }
@@ -48,7 +48,7 @@ fn direct_tau_score(dimension: f64, tau: f64, quadratic: f64) -> f64 {
         - tail_derivative
 }
 
-fn nll_location_scale<const D: usize>(
+pub(super) fn nll_location_scale<const D: usize>(
     observation: [f64; D],
     location: &[f64; D],
     cholesky: &impl LowerTriangularMatrix,

@@ -22,6 +22,12 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = DynMvNormalCholeskyDefault::new(2).unwrap();
     let _ = MvNormalCholeskyDefault::<2>::new();
     let _ = MvNormalMeanStdPartialCorrDefault::<3>::new();
+    let _ = MvPoissonCommonShockDefault::<3>::new();
+    let _ = MvPowerExponentialCholeskyDefault::<3>::new();
+    let _ = MvPowerExponentialMeanStdPartialCorrDefault::<3>::new();
+    let _ = MvSkewNormalCholeskyDefault::<3>::new();
+    let _ = MvSkewNormalLocationKernelStdPartialCorrDefault::<3>::new();
+    let _ = MvSkewStudentTFixedTauCholeskyDefault::<3>::new(5.0);
     let _ = MvStudentTCholeskyDefault::<3>::new();
     let _ = DirichletMeanPrecision::<3>::new();
     let _ = FixedLowerTriangular::<2>::zeros();
@@ -30,6 +36,12 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = gamlss::family::DynMvNormalCholeskyDefault::new(2).unwrap();
     let _ = gamlss::family::MvNormalCholeskyDefault::<2>::new();
     let _ = gamlss::family::MvNormalMeanStdPartialCorrDefault::<3>::new();
+    let _ = gamlss::family::MvPoissonCommonShockDefault::<3>::new();
+    let _ = gamlss::family::MvPowerExponentialCholeskyDefault::<3>::new();
+    let _ = gamlss::family::MvPowerExponentialMeanStdPartialCorrDefault::<3>::new();
+    let _ = gamlss::family::MvSkewNormalCholeskyDefault::<3>::new();
+    let _ = gamlss::family::MvSkewNormalLocationKernelStdPartialCorrDefault::<3>::new();
+    let _ = gamlss::family::MvSkewStudentTFixedTauCholeskyDefault::<3>::new(5.0);
     let _ = gamlss::family::MvStudentTCholeskyDefault::<3>::new();
     let _ = gamlss::family::DirichletMeanPrecision::<3>::new();
     let _ = gamlss::family::FixedLowerTriangular::<2>::zeros();

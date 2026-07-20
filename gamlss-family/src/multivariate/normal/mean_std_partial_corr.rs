@@ -119,6 +119,32 @@ impl<const D: usize> FixedPartialCorrelations<D> {
     pub(in crate::multivariate) const fn lower(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
+
+    pub(in crate::multivariate) fn from_lower_rows(values: [[f64; D]; D]) -> Self {
+        let mut out = Self::zeros();
+        for row in 1..D {
+            out.values[row][..row].copy_from_slice(&values[row][..row]);
+        }
+        out
+    }
+
+    pub(in crate::multivariate) const fn lower_rows(&self) -> [[f64; D]; D] {
+        self.values
+    }
+
+    pub(in crate::multivariate) const fn filled_strict_lower(value: f64) -> Self {
+        let mut values = [[0.0; D]; D];
+        let mut row = 1;
+        while row < D {
+            let mut col = 0;
+            while col < row {
+                values[row][col] = value;
+                col += 1;
+            }
+            row += 1;
+        }
+        Self { values }
+    }
 }
 
 /// Generic multivariate normal parameterized as `Sigma = D R D`.
@@ -426,22 +452,18 @@ where
         Product<Product<Vector<Mu, D>, Vector<Sigma, D>>, StrictLower<PartialCorrelation, D>>;
 
     fn eta_from_shape(values: ShapeValues<Self::Shape>) -> MvNormalMeanStdPartialCorrEta<D> {
-        let mut partial_corr = FixedPartialCorrelations::zeros();
-        for row in 1..D {
-            for col in 0..row {
-                *partial_corr
-                    .get_mut(row, col)
-                    .expect("valid strict-lower index") = values.1[row][col];
-            }
-        }
-        MvNormalMeanStdPartialCorrEta::new(values.0.0, values.0.1, partial_corr)
+        MvNormalMeanStdPartialCorrEta::new(
+            values.0.0,
+            values.0.1,
+            FixedPartialCorrelations::from_lower_rows(values.1),
+        )
     }
 
     fn gradient_to_shape(gradient: &MvNormalMeanStdPartialCorrEta<D>) -> ShapeValues<Self::Shape> {
-        let partial_corr = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.partial_corr.get(row, col).unwrap_or(0.0))
-        });
-        ((gradient.mu, gradient.sigma), partial_corr)
+        (
+            (gradient.mu, gradient.sigma),
+            gradient.partial_corr.lower_rows(),
+        )
     }
 
     fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> ShapeValues<Self::Shape>
@@ -784,9 +806,7 @@ fn nan_eta<const D: usize>() -> MvNormalMeanStdPartialCorrEta<D> {
     MvNormalMeanStdPartialCorrEta {
         mu: [f64::NAN; D],
         sigma: [f64::NAN; D],
-        partial_corr: FixedPartialCorrelations {
-            values: [[f64::NAN; D]; D],
-        },
+        partial_corr: FixedPartialCorrelations::filled_strict_lower(f64::NAN),
     }
 }
 

@@ -25,7 +25,27 @@ pub use matrix::{FixedLowerTriangular, PackedLowerTriangular};
 pub use multinomial::{
     MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
 };
+pub use poisson_common_shock::{
+    MvPoissonCommonShock, MvPoissonCommonShockDefault, MvPoissonCommonShockEta,
+    MvPoissonCommonShockTheta,
+};
+pub use power_exponential::{
+    MvPowerExponentialCholesky, MvPowerExponentialCholeskyDefault, MvPowerExponentialCholeskyEta,
+    MvPowerExponentialCholeskyTheta, MvPowerExponentialMeanStdPartialCorr,
+    MvPowerExponentialMeanStdPartialCorrDefault, MvPowerExponentialMeanStdPartialCorrEta,
+    MvPowerExponentialMeanStdPartialCorrTheta,
+};
 pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
+pub use skew_normal::{
+    MvSkewNormalCholesky, MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyEta,
+    MvSkewNormalCholeskyTheta, MvSkewNormalLocationKernelStdPartialCorr,
+    MvSkewNormalLocationKernelStdPartialCorrDefault, MvSkewNormalLocationKernelStdPartialCorrEta,
+    MvSkewNormalLocationKernelStdPartialCorrTheta,
+};
+pub use skew_student_t::{
+    MvSkewStudentTFixedTauCholesky, MvSkewStudentTFixedTauCholeskyDefault,
+    MvSkewStudentTFixedTauCholeskyEta, MvSkewStudentTFixedTauCholeskyTheta,
+};
 
 /// Cholesky helpers.
 pub mod cholesky;
@@ -45,7 +65,15 @@ pub mod matrix;
 pub mod multinomial;
 /// Multivariate normal distributions.
 pub mod normal;
+/// Common-shock multivariate Poisson distributions.
+pub mod poisson_common_shock;
+/// Multivariate power-exponential distributions.
+pub mod power_exponential;
 /// Simplex and compositional distributions.
 pub mod simplex;
+/// Multivariate skew-normal distributions.
+pub mod skew_normal;
+/// Multivariate skew-Student-t distributions.
+pub mod skew_student_t;
 /// Multivariate Student-t distributions.
 pub mod student_t;

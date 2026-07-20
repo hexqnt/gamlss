@@ -166,6 +166,14 @@ impl ParameterName for Sigma {
     const NAME: &'static str = "sigma";
 }
 
+/// Marker for a marginal standard deviation of an underlying distribution kernel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KernelSigma;
+
+impl ParameterName for KernelSigma {
+    const NAME: &'static str = "kernel_sigma";
+}
+
 /// Marker for a coefficient of variation parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Cv;
@@ -212,6 +220,22 @@ pub struct Rate;
 
 impl ParameterName for Rate {
     const NAME: &'static str = "rate";
+}
+
+/// Marker for a component-specific latent rate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IdiosyncraticRate;
+
+impl ParameterName for IdiosyncraticRate {
+    const NAME: &'static str = "idiosyncratic_rate";
+}
+
+/// Marker for a rate shared by multiple response components.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SharedRate;
+
+impl ParameterName for SharedRate {
+    const NAME: &'static str = "shared_rate";
 }
 
 /// Marker for a dispersion parameter.

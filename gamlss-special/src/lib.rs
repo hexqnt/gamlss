@@ -511,7 +511,7 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
         return f64::NEG_INFINITY;
     }
 
-    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()
+    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * log_one_plus_square_over_positive(t, nu)
 }
 
 /// Standard Student-t CDF.
@@ -521,21 +521,53 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
+    student_t_log_cdf_standardized(t, nu).exp()
+}
+
+/// Logarithm of the standard Student-t CDF.
+///
+/// Unlike taking the logarithm of [`student_t_cdf_standardized`], this keeps
+/// finite log-probabilities in the far negative tail after the probability
+/// itself has underflowed.
+#[must_use]
+#[inline]
+pub fn student_t_log_cdf_standardized(t: f64, nu: f64) -> f64 {
     if nu <= 0.0 || !nu.is_finite() || t.is_nan() {
         return f64::NAN;
     }
     if !t.is_finite() {
-        return if t.is_sign_negative() { 0.0 } else { 1.0 };
+        return if t.is_sign_negative() {
+            f64::NEG_INFINITY
+        } else {
+            0.0
+        };
     }
     if t == 0.0 {
-        return 0.5;
+        return -std::f64::consts::LN_2;
     }
 
-    let beta = regularized_beta(0.5 * nu, 0.5, nu / t.mul_add(t, nu));
-    if t < 0.0 {
-        0.5 * beta
+    let log_x = -log_one_plus_square_over_positive(t, nu);
+    let x = log_x.exp();
+    let a = 0.5 * nu;
+    let log_beta = if x == 0.0 {
+        a * log_x - ln_beta(a, 0.5) - a.ln()
     } else {
-        0.5f64.mul_add(-beta, 1.0)
+        log_regularized_beta(a, 0.5, x)
+    };
+    if t < 0.0 {
+        log_beta - std::f64::consts::LN_2
+    } else {
+        (-0.5 * log_beta.exp()).ln_1p()
+    }
+}
+
+#[inline]
+fn log_one_plus_square_over_positive(value: f64, positive: f64) -> f64 {
+    let log_ratio = 0.5_f64.mul_add(-positive.ln(), value.abs().ln());
+    if log_ratio <= 0.0 {
+        (2.0 * log_ratio).exp().ln_1p()
+    } else {
+        2.0_f64.mul_add(log_ratio, (-2.0 * log_ratio).exp().ln_1p())
     }
 }
 
@@ -662,6 +694,33 @@ pub fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
 #[inline]
 pub fn regularized_beta_complement(a: f64, b: f64, x: f64) -> f64 {
     clamp_probability(regularized_beta_pair_unchecked(a, b, x).1)
+}
+
+/// Logarithm of the regularized incomplete beta function `I_x(a, b)`.
+///
+/// The lower-tail branch is evaluated directly in log space so callers can
+/// retain probabilities smaller than the normal floating-point range.
+#[must_use]
+#[inline]
+pub fn log_regularized_beta(a: f64, b: f64, x: f64) -> f64 {
+    if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    #[allow(clippy::float_cmp)]
+    if x == 1.0 {
+        return 0.0;
+    }
+
+    let log_front = b.mul_add((-x).ln_1p(), a.mul_add(x.ln(), -ln_beta(a, b)));
+    if x < (a + 1.0) / (a + b + 2.0) {
+        log_front + beta_continued_fraction(a, b, x).ln() - a.ln()
+    } else {
+        let log_complement = log_front + beta_continued_fraction(b, a, 1.0 - x).ln() - b.ln();
+        (-log_complement.exp().clamp(0.0, 1.0)).ln_1p()
+    }
 }
 
 #[allow(clippy::suboptimal_flops)]
@@ -1541,7 +1600,10 @@ pub fn unit_normal_quantile(p: f64) -> f64 {
 mod tests {
     use approx::assert_relative_eq;
 
-    use super::exponential_integral_e1;
+    use super::{
+        exponential_integral_e1, log_regularized_beta, regularized_beta,
+        student_t_cdf_standardized, student_t_log_cdf_standardized, student_t_log_pdf_standardized,
+    };
 
     #[test]
     fn exponential_integral_e1_matches_reference_values() {
@@ -1568,5 +1630,43 @@ mod tests {
         assert!(exponential_integral_e1(f64::NAN).is_nan());
         assert!(exponential_integral_e1(0.0).is_infinite());
         assert!(exponential_integral_e1(f64::INFINITY).abs() <= f64::EPSILON);
+    }
+
+    #[test]
+    fn log_regularized_beta_matches_probability_in_regular_range() {
+        for (a, b, x) in [(0.7, 0.5, 0.01), (2.5, 1.3, 0.4), (4.0, 2.0, 0.9)] {
+            assert_relative_eq!(
+                log_regularized_beta(a, b, x),
+                regularized_beta(a, b, x).ln(),
+                epsilon = 1.0e-13
+            );
+        }
+    }
+
+    #[test]
+    fn student_t_log_cdf_matches_cdf_and_retains_far_tail() {
+        for (t, nu) in [(-8.0, 3.0), (-0.7, 5.0), (0.0, 7.0), (2.5, 11.0)] {
+            assert_relative_eq!(
+                student_t_log_cdf_standardized(t, nu),
+                student_t_cdf_standardized(t, nu).ln(),
+                epsilon = 1.0e-13
+            );
+        }
+        let far_tail = student_t_log_cdf_standardized(-1.0e100, 5.0);
+        assert!(far_tail.is_finite());
+        assert!(far_tail < -1_000.0);
+
+        let cauchy_tail = student_t_log_cdf_standardized(-1.0e100, 1.0);
+        let cauchy_asymptotic = 100.0_f64.mul_add(-10.0_f64.ln(), -std::f64::consts::PI.ln());
+        assert_relative_eq!(cauchy_tail, cauchy_asymptotic, epsilon = 1.0e-12);
+        assert!(student_t_log_cdf_standardized(0.0, 0.0).is_nan());
+        assert!(student_t_log_cdf_standardized(f64::NAN, 5.0).is_nan());
+        let negative_infinity = student_t_log_cdf_standardized(f64::NEG_INFINITY, 5.0);
+        assert!(negative_infinity.is_infinite() && negative_infinity.is_sign_negative());
+        assert!(student_t_log_cdf_standardized(f64::INFINITY, 5.0).abs() <= f64::EPSILON);
+        assert!(student_t_log_pdf_standardized(-1.0e308, 5.0).is_finite());
+        let small_df_far_tail = student_t_cdf_standardized(-1.0e200, 0.01);
+        assert!(small_df_far_tail > 0.0);
+        assert!(small_df_far_tail < 0.5);
     }
 }

@@ -8,14 +8,15 @@ use gamlss_core::{
     DenseInformation, DenseRows, Dispersion, DynamicLayoutKey, Family, FiniteScalarObservations,
     FixedDimensionalFamily, FloorSoftplusScalar, Gamlss, HasCdf, HasConditionalCdf, HasDensity,
     HasDeviance, HasDiagonalFisherInfo, HasExpectedInformation, HasInitialEta, HasLogDensity,
-    HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, InitialEtaFromObservations,
-    LinearForm, LinearFormBuilder, LocationCholesky, Log, LogLocation, LogPlus, LogSd, Logit,
-    LowerTriangularParameterBlock, Mean, Median, Mu, NegativeSoftplusScalar, NoPenalty, Nu,
-    Objective, ObjectiveScale, ObservationView, OneProbability, ParameterAxis, ParameterBlock,
-    ParameterBlocks, ParameterDescriptor, ParameterLayout, ParameterName, ParameterParts,
-    ParameterPath, ParameterSlice, PositiveLink, Power, PredictorBlock, Probability,
-    ScoreTilePolicy, ShapeValues, Sigma, Size, Softplus, SoftplusScalar, TotalMean,
-    TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock, ZeroProbability,
+    HasMarginalCdf, HasObservationDimension, HasRosenblattTransform, IdiosyncraticRate,
+    InitialEtaFromObservations, KernelSigma, LinearForm, LinearFormBuilder, LocationCholesky, Log,
+    LogLocation, LogPlus, LogSd, Logit, LowerTriangularParameterBlock, Mean, Median, Mu,
+    NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
+    OneProbability, ParameterAxis, ParameterBlock, ParameterBlocks, ParameterDescriptor,
+    ParameterLayout, ParameterName, ParameterParts, ParameterPath, ParameterSlice, PositiveLink,
+    Power, PredictorBlock, Probability, ScoreTilePolicy, ShapeValues, Sigma, Size, Softplus,
+    SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock,
+    ZeroProbability,
 };
 
 #[test]
@@ -389,6 +390,8 @@ fn semantic_parameter_markers_remain_root_reexports() {
     assert_eq!(OneProbability::NAME, "one_probability");
     assert_eq!(Power::NAME, "power");
     assert_eq!(CholeskyScale::NAME, "cholesky");
+    assert_eq!(KernelSigma::NAME, "kernel_sigma");
+    assert_eq!(IdiosyncraticRate::NAME, "idiosyncratic_rate");
 }
 
 #[test]
