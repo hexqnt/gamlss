@@ -8,17 +8,41 @@
 //! compile-time dimensions that are programmer-controlled and documents its
 //! panic condition.
 
+pub use dirichlet_multinomial::{
+    DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
+    DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
+};
 pub use independent::IndependentVec;
+pub use log_normal::{
+    MvLogNormalCholesky, MvLogNormalCholeskyDefault, MvLogNormalCholeskyEta,
+    MvLogNormalCholeskyTheta,
+};
+pub use logistic_normal::{
+    FixedLogRatioCholesky, LogisticNormalAlrCholesky, LogisticNormalAlrCholeskyDefault,
+    LogisticNormalAlrCholeskyEta, LogisticNormalAlrCholeskyTheta,
+};
 pub use matrix::{FixedLowerTriangular, PackedLowerTriangular};
+pub use multinomial::{
+    MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
+};
 pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
 
 /// Cholesky helpers.
 pub mod cholesky;
+mod count;
+/// Overdispersed multinomial count distributions.
+pub mod dirichlet_multinomial;
 mod elliptical;
 /// Independent product construction.
 pub mod independent;
+/// Multivariate log-normal distributions.
+pub mod log_normal;
+/// Logistic-normal simplex distributions.
+pub mod logistic_normal;
 /// Matrix storage primitives.
 pub mod matrix;
+/// Multinomial count distributions.
+pub mod multinomial;
 /// Multivariate normal distributions.
 pub mod normal;
 /// Simplex and compositional distributions.

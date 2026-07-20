@@ -47,7 +47,7 @@ pub type BinomialFixedTrialsProbability = BinomialFixedTrials<Logit>;
 pub type BinomialVaryingTrialsProbability = BinomialVaryingTrials<Logit>;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct BinomialKernel;
+pub(crate) struct BinomialKernel;
 
 impl BinomialKernel {
     #[inline]
@@ -92,7 +92,7 @@ impl BinomialKernel {
         trials.mul_add(probability, -successes) / (probability * (1.0 - probability))
     }
 
-    fn cdf(successes: f64, trials: f64, probability: f64) -> f64 {
+    pub(crate) fn cdf(successes: f64, trials: f64, probability: f64) -> f64 {
         if !successes.is_finite()
             || !is_nonnegative_integer(trials)
             || trials < 0.0

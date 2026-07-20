@@ -2,7 +2,7 @@ use crate::constants::HALF_LOG_2_PI;
 use crate::multivariate::elliptical::{self, LowerTriangularMatrix};
 use gamlss_special::unit_normal_cdf;
 
-pub(super) fn cholesky_score(
+pub(in crate::multivariate) fn cholesky_score(
     row: usize,
     col: usize,
     z_col: f64,
@@ -16,7 +16,7 @@ pub(super) fn cholesky_score(
     score
 }
 
-pub(super) fn valid_theta(
+pub(in crate::multivariate) fn valid_theta(
     dimension: usize,
     mu: &[f64],
     cholesky: &impl LowerTriangularMatrix,
@@ -24,7 +24,7 @@ pub(super) fn valid_theta(
     elliptical::valid_location_scale(dimension, mu, cholesky)
 }
 
-pub(super) fn nll(
+pub(in crate::multivariate) fn nll(
     dimension: usize,
     observation: &[f64],
     mu: &[f64],
@@ -40,7 +40,7 @@ pub(super) fn nll(
     dimension as f64 * HALF_LOG_2_PI + log_det_scale + 0.5 * quadratic
 }
 
-pub(super) fn nll_and_score(
+pub(in crate::multivariate) fn nll_and_score(
     dimension: usize,
     observation: &[f64],
     mu: &[f64],
@@ -55,7 +55,7 @@ pub(super) fn nll_and_score(
     nll
 }
 
-pub(super) fn marginal_scale(
+pub(in crate::multivariate) fn marginal_scale(
     dimension: usize,
     component: usize,
     mu: &[f64],
@@ -74,7 +74,7 @@ pub(super) fn marginal_scale(
         .sqrt()
 }
 
-pub(super) fn conditional_cdf(
+pub(in crate::multivariate) fn conditional_cdf(
     dimension: usize,
     component: usize,
     y: f64,
@@ -111,7 +111,7 @@ pub(super) fn conditional_cdf(
     unit_normal_cdf((y - conditional_mean) / cholesky.lower(component, component))
 }
 
-pub(super) fn rosenblatt_into(
+pub(in crate::multivariate) fn rosenblatt_into(
     dimension: usize,
     observation: &[f64],
     mu: &[f64],

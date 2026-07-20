@@ -20,9 +20,14 @@ use gamlss_family::{
 #[cfg(feature = "multivariate")]
 use gamlss_family::{
     DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
-    FixedLowerTriangular, FixedPartialCorrelations, MvNormalMeanStdPartialCorrDefault,
+    DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionTheta,
+    DirichletMultinomialVaryingTrials, FixedLogRatioCholesky, FixedLowerTriangular,
+    FixedPartialCorrelations, LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyTheta,
+    MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
+    MvLogNormalCholeskyDefault, MvLogNormalCholeskyTheta, MvNormalMeanStdPartialCorrDefault,
     MvNormalMeanStdPartialCorrEta, MvStudentTCholeskyDefault, MvStudentTCholeskyEta,
-    MvStudentTCholeskyTheta,
+    MvStudentTCholeskyTheta, MvStudentTMeanStdPartialCorrDefault,
+    MvStudentTMeanStdPartialCorrTheta,
 };
 
 #[allow(clippy::needless_pass_by_value)]
@@ -382,6 +387,36 @@ fn univariate_namespace_exposes_distribution_modules() {
 #[cfg(feature = "multivariate")]
 #[test]
 fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
+    let multinomial = MultinomialFixedTrials::<3>::new(10);
+    let multinomial_eta = MultinomialEta::new([0.2, -0.1, 0.0]);
+    let multinomial_theta = multinomial.theta(&multinomial_eta, &mut ());
+    assert!(
+        multinomial
+            .nll([2.0, 3.0, 5.0], &multinomial_theta, &mut ())
+            .is_finite()
+    );
+    assert!(
+        MultinomialVaryingTrials::<3>::new()
+            .nll(
+                [2.0, 3.0, 5.0],
+                &MultinomialTheta::try_new([0.2, 0.3, 0.5]).unwrap(),
+                &mut ()
+            )
+            .is_finite()
+    );
+    let dirichlet_multinomial_theta =
+        DirichletMultinomialMeanPrecisionTheta::try_new([0.2, 0.3, 0.5], 8.0).unwrap();
+    assert!(
+        DirichletMultinomialFixedTrials::<3>::new(10)
+            .nll([2.0, 3.0, 5.0], &dirichlet_multinomial_theta, &mut ())
+            .is_finite()
+    );
+    assert!(
+        DirichletMultinomialVaryingTrials::<3>::new()
+            .nll([1.0, 2.0, 3.0], &dirichlet_multinomial_theta, &mut ())
+            .is_finite()
+    );
+
     let dirichlet = DirichletMeanPrecision::<3>::new();
     let dirichlet_eta = DirichletMeanPrecisionEta::new([0.0, 0.5, 0.0], 2.0_f64.ln());
     let mut workspace = ();
@@ -415,6 +450,43 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
             .nll([0.1, -0.2, 0.3], &theta, &mut workspace)
             .is_finite()
     );
+    let student_drd = MvStudentTMeanStdPartialCorrDefault::<3>::new();
+    let student_drd_theta = MvStudentTMeanStdPartialCorrTheta::try_new(
+        [0.0; 3],
+        [1.0; 3],
+        FixedPartialCorrelations::try_new(vec![0.1, -0.2, 0.3]).unwrap(),
+        8.0,
+    )
+    .unwrap();
+    assert!(
+        student_drd
+            .nll([0.1, -0.2, 0.3], &student_drd_theta, &mut ())
+            .is_finite()
+    );
+
+    let log_normal = MvLogNormalCholeskyDefault::<2>::new();
+    let log_normal_theta = MvLogNormalCholeskyTheta::try_new(
+        [0.0; 2],
+        FixedLowerTriangular::from_lower_rows([[1.0, 0.0], [0.2, 0.8]]),
+    )
+    .unwrap();
+    assert!(
+        log_normal
+            .nll([1.0, 2.0], &log_normal_theta, &mut ())
+            .is_finite()
+    );
+
+    let logistic_normal = LogisticNormalAlrCholeskyDefault::<3>::new();
+    let logistic_normal_theta = LogisticNormalAlrCholeskyTheta::try_new(
+        [0.0; 3],
+        FixedLogRatioCholesky::try_from_packed(&[1.0, 0.2, 0.8]).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        logistic_normal
+            .nll([0.2, 0.3, 0.5], &logistic_normal_theta, &mut ())
+            .is_finite()
+    );
     assert!(
         student
             .nll(
@@ -445,9 +517,17 @@ fn multivariate_prelude_exposes_new_generic_families() {
     use gamlss_family::prelude::*;
 
     let _ = DirichletMeanPrecision::<4>::new();
+    let _ = DirichletMultinomialFixedTrials::<4>::new(10);
+    let _ = DirichletMultinomialVaryingTrials::<4>::new();
+    let _ = LogisticNormalAlrCholeskyDefault::<4>::new();
+    let _ = MultinomialFixedTrials::<4>::new(10);
+    let _ = MultinomialVaryingTrials::<4>::new();
+    let _ = MvLogNormalCholeskyDefault::<4>::new();
     let _ = MvNormalMeanStdPartialCorrDefault::<4>::new();
     let _ = MvStudentTCholeskyDefault::<4>::new();
+    let _ = MvStudentTMeanStdPartialCorrDefault::<4>::new();
     let _ = FixedPartialCorrelations::<4>::zeros();
+    let _ = FixedLogRatioCholesky::<4>::zeros();
 }
 
 #[cfg(feature = "multivariate")]
@@ -458,4 +538,27 @@ fn multivariate_matrix_module_owns_triangular_storage() {
     let _ = FixedLowerTriangular::<2>::zeros();
     let packed = PackedLowerTriangular::try_new(2, vec![1.0, 0.0, 1.0]).unwrap();
     assert_eq!(packed.dimension(), 2);
+}
+
+#[cfg(feature = "multivariate")]
+#[test]
+fn multivariate_multinomial_module_exposes_count_families() {
+    use gamlss_family::multivariate::multinomial::{
+        MultinomialFixedTrials, MultinomialVaryingTrials,
+    };
+
+    let _ = MultinomialFixedTrials::<3>::new(5);
+    let _ = MultinomialVaryingTrials::<3>::new();
+}
+
+#[cfg(feature = "multivariate")]
+#[test]
+fn new_multivariate_modules_expose_parameterized_families() {
+    let _ = gamlss_family::multivariate::dirichlet_multinomial::DirichletMultinomialFixedTrials::<
+        3,
+    >::new(5);
+    let _ = gamlss_family::multivariate::log_normal::MvLogNormalCholeskyDefault::<2>::new();
+    let _ =
+        gamlss_family::multivariate::logistic_normal::LogisticNormalAlrCholeskyDefault::<3>::new();
+    let _ = gamlss_family::multivariate::student_t::MvStudentTMeanStdPartialCorrDefault::<2>::new();
 }

@@ -14,11 +14,19 @@ pub use multivariate::normal::{
 #[cfg(feature = "multivariate")]
 pub use multivariate::student_t::{
     MvStudentTCholesky, MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+    MvStudentTMeanStdPartialCorr, MvStudentTMeanStdPartialCorrDefault,
+    MvStudentTMeanStdPartialCorrEta, MvStudentTMeanStdPartialCorrTheta,
 };
 #[cfg(feature = "multivariate")]
 pub use multivariate::{
     DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
-    FixedLowerTriangular, PackedLowerTriangular,
+    DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
+    DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
+    FixedLogRatioCholesky, FixedLowerTriangular, LogisticNormalAlrCholesky,
+    LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta, LogisticNormalAlrCholeskyTheta,
+    MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
+    MvLogNormalCholesky, MvLogNormalCholeskyDefault, MvLogNormalCholeskyEta,
+    MvLogNormalCholeskyTheta, PackedLowerTriangular,
 };
 pub use univariate::{
     Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta, BernoulliProbability,
@@ -94,13 +102,21 @@ pub mod prelude {
     #[cfg(feature = "multivariate")]
     pub use crate::{
         DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+        DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
+        DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
         DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
-        DynMvNormalCholeskyTheta, FixedLowerTriangular, FixedPartialCorrelations, IndependentVec,
-        MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta,
+        DynMvNormalCholeskyTheta, FixedLogRatioCholesky, FixedLowerTriangular,
+        FixedPartialCorrelations, IndependentVec, LogisticNormalAlrCholesky,
+        LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta,
+        LogisticNormalAlrCholeskyTheta, MultinomialEta, MultinomialFixedTrials, MultinomialTheta,
+        MultinomialVaryingTrials, MvLogNormalCholesky, MvLogNormalCholeskyDefault,
+        MvLogNormalCholeskyEta, MvLogNormalCholeskyTheta, MvNormalCholesky,
+        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta,
         MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
         MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta, MvStudentTCholesky,
         MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
-        PackedLowerTriangular,
+        MvStudentTMeanStdPartialCorr, MvStudentTMeanStdPartialCorrDefault,
+        MvStudentTMeanStdPartialCorrEta, MvStudentTMeanStdPartialCorrTheta, PackedLowerTriangular,
     };
 
     pub use crate::{

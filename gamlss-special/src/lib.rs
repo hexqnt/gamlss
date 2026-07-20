@@ -334,6 +334,77 @@ pub fn bernoulli_kl(probability: f64, reference: f64) -> f64 {
     }
 }
 
+/// Kullback-Leibler divergence between categorical probability vectors.
+///
+/// `probability` may lie on the simplex boundary, while every `reference` component must be strictly positive. The vectors are expected to have the same normalization; a local series preserves the divergence when their components are nearly equal and direct log-ratio terms would cancel.
+///
+/// Returns `NaN` for an empty vector, a negative or non-finite probability, a non-positive or non-finite reference component, a non-finite component sum, or an all-zero probability vector.
+#[must_use]
+pub fn categorical_kl<const K: usize>(probability: &[f64; K], reference: &[f64; K]) -> f64 {
+    let probability_sum = probability.iter().sum::<f64>();
+    let reference_sum = reference.iter().sum::<f64>();
+    if K == 0
+        || probability
+            .iter()
+            .any(|value| *value < 0.0 || !value.is_finite())
+        || reference
+            .iter()
+            .any(|value| *value <= 0.0 || !value.is_finite())
+        || probability_sum <= 0.0
+        || !probability_sum.is_finite()
+        || !reference_sum.is_finite()
+    {
+        return f64::NAN;
+    }
+
+    let relative: [f64; K] = std::array::from_fn(|category| {
+        let value = probability[category];
+        if value > 0.0 {
+            (reference[category] - value) / value
+        } else {
+            0.0
+        }
+    });
+    let use_series = probability
+        .iter()
+        .zip(relative.iter())
+        .all(|(value, relative)| *value <= 0.0 || relative.abs() <= 0.25);
+    if use_series {
+        let mut powers = relative;
+        let mut sum = 0.0;
+        for order in 1..=128 {
+            let order_f = f64::from(order);
+            let weighted_power = probability
+                .iter()
+                .zip(powers.iter())
+                .map(|(weight, power)| weight * power)
+                .sum::<f64>();
+            let magnitude = probability
+                .iter()
+                .zip(powers.iter())
+                .map(|(weight, power)| weight * power.abs())
+                .sum::<f64>()
+                / order_f;
+            let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
+            sum += sign * weighted_power / order_f;
+            if order > 1 && magnitude <= f64::EPSILON * sum.abs() {
+                break;
+            }
+            for (power, relative) in powers.iter_mut().zip(relative.iter()) {
+                *power *= relative;
+            }
+        }
+        sum
+    } else {
+        probability
+            .iter()
+            .zip(reference)
+            .filter(|(value, _)| **value > 0.0)
+            .map(|(value, reference)| value * (value.ln() - reference.ln()))
+            .sum()
+    }
+}
+
 /// Exponential integral `E1(x) = integral_x^inf exp(-t) / t dt`.
 ///
 /// Returns `NaN` for negative or `NaN` inputs, positive infinity at zero, and

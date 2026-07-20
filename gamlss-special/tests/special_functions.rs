@@ -5,13 +5,13 @@
 )]
 use approx::assert_relative_eq;
 use gamlss_special::{
-    bernoulli_kl, digamma, digamma_delta, digamma_minus_ln, discrete_quantile, included_count,
-    integrate_finite, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma,
-    ln_gamma_delta, ln_gamma_stirling_residual, ln_multivariate_beta, log_add_exp, log_ndtr,
-    normal_mills_ratio, owens_t, regularized_beta, regularized_beta_complement,
-    regularized_gamma_lower, regularized_gamma_upper, student_t_cdf_standardized,
-    student_t_log_pdf_standardized, student_t_nll_constant, unit_normal_cdf, unit_normal_log_sf,
-    unit_normal_quantile, unit_normal_sf,
+    bernoulli_kl, categorical_kl, digamma, digamma_delta, digamma_minus_ln, discrete_quantile,
+    included_count, integrate_finite, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf,
+    ln_beta, ln_gamma, ln_gamma_delta, ln_gamma_stirling_residual, ln_multivariate_beta,
+    log_add_exp, log_ndtr, normal_mills_ratio, owens_t, regularized_beta,
+    regularized_beta_complement, regularized_gamma_lower, regularized_gamma_upper,
+    student_t_cdf_standardized, student_t_log_pdf_standardized, student_t_nll_constant,
+    unit_normal_cdf, unit_normal_log_sf, unit_normal_quantile, unit_normal_sf,
 };
 use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
@@ -181,6 +181,33 @@ fn bernoulli_kl_preserves_near_equal_probabilities() {
         1.0e-45,
     );
     assert!(bernoulli_kl(0.0, 0.5).is_nan());
+}
+
+#[test]
+fn categorical_kl_handles_near_equal_and_boundary_probabilities() {
+    let probability = [0.25, 0.25, 0.5];
+    let difference = 2.0_f64.powi(-40);
+    let reference = [0.25 + difference, 0.25 - difference, 0.5];
+    assert_close(
+        categorical_kl(&probability, &reference),
+        4.0 * difference * difference,
+        1.0e-12,
+        1.0e-38,
+    );
+
+    let probability = [0.0, 0.4, 0.6];
+    let reference = [0.2, 0.3, 0.5];
+    assert_close(
+        categorical_kl(&probability, &reference),
+        0.4 * (0.4_f64 / 0.3).ln() + 0.6 * (0.6_f64 / 0.5).ln(),
+        1.0e-14,
+        1.0e-14,
+    );
+    assert!(categorical_kl(&[], &[]).is_nan());
+    assert!(categorical_kl(&[0.2, -0.2], &[0.5, 0.5]).is_nan());
+    assert!(categorical_kl(&[0.5, 0.5], &[1.0, 0.0]).is_nan());
+    assert!(categorical_kl(&[f64::MAX, f64::MAX], &[0.5, 0.5]).is_nan());
+    assert!(categorical_kl(&[0.5, 0.5], &[f64::MAX, f64::MAX]).is_nan());
 }
 
 #[test]

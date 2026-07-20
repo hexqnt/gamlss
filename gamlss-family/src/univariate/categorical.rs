@@ -8,7 +8,7 @@ use gamlss_special::baseline_softmax;
 #[cfg(feature = "rand")]
 use rand::RngExt as _;
 
-use crate::domain::is_probability;
+use crate::domain::{is_interior_simplex, is_probability};
 
 /// Categorical family with `K` classes and `K - 1` baseline-softmax predictors.
 ///
@@ -72,15 +72,8 @@ impl<const K: usize> Categorical<K> {
     }
 
     #[inline]
-    #[allow(clippy::cast_precision_loss)]
     fn valid_theta(theta: &CategoricalTheta<K>) -> bool {
-        K >= 2
-            && theta
-                .probabilities
-                .iter()
-                .all(|probability| *probability > 0.0 && probability.is_finite())
-            && (theta.probabilities.iter().sum::<f64>() - 1.0).abs()
-                <= 16.0 * f64::EPSILON * K as f64
+        is_interior_simplex(&theta.probabilities)
     }
 
     fn nll_theta(observation: f64, theta: &CategoricalTheta<K>) -> f64 {
@@ -301,6 +294,15 @@ mod tests {
             assert_relative_eq!(gradient.logits[index], numeric, epsilon = 1.0e-8);
         }
         assert_eq!(gradient.logits[2], 0.0);
+    }
+
+    #[test]
+    fn extreme_finite_logits_keep_likelihood_and_gradient_finite() {
+        let family = Categorical::<3>::new();
+        let eta = CategoricalEta::new([f64::MAX, -f64::MAX, 0.0]);
+        let (nll, gradient) = family.nll_and_gradient_eta(1.0, &eta, &mut ());
+        assert!(nll.is_finite());
+        assert!(gradient.logits.iter().all(|value| value.is_finite()));
     }
 
     #[test]

@@ -347,7 +347,7 @@ impl<const D: usize, MuLink, DiagonalLink, OffDiagonalLink> CompilableFamily
 where
     MuLink: InitialEtaFromTheta<f64>,
     DiagonalLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
-    OffDiagonalLink: Link<f64>,
+    OffDiagonalLink: InitialEtaFromTheta<f64>,
 {
     type Shape = LocationCholesky<D>;
 
@@ -405,7 +405,7 @@ where
         }
 
         let mut vector_eta = [0.0; D];
-        let mut lower_eta = [[0.0; D]; D];
+        let mut lower_eta = [[OffDiagonalLink::initial_eta_from_theta(0.0); D]; D];
         for component in 0..D {
             vector_eta[component] = MuLink::initial_eta_from_theta(means[component]);
             let scale = if weight_sum[component] > 0.0 {
@@ -540,13 +540,16 @@ impl<const D: usize> MvNormalCholeskyTheta<D> {
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        CholeskyScale, DenseDesign, DynamicallyCompilableFamily, Family, FixedDimensionalFamily,
-        Gamlss, HasConditionalCdf, HasMarginalCdf, HasRosenblattTransform, LinearPredictorBlock,
+        CholeskyScale, CompilableFamily, DenseDesign, DynamicallyCompilableFamily, Family,
+        FixedDimensionalFamily, Gamlss, HasConditionalCdf, HasMarginalCdf, HasRosenblattTransform,
+        Identity, InitialEtaFromTheta, LinearPredictorBlock, Link, Log,
         LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, ObjectiveScale, ParameterBlocks,
         RidgePenalty, VectorParameterBlock,
     };
 
-    use super::{FixedLowerTriangular, MvNormalCholeskyEta, MvNormalCholeskyTheta};
+    use super::{
+        FixedLowerTriangular, MvNormalCholesky, MvNormalCholeskyEta, MvNormalCholeskyTheta,
+    };
     use crate::constants::HALF_LOG_2_PI;
     use crate::multivariate::matrix::PackedLowerTriangular;
     use crate::multivariate::normal::{
@@ -556,6 +559,25 @@ mod tests {
     use crate::{NormalMuSigma, NormalTheta};
 
     fn assert_fixed_dimensional_family<F: FixedDimensionalFamily<D>, const D: usize>() {}
+
+    #[derive(Debug, Clone, Copy)]
+    struct ShiftedIdentity;
+
+    impl Link<f64> for ShiftedIdentity {
+        fn inverse(eta: f64) -> f64 {
+            eta + 1.0
+        }
+
+        fn derivative_inverse(_eta: f64) -> f64 {
+            1.0
+        }
+    }
+
+    impl InitialEtaFromTheta<f64> for ShiftedIdentity {
+        fn initial_eta_from_theta(theta: f64) -> f64 {
+            theta - 1.0
+        }
+    }
 
     fn finite_difference_gradient<const D: usize>(
         y: [f64; D],
@@ -600,6 +622,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn initialization_uses_the_off_diagonal_link_inverse() {
+        type Family = MvNormalCholesky<2, Identity, Log, ShiftedIdentity>;
+
+        let family = Family::new();
+        let initial = family.initial_shape(&[[0.0, 0.0], [1.0, -1.0]].as_slice());
+        assert_relative_eq!(initial.1[1][0], -1.0);
+
+        let eta = Family::eta_from_shape(initial);
+        let theta = family.theta(&eta, &mut ());
+        assert_relative_eq!(theta.cholesky().get(1, 0).unwrap(), 0.0);
     }
 
     fn intercept(n: usize) -> LinearPredictorBlock<DenseDesign> {

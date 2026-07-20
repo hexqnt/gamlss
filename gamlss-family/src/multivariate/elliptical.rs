@@ -2,7 +2,7 @@
 
 use super::matrix::{FixedLowerTriangular, PackedLowerTriangular};
 
-pub(super) trait LowerTriangularMatrix {
+pub(in crate::multivariate) trait LowerTriangularMatrix {
     fn dimension(&self) -> usize;
     fn lower(&self, row: usize, col: usize) -> f64;
 }

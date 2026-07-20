@@ -9,7 +9,9 @@ use gamlss_core::{
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
-use gamlss_special::{baseline_softmax, digamma_minus_ln, ln_gamma_stirling_residual};
+use gamlss_special::{
+    baseline_softmax, categorical_kl, digamma_minus_ln, ln_gamma_stirling_residual,
+};
 
 const SIMPLEX_TOLERANCE: f64 = 1.0e-8;
 
@@ -74,50 +76,11 @@ where
         }
         let concentration_mean = alpha.map(|component| component / alpha_sum);
         let mut nll = -ln_gamma_stirling_residual(alpha_sum)
-            + alpha_sum * Self::categorical_kl(&concentration_mean, &y);
+            + alpha_sum * categorical_kl(&concentration_mean, &y);
         for component in 0..D {
             nll += ln_gamma_stirling_residual(alpha[component]) + y[component].ln();
         }
         nll
-    }
-
-    fn categorical_kl(probability: &[f64; D], reference: &[f64; D]) -> f64 {
-        let relative: [f64; D] = std::array::from_fn(|component| {
-            (reference[component] - probability[component]) / probability[component]
-        });
-        if relative.iter().all(|value| value.abs() <= 0.25) {
-            let mut powers = relative;
-            let mut sum = 0.0;
-            for order in 1..=128 {
-                let weighted_power = probability
-                    .iter()
-                    .zip(powers.iter())
-                    .map(|(weight, power)| weight * power)
-                    .sum::<f64>();
-                let magnitude = probability
-                    .iter()
-                    .zip(powers.iter())
-                    .map(|(weight, power)| weight * power.abs())
-                    .sum::<f64>()
-                    / f64::from(order);
-                let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
-                let term = sign * weighted_power / f64::from(order);
-                sum += term;
-                if order > 1 && magnitude <= f64::EPSILON * sum.abs() {
-                    break;
-                }
-                for component in 0..D {
-                    powers[component] *= relative[component];
-                }
-            }
-            sum
-        } else {
-            probability
-                .iter()
-                .zip(reference.iter())
-                .map(|(probability, reference)| probability * (probability.ln() - reference.ln()))
-                .sum()
-        }
     }
 
     #[inline]
@@ -271,24 +234,13 @@ where
         if !valid_theta(theta) {
             return Err(SimulationError::InvalidParameters("Dirichlet theta"));
         }
-        let mut out = [0.0; D];
-        let mut sum = 0.0;
-        for component in 0..D {
-            let Ok(gamma) = rand_distr::Gamma::new(theta.alpha_unchecked(component), 1.0) else {
-                return Err(SimulationError::BackendRejected("Dirichlet concentration"));
-            };
-            out[component] = rand_distr::Distribution::sample(&gamma, rng);
-            sum += out[component];
-        }
-        if !sum.is_finite() || sum <= 0.0 {
-            return Err(SimulationError::NumericalFailure(
-                "Dirichlet gamma normalization",
-            ));
-        }
-        for value in &mut out {
-            *value /= sum;
-        }
-        Ok(out)
+        let concentrations = std::array::from_fn(|component| theta.alpha_unchecked(component));
+        try_sample_dirichlet(
+            rng,
+            &concentrations,
+            "Dirichlet concentration",
+            "Dirichlet gamma normalization",
+        )
     }
 }
 
@@ -470,6 +422,47 @@ fn valid_theta<const D: usize>(theta: &DirichletMeanPrecisionTheta<D>) -> bool {
         && (theta.mean.iter().sum::<f64>() - 1.0).abs() <= SIMPLEX_TOLERANCE
 }
 
+/// Samples independent gamma variates and normalizes them without overflowing their sum.
+#[cfg(feature = "rand")]
+pub(in crate::multivariate) fn try_sample_dirichlet<Rng, const D: usize>(
+    rng: &mut Rng,
+    concentrations: &[f64; D],
+    backend_context: &'static str,
+    numerical_context: &'static str,
+) -> Result<[f64; D], SimulationError>
+where
+    Rng: rand::Rng,
+{
+    let mut out = [0.0; D];
+    for (sample, concentration) in out.iter_mut().zip(concentrations.iter().copied()) {
+        let gamma = rand_distr::Gamma::new(concentration, 1.0)
+            .map_err(|_| SimulationError::BackendRejected(backend_context))?;
+        *sample = rand_distr::Distribution::sample(&gamma, rng);
+    }
+
+    if normalize_positive(&mut out) {
+        Ok(out)
+    } else {
+        Err(SimulationError::NumericalFailure(numerical_context))
+    }
+}
+
+#[cfg(any(feature = "rand", test))]
+fn normalize_positive<const D: usize>(values: &mut [f64; D]) -> bool {
+    let maximum = values.iter().copied().fold(0.0, f64::max);
+    if maximum <= 0.0 || !maximum.is_finite() {
+        return false;
+    }
+    let scaled_sum = values.iter().map(|value| value / maximum).sum::<f64>();
+    if scaled_sum <= 0.0 || !scaled_sum.is_finite() {
+        return false;
+    }
+    for value in values.iter_mut() {
+        *value = (*value / maximum) / scaled_sum;
+    }
+    values.iter().all(|value| value.is_finite() && *value > 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -478,7 +471,10 @@ mod tests {
         ParameterBlock, ParameterBlocks, Precision, SimplexLogitParameterBlock,
     };
 
-    use super::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
+    use super::{
+        DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+        normalize_positive,
+    };
 
     #[test]
     fn softmax_eta_constructs_valid_simplex_theta() {
@@ -488,6 +484,17 @@ mod tests {
         assert_relative_eq!(theta.mean.iter().sum::<f64>(), 1.0, epsilon = 1.0e-12);
         assert!(theta.mean.iter().all(|value| *value > 0.0));
         assert_relative_eq!(theta.precision, 3.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn positive_normalization_avoids_overflow_and_rejects_invalid_samples() {
+        let mut values = [f64::MAX, f64::MAX, 0.5 * f64::MAX];
+        assert!(normalize_positive(&mut values));
+        assert_relative_eq!(values.iter().sum::<f64>(), 1.0, epsilon = f64::EPSILON);
+        assert!(values.iter().all(|value| *value > 0.0 && value.is_finite()));
+
+        assert!(!normalize_positive(&mut [0.0, 0.0]));
+        assert!(!normalize_positive(&mut [1.0, f64::INFINITY]));
     }
 
     #[test]

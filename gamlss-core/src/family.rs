@@ -232,7 +232,7 @@ pub trait DynamicallyCompilableFamily: Family {
     /// Computes NLL directly from flat eta coordinates.
     ///
     /// Runtime-dimensional families must implement this operation without
-    /// materializing [`Self::Eta`]. Compiled value and pointwise paths call it
+    /// materializing [`Family::Eta`]. Compiled value and pointwise paths call it
     /// once per active observation and rely on the caller-owned workspace for
     /// reusable storage.
     fn nll_eta_flat(
@@ -245,7 +245,7 @@ pub trait DynamicallyCompilableFamily: Family {
     /// Computes fused NLL and an in-place flat gradient from flat eta coordinates.
     ///
     /// Runtime-dimensional families must implement this hot-path operation
-    /// without materializing [`Self::Eta`] or [`Self::GradientEta`]. `gradient`
+    /// without materializing [`Family::Eta`] or [`Family::GradientEta`]. `gradient`
     /// uses the same coordinate order as `values` and must be fully overwritten.
     fn nll_and_gradient_eta_flat(
         &self,

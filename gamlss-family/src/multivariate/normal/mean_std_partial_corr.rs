@@ -116,7 +116,7 @@ impl<const D: usize> FixedPartialCorrelations<D> {
     }
 
     #[inline]
-    const fn lower(&self, row: usize, col: usize) -> f64 {
+    pub(in crate::multivariate) const fn lower(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
 }
@@ -688,7 +688,7 @@ impl<const D: usize> MvNormalMeanStdPartialCorrTheta<D> {
     }
 }
 
-fn partial_corr_from_eta<const D: usize>(
+pub(in crate::multivariate) fn partial_corr_from_eta<const D: usize>(
     eta: &FixedPartialCorrelations<D>,
 ) -> FixedPartialCorrelations<D> {
     let mut out = FixedPartialCorrelations::zeros();
@@ -701,7 +701,7 @@ fn partial_corr_from_eta<const D: usize>(
     out
 }
 
-fn stable_partial_corr(eta: f64) -> (f64, f64, f64) {
+pub(in crate::multivariate) fn stable_partial_corr(eta: f64) -> (f64, f64, f64) {
     if !eta.is_finite() {
         return (f64::NAN, f64::NAN, f64::NAN);
     }
@@ -719,7 +719,7 @@ fn stable_partial_corr(eta: f64) -> (f64, f64, f64) {
     (partial_corr, sech, derivative)
 }
 
-fn correlation_cholesky_from_partial<const D: usize>(
+pub(in crate::multivariate) fn correlation_cholesky_from_partial<const D: usize>(
     partial_corr: &FixedPartialCorrelations<D>,
 ) -> FixedLowerTriangular<D> {
     let mut out = FixedLowerTriangular::zeros();
@@ -736,7 +736,7 @@ fn correlation_cholesky_from_partial<const D: usize>(
     out
 }
 
-fn scale_cholesky_from_correlation<const D: usize>(
+pub(in crate::multivariate) fn scale_cholesky_from_correlation<const D: usize>(
     sigma: &[f64; D],
     correlation_cholesky: &FixedLowerTriangular<D>,
 ) -> FixedLowerTriangular<D> {
@@ -750,7 +750,7 @@ fn scale_cholesky_from_correlation<const D: usize>(
     out
 }
 
-fn covariance_from_cholesky<const D: usize>(
+pub(in crate::multivariate) fn covariance_from_cholesky<const D: usize>(
     cholesky: &FixedLowerTriangular<D>,
     row: usize,
     col: usize,
@@ -798,6 +798,35 @@ fn zero_eta<const D: usize>() -> MvNormalMeanStdPartialCorrEta<D> {
     }
 }
 
+/// Pulls a score on the correlation Cholesky factor back through the ordered
+/// partial-correlation construction.
+pub(in crate::multivariate) fn partial_corr_gradient_from_cholesky_score<const D: usize>(
+    eta: &FixedPartialCorrelations<D>,
+    correlation_cholesky: &FixedLowerTriangular<D>,
+    cholesky_score: &[[f64; D]; D],
+) -> FixedPartialCorrelations<D> {
+    let mut gradient = FixedPartialCorrelations::zeros();
+    for row in 1..D {
+        let mut prefixes = [1.0; D];
+        let mut prefix = 1.0;
+        for col in 0..row {
+            prefixes[col] = prefix;
+            prefix *= stable_partial_corr(eta.lower(row, col)).1;
+        }
+        let mut later_adjoint = cholesky_score[row][row] * correlation_cholesky.lower(row, row);
+        for col in (0..row).rev() {
+            let (partial, _, derivative) = stable_partial_corr(eta.lower(row, col));
+            let direct = cholesky_score[row][col] * prefixes[col] * derivative;
+            let log_sech_derivative = if derivative == 0.0 { 0.0 } else { -partial };
+            *gradient
+                .get_mut(row, col)
+                .expect("valid strict-lower index") = direct + log_sech_derivative * later_adjoint;
+            later_adjoint += cholesky_score[row][col] * correlation_cholesky.lower(row, col);
+        }
+    }
+    gradient
+}
+
 fn gradient_from_cholesky_score<const D: usize, MuLink, SigmaLink>(
     eta: &MvNormalMeanStdPartialCorrEta<D>,
     theta: &MvNormalMeanStdPartialCorrTheta<D>,
@@ -826,30 +855,11 @@ where
             + residual_score * SigmaLink::derivative_inverse(eta.sigma[row]);
     }
 
-    for row in 1..D {
-        let mut prefixes = [1.0; D];
-        let mut prefix = 1.0;
-        for k in 0..row {
-            prefixes[k] = prefix;
-            prefix *= stable_partial_corr(eta.partial_corr.lower(row, k)).1;
-        }
-        let mut later_adjoint =
-            correlation_score[row][row] * theta.correlation_cholesky.lower(row, row);
-        for k in (0..row).rev() {
-            let (partial_corr, _, derivative) = stable_partial_corr(eta.partial_corr.lower(row, k));
-            let direct = correlation_score[row][k] * prefixes[k] * derivative;
-            let log_sech_derivative = if derivative == 0.0 {
-                0.0
-            } else {
-                -partial_corr
-            };
-            *gradient
-                .partial_corr
-                .get_mut(row, k)
-                .expect("valid strict-lower index") = direct + log_sech_derivative * later_adjoint;
-            later_adjoint += correlation_score[row][k] * theta.correlation_cholesky.lower(row, k);
-        }
-    }
+    gradient.partial_corr = partial_corr_gradient_from_cholesky_score(
+        &eta.partial_corr,
+        &theta.correlation_cholesky,
+        &correlation_score,
+    );
 
     gradient
 }

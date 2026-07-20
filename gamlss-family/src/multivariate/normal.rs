@@ -15,8 +15,8 @@ pub use mean_std_partial_corr::{
 
 mod dynamic;
 mod fixed;
-pub(crate) mod kernel;
-mod mean_std_partial_corr;
+pub(in crate::multivariate) mod kernel;
+pub(in crate::multivariate) mod mean_std_partial_corr;
 
 /// Generic multivariate normal with a lower-triangular Cholesky scale factor.
 ///
