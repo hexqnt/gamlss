@@ -22,6 +22,8 @@
 * `gamlss-formula` — optional dynamic formula/builder layer, который компилируется в typed models.
 * `gamlss-transform` — target transforms, их persisted state и domain-aware inverse transforms.
 * `gamlss-diagnostics` — post-fit diagnostics extension APIs: PIT/CDF values, quantile residuals, CRPS summaries и будущие helpers для fitted parameters, predictions, worm plots и centile curves.
+* `gamlss-datasets` — встроенные и синтетические наборы данных для примеров и экспериментов.
+* `gamlss-bayes` — байесовские априорные распределения коэффициентов и потенциалы апостериорного распределения.
 
 ## Принципы дизайна
 
