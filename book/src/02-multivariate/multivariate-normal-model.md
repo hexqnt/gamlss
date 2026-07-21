@@ -1,4 +1,4 @@
-# Многомерный отклик и структура зависимости
+# Многомерная нормальная модель
 
 Полный код примера находится в [`examples/simple_multivariate_fit.rs`](https://github.com/hexqnt/gamlss/blob/main/examples/simple_multivariate_fit.rs).
 
