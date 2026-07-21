@@ -11,7 +11,7 @@ use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
 };
 
-use super::{InverseGaussian, InverseGaussianTheta};
+use super::{InverseGaussianKernel, InverseGaussianTheta};
 
 /// Inverse Gaussian distribution with mean $\mu>0$ and coefficient of variation $c>0$.
 ///
@@ -116,7 +116,7 @@ where
     }
 
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        InverseGaussian::<Log, Log>::nll_theta(y, theta.mean_shape())
+        InverseGaussianKernel::nll_theta(y, theta.mean_shape())
     }
 
     fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
@@ -132,7 +132,7 @@ where
     ) -> (f64, Self::GradientEta) {
         let theta = Self::theta_from_eta(*eta);
         let mean_shape = theta.mean_shape();
-        let nll = InverseGaussian::<Log, Log>::nll_theta(y, mean_shape);
+        let nll = InverseGaussianKernel::nll_theta(y, mean_shape);
         if !nll.is_finite() {
             return (nll, InverseGaussianMeanCvEta::from_array([f64::NAN; 2]));
         }
@@ -196,7 +196,7 @@ where
     CvLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().cdf(y, &theta.mean_shape())
+        InverseGaussianKernel::cdf_theta(y, theta.mean_shape())
     }
 }
 
@@ -206,7 +206,7 @@ where
     CvLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().quantile(p, &theta.mean_shape())
+        InverseGaussianKernel::quantile_theta(p, theta.mean_shape())
     }
 }
 
@@ -216,7 +216,7 @@ where
     CvLink: PositiveLink<f64>,
 {
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        InverseGaussian::<Log, Log>::new().crps(y, &theta.mean_shape())
+        InverseGaussianKernel::crps_theta(y, theta.mean_shape())
     }
 }
 
@@ -234,6 +234,6 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
-        InverseGaussian::<Log, Log>::new().try_sample(rng, &theta.mean_shape())
+        InverseGaussianKernel::try_sample(rng, theta.mean_shape())
     }
 }

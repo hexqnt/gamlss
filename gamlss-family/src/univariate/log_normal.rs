@@ -7,6 +7,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
 use crate::constants::HALF_LOG_2_PI;
+use crate::domain::{ScalarObservationDomain, is_positive_finite};
 
 pub use log_location_log_sd::{
     LogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
@@ -38,6 +39,15 @@ mod median_log_sd;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
+}
+
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain
+    for LogNormal<Param, FirstLink, SecondLink>
+{
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
+    }
 }
 
 impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {

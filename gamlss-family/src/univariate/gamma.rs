@@ -9,6 +9,7 @@ use gamlss_special::{
     regularized_gamma_lower, regularized_gamma_upper,
 };
 
+use crate::domain::{ScalarObservationDomain, is_positive_finite};
 use crate::initial::{LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary};
 
 pub use mean_cv::{GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, MeanCv};
@@ -47,6 +48,13 @@ pub struct Gamma<Param = ShapeRate, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain for Gamma<Param, FirstLink, SecondLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
+    }
+}
+
 impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     /// Creates a stateless gamma family.
     #[inline]
@@ -56,15 +64,21 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
             marker: PhantomData,
         }
     }
+}
 
+/// Link- and parameterization-independent shape/rate gamma kernel.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct GammaKernel;
+
+impl GammaKernel {
     #[inline]
-    fn valid_shape_rate(theta: GammaShapeRateTheta) -> bool {
+    pub(super) fn valid_shape_rate(theta: GammaShapeRateTheta) -> bool {
         theta.shape > 0.0 && theta.shape.is_finite() && theta.rate > 0.0 && theta.rate.is_finite()
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn nll_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
+    pub(super) fn nll_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::INFINITY;
         }
@@ -75,7 +89,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
-    fn gradient_shape_rate(y: f64, theta: GammaShapeRateTheta) -> (f64, f64) {
+    pub(super) fn gradient_shape_rate(y: f64, theta: GammaShapeRateTheta) -> (f64, f64) {
         (
             digamma_minus_ln(theta.shape) - Self::log_rate_y_over_shape(y, theta),
             y - theta.shape / theta.rate,
@@ -110,7 +124,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
-    fn cdf_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
+    pub(super) fn cdf_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::NAN;
         }
@@ -122,7 +136,7 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     }
 
     #[inline]
-    fn quantile_shape_rate(p: f64, theta: GammaShapeRateTheta) -> f64 {
+    pub(super) fn quantile_shape_rate(p: f64, theta: GammaShapeRateTheta) -> f64 {
         if !Self::valid_shape_rate(theta) {
             return f64::NAN;
         }
@@ -186,7 +200,7 @@ macro_rules! impl_gamma_helpers {
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
             fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-                Self::cdf_shape_rate(y, (*theta).into())
+                GammaKernel::cdf_shape_rate(y, (*theta).into())
             }
         }
 
@@ -196,7 +210,7 @@ macro_rules! impl_gamma_helpers {
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
             fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-                Self::quantile_shape_rate(p, (*theta).into())
+                GammaKernel::quantile_shape_rate(p, (*theta).into())
             }
         }
 
@@ -206,7 +220,7 @@ macro_rules! impl_gamma_helpers {
             <Gamma<$param, $first, $second> as Family>::Theta: Copy + Into<GammaShapeRateTheta>,
         {
             fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-                Self::crps_shape_rate(y, (*theta).into())
+                GammaKernel::crps_shape_rate(y, (*theta).into())
             }
         }
 
@@ -225,7 +239,7 @@ macro_rules! impl_gamma_helpers {
                 theta: &Self::Theta,
             ) -> Result<f64, SimulationError> {
                 let theta = (*theta).into();
-                if !Self::valid_shape_rate(theta) {
+                if !GammaKernel::valid_shape_rate(theta) {
                     return Err(SimulationError::InvalidParameters("Gamma theta"));
                 }
 

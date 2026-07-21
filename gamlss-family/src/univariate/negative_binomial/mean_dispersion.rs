@@ -11,7 +11,7 @@ use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 
-use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
+use super::{MAX_CDF_TERMS, NegativeBinomialKernel, NegativeBinomialTheta};
 
 /// Negative binomial distribution parameterized by mean $\mu>0$ and dispersion $\phi>0$.
 ///
@@ -124,7 +124,7 @@ where
     }
 
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        NegativeBinomial::<Log, Log>::nll_theta(y, theta.mean_size())
+        NegativeBinomialKernel::nll_theta(y, theta.mean_size())
     }
 
     fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
@@ -140,7 +140,7 @@ where
     ) -> (f64, Self::GradientEta) {
         let theta = Self::theta_from_eta(*eta);
         let mean_size = theta.mean_size();
-        let nll = NegativeBinomial::<Log, Log>::nll_theta(y, mean_size);
+        let nll = NegativeBinomialKernel::nll_theta(y, mean_size);
         if !nll.is_finite() {
             return (
                 nll,
@@ -148,7 +148,7 @@ where
             );
         }
 
-        let gradient_theta = NegativeBinomial::<Log, Log>::gradient_theta(y, mean_size);
+        let gradient_theta = NegativeBinomialKernel::gradient_theta(y, mean_size);
         let d_dispersion = gradient_theta.shape * (-1.0 / (theta.dispersion * theta.dispersion));
 
         (
@@ -193,7 +193,7 @@ where
     DispersionLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        NegativeBinomial::<Log, Log>::cdf_theta(y, theta.mean_size())
+        NegativeBinomialKernel::cdf_theta(y, theta.mean_size())
     }
 }
 
@@ -214,7 +214,7 @@ where
 
         #[allow(clippy::cast_precision_loss)]
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            NegativeBinomial::<Log, Log>::cdf_theta(count as f64, theta)
+            NegativeBinomialKernel::cdf_theta(count as f64, theta)
         })
     }
 }
@@ -234,6 +234,6 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
-        NegativeBinomial::<Log, Log>::new().try_sample(rng, &theta.mean_size())
+        NegativeBinomialKernel::try_sample(rng, theta.mean_size())
     }
 }

@@ -67,7 +67,13 @@ where
             marker: PhantomData,
         }
     }
+}
 
+/// Link-independent mean/size kernel shared by negative-binomial parameterizations.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct NegativeBinomialKernel;
+
+impl NegativeBinomialKernel {
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     pub(super) fn nll_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
@@ -218,6 +224,34 @@ where
         }
 
         log_sum.exp().clamp(0.0, 1.0)
+    }
+
+    #[cfg(feature = "rand")]
+    pub(super) fn try_sample<Rng>(
+        rng: &mut Rng,
+        theta: NegativeBinomialTheta,
+    ) -> Result<f64, gamlss_core::SimulationError>
+    where
+        Rng: rand::Rng,
+    {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return Err(gamlss_core::SimulationError::InvalidParameters(
+                "Negative binomial theta",
+            ));
+        }
+
+        let mixing = rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape).map_err(|_| {
+            gamlss_core::SimulationError::BackendRejected("Negative binomial gamma mixture")
+        })?;
+        let lambda = rand_distr::Distribution::sample(&mixing, rng);
+        let count = rand_distr::Poisson::new(lambda).map_err(|_| {
+            gamlss_core::SimulationError::BackendRejected("Negative binomial Poisson mean")
+        })?;
+        Ok(rand_distr::Distribution::sample(&count, rng))
     }
 }
 

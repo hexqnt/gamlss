@@ -6,14 +6,13 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use gamlss_special::{discrete_quantile, is_nonnegative_integer};
+use gamlss_special::is_nonnegative_integer;
 
-use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{
     LARGE_SHAPE, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
 
-use super::{MAX_CDF_TERMS, Zinb, ZinbComponentMeanSizeZeroProbabilityTheta};
+use super::{Zinb, ZinbComponentMeanSizeZeroProbabilityTheta, ZinbKernel};
 
 /// ZINB distribution parameterized by component mean $\mu$, size $r$, and structural-zero probability $\pi$.
 ///
@@ -75,14 +74,14 @@ where
         eta: ZinbComponentMeanSizeZeroProbabilityEta,
     ) -> (f64, ZinbComponentMeanSizeZeroProbabilityEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let nll = ZinbKernel::nll_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
                 ZinbComponentMeanSizeZeroProbabilityEta::from_array([f64::NAN; 3]),
             );
         }
-        let gradient = Self::gradient_component_theta(y, theta);
+        let gradient = ZinbKernel::gradient_component_theta(y, theta);
         (
             nll,
             ZinbComponentMeanSizeZeroProbabilityEta {
@@ -122,11 +121,11 @@ where
     }
 
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        ZinbKernel::nll_theta(y, *theta)
     }
 
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        ZinbKernel::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     fn nll_and_gradient_eta(
@@ -190,7 +189,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, *theta)
+        ZinbKernel::cdf_theta(y, *theta)
     }
 }
 
@@ -202,17 +201,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if !is_positive_finite(theta.component_mean)
-            || !is_positive_finite(theta.size)
-            || !is_strict_probability(theta.zero_probability)
-        {
-            return f64::NAN;
-        }
-
-        #[allow(clippy::cast_precision_loss)]
-        discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, *theta)
-        })
+        ZinbKernel::quantile_theta(p, *theta)
     }
 }
 
@@ -228,7 +217,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        Self::try_sample_component_theta(rng, *theta)
+        ZinbKernel::try_sample_component_theta(rng, *theta)
     }
 }
 

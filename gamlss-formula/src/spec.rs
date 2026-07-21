@@ -9,7 +9,7 @@ use gamlss_family::{
 use crate::{
     BuiltModel, Col, DataView, FormulaError, FormulaPenalty, ModelSchema, NumericResponse,
     PredictionDesign, ResponseSchema, TermExpr,
-    compile::{ResponseDomain, fit_terms, predictor_from_fitted_terms, required_response},
+    compile::{fit_terms, predictor_from_fitted_terms, required_response},
     penalty::prediction_penalty,
     predictor::FormulaPredictorBlock,
     schema::terms_for,
@@ -62,7 +62,7 @@ macro_rules! define_spec {
     (
         $(#[$meta:meta])*
         $spec:ident, $built:ident, $compiled:ident, $blocks:ident, $family:ty;
-        family_name = $family_name:literal, domain = $domain:expr;
+        family_name = $family_name:literal;
         first = $first_field:ident, $first_method:ident, $first_name:literal, $first_param:ty;
         second = $second_field:ident, $second_method:ident, $second_name:literal, $second_param:ty
     ) => {
@@ -137,9 +137,10 @@ macro_rules! define_spec {
                     return Err(FormulaError::DuplicateParameter(parameter));
                 }
 
+                let family = <$family>::new();
                 let (response_col, response) = required_response(
                     $family_name,
-                    $domain,
+                    &family,
                     data,
                     &self.response,
                     &self.weights,
@@ -159,7 +160,7 @@ macro_rules! define_spec {
                 );
                 let blocks: $blocks = ParameterBlocks::try_new((first, second))?;
                 let model: $compiled<'a> =
-                    Gamlss::try_new_with_observations(<$family>::new(), blocks, response)?;
+                    Gamlss::try_new_with_observations(family, blocks, response)?;
                 let layout = model.parameter_layout();
                 let schema = ModelSchema {
                     response: ResponseSchema {
@@ -260,7 +261,7 @@ macro_rules! define_spec {
 define_spec!(
     /// Typed normal model specification.
     NormalSpec, BuiltNormal, CompiledNormal, NormalBlocks, NormalMuSigma;
-    family_name = "normal", domain = ResponseDomain::Finite;
+    family_name = "normal";
     first = mu_terms, mu, "mu", Mu;
     second = sigma_terms, sigma, "sigma", Sigma
 );
@@ -268,7 +269,7 @@ define_spec!(
 define_spec!(
     /// Typed gamma model specification.
     GammaSpec, BuiltGamma, CompiledGamma, GammaBlocks, GammaMeanCv;
-    family_name = "gamma", domain = ResponseDomain::Positive;
+    family_name = "gamma";
     first = mean_terms, mean, "mean", Mean;
     second = cv_terms, cv, "cv", Cv
 );
@@ -276,7 +277,7 @@ define_spec!(
 define_spec!(
     /// Typed log-normal model specification.
     LogNormalSpec, BuiltLogNormal, CompiledLogNormal, LogNormalBlocks, LogNormalMeanLogSd;
-    family_name = "log-normal", domain = ResponseDomain::Positive;
+    family_name = "log-normal";
     first = mean_terms, mean, "mean", Mean;
     second = log_sd_terms, log_sd, "log_sd", LogSd
 );
@@ -284,7 +285,7 @@ define_spec!(
 define_spec!(
     /// Typed Weibull model specification.
     WeibullSpec, BuiltWeibull, CompiledWeibull, WeibullBlocks, WeibullMeanShape;
-    family_name = "weibull", domain = ResponseDomain::Positive;
+    family_name = "weibull";
     first = mean_terms, mean, "mean", Mean;
     second = shape_terms, shape, "shape", Shape
 );
@@ -292,7 +293,7 @@ define_spec!(
 define_spec!(
     /// Typed inverse Gaussian model specification.
     InverseGaussianSpec, BuiltInverseGaussian, CompiledInverseGaussian, InverseGaussianBlocks, InverseGaussianMuShape;
-    family_name = "inverse Gaussian", domain = ResponseDomain::Positive;
+    family_name = "inverse Gaussian";
     first = mu_terms, mu, "mu", Mu;
     second = shape_terms, shape, "shape", Shape
 );
@@ -300,7 +301,7 @@ define_spec!(
 define_spec!(
     /// Typed beta model specification.
     BetaSpec, BuiltBeta, CompiledBeta, BetaBlocks, BetaMeanPrecision;
-    family_name = "beta", domain = ResponseDomain::Unit;
+    family_name = "beta";
     first = mu_terms, mu, "mu", Mu;
     second = precision_terms, precision, "precision", Precision
 );

@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use gamlss_special::{is_nonnegative_integer, log_add_exp};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer, log_add_exp};
 
-use super::negative_binomial::{NegativeBinomial, NegativeBinomialTheta};
+use super::negative_binomial::{NegativeBinomialKernel, NegativeBinomialTheta};
 
 pub use component_mean_size_zero_probability::{
     ZinbComponentMeanSizeZeroProbability, ZinbComponentMeanSizeZeroProbabilityEta,
@@ -63,11 +63,17 @@ where
             marker: PhantomData,
         }
     }
+}
 
+/// Link-independent zero-inflated negative-binomial kernel.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ZinbKernel;
+
+impl ZinbKernel {
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nb_log_pmf(y: f64, component_mean: f64, size: f64) -> f64 {
-        -NegativeBinomial::<Log, Log>::nll_theta(
+        -NegativeBinomialKernel::nll_theta(
             y,
             NegativeBinomialTheta {
                 mu: component_mean,
@@ -105,7 +111,7 @@ where
         y: f64,
         theta: ZinbComponentMeanSizeZeroProbabilityTheta,
     ) -> ZinbComponentMeanSizeZeroProbabilityTheta {
-        let gradient = NegativeBinomial::<Log, Log>::gradient_theta(
+        let gradient = NegativeBinomialKernel::gradient_theta(
             y,
             NegativeBinomialTheta {
                 mu: theta.component_mean,
@@ -148,7 +154,7 @@ where
             return 0.0;
         }
 
-        let base_cdf = NegativeBinomial::<Log, Log>::cdf_theta(
+        let base_cdf = NegativeBinomialKernel::cdf_theta(
             y,
             NegativeBinomialTheta {
                 mu: theta.component_mean,
@@ -158,6 +164,24 @@ where
         (1.0 - theta.zero_probability)
             .mul_add(base_cdf, theta.zero_probability)
             .clamp(0.0, 1.0)
+    }
+
+    pub(super) fn quantile_theta(p: f64, theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> f64 {
+        if theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.size <= 0.0
+            || !theta.size.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        #[allow(clippy::cast_precision_loss)]
+        discrete_quantile(p, MAX_CDF_TERMS, |count| {
+            Self::cdf_theta(count as f64, theta)
+        })
     }
 
     #[cfg(feature = "rand")]

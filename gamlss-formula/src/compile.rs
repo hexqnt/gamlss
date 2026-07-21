@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use gamlss_core::{DenseDesign, ModelError};
+use gamlss_family::ScalarObservationDomain;
 use gamlss_spline::{
     CyclicSplineSpec, FourierDesign, ISplineBasis, MonotoneISplineDesign, OpenUniformSplineBasis,
     SplineRowBasis, TensorSplineDesign,
@@ -12,13 +13,6 @@ use crate::{
     BoolCol, CatCol, Col, DataView, FittedTerm, FormulaError, FormulaPenalty, NumericCol,
     NumericResponse, ParameterTerms, TermExpr, TermSpec,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum ResponseDomain {
-    Finite,
-    Positive,
-    Unit,
-}
 
 #[derive(Debug)]
 enum PreparedDenseTerm<'a> {
@@ -209,22 +203,20 @@ fn validate_weights(name: &str, values: &[f64]) -> Result<(), FormulaError> {
     Ok(())
 }
 
-fn validate_response_domain(
-    family: &'static str,
-    domain: ResponseDomain,
+fn validate_response_domain<F>(
+    family_name: &'static str,
+    family: &F,
     name: &str,
     values: &[f64],
-) -> Result<(), FormulaError> {
+) -> Result<(), FormulaError>
+where
+    F: ScalarObservationDomain + ?Sized,
+{
     for (row, value) in values.iter().copied().enumerate() {
-        let valid = match domain {
-            ResponseDomain::Finite => value.is_finite(),
-            ResponseDomain::Positive => value.is_finite() && value > 0.0,
-            ResponseDomain::Unit => value.is_finite() && value > 0.0 && value < 1.0,
-        };
-        if !valid {
+        if !family.observation_in_domain(value) {
             return Err(FormulaError::InvalidResponseDomain {
                 name: name.to_owned(),
-                family,
+                family: family_name,
                 row,
             });
         }
@@ -233,20 +225,21 @@ fn validate_response_domain(
 }
 
 #[allow(clippy::ref_option)]
-pub fn required_response<'a, D>(
-    family: &'static str,
-    domain: ResponseDomain,
+pub fn required_response<'a, D, F>(
+    family_name: &'static str,
+    family: &F,
     data: &'a D,
     response: &Option<Col<f64>>,
     weights: &Option<Col<f64>>,
 ) -> Result<(Col<f64>, NumericResponse<'a>), FormulaError>
 where
     D: DataView + ?Sized,
+    F: ScalarObservationDomain + ?Sized,
 {
     let col = response.clone().ok_or(FormulaError::MissingResponse)?;
     let values = data.f64_col(&col)?;
     validate_col_len(col.name(), values.as_slice(), data.nrows())?;
-    validate_response_domain(family, domain, col.name(), values.as_slice())?;
+    validate_response_domain(family_name, family, col.name(), values.as_slice())?;
 
     let Some(weight_col) = weights else {
         return Ok((col, values.into_response()));

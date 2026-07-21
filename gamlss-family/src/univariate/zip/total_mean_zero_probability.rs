@@ -5,14 +5,11 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use gamlss_special::{discrete_quantile, is_nonnegative_integer};
+use gamlss_special::is_nonnegative_integer;
 
-use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
 
-#[cfg(feature = "rand")]
-use super::ComponentMeanZeroProbability;
-use super::{MAX_CDF_TERMS, Zip, ZipComponentMeanZeroProbabilityTheta};
+use super::{Zip, ZipComponentMeanZeroProbabilityTheta, ZipKernel};
 
 /// ZIP distribution parameterized by unconditional mean $m>0$ and structural-zero probability $\pi\in(0,1)$.
 ///
@@ -124,11 +121,11 @@ where
     }
 
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, theta.component())
+        ZipKernel::nll_theta(y, theta.component())
     }
 
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta).component())
+        ZipKernel::nll_theta(y, Self::theta_from_eta(*eta).component())
     }
 
     fn nll_and_gradient_eta(
@@ -139,14 +136,14 @@ where
     ) -> (f64, Self::GradientEta) {
         let theta = Self::theta_from_eta(*eta);
         let component = theta.component();
-        let nll = Self::nll_theta(y, component);
+        let nll = ZipKernel::nll_theta(y, component);
         if !nll.is_finite() {
             return (
                 nll,
                 ZipTotalMeanZeroProbabilityEta::from_array([f64::NAN; 2]),
             );
         }
-        let component_gradient = Self::gradient_component_theta(y, component);
+        let component_gradient = ZipKernel::gradient_component_theta(y, component);
         let one_minus_zero = 1.0 - theta.zero_probability;
         let d_total_mean = component_gradient.component_mean / one_minus_zero;
         let d_zero_probability = component_gradient.component_mean * theta.total_mean
@@ -203,7 +200,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, theta.component())
+        ZipKernel::cdf_theta(y, theta.component())
     }
 }
 
@@ -214,17 +211,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        let theta = theta.component();
-        if !is_positive_finite(theta.component_mean)
-            || !is_strict_probability(theta.zero_probability)
-        {
-            return f64::NAN;
-        }
-
-        #[allow(clippy::cast_precision_loss)]
-        discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, theta)
-        })
+        ZipKernel::quantile_theta(p, theta.component())
     }
 }
 
@@ -239,10 +226,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        Zip::<ComponentMeanZeroProbability, Log, Logit>::try_sample_component_theta(
-            rng,
-            theta.component(),
-        )
+        ZipKernel::try_sample_component_theta(rng, theta.component())
     }
 }
 

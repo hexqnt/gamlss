@@ -12,6 +12,7 @@ use gamlss_special::{
     ln_gamma_stirling_residual, regularized_beta, regularized_beta_complement,
 };
 
+use crate::domain::{ScalarObservationDomain, is_strict_probability};
 use crate::initial::{
     VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary, weighted_values,
 };
@@ -69,6 +70,13 @@ pub type BetaMeanPrecision = Beta<Logit, Log>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,
+}
+
+impl<MuLink, PrecisionLink> ScalarObservationDomain for Beta<MuLink, PrecisionLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_strict_probability(observation)
+    }
 }
 
 impl<MuLink, PrecisionLink> Beta<MuLink, PrecisionLink>

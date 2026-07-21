@@ -18,10 +18,7 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{included_count, is_nonnegative_integer, ln_gamma, log_add_exp};
 
-use crate::{
-    initial::positive_floor,
-    univariate::{Poisson, PoissonTheta},
-};
+use crate::{initial::positive_floor, univariate::poisson::PoissonKernel};
 
 /// Default-link common-shock multivariate Poisson family.
 pub type MvPoissonCommonShockDefault<const D: usize> = MvPoissonCommonShock<D, Log, Log>;
@@ -290,7 +287,7 @@ where
         if !valid_theta(theta) {
             return f64::NAN;
         }
-        Poisson::<Log>::cdf_theta(y, PoissonTheta { mu: mean })
+        PoissonKernel::cdf(y, mean)
     }
 }
 

@@ -12,7 +12,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 
 use crate::constants::{HALF_LOG_2_PI, INV_SQRT_2_PI, INV_SQRT_PI};
-use crate::domain::is_finite_location_scale;
+use crate::domain::{ScalarObservationDomain, is_finite_location_scale};
 use crate::initial::{robust_location_scale, weighted_values};
 
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
@@ -61,6 +61,13 @@ pub type NormalGamlss<'a, XMu, XSigma, PMu = NoPenalty, PSigma = NoPenalty> = Ga
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
+}
+
+impl<MuLink, SigmaLink> ScalarObservationDomain for Normal<MuLink, SigmaLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        observation.is_finite()
+    }
 }
 
 impl<MuLink, SigmaLink> Normal<MuLink, SigmaLink>

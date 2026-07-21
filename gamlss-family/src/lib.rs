@@ -87,6 +87,7 @@ pub use univariate::{
     ZipTotalMeanZeroProbabilityEta, ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
 };
 
+pub use domain::ScalarObservationDomain;
 pub use mixture::{
     FactorizedComponentGradient, Mixture, MixtureEta, MixtureGradient, MixtureTheta,
     MixtureWorkspace,

@@ -6,7 +6,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{ln_gamma, regularized_gamma_lower};
 
-use crate::domain::{is_positive_finite, is_probability};
+use crate::domain::{ScalarObservationDomain, is_positive_finite, is_probability};
 use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary};
 
 pub use mean_shape::{MeanShape, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta};
@@ -44,6 +44,15 @@ const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
+}
+
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain
+    for Weibull<Param, FirstLink, SecondLink>
+{
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
+    }
 }
 
 impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {

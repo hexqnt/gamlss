@@ -3,7 +3,7 @@ use gamlss_core::{
     ParameterParts, PositiveLink, Shape,
 };
 
-use super::{Gamma, GammaShapeRateTheta};
+use super::{Gamma, GammaKernel, GammaShapeRateTheta};
 
 /// Gamma distribution parameterized by mean $\mu>0$ and shape $\alpha>0$.
 ///
@@ -70,12 +70,12 @@ where
     fn nll_and_gradient_eta_values(y: f64, eta: GammaMeanShapeEta) -> (f64, GammaMeanShapeEta) {
         let theta = Self::theta_from_eta(eta);
         let shape_rate = theta.shape_rate();
-        let nll = Self::nll_shape_rate(y, shape_rate);
+        let nll = GammaKernel::nll_shape_rate(y, shape_rate);
         if !nll.is_finite() {
             return (nll, GammaMeanShapeEta::from_array([f64::NAN; 2]));
         }
 
-        let (d_shape, d_rate) = Self::gradient_shape_rate(y, shape_rate);
+        let (d_shape, d_rate) = GammaKernel::gradient_shape_rate(y, shape_rate);
         let d_mean = d_rate * (-theta.shape / (theta.mean * theta.mean));
         let d_shape_param = d_shape + d_rate / theta.mean;
 
@@ -119,12 +119,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_shape_rate(y, theta.shape_rate())
+        GammaKernel::nll_shape_rate(y, theta.shape_rate())
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_shape_rate(y, Self::theta_from_eta(*eta).shape_rate())
+        GammaKernel::nll_shape_rate(y, Self::theta_from_eta(*eta).shape_rate())
     }
 
     #[inline]
@@ -147,7 +147,7 @@ where
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {
-        let Some((mean, shape)) = Self::initial_mean_shape(obs) else {
+        let Some((mean, shape)) = GammaKernel::initial_mean_shape(obs) else {
             return GammaMeanShapeEta::from_array([0.0, 0.0]);
         };
 

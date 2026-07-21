@@ -61,7 +61,13 @@ where
             power: 1.0 + PowerLink::inverse(eta.power),
         }
     }
+}
 
+/// Link- and parameterization-independent Tweedie kernel.
+#[derive(Debug, Clone, Copy)]
+struct TweedieKernel;
+
+impl TweedieKernel {
     #[inline]
     fn compound(theta: TweedieTheta) -> Option<CompoundParams> {
         if theta.mean <= 0.0
@@ -335,10 +341,17 @@ where
             Err(SimulationError::NumericalFailure("Tweedie gamma sample"))
         }
     }
+}
 
+impl<MeanLink, DispersionLink, PowerLink> Tweedie<MeanLink, DispersionLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
-        let (nll, gradient) = Self::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
+        let (nll, gradient) = TweedieKernel::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
         if !nll.is_finite() {
             return (nll, TweedieEta::from_array([f64::NAN; 3]));
         }
@@ -393,12 +406,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        TweedieKernel::nll_theta(y, *theta)
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        TweedieKernel::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
@@ -446,7 +459,7 @@ where
     PowerLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, *theta)
+        TweedieKernel::cdf_theta(y, *theta)
     }
 }
 
@@ -458,7 +471,7 @@ where
     PowerLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        Self::quantile_theta(p, *theta)
+        TweedieKernel::quantile_theta(p, *theta)
     }
 }
 
@@ -474,7 +487,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        Self::try_sample_theta(rng, *theta)
+        TweedieKernel::try_sample_theta(rng, *theta)
     }
 }
 
@@ -626,8 +639,7 @@ where
     ) -> (f64, TweedieMeanCvPowerEta) {
         let theta = Self::theta_from_eta(eta);
         let dispersion_theta: TweedieTheta = theta.into();
-        let (nll, dispersion_gradient) =
-            Tweedie::<Log, Log, Logit>::nll_and_gradient_theta(y, dispersion_theta);
+        let (nll, dispersion_gradient) = TweedieKernel::nll_and_gradient_theta(y, dispersion_theta);
         if !nll.is_finite() {
             return (nll, TweedieMeanCvPowerEta::from_array([f64::NAN; 3]));
         }
@@ -688,12 +700,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Tweedie::<Log, Log, Logit>::nll_theta(y, (*theta).into())
+        TweedieKernel::nll_theta(y, (*theta).into())
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Tweedie::<Log, Log, Logit>::nll_theta(y, Self::theta_from_eta(*eta).into())
+        TweedieKernel::nll_theta(y, Self::theta_from_eta(*eta).into())
     }
 
     #[inline]
@@ -741,7 +753,7 @@ where
     PowerLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::cdf_theta(y, (*theta).into())
+        TweedieKernel::cdf_theta(y, (*theta).into())
     }
 }
 
@@ -752,7 +764,7 @@ where
     PowerLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        Tweedie::<Log, Log, Logit>::quantile_theta(p, (*theta).into())
+        TweedieKernel::quantile_theta(p, (*theta).into())
     }
 }
 
@@ -767,7 +779,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        Tweedie::<Log, Log, Logit>::try_sample_theta(rng, (*theta).into())
+        TweedieKernel::try_sample_theta(rng, (*theta).into())
     }
 }
 

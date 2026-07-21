@@ -44,29 +44,18 @@ pub struct Poisson<MuLink = Log> {
     marker: PhantomData<MuLink>,
 }
 
-impl<MuLink> Poisson<MuLink>
-where
-    MuLink: PositiveLink<f64>,
-{
-    /// Creates a stateless Poisson family.
-    #[inline]
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
+/// Link-independent Poisson likelihood kernel shared by Poisson-based families.
+///
+/// Keeping the distribution mathematics outside [`Poisson`] prevents
+/// composition layers from selecting an arbitrary link type merely to call a
+/// natural-scale operation. The zero-sized carrier is compile-time only.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PoissonKernel;
 
-    #[inline]
-    fn theta_from_eta(eta: PoissonEta) -> PoissonTheta {
-        PoissonTheta {
-            mu: MuLink::inverse(eta.mu),
-        }
-    }
-
+impl PoissonKernel {
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn nll_theta(y: f64, theta: PoissonTheta) -> f64 {
+    fn nll(y: f64, theta: PoissonTheta) -> f64 {
         if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
             return f64::INFINITY;
         }
@@ -75,24 +64,18 @@ where
     }
 
     #[inline]
-    fn nll_and_gradient_eta_values(y: f64, eta: PoissonEta) -> (f64, PoissonEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
-        if !nll.is_finite() {
-            return (nll, PoissonEta { mu: f64::NAN });
+    #[allow(clippy::suboptimal_flops)]
+    pub(crate) fn log_pmf(y: f64, mu: f64) -> f64 {
+        if !is_nonnegative_integer(y) || mu <= 0.0 || !mu.is_finite() {
+            return f64::NEG_INFINITY;
         }
 
-        let d_mu = 1.0 - y / theta.mu;
-        let gradient_eta = PoissonEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-        };
-
-        (nll, gradient_eta)
+        y.mul_add(mu.ln(), -mu) - ln_gamma(y + 1.0)
     }
 
     #[inline]
-    pub(crate) fn cdf_theta(y: f64, theta: PoissonTheta) -> f64 {
-        if !y.is_finite() || theta.mu <= 0.0 || !theta.mu.is_finite() {
+    pub(crate) fn cdf(y: f64, mu: f64) -> f64 {
+        if !y.is_finite() || mu <= 0.0 || !mu.is_finite() {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -102,12 +85,12 @@ where
         let Some(max_count) = included_count(y, MAX_CDF_TERMS) else {
             return f64::NAN;
         };
-        let term = (-theta.mu).exp();
+        let term = (-mu).exp();
         if term.is_finite() && term > 0.0 {
-            return Self::cdf_by_recurrence(theta.mu, max_count, term);
+            return Self::cdf_by_recurrence(mu, max_count, term);
         }
 
-        Self::cdf_by_log_sum(theta.mu, max_count)
+        Self::cdf_by_log_sum(mu, max_count)
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -139,12 +122,12 @@ where
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn pmf_theta(y: f64, theta: PoissonTheta) -> f64 {
-        if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
+    fn pmf(y: f64, mu: f64) -> f64 {
+        if !is_nonnegative_integer(y) || mu <= 0.0 || !mu.is_finite() {
             return f64::NAN;
         }
 
-        (-theta.mu + y * theta.mu.ln() - ln_gamma(y + 1.0)).exp()
+        Self::log_pmf(y, mu).exp()
     }
 
     #[inline]
@@ -203,6 +186,43 @@ where
     }
 }
 
+impl<MuLink> Poisson<MuLink>
+where
+    MuLink: PositiveLink<f64>,
+{
+    /// Creates a stateless Poisson family.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: PoissonEta) -> PoissonTheta {
+        PoissonTheta {
+            mu: MuLink::inverse(eta.mu),
+        }
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(y: f64, eta: PoissonEta) -> (f64, PoissonEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = PoissonKernel::nll(y, theta);
+        if !nll.is_finite() {
+            return (nll, PoissonEta { mu: f64::NAN });
+        }
+
+        let d_mu = 1.0 - y / theta.mu;
+        let gradient_eta = PoissonEta {
+            mu: d_mu * MuLink::derivative_inverse(eta.mu),
+        };
+
+        (nll, gradient_eta)
+    }
+}
+
 impl<MuLink> Default for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
@@ -237,12 +257,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        PoissonKernel::nll(y, *theta)
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        PoissonKernel::nll(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
@@ -280,7 +300,7 @@ where
     MuLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, *theta)
+        PoissonKernel::cdf(y, theta.mu)
     }
 }
 
@@ -295,7 +315,7 @@ where
         }
 
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, *theta)
+            PoissonKernel::cdf(count as f64, theta.mu)
         })
     }
 }
@@ -310,9 +330,9 @@ where
             return f64::NAN;
         }
 
-        let cdf = Self::cdf_theta(y, *theta);
-        let pmf = Self::pmf_theta(y, *theta);
-        let half_gini = Self::half_gini_mean_difference(theta.mu);
+        let cdf = PoissonKernel::cdf(y, theta.mu);
+        let pmf = PoissonKernel::pmf(y, theta.mu);
+        let half_gini = PoissonKernel::half_gini_mean_difference(theta.mu);
         if !cdf.is_finite() || !pmf.is_finite() || !half_gini.is_finite() {
             return f64::NAN;
         }

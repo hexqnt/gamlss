@@ -5,15 +5,11 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use gamlss_special::{
-    integrate_finite, invert_positive_cdf, unit_normal_cdf, unit_normal_log_sf, unit_normal_sf,
-};
-
 use crate::initial::{
     LARGE_SHAPE, VARIANCE_FLOOR, positive_floor, weighted_summary, weighted_values,
 };
 
-use super::InverseGaussian;
+use super::{InverseGaussian, InverseGaussianKernel};
 
 /// Inverse Gaussian distribution with mean $\mu>0$ and shape $\lambda>0$.
 ///
@@ -54,7 +50,7 @@ where
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: InverseGaussianEta) -> (f64, InverseGaussianEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let nll = InverseGaussianKernel::nll_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
@@ -100,12 +96,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        InverseGaussianKernel::nll_theta(y, *theta)
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        InverseGaussianKernel::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
@@ -154,26 +150,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return f64::NAN;
-        }
-        if y <= 0.0 {
-            return 0.0;
-        }
-
-        let scale = (theta.shape / y).sqrt();
-        let ratio = y / theta.mu;
-        let first_argument = scale * (ratio - 1.0);
-        let first = unit_normal_cdf(first_argument);
-        let log_multiplier = 2.0 * theta.shape / theta.mu;
-        let second = (log_multiplier + unit_normal_log_sf(scale * (ratio + 1.0))).exp();
-
-        (first + second).clamp(0.0, 1.0)
+        InverseGaussianKernel::cdf_theta(y, *theta)
     }
 }
 
@@ -183,15 +160,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return f64::NAN;
-        }
-
-        invert_positive_cdf(p, |y| self.cdf(y, theta))
+        InverseGaussianKernel::quantile_theta(p, *theta)
     }
 }
 
@@ -201,38 +170,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if y < 0.0
-            || !y.is_finite()
-            || theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return f64::NAN;
-        }
-
-        let left = integrate_finite(0.0, y, |x| {
-            let cdf = self.cdf(x, theta);
-            cdf * cdf
-        });
-        let right = integrate_finite(0.0, 1.0, |u| {
-            #[allow(clippy::float_cmp)]
-            if u == 1.0 {
-                return 0.0;
-            }
-
-            let one_minus_u = 1.0 - u;
-            let x = y + u / one_minus_u;
-            let scale = (theta.shape / x).sqrt();
-            let ratio = x / theta.mu;
-            let first_survival = unit_normal_sf(scale * (ratio - 1.0));
-            let second =
-                (2.0 * theta.shape / theta.mu + unit_normal_log_sf(scale * (ratio + 1.0))).exp();
-            let survival = (first_survival - second).max(0.0);
-            survival * survival / (one_minus_u * one_minus_u)
-        });
-
-        left + right
+        InverseGaussianKernel::crps_theta(y, *theta)
     }
 }
 
@@ -246,19 +184,6 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return Err(SimulationError::InvalidParameters("Inverse Gaussian theta"));
-        }
-
-        let distribution = rand_distr::InverseGaussian::new(theta.mu, theta.shape)
-            .map_err(|_| SimulationError::BackendRejected("Inverse Gaussian mean/shape"))?;
-        crate::simulation::ensure_finite(
-            rand_distr::Distribution::sample(&distribution, rng),
-            "Inverse Gaussian sample",
-        )
+        InverseGaussianKernel::try_sample(rng, *theta)
     }
 }

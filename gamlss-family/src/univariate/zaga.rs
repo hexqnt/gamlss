@@ -2,8 +2,6 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
-use gamlss_special::{digamma, ln_gamma, regularized_gamma_lower};
-
 pub use component_mean_cv_zero_probability::{
     ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
 };
@@ -14,6 +12,8 @@ pub use total_mean_cv::{
 
 mod component_mean_cv_zero_probability;
 mod total_mean_cv;
+
+use super::gamma::{GammaKernel, GammaShapeRateTheta};
 
 /// Zero-adjusted gamma family.
 ///
@@ -62,18 +62,18 @@ where
             marker: PhantomData,
         }
     }
+}
 
+/// Link-independent zero-adjusted gamma kernel shared by its parameterizations.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ZagaKernel;
+
+impl ZagaKernel {
     #[inline]
-    fn gamma_shape_rate(theta: ZagaComponentMeanCvZeroProbabilityTheta) -> (f64, f64) {
+    fn gamma_shape_rate(theta: ZagaComponentMeanCvZeroProbabilityTheta) -> GammaShapeRateTheta {
         let shape = 1.0 / (theta.cv * theta.cv);
         let rate = 1.0 / (theta.cv * theta.cv * theta.component_mean);
-        (shape, rate)
-    }
-
-    #[inline]
-    #[allow(clippy::suboptimal_flops)]
-    fn gamma_nll(y: f64, shape: f64, rate: f64) -> f64 {
-        ln_gamma(shape) - shape * rate.ln() - (shape - 1.0) * y.ln() + rate * y
+        GammaShapeRateTheta { shape, rate }
     }
 
     #[inline]
@@ -93,8 +93,8 @@ where
         if y == 0.0 {
             return -theta.zero_probability.ln();
         }
-        let (shape, rate) = Self::gamma_shape_rate(theta);
-        -(1.0 - theta.zero_probability).ln() + Self::gamma_nll(y, shape, rate)
+        let shape_rate = Self::gamma_shape_rate(theta);
+        -(1.0 - theta.zero_probability).ln() + GammaKernel::nll_shape_rate(y, shape_rate)
     }
 
     #[inline]
@@ -110,14 +110,14 @@ where
             };
         }
 
-        let (shape, rate) = Self::gamma_shape_rate(theta);
-        let d_shape = digamma(shape) - rate.ln() - y.ln();
-        let d_rate = y - shape / rate;
+        let shape_rate = Self::gamma_shape_rate(theta);
+        let (d_shape, d_rate) = GammaKernel::gradient_shape_rate(y, shape_rate);
 
         #[allow(clippy::suboptimal_flops)]
         ZagaComponentMeanCvZeroProbabilityTheta {
-            component_mean: d_rate * (-rate / theta.component_mean),
-            cv: d_shape * (-2.0 * shape / theta.cv) + d_rate * (-2.0 * rate / theta.cv),
+            component_mean: d_rate * (-shape_rate.rate / theta.component_mean),
+            cv: d_shape * (-2.0 * shape_rate.shape / theta.cv)
+                + d_rate * (-2.0 * shape_rate.rate / theta.cv),
             zero_probability: 1.0 / (1.0 - theta.zero_probability),
         }
     }
@@ -141,10 +141,30 @@ where
         if y == 0.0 {
             return theta.zero_probability;
         }
-        let (shape, rate) = Self::gamma_shape_rate(theta);
+        let shape_rate = Self::gamma_shape_rate(theta);
         (theta.zero_probability
-            + (1.0 - theta.zero_probability) * regularized_gamma_lower(shape, rate * y))
+            + (1.0 - theta.zero_probability) * GammaKernel::cdf_shape_rate(y, shape_rate))
         .clamp(0.0, 1.0)
+    }
+
+    pub(super) fn quantile_theta(p: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
+        if !(0.0..=1.0).contains(&p)
+            || theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.cv <= 0.0
+            || !theta.cv.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
+        {
+            return f64::NAN;
+        }
+        if p <= theta.zero_probability {
+            return 0.0;
+        }
+
+        let target = (p - theta.zero_probability) / (1.0 - theta.zero_probability);
+        GammaKernel::quantile_shape_rate(target, Self::gamma_shape_rate(theta))
     }
 
     #[cfg(feature = "rand")]
@@ -171,8 +191,8 @@ where
             return Ok(0.0);
         }
 
-        let (shape, rate) = Self::gamma_shape_rate(theta);
-        let distribution = rand_distr::Gamma::new(shape, 1.0 / rate)
+        let shape_rate = Self::gamma_shape_rate(theta);
+        let distribution = rand_distr::Gamma::new(shape_rate.shape, 1.0 / shape_rate.rate)
             .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZAGA gamma"))?;
         Ok(rand_distr::Distribution::sample(&distribution, rng))
     }

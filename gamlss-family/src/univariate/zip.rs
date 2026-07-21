@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, ParameterParts, PositiveLink, UnitIntervalLink};
 
-use gamlss_special::{is_nonnegative_integer, ln_gamma, log_add_exp};
+use gamlss_special::{discrete_quantile, is_nonnegative_integer, log_add_exp};
 
-use super::poisson::{Poisson, PoissonTheta};
+use super::poisson::PoissonKernel;
 
 pub use component_mean_zero_probability::{
     ComponentMeanZeroProbability, ZipComponentMeanZeroProbability,
@@ -60,12 +60,13 @@ where
             marker: PhantomData,
         }
     }
+}
 
-    #[inline]
-    fn poisson_log_pmf(y: f64, mu: f64) -> f64 {
-        y.mul_add(mu.ln(), -mu) - ln_gamma(y + 1.0)
-    }
+/// Link-independent zero-inflated Poisson kernel.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ZipKernel;
 
+impl ZipKernel {
     #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
         if !is_nonnegative_integer(y)
@@ -83,7 +84,7 @@ where
                 (1.0 - theta.zero_probability).ln() - theta.component_mean,
             )
         } else {
-            -((1.0 - theta.zero_probability).ln() + Self::poisson_log_pmf(y, theta.component_mean))
+            -((1.0 - theta.zero_probability).ln() + PoissonKernel::log_pmf(y, theta.component_mean))
         }
     }
 
@@ -121,15 +122,26 @@ where
         if y < 0.0 {
             return 0.0;
         }
-        let base_cdf = Poisson::<Log>::cdf_theta(
-            y,
-            PoissonTheta {
-                mu: theta.component_mean,
-            },
-        );
+        let base_cdf = PoissonKernel::cdf(y, theta.component_mean);
         (1.0 - theta.zero_probability)
             .mul_add(base_cdf, theta.zero_probability)
             .clamp(0.0, 1.0)
+    }
+
+    pub(super) fn quantile_theta(p: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
+        if theta.component_mean <= 0.0
+            || !theta.component_mean.is_finite()
+            || theta.zero_probability <= 0.0
+            || theta.zero_probability >= 1.0
+            || !theta.zero_probability.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        #[allow(clippy::cast_precision_loss)]
+        discrete_quantile(p, MAX_CDF_TERMS, |count| {
+            Self::cdf_theta(count as f64, theta)
+        })
     }
 
     #[cfg(feature = "rand")]

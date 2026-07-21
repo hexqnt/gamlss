@@ -9,7 +9,7 @@ use gamlss_special::{discrete_quantile, is_nonnegative_integer};
 
 use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
 
-use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialTheta};
+use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialKernel, NegativeBinomialTheta};
 
 /// Negative binomial distribution with log links for mean $\mu$ and size $r$.
 ///
@@ -61,7 +61,7 @@ where
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NegativeBinomialEta) -> (f64, NegativeBinomialEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let nll = NegativeBinomialKernel::nll_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
@@ -72,7 +72,7 @@ where
             );
         }
 
-        let gradient_theta = Self::gradient_theta(y, theta);
+        let gradient_theta = NegativeBinomialKernel::gradient_theta(y, theta);
         let gradient_eta = NegativeBinomialEta {
             mu: gradient_theta.mu * MuLink::derivative_inverse(eta.mu),
             shape: gradient_theta.shape * ShapeLink::derivative_inverse(eta.shape),
@@ -108,12 +108,12 @@ where
 
     #[inline]
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        NegativeBinomialKernel::nll_theta(y, *theta)
     }
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        NegativeBinomialKernel::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     #[inline]
@@ -160,7 +160,7 @@ where
     ShapeLink: PositiveLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, *theta)
+        NegativeBinomialKernel::cdf_theta(y, *theta)
     }
 }
 
@@ -180,7 +180,7 @@ where
 
         #[allow(clippy::cast_precision_loss)]
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
-            Self::cdf_theta(count as f64, *theta)
+            NegativeBinomialKernel::cdf_theta(count as f64, *theta)
         })
     }
 }
@@ -195,21 +195,6 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        if theta.mu <= 0.0
-            || !theta.mu.is_finite()
-            || theta.shape <= 0.0
-            || !theta.shape.is_finite()
-        {
-            return Err(SimulationError::InvalidParameters(
-                "Negative binomial theta",
-            ));
-        }
-
-        let mixing = rand_distr::Gamma::new(theta.shape, theta.mu / theta.shape)
-            .map_err(|_| SimulationError::BackendRejected("Negative binomial gamma mixture"))?;
-        let lambda = rand_distr::Distribution::sample(&mixing, rng);
-        let count = rand_distr::Poisson::new(lambda)
-            .map_err(|_| SimulationError::BackendRejected("Negative binomial Poisson mean"))?;
-        Ok(rand_distr::Distribution::sample(&count, rng))
+        NegativeBinomialKernel::try_sample(rng, *theta)
     }
 }

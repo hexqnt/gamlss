@@ -6,11 +6,9 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use gamlss_special::{invert_positive_cdf, regularized_gamma_lower};
-
 use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
 
-use super::{Zaga, ZagaComponentMeanCvZeroProbabilityTheta};
+use super::{Zaga, ZagaComponentMeanCvZeroProbabilityTheta, ZagaKernel};
 
 /// ZAGA distribution parameterized by gamma component mean $\mu$, component CV $c$, and zero-mass probability $\pi$.
 ///
@@ -72,14 +70,14 @@ where
         eta: ZagaComponentMeanCvZeroProbabilityEta,
     ) -> (f64, ZagaComponentMeanCvZeroProbabilityEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let nll = ZagaKernel::nll_theta(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
                 ZagaComponentMeanCvZeroProbabilityEta::from_array([f64::NAN; 3]),
             );
         }
-        let gradient = Self::gradient_component_theta(y, theta);
+        let gradient = ZagaKernel::gradient_component_theta(y, theta);
         (
             nll,
             ZagaComponentMeanCvZeroProbabilityEta {
@@ -119,11 +117,11 @@ where
     }
 
     fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, *theta)
+        ZagaKernel::nll_theta(y, *theta)
     }
 
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        ZagaKernel::nll_theta(y, Self::theta_from_eta(*eta))
     }
 
     fn nll_and_gradient_eta(
@@ -187,7 +185,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        Self::cdf_theta(y, *theta)
+        ZagaKernel::cdf_theta(y, *theta)
     }
 }
 
@@ -199,26 +197,7 @@ where
     ZeroProbabilityLink: UnitIntervalLink<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-        {
-            return f64::NAN;
-        }
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.cv <= 0.0
-            || !theta.cv.is_finite()
-        {
-            return f64::NAN;
-        }
-        if p <= theta.zero_probability {
-            return 0.0;
-        }
-        let shape = 1.0 / (theta.cv * theta.cv);
-        let rate = 1.0 / (theta.cv * theta.cv * theta.component_mean);
-        let target = (p - theta.zero_probability) / (1.0 - theta.zero_probability);
-        invert_positive_cdf(target, |y| regularized_gamma_lower(shape, rate * y))
+        ZagaKernel::quantile_theta(p, *theta)
     }
 }
 
@@ -234,7 +213,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        Self::try_sample_component_theta(rng, *theta)
+        ZagaKernel::try_sample_component_theta(rng, *theta)
     }
 }
 
