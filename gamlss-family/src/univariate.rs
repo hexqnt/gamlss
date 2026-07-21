@@ -61,7 +61,10 @@ pub use power_exponential::{
     PowerExponentialTheta,
 };
 pub use rayleigh::{Rayleigh, RayleighEta, RayleighScale, RayleighTheta};
-pub use shash::{Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta};
+pub use shash::{
+    Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SinhArcsinh, SinhArcsinhEta,
+    SinhArcsinhMuSigmaNuTau, SinhArcsinhTheta,
+};
 pub use skew_normal::{
     SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
     SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
@@ -155,6 +158,8 @@ pub mod power_exponential;
 pub mod rayleigh;
 /// Sinh-arcsinh distribution.
 pub mod shash;
+/// Full-name module alias for the sinh-arcsinh / SHASH distribution.
+pub use shash as sinh_arcsinh;
 /// Skew-normal distribution.
 pub mod skew_normal;
 /// Skew Student-t distribution.

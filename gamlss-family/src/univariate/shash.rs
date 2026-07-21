@@ -9,18 +9,32 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
-use crate::initial::{robust_location_scale, weighted_values};
+use crate::{
+    initial::{robust_location_scale, weighted_values},
+    shash_kernel as kernel,
+};
 
 /// SHASH distribution with identity/log/log/log links.
 pub type ShashMuSigmaNuTau = Shash<Identity, Log, Log, Log>;
-/// Sinh-arcsinh family using positive skewness and tail parameters.
+/// Full-name alias for [`ShashMuSigmaNuTau`].
+pub type SinhArcsinhMuSigmaNuTau = ShashMuSigmaNuTau;
+/// Full-name alias for [`Shash`].
+pub type SinhArcsinh<MuLink = Identity, SigmaLink = Log, NuLink = Log, TauLink = Log> =
+    Shash<MuLink, SigmaLink, NuLink, TauLink>;
+/// Full-name alias for [`ShashEta`].
+pub type SinhArcsinhEta = ShashEta;
+/// Full-name alias for [`ShashTheta`].
+pub type SinhArcsinhTheta = ShashTheta;
+
+/// Sinh-arcsinh-normal (SHASH) family using positive skew-ratio and tail parameters.
 ///
-/// `nu = 1` and `tau = 1` reduce the standardized distribution to the
-/// standard normal. Values of `nu` above or below one skew the distribution
-/// through `ln(nu)`, which keeps the default log link centered at the symmetric
-/// case.
+/// For standardized `x = (y - mu) / sigma`, the normalizing transformation is `z = sinh(tau * asinh(x) - ln(nu))`. In the original [Jones--Pewsey] notation, `epsilon = -ln(nu)` and `delta = tau`; consequently the default `nu` predictor `ln(nu)` increases in the direction of positive response skewness.
+///
+/// `nu = 1` is symmetric. Together, `nu = 1` and `tau = 1` reduce the family to `Normal(mu, sigma)`. Values `tau < 1` give heavier tails than the normal and values `tau > 1` give lighter tails. `mu` and `sigma` are transformation location and scale, not generally the distribution mean and standard deviation when `nu != 1` or `tau != 1`.
 ///
 /// ### Parameterization examples
+///
+/// [Jones--Pewsey]: https://doi.org/10.1093/biomet/asp053
 #[cfg_attr(
     doc,
     doc = include_str!("../../doc-assets/distributions/shash.svg")
@@ -58,17 +72,15 @@ where
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn transformed_z(y: f64, theta: ShashTheta) -> (f64, f64) {
-        let (x, _, z) = Self::transformed_x_h_z(y, theta);
-        (x, z)
+    fn transformed_z(y: f64, theta: ShashTheta) -> f64 {
+        Self::transform(y, theta).1.latent
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn transformed_x_h_z(y: f64, theta: ShashTheta) -> (f64, f64, f64) {
+    fn transform(y: f64, theta: ShashTheta) -> (f64, kernel::Transform) {
         let x = (y - theta.mu) / theta.sigma;
-        let h = theta.tau * x.asinh() - theta.nu.ln();
-        (x, h, h.sinh())
+        (x, kernel::transform_standardized(x, theta.nu, theta.tau))
     }
 
     #[inline]
@@ -86,27 +98,32 @@ where
             return f64::INFINITY;
         }
 
-        let (x, h, z) = Self::transformed_x_h_z(y, theta);
-        theta.sigma.ln() - theta.tau.ln() + 0.5 * (x * x).ln_1p()
-            - h.cosh().ln()
-            - unit_normal_log_pdf(z)
+        let (x, transformed) = Self::transform(y, theta);
+        if !transformed.h.is_finite() || !transformed.latent.is_finite() {
+            return f64::INFINITY;
+        }
+
+        theta.sigma.ln() - theta.tau.ln() + x.hypot(1.0).ln()
+            - kernel::log_cosh(transformed.h)
+            - unit_normal_log_pdf(transformed.latent)
     }
 
     #[inline]
-    fn gradient_theta(y: f64, theta: ShashTheta) -> ShashTheta {
-        let (x, h, _) = Self::transformed_x_h_z(y, theta);
-        let asinh_x = x.asinh();
-        let sinh_h = h.sinh();
-        let cosh_h = h.cosh();
-        let d_h = sinh_h.mul_add(cosh_h, -h.tanh());
-        let inv_one_plus_x2 = 1.0 / x.mul_add(x, 1.0);
-        let d_x = (d_h * theta.tau).mul_add(inv_one_plus_x2.sqrt(), x * inv_one_plus_x2);
+    fn gradient_eta(y: f64, eta: ShashEta, theta: ShashTheta) -> ShashEta {
+        let (x, transformed) = Self::transform(y, theta);
+        let cosh_h = transformed.latent.hypot(1.0);
+        let d_h = transformed
+            .latent
+            .mul_add(cosh_h, -transformed.latent / cosh_h);
+        let inverse_hypot = 1.0 / x.hypot(1.0);
+        let d_x = (d_h * theta.tau).mul_add(inverse_hypot, (x * inverse_hypot) * inverse_hypot);
 
-        ShashTheta {
-            mu: -d_x / theta.sigma,
-            sigma: x.mul_add(-d_x, 1.0) / theta.sigma,
-            nu: -d_h / theta.nu,
-            tau: d_h.mul_add(asinh_x, -1.0 / theta.tau),
+        ShashEta {
+            mu: -d_x / theta.sigma * MuLink::derivative_inverse(eta.mu),
+            sigma: x.mul_add(-d_x, 1.0) * SigmaLink::derivative_log_inverse(eta.sigma),
+            nu: -d_h * NuLink::derivative_log_inverse(eta.nu),
+            tau: (d_h * theta.tau).mul_add(transformed.asinh_x, -1.0)
+                * TauLink::derivative_log_inverse(eta.tau),
         }
     }
 
@@ -118,16 +135,7 @@ where
             return (nll, ShashEta::from_array([f64::NAN; 4]));
         }
 
-        let gradient = Self::gradient_theta(y, theta);
-        (
-            nll,
-            ShashEta {
-                mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
-                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
-                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
-            },
-        )
+        (nll, Self::gradient_eta(y, eta, theta))
     }
 }
 
@@ -236,7 +244,7 @@ where
             return f64::NAN;
         }
 
-        unit_normal_cdf(Self::transformed_z(y, *theta).1)
+        unit_normal_cdf(Self::transformed_z(y, *theta))
     }
 }
 
@@ -261,7 +269,7 @@ where
         }
 
         let z = unit_normal_quantile(p);
-        theta.mu + theta.sigma * ((z.asinh() + theta.nu.ln()) / theta.tau).sinh()
+        theta.mu + theta.sigma * kernel::inverse_standardized(z, theta.nu, theta.tau)
     }
 }
 
@@ -290,9 +298,10 @@ where
         }
 
         let z = crate::simulation::standard_normal(rng);
-        let sample = theta
-            .sigma
-            .mul_add(((z.asinh() + theta.nu.ln()) / theta.tau).sinh(), theta.mu);
+        let sample = theta.sigma.mul_add(
+            kernel::inverse_standardized(z, theta.nu, theta.tau),
+            theta.mu,
+        );
         if sample.is_finite() {
             Ok(sample)
         } else {
@@ -308,9 +317,9 @@ pub struct ShashEta {
     pub mu: f64,
     /// Scale predictor.
     pub sigma: f64,
-    /// Positive skewness predictor.
+    /// Skew-ratio predictor; with the default log link this is `ln(nu)`.
     pub nu: f64,
-    /// Positive tail predictor.
+    /// Tail-parameter predictor; the link maps it to a positive natural parameter.
     pub tau: f64,
 }
 
@@ -344,19 +353,80 @@ pub struct ShashTheta {
     pub mu: f64,
     /// Positive scale parameter.
     pub sigma: f64,
-    /// Positive skewness parameter.
+    /// Positive skew ratio; `ln(nu)` is the signed skew predictor in this parameterization.
     pub nu: f64,
-    /// Positive tail parameter.
+    /// Positive Jones--Pewsey tail parameter.
     pub tau: f64,
 }
 
 #[cfg(test)]
 mod tests {
+    use gamlss_core::Family;
     #[cfg(feature = "rand")]
     use gamlss_core::TrySimulate;
 
-    #[cfg(feature = "rand")]
-    use super::{ShashMuSigmaNuTau, ShashTheta};
+    use super::{ShashEta, ShashMuSigmaNuTau, ShashTheta};
+
+    #[test]
+    fn shash_extreme_finite_observation_remains_numerically_representable() {
+        let family = ShashMuSigmaNuTau::new();
+        let eta = ShashEta {
+            mu: 0.0,
+            sigma: 0.0,
+            nu: 0.0,
+            tau: 0.001_f64.ln(),
+        };
+        let (nll, gradient) = family.nll_and_gradient_eta(f64::MAX, &eta, &mut family.workspace());
+
+        assert!(nll.is_finite());
+        assert!(gradient.mu.is_finite());
+        assert!(gradient.sigma.is_finite());
+        assert!(gradient.nu.is_finite());
+        assert!(gradient.tau.is_finite());
+    }
+
+    #[test]
+    fn shash_log_link_gradient_remains_finite_for_subnormal_positive_parameters() {
+        let family = ShashMuSigmaNuTau::new();
+        for eta in [
+            ShashEta {
+                mu: 0.0,
+                sigma: -744.0,
+                nu: 0.0,
+                tau: 0.0,
+            },
+            ShashEta {
+                mu: 0.0,
+                sigma: 0.0,
+                nu: 0.0,
+                tau: -744.0,
+            },
+        ] {
+            let (nll, gradient) = family.nll_and_gradient_eta(0.0, &eta, &mut family.workspace());
+            assert!(nll.is_finite());
+            assert!(gradient.mu.is_finite());
+            assert!(gradient.sigma.is_finite());
+            assert!(gradient.nu.is_finite());
+            assert!(gradient.tau.is_finite());
+        }
+    }
+
+    #[test]
+    fn shash_overflowing_normal_transform_returns_infinite_nll() {
+        let family = ShashMuSigmaNuTau::new();
+        let nll = family.nll(
+            1.0,
+            &ShashTheta {
+                mu: 0.0,
+                sigma: 1.0,
+                nu: 1.0,
+                tau: 1_000.0,
+            },
+            &mut family.workspace(),
+        );
+
+        assert!(nll.is_infinite() && nll.is_sign_positive());
+    }
 
     #[cfg(feature = "rand")]
     #[test]

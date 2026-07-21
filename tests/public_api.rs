@@ -25,6 +25,7 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = MvPoissonCommonShockDefault::<3>::new();
     let _ = MvPowerExponentialCholeskyDefault::<3>::new();
     let _ = MvPowerExponentialMeanStdPartialCorrDefault::<3>::new();
+    let _ = MvShashMuSigmaNuTauPartialCorrDefault::<3>::new();
     let _ = MvSkewNormalCholeskyDefault::<3>::new();
     let _ = MvSkewNormalLocationKernelStdPartialCorrDefault::<3>::new();
     let _ = MvSkewStudentTFixedTauCholeskyDefault::<3>::new(5.0);
@@ -39,6 +40,7 @@ fn high_level_crate_reexports_multivariate_family() {
     let _ = gamlss::family::MvPoissonCommonShockDefault::<3>::new();
     let _ = gamlss::family::MvPowerExponentialCholeskyDefault::<3>::new();
     let _ = gamlss::family::MvPowerExponentialMeanStdPartialCorrDefault::<3>::new();
+    let _ = gamlss::family::MvShashMuSigmaNuTauPartialCorrDefault::<3>::new();
     let _ = gamlss::family::MvSkewNormalCholeskyDefault::<3>::new();
     let _ = gamlss::family::MvSkewNormalLocationKernelStdPartialCorrDefault::<3>::new();
     let _ = gamlss::family::MvSkewStudentTFixedTauCholeskyDefault::<3>::new(5.0);

@@ -36,6 +36,12 @@ pub use power_exponential::{
     MvPowerExponentialMeanStdPartialCorrDefault, MvPowerExponentialMeanStdPartialCorrEta,
     MvPowerExponentialMeanStdPartialCorrTheta,
 };
+pub use shash::{
+    MvShashMuSigmaNuTauPartialCorr, MvShashMuSigmaNuTauPartialCorrDefault,
+    MvShashMuSigmaNuTauPartialCorrEta, MvShashMuSigmaNuTauPartialCorrTheta,
+    MvSinhArcsinhMuSigmaNuTauPartialCorr, MvSinhArcsinhMuSigmaNuTauPartialCorrDefault,
+    MvSinhArcsinhMuSigmaNuTauPartialCorrEta, MvSinhArcsinhMuSigmaNuTauPartialCorrTheta,
+};
 pub use simplex::{DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta};
 pub use skew_normal::{
     MvSkewNormalCholesky, MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyEta,
@@ -72,6 +78,10 @@ pub mod normal;
 pub mod poisson_common_shock;
 /// Multivariate power-exponential distributions.
 pub mod power_exponential;
+/// Multivariate sinh-arcsinh-normal / SHASH distribution.
+pub mod shash;
+/// Full-name module alias for the multivariate sinh-arcsinh / SHASH distribution.
+pub use shash as sinh_arcsinh;
 /// Simplex and compositional distributions.
 pub mod simplex;
 /// Multivariate skew-normal distributions.

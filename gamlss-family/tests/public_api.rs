@@ -7,7 +7,8 @@ use gamlss_family::{
     LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvTheta, LogNormalMeanLogSd,
     LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdTheta,
     NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize,
-    NegativeBinomialTheta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewStudentTMeanSdNuTau,
+    NegativeBinomialTheta, ShashEta, ShashTheta, SinhArcsinhEta, SinhArcsinhMuSigmaNuTau,
+    SinhArcsinhTheta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewStudentTMeanSdNuTau,
     SkewStudentTMeanSdTheta, StudentTMuSdTau, StudentTMuSdTauTheta, StudentTMuSigmaTau,
     StudentTMuSigmaTauTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
     TweedieMeanDispersionPower, TweedieTheta, WeibullMeanShape, WeibullMeanShapeTheta,
@@ -26,9 +27,12 @@ use gamlss_family::{
     MultinomialEta, MultinomialFixedTrials, MultinomialTheta, MultinomialVaryingTrials,
     MvLogNormalCholeskyDefault, MvLogNormalCholeskyTheta, MvNormalMeanStdPartialCorrDefault,
     MvNormalMeanStdPartialCorrEta, MvPowerExponentialCholeskyDefault,
-    MvPowerExponentialCholeskyTheta, MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyTheta,
-    MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
-    MvStudentTMeanStdPartialCorrDefault, MvStudentTMeanStdPartialCorrTheta,
+    MvPowerExponentialCholeskyTheta, MvShashMuSigmaNuTauPartialCorrDefault,
+    MvShashMuSigmaNuTauPartialCorrTheta, MvSinhArcsinhMuSigmaNuTauPartialCorrEta,
+    MvSinhArcsinhMuSigmaNuTauPartialCorrTheta, MvSkewNormalCholeskyDefault,
+    MvSkewNormalCholeskyTheta, MvStudentTCholeskyDefault, MvStudentTCholeskyEta,
+    MvStudentTCholeskyTheta, MvStudentTMeanStdPartialCorrDefault,
+    MvStudentTMeanStdPartialCorrTheta,
 };
 
 #[allow(clippy::needless_pass_by_value)]
@@ -73,6 +77,21 @@ fn mixture_prelude_exposes_read_only_gradient_carriers() {
 
 #[test]
 fn semantic_parameterization_aliases_construct_without_type_annotations() {
+    let eta: SinhArcsinhEta = ShashEta {
+        mu: 0.0,
+        sigma: 0.0,
+        nu: 0.0,
+        tau: 0.0,
+    };
+    let theta: SinhArcsinhTheta = ShashTheta {
+        mu: 0.0,
+        sigma: 1.0,
+        nu: 1.0,
+        tau: 1.0,
+    };
+    assert!(eta.nu.is_finite());
+    assert!(finite_nll(SinhArcsinhMuSigmaNuTau::new(), 0.25, theta));
+
     assert!(finite_nll(
         GammaMeanCv::new(),
         1.2,
@@ -383,6 +402,7 @@ fn univariate_namespace_exposes_distribution_modules() {
     let _ = gamlss_family::univariate::chi::ChiDegreesOfFreedom::new();
     let _ = gamlss_family::univariate::beta_binomial::BetaBinomialMeanPrecision::new();
     let _ = gamlss_family::univariate::generalized_pareto::GeneralizedParetoScaleShape::new();
+    let _ = gamlss_family::univariate::sinh_arcsinh::SinhArcsinhMuSigmaNuTau::new();
 }
 
 #[cfg(feature = "multivariate")]
@@ -502,6 +522,26 @@ fn multivariate_generic_aliases_construct_without_dimension_specific_types() {
             .is_finite()
     );
 
+    let shash = MvShashMuSigmaNuTauPartialCorrDefault::<2>::new();
+    let shash_theta = MvShashMuSigmaNuTauPartialCorrTheta::try_new(
+        [0.0; 2],
+        [1.0; 2],
+        [1.2, 0.8],
+        [0.9, 1.1],
+        FixedPartialCorrelations::zeros(),
+    )
+    .unwrap();
+    let _: MvSinhArcsinhMuSigmaNuTauPartialCorrTheta<2> = shash_theta;
+    let _: MvSinhArcsinhMuSigmaNuTauPartialCorrEta<2> =
+        gamlss_family::MvShashMuSigmaNuTauPartialCorrEta::new(
+            [0.0; 2],
+            [0.0; 2],
+            [0.0; 2],
+            [0.0; 2],
+            FixedPartialCorrelations::zeros(),
+        );
+    assert!(shash.nll([0.1, -0.2], &shash_theta, &mut ()).is_finite());
+
     let skew_normal = MvSkewNormalCholeskyDefault::<2>::new();
     let skew_normal_theta = MvSkewNormalCholeskyTheta::try_new(
         [0.0; 2],
@@ -554,6 +594,7 @@ fn multivariate_prelude_exposes_new_generic_families() {
     let _ = MvPoissonCommonShockDefault::<4>::new();
     let _ = MvPowerExponentialCholeskyDefault::<4>::new();
     let _ = MvPowerExponentialMeanStdPartialCorrDefault::<4>::new();
+    let _ = MvShashMuSigmaNuTauPartialCorrDefault::<4>::new();
     let _ = MvSkewNormalCholeskyDefault::<4>::new();
     let _ = MvSkewNormalLocationKernelStdPartialCorrDefault::<4>::new();
     let _ = MvSkewStudentTFixedTauCholeskyDefault::<4>::new(5.0);
@@ -602,6 +643,11 @@ fn new_multivariate_modules_expose_parameterized_families() {
         >::new();
     let _ =
         gamlss_family::multivariate::poisson_common_shock::MvPoissonCommonShockDefault::<2>::new();
+    let _ =
+        gamlss_family::multivariate::shash::MvSinhArcsinhMuSigmaNuTauPartialCorrDefault::<2>::new();
+    let _ =
+        gamlss_family::multivariate::sinh_arcsinh::MvShashMuSigmaNuTauPartialCorrDefault::<2>::new(
+        );
     let _ = gamlss_family::multivariate::skew_normal::MvSkewNormalCholeskyDefault::<2>::new();
     let _ =
         gamlss_family::multivariate::skew_normal::MvSkewNormalLocationKernelStdPartialCorrDefault::<
