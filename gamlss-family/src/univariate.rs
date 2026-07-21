@@ -69,6 +69,12 @@ pub use skew_normal::{
     SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
     SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
 };
+pub use skew_power_exponential::{
+    SkewPowerExponential, SkewPowerExponentialEta, SkewPowerExponentialMeanSd,
+    SkewPowerExponentialMeanSdEta, SkewPowerExponentialMeanSdSkewPower,
+    SkewPowerExponentialMeanSdTheta, SkewPowerExponentialMuSigmaSkewPower,
+    SkewPowerExponentialTheta,
+};
 pub use skew_student_t::{
     SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd, SkewStudentTMeanSdEta,
     SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
@@ -162,6 +168,8 @@ pub mod shash;
 pub use shash as sinh_arcsinh;
 /// Skew-normal distribution.
 pub mod skew_normal;
+/// Fernández--Steel two-piece skew power-exponential / generalized-error distribution.
+pub mod skew_power_exponential;
 /// Skew Student-t distribution.
 pub mod skew_student_t;
 /// Student distribution with a fixed number of degrees of freedom.

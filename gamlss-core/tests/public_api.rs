@@ -14,9 +14,9 @@ use gamlss_core::{
     NegativeSoftplusScalar, NoPenalty, Nu, Objective, ObjectiveScale, ObservationView,
     OneProbability, ParameterAxis, ParameterBlock, ParameterBlocks, ParameterDescriptor,
     ParameterLayout, ParameterName, ParameterParts, ParameterPath, ParameterSlice, PositiveLink,
-    Power, PredictorBlock, Probability, ScoreTilePolicy, ShapeValues, Sigma, Size, Softplus,
-    SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink, VectorParameterBlock,
-    ZeroProbability,
+    Power, PredictorBlock, Probability, ScoreTilePolicy, ShapeValues, Sigma, Size, SkewRatio,
+    Softplus, SoftplusScalar, TotalMean, TrainingDiagnostics, UnitIntervalLink,
+    VectorParameterBlock, ZeroProbability,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -389,9 +389,11 @@ fn semantic_parameter_markers_remain_root_reexports() {
     assert_eq!(ZeroProbability::NAME, "zero_probability");
     assert_eq!(OneProbability::NAME, "one_probability");
     assert_eq!(Power::NAME, "power");
+    assert_eq!(SkewRatio::NAME, "skew_ratio");
     assert_eq!(CholeskyScale::NAME, "cholesky");
     assert_eq!(KernelSigma::NAME, "kernel_sigma");
     assert_eq!(IdiosyncraticRate::NAME, "idiosyncratic_rate");
+    let _: gamlss_core::prelude::SkewRatio = SkewRatio;
 }
 
 #[test]

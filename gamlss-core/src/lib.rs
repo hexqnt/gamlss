@@ -59,8 +59,8 @@ pub use param::{
     IdiosyncraticRate, KernelSigma, LogLocation, LogSd, LowerTriangularParameterBlock, Mean,
     Median, MixtureWeight, Mu, Nu, OneProbability, ParameterBlock, ParameterBlocks, ParameterName,
     PartialCorrelation, Power, Precision, Probability, Rate, Scale, Shape, SharedRate, Sigma,
-    SimplexLogitParameterBlock, Size, StrictLowerTriangularParameterBlock, Tau, TotalMean,
-    TryAssignParameterOffsets, VectorParameterBlock, ZeroProbability,
+    SimplexLogitParameterBlock, Size, SkewRatio, StrictLowerTriangularParameterBlock, Tau,
+    TotalMean, TryAssignParameterOffsets, VectorParameterBlock, ZeroProbability,
 };
 pub use penalty::{
     AbsoluteLimitPenalty, GlobalPenalty, HingeQuadraticPenalty, LinearForm, LinearFormBuilder,
@@ -120,8 +120,8 @@ pub mod prelude {
         PredictorBlock, Probability, Product, ProductBlock, Rate, Repeated, RidgePenalty,
         RowMultiplier, Scalar, ScalarTuple, Scale, ScoreTilePolicy, SegmentPenalty, Shape,
         ShapeValues, SharedRate, Sigma, Simplex, SimplexLogitParameterBlock, SimulationError, Size,
-        Softplus, StrictLower, StrictLowerTriangularParameterBlock, SumBlock, Tau, TotalMean,
-        TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, TrySimulate,
+        SkewRatio, Softplus, StrictLower, StrictLowerTriangularParameterBlock, SumBlock, Tau,
+        TotalMean, TrainingDiagnostics, TransformedScalar, TryAssignParameterOffsets, TrySimulate,
         UnitIntervalLink, UnpackedParameters, Vector, VectorParameterBlock, WithGlobalPenalties,
         WorkspaceGamlss, ZeroProbability,
     };

@@ -214,6 +214,14 @@ impl ParameterName for Tau {
     const NAME: &'static str = "tau";
 }
 
+/// Marker for a positive ratio controlling two-piece skewness.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SkewRatio;
+
+impl ParameterName for SkewRatio {
+    const NAME: &'static str = "skew_ratio";
+}
+
 /// Marker for the rate parameter of a distribution.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Rate;

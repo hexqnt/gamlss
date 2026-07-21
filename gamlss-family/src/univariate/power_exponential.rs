@@ -8,11 +8,38 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
-    digamma, invert_real_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
+    digamma, invert_real_cdf, ln_gamma, ln_gamma_delta, regularized_gamma_lower,
+    regularized_gamma_upper,
 };
 
 use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
+
+#[inline]
+pub(super) fn log_standardized_scale(power: f64) -> f64 {
+    -0.5 * ln_gamma_delta(1.0 / power, 2.0 / power)
+}
+
+#[inline]
+pub(super) fn standardized_scale(power: f64) -> f64 {
+    log_standardized_scale(power).exp()
+}
+
+#[inline]
+pub(super) fn d_log_standardized_scale_d_power(power: f64) -> f64 {
+    3.0_f64.mul_add(digamma(3.0 / power), -digamma(1.0 / power)) / (2.0 * power * power)
+}
+
+#[inline]
+pub(super) fn standardized_cdf(value: f64, power: f64) -> f64 {
+    let scaled = value / standardized_scale(power);
+    if scaled < 0.0 {
+        0.5 * regularized_gamma_upper(1.0 / power, scaled.abs().powf(power))
+    } else {
+        let probability = regularized_gamma_lower(1.0 / power, scaled.powf(power));
+        f64::midpoint(1.0, probability)
+    }
+}
 
 /// Power exponential distribution with identity/log/log links.
 pub type PowerExponentialMuSigmaNu = PowerExponential<Identity, Log, Log>;
@@ -59,12 +86,12 @@ where
 
     #[inline]
     fn scale_c(nu: f64) -> f64 {
-        (0.5 * (ln_gamma(1.0 / nu) - ln_gamma(3.0 / nu))).exp()
+        standardized_scale(nu)
     }
 
     #[inline]
     fn d_log_scale_c_d_nu(nu: f64) -> f64 {
-        3.0_f64.mul_add(digamma(3.0 / nu), -digamma(1.0 / nu)) / (2.0 * nu * nu)
+        d_log_standardized_scale_d_power(nu)
     }
 
     #[inline]
@@ -79,9 +106,10 @@ where
             return f64::INFINITY;
         }
 
-        let c = Self::scale_c(theta.nu);
+        let log_c = log_standardized_scale(theta.nu);
+        let c = log_c.exp();
         let z = ((y - theta.mu) / (c * theta.sigma)).abs();
-        LOG_2 + c.ln() + theta.sigma.ln() + ln_gamma(1.0 / theta.nu) - theta.nu.ln()
+        LOG_2 + log_c + theta.sigma.ln() + ln_gamma(1.0 / theta.nu) - theta.nu.ln()
             + z.powf(theta.nu)
     }
 
@@ -236,14 +264,7 @@ where
             return f64::NAN;
         }
 
-        let c = Self::scale_c(theta.nu);
-        let z = (y - theta.mu) / (c * theta.sigma);
-        if z < 0.0 {
-            0.5 * regularized_gamma_upper(1.0 / theta.nu, z.abs().powf(theta.nu))
-        } else {
-            let p = regularized_gamma_lower(1.0 / theta.nu, z.powf(theta.nu));
-            f64::midpoint(1.0, p)
-        }
+        standardized_cdf((y - theta.mu) / theta.sigma, theta.nu)
     }
 }
 
