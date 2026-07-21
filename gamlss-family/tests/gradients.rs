@@ -64,6 +64,11 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         [0.1, -0.2, 0.3],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &SkewNormalMuSigmaNu::new(),
+        -0.7,
+        [0.1, -0.2, -1.1],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &SkewNormalMeanSdNu::new(),
         0.4,
         [0.1, -0.2, 0.3],
@@ -77,6 +82,11 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         &SkewStudentTMuSigmaNuTau::new(),
         0.4,
         [0.1, -0.2, 0.3, 5.0_f64.ln()],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 4>(
+        &SkewStudentTMuSigmaNuTau::new(),
+        -0.7,
+        [0.1, -0.2, -1.1, 5.0_f64.ln()],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 4>(
         &SkewStudentTMeanSdNuTau::new(),
@@ -101,12 +111,22 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GeneralizedGammaScaleSigmaNu::new(),
         1.4,
+        [0.1, -0.2, -0.5],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &GeneralizedGammaScaleSigmaNu::new(),
+        1.4,
         [0.1, -0.2, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GevMuSigmaShape::new(),
         0.4,
         [0.1, -0.2, 0.1],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &GevMuSigmaShape::new(),
+        0.4,
+        [0.1, -0.2, -0.2],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GevMuSigmaShape::new(),
@@ -119,8 +139,18 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         [0.2, -0.3, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanDispersionPower::new(),
+        0.0,
+        [0.2, -0.3, 0.0],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &TweedieMeanCvPower::new(),
         1.4,
+        [0.2, -0.3, 0.0],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanCvPower::new(),
+        0.0,
         [0.2, -0.3, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(

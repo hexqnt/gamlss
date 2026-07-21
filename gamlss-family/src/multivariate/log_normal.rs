@@ -747,6 +747,55 @@ mod tests {
         assert!(MvLogNormalCholeskyDefault::<0>::try_new().is_err());
     }
 
+    #[test]
+    fn moments_match_multivariate_log_normal_closed_forms() {
+        let theta = MvLogNormalCholeskyTheta::try_new(
+            [0.2, -0.3],
+            FixedLowerTriangular::from_lower_rows([[0.8, 0.0], [0.25, 0.7]]),
+        )
+        .unwrap();
+        let log_variance_0 = 0.8_f64.powi(2);
+        let log_covariance_01 = 0.8 * 0.25;
+        let log_variance_1 = 0.25_f64.powi(2) + 0.7_f64.powi(2);
+        let mean_0 = (0.2 + 0.5 * log_variance_0).exp();
+        let mean_1 = (-0.3 + 0.5 * log_variance_1).exp();
+
+        assert_relative_eq!(
+            theta.log_covariance(0, 0).unwrap(),
+            log_variance_0,
+            epsilon = 1.0e-15
+        );
+        assert_relative_eq!(
+            theta.log_covariance(0, 1).unwrap(),
+            log_covariance_01,
+            epsilon = 1.0e-15
+        );
+        assert_relative_eq!(
+            theta.log_covariance(1, 0).unwrap(),
+            log_covariance_01,
+            epsilon = 1.0e-15
+        );
+        assert_relative_eq!(theta.mean(0).unwrap(), mean_0, epsilon = 1.0e-15);
+        assert_relative_eq!(theta.mean(1).unwrap(), mean_1, epsilon = 1.0e-15);
+        assert_relative_eq!(
+            theta.covariance(0, 0).unwrap(),
+            mean_0 * mean_0 * log_variance_0.exp_m1(),
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            theta.covariance(0, 1).unwrap(),
+            mean_0 * mean_1 * log_covariance_01.exp_m1(),
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            theta.covariance(1, 1).unwrap(),
+            mean_1 * mean_1 * log_variance_1.exp_m1(),
+            epsilon = 1.0e-14
+        );
+        assert_eq!(theta.mean(2), None);
+        assert_eq!(theta.covariance(0, 2), None);
+    }
+
     #[cfg(feature = "rand")]
     #[test]
     fn sampling_is_strictly_positive() {

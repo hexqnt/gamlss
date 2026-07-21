@@ -246,6 +246,83 @@ fn continuous_density_integrates_approximately_to_one() {
 }
 
 #[test]
+fn extended_continuous_densities_integrate_to_their_cdf_mass() {
+    assert_density_integrates_over_quantile_bracket(
+        &SkewNormalMuSigmaNu::new(),
+        SkewNormalTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &PowerExponentialMuSigmaNu::new(),
+        PowerExponentialTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 1.5,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ShashMuSigmaNuTau::new(),
+        ShashTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+            tau: 1.2,
+        },
+        1.0e-4,
+        3.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &JohnsonSuMuSigmaNuTau::new(),
+        JohnsonSuTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.3,
+            tau: 1.1,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GeneralizedGammaScaleSigmaNu::new(),
+        GeneralizedGammaTheta {
+            scale: 1.2,
+            sigma: 0.6,
+            nu: -0.8,
+        },
+        1.0e-4,
+        5.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GevMuSigmaShape::new(),
+        GevTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: -0.2,
+        },
+        1.0e-4,
+        3.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &SkewStudentTMuSigmaNuTau::new(),
+        SkewStudentTTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+            tau: 5.0,
+        },
+        1.0e-3,
+        1.5e-3,
+    );
+}
+
+#[test]
 fn discrete_mass_sums_approximately_to_one() {
     assert_discrete_mass_sums_to_one(
         &BernoulliProbability::new(),
@@ -278,6 +355,25 @@ fn discrete_mass_sums_approximately_to_one() {
         &BinomialFixedTrialsProbability::try_new(20).unwrap(),
         BinomialTheta { probability: 0.35 },
         1.0,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &ZipComponentMeanZeroProbability::new(),
+        ZipComponentMeanZeroProbabilityTheta {
+            component_mean: 4.0,
+            zero_probability: 0.25,
+        },
+        1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &ZinbComponentMeanSizeZeroProbability::new(),
+        ZinbComponentMeanSizeZeroProbabilityTheta {
+            component_mean: 5.0,
+            size: 2.5,
+            zero_probability: 0.25,
+        },
+        1.0 - 1.0e-10,
         2.0e-12,
     );
 }

@@ -250,6 +250,197 @@ fn student_t_dynamic_matches_fixed_df_equivalent() {
 }
 
 #[test]
+fn gev_zero_shape_matches_gumbel_and_nonzero_shapes_have_expected_endpoints() {
+    let gev = GevMuSigmaShape::new();
+    let gumbel = GumbelMuSigma::new();
+    let gev_theta = GevTheta {
+        mu: 0.2,
+        sigma: 1.3,
+        nu: 0.0,
+    };
+    let gumbel_theta = GumbelTheta {
+        mu: gev_theta.mu,
+        sigma: gev_theta.sigma,
+    };
+
+    for y in [-4.0_f64, -0.3, 0.2, 1.7, 8.0] {
+        assert_close(
+            gev.nll(y, &gev_theta, &mut gev.workspace()),
+            gumbel.nll(y, &gumbel_theta, &mut gumbel.workspace()),
+            0.0,
+            2.0e-14,
+        );
+        assert_close(
+            gev.cdf(y, &gev_theta),
+            gumbel.cdf(y, &gumbel_theta),
+            0.0,
+            2.0e-14,
+        );
+    }
+    for probability in [0.01_f64, 0.2, 0.5, 0.8, 0.99] {
+        assert_close(
+            gev.quantile(probability, &gev_theta),
+            gumbel.quantile(probability, &gumbel_theta),
+            0.0,
+            2.0e-14,
+        );
+    }
+
+    let lower_bounded = GevTheta {
+        mu: 0.5,
+        sigma: 2.0,
+        nu: 0.5,
+    };
+    let lower_endpoint = lower_bounded.mu - lower_bounded.sigma / lower_bounded.nu;
+    assert_close(gev.cdf(lower_endpoint, &lower_bounded), 0.0, 0.0, 0.0);
+    assert_close(gev.quantile(0.0, &lower_bounded), lower_endpoint, 0.0, 0.0);
+    assert!(
+        gev.nll(lower_endpoint, &lower_bounded, &mut ())
+            .is_infinite()
+    );
+
+    let upper_bounded = GevTheta {
+        nu: -0.5,
+        ..lower_bounded
+    };
+    let upper_endpoint = upper_bounded.mu - upper_bounded.sigma / upper_bounded.nu;
+    assert_close(gev.cdf(upper_endpoint, &upper_bounded), 1.0, 0.0, 0.0);
+    assert_close(gev.quantile(1.0, &upper_bounded), upper_endpoint, 0.0, 0.0);
+    assert!(
+        gev.nll(upper_endpoint, &upper_bounded, &mut ())
+            .is_infinite()
+    );
+}
+
+#[test]
+fn generalized_gamma_zero_shape_matches_log_normal() {
+    let generalized_gamma = GeneralizedGammaScaleSigmaNu::new();
+    let log_normal = LogNormalLogLocationLogSd::new();
+    let generalized_theta = GeneralizedGammaTheta {
+        scale: 1.7,
+        sigma: 0.6,
+        nu: 0.0,
+    };
+    let log_normal_theta = LogNormalLogLocationLogSdTheta {
+        log_location: generalized_theta.scale.ln(),
+        log_sd: generalized_theta.sigma,
+    };
+
+    for y in [0.05_f64, 0.4, 1.7, 3.0, 20.0] {
+        assert_close(
+            generalized_gamma.nll(y, &generalized_theta, &mut generalized_gamma.workspace()),
+            log_normal.nll(y, &log_normal_theta, &mut log_normal.workspace()),
+            0.0,
+            2.0e-14,
+        );
+        assert_close(
+            generalized_gamma.cdf(y, &generalized_theta),
+            log_normal.cdf(y, &log_normal_theta),
+            0.0,
+            2.0e-14,
+        );
+    }
+    for probability in [0.01_f64, 0.2, 0.5, 0.8, 0.99] {
+        assert_close(
+            generalized_gamma.quantile(probability, &generalized_theta),
+            log_normal.quantile(probability, &log_normal_theta),
+            0.0,
+            2.0e-7,
+        );
+    }
+}
+
+#[test]
+fn johnson_su_and_shash_match_their_normal_change_of_variables() {
+    let normal = NormalMuSigma::new();
+    let normal_theta = NormalTheta {
+        mu: 0.0,
+        sigma: 1.0,
+    };
+
+    let johnson = JohnsonSuMuSigmaNuTau::new();
+    let johnson_theta = JohnsonSuTheta {
+        mu: 0.4,
+        sigma: 1.3,
+        nu: -0.7,
+        tau: 1.4,
+    };
+    for y in [-3.0_f64, -0.2, 0.4, 1.8, 5.0] {
+        let standardized = (y - johnson_theta.mu) / johnson_theta.sigma;
+        let z = johnson_theta
+            .tau
+            .mul_add(standardized.asinh(), johnson_theta.nu);
+        let log_jacobian = johnson_theta.tau.ln()
+            - johnson_theta.sigma.ln()
+            - 0.5 * standardized.mul_add(standardized, 1.0).ln();
+        assert_close(
+            johnson.nll(y, &johnson_theta, &mut johnson.workspace()),
+            normal.nll(z, &normal_theta, &mut normal.workspace()) - log_jacobian,
+            0.0,
+            2.0e-14,
+        );
+        assert_close(
+            johnson.cdf(y, &johnson_theta),
+            normal.cdf(z, &normal_theta),
+            0.0,
+            2.0e-14,
+        );
+    }
+
+    let shash = ShashMuSigmaNuTau::new();
+    let shash_theta = ShashTheta {
+        mu: -0.3,
+        sigma: 0.9,
+        nu: 1.6,
+        tau: 0.8,
+    };
+    for y in [-3.0_f64, -0.3, 0.2, 1.8, 5.0] {
+        let standardized = (y - shash_theta.mu) / shash_theta.sigma;
+        let transformed = shash_theta.tau * standardized.asinh() - shash_theta.nu.ln();
+        let z = transformed.sinh();
+        let log_jacobian = shash_theta.tau.ln() - shash_theta.sigma.ln() + transformed.cosh().ln()
+            - 0.5 * standardized.mul_add(standardized, 1.0).ln();
+        assert_close(
+            shash.nll(y, &shash_theta, &mut shash.workspace()),
+            normal.nll(z, &normal_theta, &mut normal.workspace()) - log_jacobian,
+            0.0,
+            2.0e-14,
+        );
+        assert_close(
+            shash.cdf(y, &shash_theta),
+            normal.cdf(z, &normal_theta),
+            0.0,
+            2.0e-14,
+        );
+    }
+
+    for probability in [0.01_f64, 0.2, 0.5, 0.8, 0.99] {
+        let z = normal.quantile(probability, &normal_theta);
+        let expected_johnson = johnson_theta.sigma.mul_add(
+            ((z - johnson_theta.nu) / johnson_theta.tau).sinh(),
+            johnson_theta.mu,
+        );
+        assert_close(
+            johnson.quantile(probability, &johnson_theta),
+            expected_johnson,
+            0.0,
+            2.0e-14,
+        );
+
+        let expected_shash = shash_theta.sigma.mul_add(
+            ((z.asinh() + shash_theta.nu.ln()) / shash_theta.tau).sinh(),
+            shash_theta.mu,
+        );
+        assert_close(
+            shash.quantile(probability, &shash_theta),
+            expected_shash,
+            0.0,
+            2.0e-14,
+        );
+    }
+}
+
+#[test]
 fn skew_normal_mean_sd_matches_location_scale_equivalent() {
     let mean_sd = SkewNormalMeanSdNu::new();
     let location_scale = SkewNormalMuSigmaNu::new();
