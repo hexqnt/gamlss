@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_tolerance_cost(1.0e-10)?;
 
     let result = Executor::new(problem, solver)
-        .configure(|state| state.param(initial_parameters).max_iters(100))
+        .configure(|state| state.param(initial_parameters).max_iters(1000))
         .run()?;
 
     // Extract the final optimizer parameters and compute the gradient norm to check optimality.

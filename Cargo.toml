@@ -13,7 +13,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "Type-driven Rust crates for GAMLSS modeling"
 license = "MIT OR Apache-2.0"
@@ -29,15 +29,15 @@ approx = "0.5.1"
 criterion = { version = "0.8.2", default-features = false, features = [
     "cargo_bench_support",
 ] }
-gamlss-core = { path = "gamlss-core", version = "0.3.1" }
-gamlss-bayes = { path = "gamlss-bayes", version = "0.3.1" }
-gamlss-datasets = { path = "gamlss-datasets" }
-gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.3.1" }
-gamlss-family = { path = "gamlss-family", version = "0.3.1" }
-gamlss-formula = { path = "gamlss-formula", version = "0.3.1" }
-gamlss-spline = { path = "gamlss-spline", version = "0.3.1" }
-gamlss-special = { path = "gamlss-special", version = "0.3.1" }
-gamlss-transform = { path = "gamlss-transform", version = "0.3.1" }
+gamlss-core = { path = "gamlss-core", version = "0.4.0" }
+gamlss-bayes = { path = "gamlss-bayes", version = "0.4.0" }
+gamlss-datasets = { path = "gamlss-datasets", version = "0.4.0" }
+gamlss-diagnostics = { path = "gamlss-diagnostics", version = "0.4.0" }
+gamlss-family = { path = "gamlss-family", version = "0.4.0" }
+gamlss-formula = { path = "gamlss-formula", version = "0.4.0" }
+gamlss-spline = { path = "gamlss-spline", version = "0.4.0" }
+gamlss-special = { path = "gamlss-special", version = "0.4.0" }
+gamlss-transform = { path = "gamlss-transform", version = "0.4.0" }
 rand = "0.10.2"
 rand_distr = "0.6.0"
 thiserror = "2.0.18"
@@ -101,7 +101,7 @@ gamlss-transform.workspace = true
 approx.workspace = true
 argmin = "0.11.0"
 argmin-math = { version = "0.5.1", features = ["vec"] }
-gamlss-datasets = { path = "gamlss-datasets", features = ["rand"] }
+gamlss-datasets = { workspace = true, features = ["rand"] }
 rand.workspace = true
 
 [[example]]

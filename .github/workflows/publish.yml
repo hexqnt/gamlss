@@ -110,7 +110,9 @@ jobs:
           publish_package gamlss-special
           publish_package gamlss-transform
           publish_package gamlss-family
+          publish_package gamlss-bayes
           publish_package gamlss-spline
           publish_package gamlss-formula
           publish_package gamlss-diagnostics
+          publish_package gamlss-datasets
           publish_package gamlss

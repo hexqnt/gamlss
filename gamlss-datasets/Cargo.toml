@@ -3,7 +3,6 @@ name = "gamlss-datasets"
 version.workspace = true
 edition.workspace = true
 description = "Small built-in datasets for GAMLSS examples and experimentation"
-publish = false
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -19,10 +18,10 @@ rand = ["dep:rand", "dep:rand_distr"]
 [dependencies]
 rand = { workspace = true, optional = true }
 rand_distr = { workspace = true, optional = true }
-time = { version = "0.3.53", default-features = false, features = ["macros"] }
+time = { version = "0.3.54", default-features = false, features = ["macros"] }
 
 [build-dependencies]
-time = { version = "0.3.53", default-features = false }
+time = { version = "0.3.54", default-features = false }
 
 [lints]
 workspace = true

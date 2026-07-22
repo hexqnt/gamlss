@@ -39,7 +39,7 @@ approx.workspace = true
 criterion.workspace = true
 dhat = "0.3.3"
 proptest = "1.11.0"
-statrs = "0.18"
+statrs = "0.19"
 
 [[example]]
 name = "objective_memory"

@@ -17,7 +17,7 @@ readme = "README.md"
 [dev-dependencies]
 approx.workspace = true
 criterion.workspace = true
-statrs = "0.18"
+statrs = "0.19"
 
 [[bench]]
 name = "numeric_kernels"
