@@ -22,6 +22,14 @@ pub type SkewPowerExponentialMeanSdSkewPower = SkewPowerExponentialMeanSd<Identi
 /// Fernández--Steel two-piece skew power-exponential parameterized by mathematical mean and standard deviation.
 ///
 /// The positive `skew_ratio` and `power` have the same meaning as in [`super::SkewPowerExponential`], but every change to either shape parameter is accompanied by an analytic recentering and rescaling so that `mean` and `sigma` remain the response mean and standard deviation. This is the same density family, not an additional distribution or a special case, and is provided for interpretable distributional-regression predictors familiar from standardized SGED/SEPD formulations. Prefer the direct mode/base-scale form when moment semantics are unnecessary on a performance-sensitive path.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!(
+        "../../../doc-assets/distributions/skew_power_exponential_mean_sd.svg"
+    )
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewPowerExponentialMeanSd<
     MeanLink = Identity,

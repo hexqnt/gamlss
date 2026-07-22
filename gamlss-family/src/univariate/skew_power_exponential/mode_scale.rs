@@ -28,6 +28,12 @@ pub type SkewPowerExponentialMuSigmaSkewPower = SkewPowerExponential<Identity, L
 /// At an observation exactly equal to `mu`, the location score is defined as zero. This is the ordinary derivative for `power > 1` and an explicit optimization convention at the non-smooth join for `power <= 1`.
 ///
 /// This is the direct kernel parameterization and avoids the moment conversion required by [`super::SkewPowerExponentialMeanSd`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/distributions/skew_power_exponential.svg")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkewPowerExponential<MuLink = Identity, SigmaLink = Log, SkewLink = Log, PowerLink = Log>
 {
