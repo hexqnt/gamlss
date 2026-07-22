@@ -1,13 +1,16 @@
 //! Seedable synthetic data generators.
 //!
-//! The functions in this module accept parameter functions directly, keeping
-//! custom data-generating processes concise and independent of a particular
-//! GAMLSS family implementation.
+//! The normal helpers accept parameter functions directly, while the
+//! [`continuous`] module provides a structured family-independent
+//! data-generating process.
 
 use std::{error::Error, fmt};
 
 use rand::Rng;
 use rand_distr::{Distribution, StandardNormal};
+
+/// Structured continuous synthetic datasets.
+pub mod continuous;
 
 /// Errors returned when a generator cannot produce a finite observation.
 #[derive(Clone, Copy, Debug)]
