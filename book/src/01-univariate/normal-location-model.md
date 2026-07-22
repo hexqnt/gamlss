@@ -1,6 +1,6 @@
 # Нормальная модель с линейным средним
 
-Полный код примера находится в [`examples/simple_fit.rs`](https://github.com/hexqnt/gamlss/blob/main/examples/simple_fit.rs).
+Полный код примера находится в [`examples/simple_fit.rs`](https://github.com/hexqnt/gamlss/blob/master/examples/simple_fit.rs).
 
 Рассмотрим нормальную модель с линейным средним и постоянным стандартным отклонением:
 

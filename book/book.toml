@@ -9,4 +9,4 @@ after = ["links"]
 
 [output.html]
 git-repository-url = "https://github.com/hexqnt/gamlss"
-edit-url-template = "https://github.com/hexqnt/gamlss/edit/main/book/{path}"
+edit-url-template = "https://github.com/hexqnt/gamlss/edit/master/book/{path}"
