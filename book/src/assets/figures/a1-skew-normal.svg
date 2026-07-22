@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-labelledby="title desc">
-<title id="title">Сплайн-модель skew-normal для датасета a1</title>
+<title id="title">Сплайн-модель асимметричного нормального распределения для набора a1</title>
 <desc id="desc">Наблюдения, условное среднее, девяностопроцентный интервал и меняющийся параметр асимметрии nu.</desc>
 <defs>
 <clipPath id="main-clip"><rect x="72" y="20" width="864" height="410"/></clipPath>
