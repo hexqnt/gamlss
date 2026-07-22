@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, Mu,
-    Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Logit, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau, UnitIntervalLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{
-    bernoulli_kl, digamma_minus_ln, invert_bounded_cdf, ln_gamma_stirling_residual,
-    regularized_beta,
+    bernoulli_kl, digamma_minus_ln, integrate_finite, invert_bounded_cdf,
+    ln_gamma_stirling_residual, regularized_beta,
 };
 
 use crate::initial::{
@@ -380,6 +380,23 @@ where
         invert_bounded_cdf(target, 0.0, 1.0, |y| {
             regularized_beta(parts.alpha, parts.beta, y)
         })
+    }
+}
+
+impl<MuLink, SigmaLink, NuLink, TauLink> HasCrps for Beinf<MuLink, SigmaLink, NuLink, TauLink>
+where
+    MuLink: UnitIntervalLink<f64>,
+    SigmaLink: UnitIntervalLink<f64>,
+    NuLink: PositiveLink<f64>,
+    TauLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !(0.0..=1.0).contains(&y) || !y.is_finite() || Self::parts(*theta).is_none() {
+            return f64::NAN;
+        }
+        let left = integrate_finite(0.0, y, |x| Self::cdf_theta(x, *theta).powi(2));
+        let right = integrate_finite(y, 1.0, |x| (1.0 - Self::cdf_theta(x, *theta)).powi(2));
+        (left + right).max(0.0)
     }
 }
 

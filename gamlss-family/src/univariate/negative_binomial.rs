@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use gamlss_core::{Log, PositiveLink};
 
 use gamlss_special::{
-    bernoulli_kl, digamma_minus_ln, included_count, is_nonnegative_integer, ln_gamma,
-    ln_gamma_delta, ln_gamma_stirling_residual, log_add_exp,
+    bernoulli_kl, digamma_minus_ln, included_count, integrate_finite, is_nonnegative_integer,
+    ln_gamma, ln_gamma_delta, ln_gamma_stirling_residual, log_add_exp,
 };
 
 pub use mean_dispersion::{
@@ -189,6 +189,66 @@ impl NegativeBinomialKernel {
         }
 
         Self::cdf_by_log_sum(theta.shape, log_success, log_failure, max_count)
+    }
+
+    #[allow(clippy::suboptimal_flops)]
+    pub(super) fn crps_theta(y: f64, theta: NegativeBinomialTheta) -> f64 {
+        if !is_nonnegative_integer(y)
+            || theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        let log_success = -Self::log1p_ratio(theta.mu, theta.shape);
+        let log_failure = -Self::log1p_ratio(theta.shape, theta.mu);
+        let success_probability = log_success.exp();
+        let cdf = Self::cdf_theta(y, theta);
+        let size_biased_cdf = if y < 1.0 {
+            0.0
+        } else {
+            Self::cdf_theta(
+                y - 1.0,
+                NegativeBinomialTheta {
+                    mu: theta.mu * (1.0 + 1.0 / theta.shape),
+                    shape: theta.shape + 1.0,
+                },
+            )
+        };
+        let hypergeometric_term =
+            Self::crps_hypergeometric_term(theta.shape, log_success, log_failure);
+        if !cdf.is_finite() || !size_biased_cdf.is_finite() || !hypergeometric_term.is_finite() {
+            return f64::NAN;
+        }
+
+        let score = y * (2.0 * cdf - 1.0)
+            - theta.mu / success_probability
+                * (success_probability * (2.0 * size_biased_cdf - 1.0) + hypergeometric_term);
+        score.max(0.0)
+    }
+
+    /// Evaluates `2F1(shape + 1, 1/2; 2; -4 * failure / success^2)` through
+    /// its Euler integral, avoiding a separate hypergeometric implementation.
+    #[allow(clippy::suboptimal_flops)]
+    fn crps_hypergeometric_term(shape: f64, log_success: f64, log_failure: f64) -> f64 {
+        let log_argument_scale = std::f64::consts::LN_2 * 2.0 + log_failure - 2.0 * log_success;
+        let integral = integrate_finite(0.0, std::f64::consts::FRAC_PI_2, |angle| {
+            let sine = angle.sin();
+            let cosine = angle.cos();
+            if cosine <= 0.0 {
+                return 0.0;
+            }
+            let log_scaled_sine = if sine == 0.0 {
+                f64::NEG_INFINITY
+            } else {
+                log_argument_scale + 2.0 * sine.ln()
+            };
+            let log_denominator = log_add_exp(0.0, log_scaled_sine);
+            (2.0 * cosine.ln() - (shape + 1.0) * log_denominator).exp()
+        });
+        4.0 * integral / std::f64::consts::PI
     }
 
     #[allow(clippy::cast_precision_loss)]

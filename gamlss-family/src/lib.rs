@@ -102,6 +102,7 @@ pub use mixture::{
 };
 
 mod constants;
+mod crps;
 mod domain;
 mod initial;
 /// Homogeneous finite-mixture distributions.

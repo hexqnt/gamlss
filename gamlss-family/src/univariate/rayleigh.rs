@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     ObservationView, ParameterParts, PositiveLink, Scale,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
+use gamlss_special::regularized_gamma_lower;
 
 use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{positive_floor, weighted_values};
@@ -161,6 +162,30 @@ where
     }
 }
 
+impl<ScaleLink> HasCrps for Rayleigh<ScaleLink>
+where
+    ScaleLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !is_positive_finite(theta.scale) {
+            return f64::NAN;
+        }
+
+        let half_squared_standardized = 0.5 * (y / theta.scale).powi(2);
+        let cdf = -(-half_squared_standardized).exp_m1();
+        let truncated_first_moment = if half_squared_standardized.is_infinite() {
+            1.0
+        } else {
+            regularized_gamma_lower(1.5, half_squared_standardized)
+        };
+        let standardized_mean = (std::f64::consts::PI / 2.0).sqrt();
+        let scale_term =
+            standardized_mean * (1.0 / std::f64::consts::SQRT_2 - 2.0 * truncated_first_moment);
+        (theta.scale.mul_add(scale_term, y * (2.0 * cdf - 1.0))).max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ScaleLink> TrySimulate<Rng> for Rayleigh<ScaleLink>
 where
@@ -206,7 +231,7 @@ pub struct RayleighTheta {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{RayleighScale, RayleighTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -223,5 +248,24 @@ mod tests {
         let probability = family.cdf(1.7, &theta);
         assert_relative_eq!(family.quantile(probability, &theta), 1.7, epsilon = 1.0e-12);
         assert!(family.nll(0.0, &theta, &mut ()).is_infinite());
+    }
+
+    #[test]
+    fn rayleigh_crps_matches_reference_value() {
+        let family = RayleighScale::new();
+        assert_relative_eq!(
+            family.crps(0.7, &RayleighTheta { scale: 1.3 }),
+            0.516_904_326_495_451_7,
+            epsilon = 1.0e-12
+        );
+        assert!(family.crps(-0.1, &RayleighTheta { scale: 1.3 }).is_nan());
+
+        let extreme = family.crps(
+            f64::MAX,
+            &RayleighTheta {
+                scale: f64::MIN_POSITIVE,
+            },
+        );
+        assert!(extreme.is_finite());
     }
 }

@@ -294,6 +294,16 @@ pub(super) fn quantile_mode_scale(
 }
 
 #[inline]
+pub(super) fn crps_mode_scale(y: f64, mu: f64, sigma: f64, skew_ratio: f64, power: f64) -> f64 {
+    if !y.is_finite() || !valid_mode_scale(mu, sigma, skew_ratio, power) {
+        return f64::NAN;
+    }
+    crate::crps::integrate_cdf_crps(y, sigma, |x| {
+        cdf_mode_scale(x, mu, sigma, skew_ratio, power)
+    })
+}
+
+#[inline]
 fn raw_moment_geometry(skew_ratio: f64, power: f64) -> Option<ModeScaleGeometry> {
     if skew_ratio <= 0.0 || !skew_ratio.is_finite() || power <= 0.0 || !power.is_finite() {
         return None;

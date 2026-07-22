@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, ObservationView, ParameterParts, PositiveLink, Scale, Shape,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, ObservationView, ParameterParts, PositiveLink, Scale, Shape,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -58,7 +58,7 @@ where
         y >= 0.0
             && y.is_finite()
             && Self::valid_theta(theta)
-            && theta.shape.mul_add(y / theta.scale, 1.0) > 0.0
+            && (theta.shape >= 0.0 || theta.shape.mul_add(y / theta.scale, 1.0) > 0.0)
     }
 
     #[inline]
@@ -136,17 +136,22 @@ where
         if theta.shape < 0.0 && y >= -theta.scale / theta.shape {
             return 1.0;
         }
+
+        -Self::log_survival_theta(y, theta).exp_m1()
+    }
+
+    #[inline]
+    fn log_survival_theta(y: f64, theta: GeneralizedParetoTheta) -> f64 {
         let scaled = y / theta.scale;
         if theta.shape == 0.0 {
-            return -(-scaled).exp_m1();
+            return -scaled;
         }
         let product = theta.shape * scaled;
-        let exponent = if product.is_finite() {
+        if product.is_finite() {
             -scaled * Self::log1p_ratio(product)
         } else {
             -(theta.shape.ln() + scaled.ln()) / theta.shape
-        };
-        -exponent.exp_m1()
+        }
     }
 }
 
@@ -266,6 +271,24 @@ where
     }
 }
 
+impl<ScaleLink, ShapeLink> HasCrps for GeneralizedPareto<ScaleLink, ShapeLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    ShapeLink: Link<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if theta.shape >= 1.0 || !Self::valid_support(y, *theta) {
+            return f64::NAN;
+        }
+
+        let log_survival = Self::log_survival_theta(y, *theta);
+        let integrated_survival =
+            theta.scale / (1.0 - theta.shape) * -((1.0 - theta.shape) * log_survival).exp_m1();
+        (y - 2.0 * integrated_survival + theta.scale / (2.0 - theta.shape)).max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ScaleLink, ShapeLink> TrySimulate<Rng> for GeneralizedPareto<ScaleLink, ShapeLink>
 where
@@ -323,7 +346,7 @@ pub struct GeneralizedParetoTheta {
 mod tests {
     #![allow(clippy::float_cmp)]
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{GeneralizedParetoScaleShape, GeneralizedParetoTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -390,5 +413,43 @@ mod tests {
             shape: 0.0,
         };
         assert_relative_eq!(family.cdf(1.0, &exponential), 1.0, epsilon = f64::EPSILON);
+    }
+
+    #[test]
+    fn generalized_pareto_crps_matches_reference_values() {
+        let family = GeneralizedParetoScaleShape::new();
+        for (shape, expected) in [
+            (0.0, 0.267_478_243_173_292_55),
+            (0.3, 0.369_388_535_807_232_63),
+            (-0.4, 0.179_115_795_155_739_5),
+        ] {
+            assert_relative_eq!(
+                family.crps(0.7, &GeneralizedParetoTheta { scale: 1.3, shape }),
+                expected,
+                epsilon = 1.0e-12
+            );
+        }
+        assert!(
+            family
+                .crps(
+                    0.7,
+                    &GeneralizedParetoTheta {
+                        scale: 1.3,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
+        );
+
+        for shape in [0.0, 0.5] {
+            let score = family.crps(
+                f64::MAX,
+                &GeneralizedParetoTheta {
+                    scale: f64::MIN_POSITIVE,
+                    shape,
+                },
+            );
+            assert!(score.is_finite(), "shape={shape}, score={score}");
+        }
     }
 }

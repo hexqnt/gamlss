@@ -1,5 +1,5 @@
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
     ObservationView, ParameterParts, PositiveLink, Shape,
 };
 #[cfg(feature = "rand")]
@@ -182,6 +182,16 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             NegativeBinomialKernel::cdf_theta(count as f64, *theta)
         })
+    }
+}
+
+impl<MuLink, ShapeLink> HasCrps for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        NegativeBinomialKernel::crps_theta(y, *theta)
     }
 }
 

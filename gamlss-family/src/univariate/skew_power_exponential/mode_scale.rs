@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, ObservationView, ParameterParts, PositiveLink, Power, Sigma, SkewRatio,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, ObservationView, ParameterParts, PositiveLink, Power,
+    Sigma, SkewRatio,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -12,8 +13,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 #[cfg(feature = "rand")]
 use super::try_sample_mode_scale;
 use super::{
-    cdf_mode_scale, mode_scale_to_mean_sd, nll_and_gradient_mode_scale, nll_mode_scale,
-    quantile_mode_scale, valid_mode_scale,
+    cdf_mode_scale, crps_mode_scale, mode_scale_to_mean_sd, nll_and_gradient_mode_scale,
+    nll_mode_scale, quantile_mode_scale, valid_mode_scale,
 };
 
 /// Two-piece skew power-exponential with identity/log/log/log links.
@@ -213,6 +214,19 @@ where
             theta.skew_ratio,
             theta.power,
         )
+    }
+}
+
+impl<MuLink, SigmaLink, SkewLink, PowerLink> HasCrps
+    for SkewPowerExponential<MuLink, SigmaLink, SkewLink, PowerLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    SkewLink: PositiveLink<f64>,
+    PowerLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        crps_mode_scale(y, theta.mu, theta.sigma, theta.skew_ratio, theta.power)
     }
 }
 

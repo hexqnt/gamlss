@@ -1,5 +1,6 @@
 use gamlss_core::{
-    CompilableFamily, Family, HasCdf, HasQuantile, ModelError, ObservationView, Probability,
+    CompilableFamily, Family, HasCdf, HasCrps, HasQuantile, ModelError, ObservationView,
+    Probability,
     shape::{ShapeValues, Simplex},
 };
 #[cfg(feature = "rand")]
@@ -8,6 +9,7 @@ use gamlss_special::baseline_softmax;
 #[cfg(feature = "rand")]
 use rand::RngExt as _;
 
+use crate::crps::finite_discrete_crps_from_log_pmf;
 use crate::domain::{is_interior_simplex, is_probability};
 
 /// Categorical family with `K` classes and `K - 1` baseline-softmax predictors.
@@ -210,6 +212,21 @@ impl<const K: usize> HasQuantile for Categorical<K> {
             }
         }
         f64::NAN
+    }
+}
+
+impl<const K: usize> HasCrps for Categorical<K> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn crps(&self, observation: f64, theta: &Self::Theta) -> f64 {
+        let Some(category) = Self::category(observation) else {
+            return f64::NAN;
+        };
+        if !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+        finite_discrete_crps_from_log_pmf(category as u64, (K - 1) as u64, |value| {
+            theta.probabilities[value as usize].ln()
+        })
     }
 }
 

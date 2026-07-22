@@ -1,6 +1,7 @@
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
-    ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink, ZeroProbability,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Logit, ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink,
+    ZeroProbability,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -212,6 +213,17 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         ZipKernel::quantile_theta(p, theta.component())
+    }
+}
+
+impl<MeanLink, ZeroProbabilityLink> HasCrps
+    for Zip<TotalMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZipKernel::crps_theta(y, theta.component())
     }
 }
 

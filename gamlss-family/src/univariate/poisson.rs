@@ -135,6 +135,20 @@ impl PoissonKernel {
         mu * Self::scaled_bessel_i0_plus_i1_two_mu(mu)
     }
 
+    #[allow(clippy::suboptimal_flops)]
+    pub(crate) fn crps(y: f64, mu: f64) -> f64 {
+        if !is_nonnegative_integer(y) || mu <= 0.0 || !mu.is_finite() {
+            return f64::NAN;
+        }
+        let cdf = Self::cdf(y, mu);
+        let pmf = Self::pmf(y, mu);
+        let half_gini = Self::half_gini_mean_difference(mu);
+        if !cdf.is_finite() || !pmf.is_finite() || !half_gini.is_finite() {
+            return f64::NAN;
+        }
+        ((y - mu) * (2.0 * cdf - 1.0) + 2.0 * mu * pmf - half_gini).max(0.0)
+    }
+
     fn scaled_bessel_i0_plus_i1_two_mu(mu: f64) -> f64 {
         if mu <= DIRECT_BESSEL_MU_LIMIT {
             return Self::scaled_bessel_i0_plus_i1_by_series(mu);
@@ -324,20 +338,8 @@ impl<MuLink> HasCrps for Poisson<MuLink>
 where
     MuLink: PositiveLink<f64>,
 {
-    #[allow(clippy::suboptimal_flops)]
     fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if !is_nonnegative_integer(y) || theta.mu <= 0.0 || !theta.mu.is_finite() {
-            return f64::NAN;
-        }
-
-        let cdf = PoissonKernel::cdf(y, theta.mu);
-        let pmf = PoissonKernel::pmf(y, theta.mu);
-        let half_gini = PoissonKernel::half_gini_mean_difference(theta.mu);
-        if !cdf.is_finite() || !pmf.is_finite() || !half_gini.is_finite() {
-            return f64::NAN;
-        }
-
-        (y - theta.mu) * (2.0 * cdf - 1.0) + 2.0 * theta.mu * pmf - half_gini
+        PoissonKernel::crps(y, theta.mu)
     }
 }
 

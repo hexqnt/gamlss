@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mean,
-    ObservationView, ParameterParts, PositiveLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Mean, ObservationView, ParameterParts, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -216,6 +216,23 @@ where
     }
 }
 
+impl<MeanLink> HasCrps for Geometric<MeanLink>
+where
+    MeanLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if !is_nonnegative_integer(y) || !Self::valid_theta(*theta) {
+            return f64::NAN;
+        }
+
+        let log_failure_probability = -Self::log_one_plus_inverse_mean(theta.mean);
+        let one_minus_failure_power = -(y * log_failure_probability).exp_m1();
+        let half_gini = theta.mean / (2.0 + 1.0 / theta.mean);
+        (y - theta.mean * (2.0 * one_minus_failure_power) + half_gini).max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MeanLink> TrySimulate<Rng> for Geometric<MeanLink>
 where
@@ -267,7 +284,7 @@ pub struct GeometricTheta {
 mod tests {
     #![allow(clippy::float_cmp)]
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{GeometricMean, GeometricTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -306,5 +323,25 @@ mod tests {
         let quantile = family.quantile(0.75, &theta);
         assert!(quantile.is_finite());
         assert!(family.cdf(quantile, &theta) >= 0.75);
+    }
+
+    #[test]
+    fn geometric_crps_matches_closed_form_values() {
+        let family = GeometricMean::new();
+        assert_relative_eq!(
+            family.crps(3.0, &GeometricTheta { mean: 2.0 }),
+            0.985_185_185_185_185_2,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            family.crps(0.0, &GeometricTheta { mean: 0.5 }),
+            0.125,
+            epsilon = 1.0e-15
+        );
+        assert!(family.crps(0.5, &GeometricTheta { mean: 2.0 }).is_nan());
+
+        let extreme = family.crps(0.0, &GeometricTheta { mean: f64::MAX });
+        assert!(extreme.is_finite());
+        assert_relative_eq!(extreme, 0.5 * f64::MAX, epsilon = 0.0);
     }
 }

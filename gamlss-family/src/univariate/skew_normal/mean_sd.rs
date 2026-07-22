@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mean, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mean, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -11,8 +11,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 
 use super::mu_sigma_nu::SkewNormalTheta;
 use super::{
-    SQRT_2_OVER_PI, cdf_location_scale, mean_sd_to_location_scale, nll_gradient_location_scale,
-    nll_location_scale, quantile_location_scale,
+    SQRT_2_OVER_PI, cdf_location_scale, crps_location_scale, mean_sd_to_location_scale,
+    nll_gradient_location_scale, nll_location_scale, quantile_location_scale,
 };
 
 /// Skew-normal distribution parameterized by mean, standard deviation and skewness.
@@ -232,6 +232,26 @@ where
 
         quantile_location_scale(
             p,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+        )
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink> HasCrps for SkewNormalMeanSd<MeanLink, SigmaLink, NuLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        crps_location_scale(
+            y,
             location_scale.mu,
             location_scale.sigma,
             location_scale.nu,

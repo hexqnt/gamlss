@@ -146,20 +146,27 @@ impl GammaKernel {
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
-    fn crps_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
+    pub(super) fn crps_shape_rate(y: f64, theta: GammaShapeRateTheta) -> f64 {
         if y < 0.0 || !y.is_finite() || !Self::valid_shape_rate(theta) {
             return f64::NAN;
         }
 
         let scaled_y = theta.rate * y;
-        let f_shape = regularized_gamma_lower(theta.shape, scaled_y);
-        let s_shape = regularized_gamma_upper(theta.shape, scaled_y);
-        let f_next_shape = regularized_gamma_lower(theta.shape + 1.0, scaled_y);
-        let s_next_shape = regularized_gamma_upper(theta.shape + 1.0, scaled_y);
+        let (f_shape, s_shape, f_next_shape, s_next_shape) = if scaled_y.is_infinite() {
+            (1.0, 0.0, 1.0, 0.0)
+        } else {
+            (
+                regularized_gamma_lower(theta.shape, scaled_y),
+                regularized_gamma_upper(theta.shape, scaled_y),
+                regularized_gamma_lower(theta.shape + 1.0, scaled_y),
+                regularized_gamma_upper(theta.shape + 1.0, scaled_y),
+            )
+        };
         let mean = theta.shape / theta.rate;
-        let beta_term = ln_beta(theta.shape + 0.5, 0.5).exp() / (std::f64::consts::PI * theta.rate);
+        let beta_term = theta.shape * ln_beta(theta.shape + 0.5, 0.5).exp()
+            / (std::f64::consts::PI * theta.rate);
 
-        y * (f_shape - s_shape) - mean * (f_next_shape - s_next_shape) - beta_term
+        (y * (f_shape - s_shape) - mean * (f_next_shape - s_next_shape) - beta_term).max(0.0)
     }
 
     #[inline]

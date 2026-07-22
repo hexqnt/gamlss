@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     ObservationView, ParameterParts, PositiveLink, Scale, Shape,
 };
 #[cfg(feature = "rand")]
@@ -202,6 +202,23 @@ where
     }
 }
 
+impl<ShapeLink, ScaleLink> HasCrps for Lomax<ShapeLink, ScaleLink>
+where
+    ShapeLink: PositiveLink<f64>,
+    ScaleLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(*theta) || theta.shape <= 1.0 {
+            return f64::NAN;
+        }
+
+        let exponent = (1.0 - theta.shape) * (y / theta.scale).ln_1p();
+        let integrated_survival = theta.scale / (theta.shape - 1.0) * -exponent.exp_m1();
+        (y - 2.0 * integrated_survival + theta.scale / (2.0 * theta.shape - 1.0)).max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ShapeLink, ScaleLink> TrySimulate<Rng> for Lomax<ShapeLink, ScaleLink>
 where
@@ -250,7 +267,7 @@ mod tests {
     use approx::assert_relative_eq;
     #[cfg(feature = "rand")]
     use gamlss_core::TrySimulate;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{LomaxShapeScale, LomaxTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -328,6 +345,33 @@ mod tests {
                         shape: 0.0,
                         scale: 3.0
                     }
+                )
+                .is_nan()
+        );
+    }
+
+    #[test]
+    fn lomax_crps_matches_reference_value_and_requires_finite_mean() {
+        let family = LomaxShapeScale::new();
+        assert_relative_eq!(
+            family.crps(
+                0.7,
+                &LomaxTheta {
+                    shape: 2.4,
+                    scale: 1.3,
+                },
+            ),
+            0.201_033_301_636_466_04,
+            epsilon = 1.0e-12
+        );
+        assert!(
+            family
+                .crps(
+                    0.7,
+                    &LomaxTheta {
+                        shape: 1.0,
+                        scale: 1.3,
+                    },
                 )
                 .is_nan()
         );

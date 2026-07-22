@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Cv, Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
-    Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power, UnitIntervalLink,
+    Cv, Dispersion, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Log, Logit, Mu, ObservationView, ParameterParts, PositiveLink, Power,
+    UnitIntervalLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -316,6 +317,21 @@ impl TweedieKernel {
         invert_positive_cdf(p, |y| Self::cdf_theta(y, theta))
     }
 
+    fn crps_theta(y: f64, theta: TweedieTheta) -> f64 {
+        if y < 0.0 || !y.is_finite() || Self::compound(theta).is_none() {
+            return f64::NAN;
+        }
+        let standard_deviation = theta.dispersion.sqrt() * theta.mean.powf(0.5 * theta.power);
+        let mapping_scale = if standard_deviation.is_finite() {
+            theta.mean.max(standard_deviation)
+        } else {
+            // The mapping scale only conditions the quadrature. The mean is a
+            // valid fallback even when the variance overflows representable f64.
+            theta.mean
+        };
+        crate::crps::integrate_cdf_crps(y, mapping_scale, |x| Self::cdf_theta(x, theta))
+    }
+
     #[cfg(feature = "rand")]
     fn try_sample_theta<Rng>(rng: &mut Rng, theta: TweedieTheta) -> Result<f64, SimulationError>
     where
@@ -472,6 +488,17 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         TweedieKernel::quantile_theta(p, *theta)
+    }
+}
+
+impl<MeanLink, DispersionLink, PowerLink> HasCrps for Tweedie<MeanLink, DispersionLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        TweedieKernel::crps_theta(y, *theta)
     }
 }
 
@@ -765,6 +792,17 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         TweedieKernel::quantile_theta(p, (*theta).into())
+    }
+}
+
+impl<MeanLink, CvLink, PowerLink> HasCrps for TweedieCv<MeanLink, CvLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        TweedieKernel::crps_theta(y, (*theta).into())
     }
 }
 

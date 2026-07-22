@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Nu, ObservationView, ParameterParts, PositiveLink, Scale, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Nu, ObservationView, ParameterParts, PositiveLink, Scale,
+    Sigma,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -13,6 +14,7 @@ use gamlss_special::{
 };
 
 use crate::constants::HALF_LOG_2_PI;
+use crate::domain::is_positive_finite;
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
 
 const NU_EPSILON: f64 = 1.0e-4;
@@ -59,16 +61,23 @@ where
     }
 
     #[inline]
+    fn valid_theta(theta: GeneralizedGammaTheta) -> bool {
+        is_positive_finite(theta.scale) && is_positive_finite(theta.sigma) && theta.nu.is_finite()
+    }
+
+    #[inline]
+    fn has_finite_mean(theta: GeneralizedGammaTheta) -> bool {
+        // For negative nu outside the log-normal limit, E[Y] exists exactly
+        // when k + 1 / nu > 0, where k = 1 / (sigma^2 * nu^2).
+        theta.nu >= 0.0
+            || theta.nu.abs() < NU_EPSILON
+            || theta.sigma * theta.sigma * theta.nu.abs() < 1.0
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: GeneralizedGammaTheta) -> f64 {
-        if y <= 0.0
-            || !y.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if y <= 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
         if theta.nu.abs() < NU_EPSILON {
@@ -248,13 +257,7 @@ where
     NuLink: Link<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if !y.is_finite()
-            || theta.scale <= 0.0
-            || !theta.scale.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
         if y <= 0.0 {
@@ -285,16 +288,26 @@ where
     NuLink: Link<f64>,
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if theta.scale <= 0.0
-            || !theta.scale.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
         invert_positive_cdf(p, |y| self.cdf(y, theta))
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> HasCrps for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(*theta) || !Self::has_finite_mean(*theta)
+        {
+            return f64::NAN;
+        }
+        crate::crps::integrate_cdf_crps(y, theta.scale, |x| self.cdf(x, theta))
     }
 }
 
@@ -310,12 +323,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        if theta.scale <= 0.0
-            || !theta.scale.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !Self::valid_theta(*theta) {
             return Err(SimulationError::InvalidParameters(
                 "generalized gamma theta",
             ));

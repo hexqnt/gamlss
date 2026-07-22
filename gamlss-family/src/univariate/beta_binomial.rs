@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit, ObservationView,
-    ParameterParts, PositiveLink, Precision, Probability, UnitIntervalLink,
+    Family, HasCdf, HasCrps, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
+    ObservationView, ParameterParts, PositiveLink, Precision, Probability, UnitIntervalLink,
 };
 use gamlss_special::{digamma_delta, included_count, ln_gamma_delta, log_add_exp};
 
+use crate::crps::finite_discrete_crps_from_log_pmf;
 use crate::domain::{is_positive_finite, is_strict_probability};
 use crate::initial::{positive_floor, probability_floor};
 
@@ -256,6 +257,29 @@ where
             log_sum = log_add_exp(log_sum, log_term);
         }
         log_sum.exp().clamp(0.0, 1.0)
+    }
+}
+
+impl<ProbabilityLink, PrecisionLink> HasCrps for BetaBinomial<ProbabilityLink, PrecisionLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+    PrecisionLink: PositiveLink<f64>,
+{
+    #[allow(clippy::cast_precision_loss)]
+    fn crps(&self, observation: [f64; 2], theta: &Self::Theta) -> f64 {
+        let [successes, trials] = observation;
+        if !BinomialKernel::valid_observation(successes, trials) || !Self::valid_theta(*theta) {
+            return f64::NAN;
+        }
+        let Some(successes) = included_count(successes, MAX_CDF_TERMS) else {
+            return f64::NAN;
+        };
+        let Some(trials) = included_count(trials, MAX_CDF_TERMS) else {
+            return f64::NAN;
+        };
+        finite_discrete_crps_from_log_pmf(successes, trials, |value| {
+            Self::log_pmf(value as f64, trials as f64, *theta)
+        })
     }
 }
 

@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    AboveTwoLink, Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations,
+    AboveTwoLink, Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
     InitialEtaFromTheta, Link, Log, LogPlus, Mean, Nu, ObservationView, ParameterParts,
     PositiveLink, Sigma, Tau,
 };
@@ -15,7 +15,8 @@ use super::mu_sigma_nu_tau::SkewStudentTTheta;
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
 use super::{
-    cdf_location_scale, mean_sd_to_location_scale, nll_location_scale, quantile_location_scale,
+    cdf_location_scale, crps_location_scale, mean_sd_to_location_scale, nll_location_scale,
+    quantile_location_scale,
 };
 
 /// Skew Student-t distribution parameterized by mean, standard deviation, skewness and `tau > 2`.
@@ -233,6 +234,28 @@ where
 
         quantile_location_scale(
             p,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> HasCrps
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+        crps_location_scale(
+            y,
             location_scale.mu,
             location_scale.sigma,
             location_scale.nu,

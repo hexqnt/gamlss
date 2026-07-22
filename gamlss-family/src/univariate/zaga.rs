@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
+use crate::domain::{is_positive_finite, is_strict_probability};
+
 pub use component_mean_cv_zero_probability::{
     ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
 };
@@ -70,6 +72,13 @@ pub(super) struct ZagaKernel;
 
 impl ZagaKernel {
     #[inline]
+    fn valid_theta(theta: ZagaComponentMeanCvZeroProbabilityTheta) -> bool {
+        is_positive_finite(theta.component_mean)
+            && is_positive_finite(theta.cv)
+            && is_strict_probability(theta.zero_probability)
+    }
+
+    #[inline]
     fn gamma_shape_rate(theta: ZagaComponentMeanCvZeroProbabilityTheta) -> GammaShapeRateTheta {
         let shape = 1.0 / (theta.cv * theta.cv);
         let rate = 1.0 / (theta.cv * theta.cv * theta.component_mean);
@@ -78,16 +87,7 @@ impl ZagaKernel {
 
     #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
-        if y < 0.0
-            || !y.is_finite()
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.cv <= 0.0
-            || !theta.cv.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
         if y == 0.0 {
@@ -124,15 +124,7 @@ impl ZagaKernel {
 
     #[allow(clippy::suboptimal_flops)]
     pub(super) fn cdf_theta(y: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
-        if !y.is_finite()
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.cv <= 0.0
-            || !theta.cv.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -148,15 +140,7 @@ impl ZagaKernel {
     }
 
     pub(super) fn quantile_theta(p: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.cv <= 0.0
-            || !theta.cv.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !(0.0..=1.0).contains(&p) || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if p <= theta.zero_probability {
@@ -167,6 +151,19 @@ impl ZagaKernel {
         GammaKernel::quantile_shape_rate(target, Self::gamma_shape_rate(theta))
     }
 
+    pub(super) fn crps_theta(y: f64, theta: ZagaComponentMeanCvZeroProbabilityTheta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+        let gamma = Self::gamma_shape_rate(theta);
+        crate::crps::zero_inflated_crps(
+            y,
+            theta.zero_probability,
+            GammaKernel::crps_shape_rate(y, gamma),
+            GammaKernel::crps_shape_rate(0.0, gamma),
+        )
+    }
+
     #[cfg(feature = "rand")]
     pub(super) fn try_sample_component_theta<Rng>(
         rng: &mut Rng,
@@ -175,14 +172,7 @@ impl ZagaKernel {
     where
         Rng: rand::Rng,
     {
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.cv <= 0.0
-            || !theta.cv.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return Err(gamlss_core::SimulationError::InvalidParameters(
                 "ZAGA theta",
             ));

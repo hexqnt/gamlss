@@ -1,5 +1,5 @@
 use gamlss_core::{
-    ComponentMean, Cv, Family, HasCdf, HasQuantile, InitialEtaFromObservations,
+    ComponentMean, Cv, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
     InitialEtaFromTheta, Log, Logit, ObservationView, ParameterParts, PositiveLink,
     UnitIntervalLink, ZeroProbability,
 };
@@ -198,6 +198,18 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         ZagaKernel::quantile_theta(p, *theta)
+    }
+}
+
+impl<ComponentMeanLink, CvLink, ZeroProbabilityLink> HasCrps
+    for Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
+where
+    ComponentMeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZagaKernel::crps_theta(y, *theta)
     }
 }
 

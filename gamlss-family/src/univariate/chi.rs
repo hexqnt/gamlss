@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    DegreesOfFreedom, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
-    Log, ObservationView, ParameterParts, PositiveLink,
+    DegreesOfFreedom, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Log, ObservationView, ParameterParts, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -170,6 +170,20 @@ where
             return f64::NAN;
         }
         invert_positive_cdf(probability, |y| Self::cdf_theta(y, *theta))
+    }
+}
+
+impl<DofLink> HasCrps for Chi<DofLink>
+where
+    DofLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !is_positive_finite(theta.degrees_of_freedom) {
+            return f64::NAN;
+        }
+        crate::crps::integrate_cdf_crps(y, theta.degrees_of_freedom.sqrt(), |x| {
+            Self::cdf_theta(x, *theta)
+        })
     }
 }
 

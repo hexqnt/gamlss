@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
+use crate::domain::is_finite_location_scale;
 use crate::initial::{robust_location_scale, weighted_values};
 
 const XI_EPSILON: f64 = 1.0e-8;
@@ -50,14 +51,14 @@ where
     }
 
     #[inline]
+    fn valid_theta(theta: GevTheta) -> bool {
+        is_finite_location_scale(theta.mu, theta.sigma) && theta.nu.is_finite()
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: GevTheta) -> f64 {
-        if !y.is_finite()
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
@@ -218,12 +219,7 @@ where
     NuLink: Link<f64>,
 {
     fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
-        if !y.is_finite()
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
 
@@ -247,12 +243,7 @@ where
 {
     #[allow(clippy::float_cmp)]
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
-        if !(0.0..=1.0).contains(&p)
-            || !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !(0.0..=1.0).contains(&p) || !Self::valid_theta(*theta) {
             return f64::NAN;
         }
         if p == 0.0 {
@@ -279,6 +270,27 @@ where
     }
 }
 
+impl<MuLink, SigmaLink, NuLink> HasCrps for Gev<MuLink, SigmaLink, NuLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) || theta.nu >= 1.0 {
+            return f64::NAN;
+        }
+
+        let standardized = (y - theta.mu) / theta.sigma;
+        let outside_support =
+            theta.nu.abs() >= XI_EPSILON && theta.nu.mul_add(standardized, 1.0) <= 0.0;
+        if outside_support {
+            return f64::NAN;
+        }
+        crate::crps::integrate_cdf_crps(y, theta.sigma, |x| self.cdf(x, theta))
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, MuLink, SigmaLink, NuLink> TrySimulate<Rng> for Gev<MuLink, SigmaLink, NuLink>
 where
@@ -290,11 +302,7 @@ where
     type Sample = f64;
 
     fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
-        if !theta.mu.is_finite()
-            || theta.sigma <= 0.0
-            || !theta.sigma.is_finite()
-            || !theta.nu.is_finite()
-        {
+        if !Self::valid_theta(*theta) {
             return Err(SimulationError::InvalidParameters("GEV theta"));
         }
         crate::simulation::try_sample_quantile(rng, self, theta, "GEV quantile")

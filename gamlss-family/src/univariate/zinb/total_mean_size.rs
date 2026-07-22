@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Logit,
-    ObservationView, ParameterParts, PositiveLink, Size, TotalMean, UnitIntervalLink,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Logit, ObservationView, ParameterParts, PositiveLink, Size, TotalMean, UnitIntervalLink,
     ZeroProbability,
 };
 #[cfg(feature = "rand")]
@@ -269,6 +269,18 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         ZinbKernel::quantile_theta(p, theta.component())
+    }
+}
+
+impl<MeanLink, SizeLink, ZeroProbabilityLink> HasCrps
+    for ZinbTotalMeanSize<MeanLink, SizeLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZinbKernel::crps_theta(y, theta.component())
     }
 }
 

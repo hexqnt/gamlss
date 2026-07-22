@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma, Tau,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
+    Tau,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -14,7 +15,10 @@ use crate::numeric::finite_difference_gradient_eta;
 
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
-use super::{cdf_location_scale, nll_location_scale, quantile_location_scale, skew_argument};
+use super::{
+    cdf_location_scale, crps_location_scale, nll_location_scale, quantile_location_scale,
+    skew_argument,
+};
 
 /// Skew Student-t distribution with identity/log/identity/log links.
 ///
@@ -225,6 +229,19 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         quantile_location_scale(p, theta.mu, theta.sigma, theta.nu, theta.tau)
+    }
+}
+
+impl<MuLink, SigmaLink, NuLink, TauLink> HasCrps
+    for SkewStudentT<MuLink, SigmaLink, NuLink, TauLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        crps_location_scale(y, theta.mu, theta.sigma, theta.nu, theta.tau)
     }
 }
 

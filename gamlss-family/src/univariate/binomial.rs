@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
     ModelError, ObservationView, ParameterParts, Probability, UnitIntervalLink,
 };
 #[cfg(feature = "rand")]
@@ -11,8 +11,11 @@ use gamlss_special::{
     regularized_beta,
 };
 
+use crate::crps::finite_discrete_crps_from_log_pmf;
 use crate::domain::{is_probability, is_strict_probability};
 use crate::initial::probability_floor;
+
+const MAX_CRPS_TERMS: u64 = 1_000_000;
 
 /// Fixed-trials binomial family with the default logit probability link.
 pub type BinomialFixedTrialsProbability = BinomialFixedTrials<Logit>;
@@ -312,6 +315,15 @@ where
     }
 }
 
+impl<ProbabilityLink> HasCrps for BinomialFixedTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, successes: f64, theta: &Self::Theta) -> f64 {
+        binomial_crps(successes, self.trials_f64(), theta.probability)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ProbabilityLink> TrySimulate<Rng> for BinomialFixedTrials<ProbabilityLink>
 where
@@ -360,6 +372,37 @@ where
     fn cdf(&self, observation: [f64; 2], theta: &Self::Theta) -> f64 {
         BinomialKernel::cdf(observation[0], observation[1], theta.probability)
     }
+}
+
+impl<ProbabilityLink> HasCrps for BinomialVaryingTrials<ProbabilityLink>
+where
+    ProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, observation: [f64; 2], theta: &Self::Theta) -> f64 {
+        binomial_crps(observation[0], observation[1], theta.probability)
+    }
+}
+
+#[allow(clippy::cast_precision_loss, clippy::suboptimal_flops)]
+fn binomial_crps(successes: f64, trials: f64, probability: f64) -> f64 {
+    if !BinomialKernel::valid_observation(successes, trials) || !is_strict_probability(probability)
+    {
+        return f64::NAN;
+    }
+    let Some(successes) = gamlss_special::included_count(successes, MAX_CRPS_TERMS) else {
+        return f64::NAN;
+    };
+    let Some(trials) = gamlss_special::included_count(trials, MAX_CRPS_TERMS) else {
+        return f64::NAN;
+    };
+    let log_probability = probability.ln();
+    let log_failure = (-probability).ln_1p();
+    finite_discrete_crps_from_log_pmf(successes, trials, |value| {
+        let value = value as f64;
+        BinomialKernel::log_choose(trials as f64, value)
+            + value * log_probability
+            + (trials as f64 - value) * log_failure
+    })
 }
 
 /// Link-scale probability predictor shared by binomial families.

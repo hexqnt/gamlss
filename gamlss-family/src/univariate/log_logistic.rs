@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
     ObservationView, ParameterParts, PositiveLink, Scale, Shape,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
-use gamlss_special::log_add_exp;
+use gamlss_special::{ln_beta, log_add_exp, regularized_beta};
 
 use crate::domain::{is_positive_finite, is_probability};
 use crate::initial::{positive_floor, weighted_summary, weighted_values};
@@ -187,6 +187,29 @@ where
     }
 }
 
+impl<ScaleLink, ShapeLink> HasCrps for LogLogistic<ScaleLink, ShapeLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    #[allow(clippy::suboptimal_flops)]
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(*theta) || theta.shape <= 1.0 {
+            return f64::NAN;
+        }
+
+        let cdf = Self::cdf_theta(y, *theta);
+        let inverse_shape = 1.0 / theta.shape;
+        let first_beta_shape = 1.0 + inverse_shape;
+        let second_beta_shape = 1.0 - inverse_shape;
+        let beta = ln_beta(first_beta_shape, second_beta_shape).exp();
+        let partial_first_moment =
+            theta.scale * regularized_beta(first_beta_shape, second_beta_shape, cdf) * beta;
+        let half_gini = theta.scale * second_beta_shape * beta;
+        (y * (2.0 * cdf - 1.0) - 2.0 * partial_first_moment + half_gini).max(0.0)
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, ScaleLink, ShapeLink> TrySimulate<Rng> for LogLogistic<ScaleLink, ShapeLink>
 where
@@ -226,7 +249,7 @@ define_two_positive_parameter_blocks! {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{HasCdf, HasQuantile};
+    use gamlss_core::{HasCdf, HasCrps, HasQuantile};
 
     use super::{LogLogisticScaleShape, LogLogisticTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -252,6 +275,33 @@ mod tests {
             family.quantile(family.cdf(1.7, &theta), &theta),
             1.7,
             epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
+    fn log_logistic_crps_matches_reference_value_and_requires_finite_mean() {
+        let family = LogLogisticScaleShape::new();
+        assert_relative_eq!(
+            family.crps(
+                0.7,
+                &LogLogisticTheta {
+                    scale: 1.3,
+                    shape: 2.4,
+                },
+            ),
+            0.410_194_621_302_024_66,
+            epsilon = 1.0e-12
+        );
+        assert!(
+            family
+                .crps(
+                    0.7,
+                    &LogLogisticTheta {
+                        scale: 1.3,
+                        shape: 1.0,
+                    },
+                )
+                .is_nan()
         );
     }
 }

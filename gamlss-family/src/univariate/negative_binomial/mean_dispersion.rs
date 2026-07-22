@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Dispersion, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    Mean, ObservationView, ParameterParts, PositiveLink,
+    Dispersion, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Log, Mean, ObservationView, ParameterParts, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -216,6 +216,16 @@ where
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             NegativeBinomialKernel::cdf_theta(count as f64, theta)
         })
+    }
+}
+
+impl<MeanLink, DispersionLink> HasCrps for NegativeBinomialDispersion<MeanLink, DispersionLink>
+where
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        NegativeBinomialKernel::crps_theta(y, theta.mean_size())
     }
 }
 

@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    DegreesOfFreedom, Family, HasCdf, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta,
-    Log, ObservationView, ParameterParts, PositiveLink,
+    DegreesOfFreedom, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Log, ObservationView, ParameterParts, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -12,6 +12,8 @@ use gamlss_special::{
 
 use crate::domain::is_positive_finite;
 use crate::initial::{positive_floor, weighted_values};
+
+use super::gamma::{GammaKernel, GammaShapeRateTheta};
 
 /// Chi-squared distribution with a log link for degrees of freedom.
 pub type ChiSquaredDegreesOfFreedom = ChiSquared<Log>;
@@ -194,6 +196,21 @@ where
     }
 }
 
+impl<DofLink> HasCrps for ChiSquared<DofLink>
+where
+    DofLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: f64, theta: &Self::Theta) -> f64 {
+        GammaKernel::crps_shape_rate(
+            y,
+            GammaShapeRateTheta {
+                shape: 0.5 * theta.degrees_of_freedom,
+                rate: 0.5,
+            },
+        )
+    }
+}
+
 #[cfg(feature = "rand")]
 impl<Rng, DofLink> TrySimulate<Rng> for ChiSquared<DofLink>
 where
@@ -246,7 +263,7 @@ pub struct ChiSquaredTheta {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use gamlss_core::{Family, HasCdf, HasQuantile};
+    use gamlss_core::{Family, HasCdf, HasCrps, HasQuantile};
 
     use super::{ChiSquaredDegreesOfFreedom, ChiSquaredTheta};
     use crate::test_support::assert_gradient_matches_finite_difference;
@@ -283,5 +300,20 @@ mod tests {
         let nll = family.nll(dof, &theta, &mut ());
         let expected = 0.5 * (4.0 * std::f64::consts::PI * dof).ln();
         assert_relative_eq!(nll, expected, epsilon = 1.0e-13);
+    }
+
+    #[test]
+    fn chi_squared_crps_matches_reference_value() {
+        let family = ChiSquaredDegreesOfFreedom::new();
+        assert_relative_eq!(
+            family.crps(
+                0.7,
+                &ChiSquaredTheta {
+                    degrees_of_freedom: 3.0,
+                },
+            ),
+            1.102_086_977_703_495_8,
+            epsilon = 1.0e-12
+        );
     }
 }

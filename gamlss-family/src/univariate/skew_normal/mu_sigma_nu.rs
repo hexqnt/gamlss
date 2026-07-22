@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -10,7 +10,8 @@ use gamlss_core::{SimulationError, TrySimulate};
 use crate::initial::{robust_location_scale, weighted_values};
 
 use super::{
-    cdf_location_scale, nll_gradient_location_scale, nll_location_scale, quantile_location_scale,
+    cdf_location_scale, crps_location_scale, nll_gradient_location_scale, nll_location_scale,
+    quantile_location_scale,
 };
 
 /// Skew-normal distribution with identity/log/identity links.
@@ -177,6 +178,17 @@ where
 {
     fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
         quantile_location_scale(p, theta.mu, theta.sigma, theta.nu)
+    }
+}
+
+impl<MuLink, SigmaLink, NuLink> HasCrps for SkewNormal<MuLink, SigmaLink, NuLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        crps_location_scale(y, theta.mu, theta.sigma, theta.nu)
     }
 }
 

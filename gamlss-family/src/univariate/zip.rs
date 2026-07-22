@@ -4,6 +4,8 @@ use gamlss_core::{Log, Logit, ParameterParts, PositiveLink, UnitIntervalLink};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer, log_add_exp};
 
+use crate::domain::{is_positive_finite, is_strict_probability};
+
 use super::poisson::PoissonKernel;
 
 pub use component_mean_zero_probability::{
@@ -68,14 +70,13 @@ pub(super) struct ZipKernel;
 
 impl ZipKernel {
     #[inline]
+    fn valid_theta(theta: ZipComponentMeanZeroProbabilityTheta) -> bool {
+        is_positive_finite(theta.component_mean) && is_strict_probability(theta.zero_probability)
+    }
+
+    #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
-        if !is_nonnegative_integer(y)
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !is_nonnegative_integer(y) || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
         if y == 0.0 {
@@ -110,13 +111,7 @@ impl ZipKernel {
     }
 
     pub(super) fn cdf_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
-        if !y.is_finite()
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -129,12 +124,7 @@ impl ZipKernel {
     }
 
     pub(super) fn quantile_theta(p: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -142,6 +132,18 @@ impl ZipKernel {
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Self::cdf_theta(count as f64, theta)
         })
+    }
+
+    pub(super) fn crps_theta(y: f64, theta: ZipComponentMeanZeroProbabilityTheta) -> f64 {
+        if !is_nonnegative_integer(y) || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+        crate::crps::zero_inflated_crps(
+            y,
+            theta.zero_probability,
+            PoissonKernel::crps(y, theta.component_mean),
+            PoissonKernel::crps(0.0, theta.component_mean),
+        )
     }
 
     #[cfg(feature = "rand")]
@@ -152,12 +154,7 @@ impl ZipKernel {
     where
         Rng: rand::Rng,
     {
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return Err(gamlss_core::SimulationError::InvalidParameters("ZIP theta"));
         }
         if crate::simulation::open_unit(rng) <= theta.zero_probability {

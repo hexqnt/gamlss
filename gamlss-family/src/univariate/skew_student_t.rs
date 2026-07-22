@@ -104,6 +104,14 @@ fn quantile_location_scale(p: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f6
     invert_real_cdf(p, |y| cdf_location_scale(y, mu, sigma, nu, tau))
 }
 
+#[inline]
+fn crps_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
+    if !y.is_finite() || !valid_location_scale(mu, sigma, nu, tau) || tau <= 1.0 {
+        return f64::NAN;
+    }
+    crate::crps::integrate_cdf_crps(y, sigma, |x| cdf_location_scale(x, mu, sigma, nu, tau))
+}
+
 #[cfg(feature = "rand")]
 fn try_sample_location_scale<Rng>(
     rng: &mut Rng,

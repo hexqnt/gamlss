@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use gamlss_core::{
-    Family, HasCdf, HasQuantile, Identity, InitialEtaFromObservations, InitialEtaFromTheta, Link,
-    Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Mu, Nu, ObservationView, ParameterParts, PositiveLink, Sigma,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -285,6 +285,26 @@ where
         }
 
         invert_real_cdf(p, |y| self.cdf(y, theta))
+    }
+}
+
+impl<MuLink, SigmaLink, NuLink> HasCrps for PowerExponential<MuLink, SigmaLink, NuLink>
+where
+    MuLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite()
+            || !theta.mu.is_finite()
+            || theta.sigma <= 0.0
+            || !theta.sigma.is_finite()
+            || theta.nu <= 0.0
+            || !theta.nu.is_finite()
+        {
+            return f64::NAN;
+        }
+        crate::crps::integrate_cdf_crps(y, theta.sigma, |x| self.cdf(x, theta))
     }
 }
 

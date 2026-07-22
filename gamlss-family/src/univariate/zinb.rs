@@ -4,6 +4,8 @@ use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer, log_add_exp};
 
+use crate::domain::{is_positive_finite, is_strict_probability};
+
 use super::negative_binomial::{NegativeBinomialKernel, NegativeBinomialTheta};
 
 pub use component_mean_size_zero_probability::{
@@ -71,6 +73,13 @@ pub(super) struct ZinbKernel;
 
 impl ZinbKernel {
     #[inline]
+    fn valid_theta(theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> bool {
+        is_positive_finite(theta.component_mean)
+            && is_positive_finite(theta.size)
+            && is_strict_probability(theta.zero_probability)
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nb_log_pmf(y: f64, component_mean: f64, size: f64) -> f64 {
         -NegativeBinomialKernel::nll_theta(
@@ -84,15 +93,7 @@ impl ZinbKernel {
 
     #[inline]
     pub(super) fn nll_theta(y: f64, theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> f64 {
-        if !is_nonnegative_integer(y)
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.size <= 0.0
-            || !theta.size.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !is_nonnegative_integer(y) || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
         let log_nb = Self::nb_log_pmf(y, theta.component_mean, theta.size);
@@ -139,15 +140,7 @@ impl ZinbKernel {
     }
 
     pub(super) fn cdf_theta(y: f64, theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> f64 {
-        if !y.is_finite()
-            || theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.size <= 0.0
-            || !theta.size.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::NAN;
         }
         if y < 0.0 {
@@ -167,14 +160,7 @@ impl ZinbKernel {
     }
 
     pub(super) fn quantile_theta(p: f64, theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> f64 {
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.size <= 0.0
-            || !theta.size.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return f64::NAN;
         }
 
@@ -182,6 +168,22 @@ impl ZinbKernel {
         discrete_quantile(p, MAX_CDF_TERMS, |count| {
             Self::cdf_theta(count as f64, theta)
         })
+    }
+
+    pub(super) fn crps_theta(y: f64, theta: ZinbComponentMeanSizeZeroProbabilityTheta) -> f64 {
+        if !is_nonnegative_integer(y) || !Self::valid_theta(theta) {
+            return f64::NAN;
+        }
+        let base = NegativeBinomialTheta {
+            mu: theta.component_mean,
+            shape: theta.size,
+        };
+        crate::crps::zero_inflated_crps(
+            y,
+            theta.zero_probability,
+            NegativeBinomialKernel::crps_theta(y, base),
+            NegativeBinomialKernel::crps_theta(0.0, base),
+        )
     }
 
     #[cfg(feature = "rand")]
@@ -192,14 +194,7 @@ impl ZinbKernel {
     where
         Rng: rand::Rng,
     {
-        if theta.component_mean <= 0.0
-            || !theta.component_mean.is_finite()
-            || theta.size <= 0.0
-            || !theta.size.is_finite()
-            || theta.zero_probability <= 0.0
-            || theta.zero_probability >= 1.0
-            || !theta.zero_probability.is_finite()
-        {
+        if !Self::valid_theta(theta) {
             return Err(gamlss_core::SimulationError::InvalidParameters(
                 "ZINB theta",
             ));
