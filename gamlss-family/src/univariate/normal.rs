@@ -109,12 +109,13 @@ where
 
     /// Computes NLL and gradient w.r.t. eta for one observation.
     ///
-    /// Uses analytic NLL derivatives w.r.t. `mu` and `sigma` and multiplies
-    /// by the link function derivatives (chain rule).
+    /// Uses scores with respect to `mu` and `log(sigma)`. Expressing the scale
+    /// chain rule through `d log(sigma) / d eta` avoids evaluating the
+    /// inverse-link derivative separately.
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
         let theta = Self::theta_from_eta(eta);
-        let (nll, gradient_theta) = normal_nll_gradient_theta(y, theta);
+        let (nll, z) = normal_nll_and_standardized_residual(y, theta);
         if !nll.is_finite() {
             return (
                 nll,
@@ -126,8 +127,8 @@ where
         }
 
         let gradient_eta = NormalEta {
-            mu: gradient_theta.mu * MuLink::derivative_inverse(eta.mu),
-            sigma: gradient_theta.sigma * SigmaLink::derivative_inverse(eta.sigma),
+            mu: (-z / theta.sigma) * MuLink::derivative_inverse(eta.mu),
+            sigma: z.mul_add(-z, 1.0) * SigmaLink::derivative_log_inverse(eta.sigma),
         };
 
         (nll, gradient_eta)
@@ -343,12 +344,6 @@ pub struct NormalTheta {
     pub sigma: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct NormalThetaGradient {
-    pub(crate) mu: f64,
-    pub(crate) sigma: f64,
-}
-
 #[inline]
 pub(crate) fn normal_valid_theta(theta: NormalTheta) -> bool {
     is_finite_location_scale(theta.mu, theta.sigma)
@@ -359,41 +354,20 @@ pub(crate) fn normal_valid_theta(theta: NormalTheta) -> bool {
 /// Returns `INFINITY` for non-finite observations or invalid natural
 /// parameters.
 #[inline]
-#[allow(clippy::suboptimal_flops)]
 pub(crate) fn normal_nll_theta(y: f64, theta: NormalTheta) -> f64 {
+    normal_nll_and_standardized_residual(y, theta).0
+}
+
+#[inline]
+fn normal_nll_and_standardized_residual(y: f64, theta: NormalTheta) -> (f64, f64) {
     if !y.is_finite() || !normal_valid_theta(theta) {
-        return f64::INFINITY;
+        return (f64::INFINITY, f64::NAN);
     }
 
     let residual = y - theta.mu;
     let z = residual / theta.sigma;
-    HALF_LOG_2_PI + theta.sigma.ln() + 0.5 * z * z
-}
-
-/// Negative log-likelihood and gradient with respect to natural normal
-/// parameters.
-#[inline]
-#[allow(clippy::suboptimal_flops)]
-pub(crate) fn normal_nll_gradient_theta(y: f64, theta: NormalTheta) -> (f64, NormalThetaGradient) {
-    let nll = normal_nll_theta(y, theta);
-    if !nll.is_finite() {
-        return (
-            nll,
-            NormalThetaGradient {
-                mu: f64::NAN,
-                sigma: f64::NAN,
-            },
-        );
-    }
-
-    let residual = y - theta.mu;
-    let sigma2 = theta.sigma * theta.sigma;
-    let gradient = NormalThetaGradient {
-        mu: (theta.mu - y) / sigma2,
-        sigma: (1.0 / theta.sigma) - (residual * residual / (sigma2 * theta.sigma)),
-    };
-
-    (nll, gradient)
+    let nll = (0.5 * z).mul_add(z, HALF_LOG_2_PI + theta.sigma.ln());
+    (nll, z)
 }
 
 /// Creates a normal GAMLSS model from a response, two design matrices and
@@ -427,18 +401,77 @@ mod tests {
     #[cfg(feature = "rand")]
     use gamlss_core::TrySimulate;
     use gamlss_core::{
-        DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
-        HasLogDensity, HasQuantile, NoPenalty, Objective,
+        ClampedLog, DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
+        HasLogDensity, HasQuantile, Identity, NoPenalty, Objective, Softplus,
     };
     use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
-    use super::{DEFAULT_INITIAL_LOG_SIGMA, NormalEta, NormalMuSigma, NormalTheta, normal_gamlss};
+    use super::{
+        DEFAULT_INITIAL_LOG_SIGMA, Normal, NormalEta, NormalMuSigma, NormalTheta, normal_gamlss,
+    };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
     #[test]
     fn normal_gradient_matches_finite_difference() {
         let family = NormalMuSigma::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn normal_softplus_scale_gradient_matches_finite_difference() {
+        let family = Normal::<Identity, Softplus>::new();
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn normal_log_gradient_remains_finite_when_sigma_squared_underflows() {
+        let family = NormalMuSigma::new();
+        let eta_sigma = -460.0_f64;
+        let sigma = eta_sigma.exp();
+        let (nll, gradient) = family.nll_and_gradient_eta(
+            sigma,
+            &NormalEta {
+                mu: 0.0,
+                sigma: eta_sigma,
+            },
+            &mut family.workspace(),
+        );
+
+        assert!(nll.is_finite());
+        assert!(gradient.mu.is_finite());
+        assert_relative_eq!(gradient.mu * sigma, -1.0, epsilon = 1.0e-12);
+        assert_relative_eq!(gradient.sigma, 0.0, epsilon = 1.0e-12);
+    }
+
+    #[test]
+    fn normal_clamped_log_scale_gradient_respects_active_interval() {
+        let family = Normal::<Identity, ClampedLog<-2, 2>>::new();
+        let y = 1.7;
+        let mu = 0.4;
+
+        assert_gradient_matches_finite_difference::<_, 2>(&family, y, [mu, -0.2]);
+
+        for (outside, boundary) in [(-3.0_f64, -2.0_f64), (3.0_f64, 2.0_f64)] {
+            let (outside_nll, outside_gradient) = family.nll_and_gradient_eta(
+                y,
+                &NormalEta { mu, sigma: outside },
+                &mut family.workspace(),
+            );
+            let (boundary_nll, boundary_gradient) = family.nll_and_gradient_eta(
+                y,
+                &NormalEta {
+                    mu,
+                    sigma: boundary,
+                },
+                &mut family.workspace(),
+            );
+            let sigma = boundary.exp();
+            let z = (y - mu) / sigma;
+
+            assert_relative_eq!(outside_nll, boundary_nll);
+            assert_relative_eq!(outside_gradient.sigma, 0.0);
+            assert_relative_eq!(boundary_gradient.sigma, z.mul_add(-z, 1.0));
+        }
     }
 
     #[test]

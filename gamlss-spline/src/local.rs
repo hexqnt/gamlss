@@ -254,24 +254,34 @@ fn edge_extrapolation_basis_derivative(
     }
 }
 
-/// Finds the span (control point index) for an open-uniform spline via binary
-/// search.
+/// Finds the span (control point index) for an interior open-uniform coordinate
+/// in constant time.
+#[inline]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
-    let last_control = n_basis - 1;
-    let mut low = degree;
-    let mut high = n_basis;
-    let mut mid = usize::midpoint(low, high);
-    while u < open_uniform_knot(mid, n_basis, degree)
-        || u >= open_uniform_knot(mid + 1, n_basis, degree)
-    {
-        if u < open_uniform_knot(mid, n_basis, degree) {
-            high = mid;
-        } else {
-            low = mid;
-        }
-        mid = usize::midpoint(low, high);
+    debug_assert!(u > 0.0 && u < 1.0);
+    debug_assert!(n_basis > degree);
+
+    let n_intervals = n_basis - degree;
+    let interval = (u * n_intervals as f64) as usize;
+    let mut span = degree + interval.min(n_intervals - 1);
+
+    // Division followed by multiplication is not guaranteed to recover an
+    // integer exactly (for example, 15 / 22 * 22 rounds down). Correct the
+    // estimate by at most one span so exact knots retain right-open semantics.
+    if u < open_uniform_knot(span, n_basis, degree) {
+        span -= 1;
+    } else if u >= open_uniform_knot(span + 1, n_basis, degree) {
+        span += 1;
     }
-    mid.min(last_control)
+
+    debug_assert!(u >= open_uniform_knot(span, n_basis, degree));
+    debug_assert!(u < open_uniform_knot(span + 1, n_basis, degree));
+    span
 }
 
 /// Computes the weights of the B-spline basis functions in a given span.
@@ -429,5 +439,73 @@ fn spline_weights(order: SplineOrder, u: f64) -> [f64; 4] {
                 u3 / 6.0,
             ]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{open_uniform_knot, open_uniform_span};
+
+    fn assert_matches_binary_search(u: f64, n_basis: usize, degree: usize) {
+        assert_eq!(
+            open_uniform_span(u, n_basis, degree),
+            binary_search_span(u, n_basis, degree),
+            "degree={degree}, n_basis={n_basis}, u={u:?}",
+        );
+    }
+
+    fn binary_search_span(u: f64, n_basis: usize, degree: usize) -> usize {
+        let last_control = n_basis - 1;
+        let mut low = degree;
+        let mut high = n_basis;
+        let mut mid = usize::midpoint(low, high);
+        while u < open_uniform_knot(mid, n_basis, degree)
+            || u >= open_uniform_knot(mid + 1, n_basis, degree)
+        {
+            if u < open_uniform_knot(mid, n_basis, degree) {
+                high = mid;
+            } else {
+                low = mid;
+            }
+            mid = usize::midpoint(low, high);
+        }
+        mid.min(last_control)
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn constant_time_span_matches_binary_search_at_knots_and_between_them() {
+        for degree in 1..=3 {
+            for n_intervals in 1..=64 {
+                let n_basis = degree + n_intervals;
+
+                for u in [0.0_f64.next_up(), 1.0_f64.next_down()] {
+                    assert_matches_binary_search(u, n_basis, degree);
+                }
+
+                for numerator in 1..n_intervals {
+                    let knot = numerator as f64 / n_intervals as f64;
+                    for u in [knot.next_down(), knot, knot.next_up()] {
+                        assert_matches_binary_search(u, n_basis, degree);
+                    }
+                }
+
+                for numerator in 1..1024 {
+                    let u = f64::from(numerator) / 1024.0;
+                    assert_matches_binary_search(u, n_basis, degree);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn constant_time_span_preserves_right_open_knot_semantics_after_rounding() {
+        let degree = 3;
+        let n_intervals = 22;
+        let n_basis = degree + n_intervals;
+        let knot = open_uniform_knot(degree + 15, n_basis, degree);
+
+        assert!(knot * 22.0 < 15.0);
+        assert_eq!(open_uniform_span(knot, n_basis, degree), degree + 15);
     }
 }
