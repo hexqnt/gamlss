@@ -38,6 +38,11 @@ fn valid_location_scale(mu: f64, sigma: f64, nu: f64) -> bool {
 
 #[inline]
 fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
+    nll_location_scale_with_log_sigma(y, mu, sigma, nu, sigma.ln())
+}
+
+#[inline]
+fn nll_location_scale_with_log_sigma(y: f64, mu: f64, sigma: f64, nu: f64, log_sigma: f64) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu) {
         return f64::INFINITY;
     }
@@ -48,7 +53,7 @@ fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64) -> f64 {
         return f64::INFINITY;
     }
 
-    sigma.ln() - LOG_2 - unit_normal_log_pdf(z) - log_skew_cdf
+    log_sigma - LOG_2 - unit_normal_log_pdf(z) - log_skew_cdf
 }
 
 #[inline]

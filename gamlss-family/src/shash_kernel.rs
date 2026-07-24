@@ -9,8 +9,13 @@ pub struct Transform {
 
 #[inline]
 pub fn transform_standardized(x: f64, nu: f64, tau: f64) -> Transform {
+    transform_standardized_with_log_nu(x, nu.ln(), tau)
+}
+
+#[inline]
+pub fn transform_standardized_with_log_nu(x: f64, log_nu: f64, tau: f64) -> Transform {
     let asinh_x = x.asinh();
-    let h = tau.mul_add(asinh_x, -nu.ln());
+    let h = tau.mul_add(asinh_x, -log_nu);
     Transform {
         asinh_x,
         h,

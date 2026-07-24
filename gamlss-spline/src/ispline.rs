@@ -138,7 +138,10 @@ impl ISplineBasis {
     }
 }
 
-/// I-spline predictor.
+/// I-spline predictor with on-demand row evaluation.
+///
+/// The design retains coordinates and basis metadata but does not materialize
+/// or cache observation rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ISplineDesign {
     x: Vec<f64>,

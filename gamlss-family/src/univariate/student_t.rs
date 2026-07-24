@@ -56,6 +56,15 @@ pub(super) struct StudentTGradientTheta {
 }
 
 pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
+    student_t_nll_theta_with_log_sigma(nu, y, theta, theta.sigma.ln())
+}
+
+pub(super) fn student_t_nll_theta_with_log_sigma(
+    nu: f64,
+    y: f64,
+    theta: StudentTTheta,
+    log_sigma: f64,
+) -> f64 {
     if !y.is_finite()
         || !theta.mu.is_finite()
         || theta.sigma <= 0.0
@@ -67,7 +76,7 @@ pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 
     }
 
     let z = (y - theta.mu) / theta.sigma;
-    student_t_nll_constant(nu) + theta.sigma.ln() + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
+    student_t_nll_constant(nu) + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
 }
 
 #[allow(clippy::suboptimal_flops)]

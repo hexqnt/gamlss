@@ -42,6 +42,11 @@ impl Link<f64> for Log {
 
 impl PositiveLink<f64> for Log {
     #[inline]
+    fn inverse_and_log_inverse(eta: f64) -> (f64, Option<f64>) {
+        (eta.exp(), Some(eta))
+    }
+
+    #[inline]
     fn derivative_log_inverse(_: f64) -> f64 {
         1.0
     }
@@ -82,6 +87,12 @@ impl Link<f64> for Softplus {
 }
 
 impl PositiveLink<f64> for Softplus {
+    #[inline]
+    fn inverse_and_log_inverse(eta: f64) -> (f64, Option<f64>) {
+        let inverse = Self::inverse(eta);
+        (inverse, Some(inverse.ln()))
+    }
+
     #[inline]
     fn derivative_log_inverse(eta: f64) -> f64 {
         if eta > 30.0 {
@@ -172,6 +183,12 @@ impl<const OFFSET: i64> InitialEtaFromTheta<f64> for LogPlus<OFFSET> {
 
 impl PositiveLink<f64> for LogPlus<2> {
     #[inline]
+    fn inverse_and_log_inverse(eta: f64) -> (f64, Option<f64>) {
+        let inverse = Self::inverse(eta);
+        (inverse, Some(inverse.ln()))
+    }
+
+    #[inline]
     fn derivative_log_inverse(eta: f64) -> f64 {
         const LN_2: f64 = std::f64::consts::LN_2;
         if eta >= LN_2 {
@@ -227,6 +244,23 @@ impl<const MIN: i64, const MAX: i64> Link<f64> for ClampedLog<MIN, MAX> {
 impl<const MIN: i64, const MAX: i64> PositiveLink<f64> for ClampedLog<MIN, MAX> {
     #[allow(clippy::cast_precision_loss)]
     #[inline]
+    fn inverse_and_log_inverse(eta: f64) -> (f64, Option<f64>) {
+        let min = MIN as f64;
+        let max = MAX as f64;
+        debug_assert!(min <= max);
+
+        let log_inverse = if eta < min {
+            min
+        } else if eta > max {
+            max
+        } else {
+            eta
+        };
+        (log_inverse.exp(), Some(log_inverse))
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[inline]
     fn derivative_log_inverse(eta: f64) -> f64 {
         if (MIN as f64..=MAX as f64).contains(&eta) {
             1.0
@@ -278,6 +312,20 @@ pub trait InitialEtaFromTheta<S>: Link<S> {
 /// This contract is suitable for scale/rate/shape-like parameters without an
 /// upper bound. For probabilities use [`UnitIntervalLink`].
 pub trait PositiveLink<S>: Link<S> {
+    /// Computes the inverse link and, when available without redundant work,
+    /// its analytical natural logarithm.
+    ///
+    /// The default keeps custom positive links source-compatible and returns
+    /// no precomputed logarithm. Built-in links override this method so
+    /// likelihood kernels can avoid an `inverse(eta).ln()` round trip.
+    ///
+    /// When an implementation returns `Some(log_inverse)`, that value must be
+    /// the natural logarithm of the returned inverse-link value.
+    #[inline]
+    fn inverse_and_log_inverse(eta: S) -> (S, Option<S>) {
+        (Self::inverse(eta), None)
+    }
+
     /// Derivative of `ln(inverse(eta))` with respect to `eta`.
     ///
     /// Positive-scale likelihoods often contain a log-Jacobian term. Computing
@@ -315,6 +363,25 @@ mod tests {
         Softplus,
     };
 
+    struct CustomPositiveLink;
+
+    impl Link<f64> for CustomPositiveLink {
+        fn inverse(eta: f64) -> f64 {
+            eta.exp() + 1.0
+        }
+
+        fn derivative_inverse(eta: f64) -> f64 {
+            eta.exp()
+        }
+    }
+
+    impl PositiveLink<f64> for CustomPositiveLink {
+        fn derivative_log_inverse(eta: f64) -> f64 {
+            let exp_eta = eta.exp();
+            exp_eta / (exp_eta + 1.0)
+        }
+    }
+
     #[test]
     #[allow(clippy::float_cmp)]
     fn clamped_log_clamps_value_and_derivative() {
@@ -327,6 +394,38 @@ mod tests {
         assert_eq!(LinkUnderTest::derivative_inverse(-3.0), 0.0);
         assert_relative_eq!(LinkUnderTest::derivative_inverse(1.0), 1.0_f64.exp());
         assert_eq!(LinkUnderTest::derivative_inverse(3.0), 0.0);
+
+        for (eta, expected_log_inverse) in [(-3.0_f64, -2.0_f64), (1.0, 1.0), (3.0, 2.0)] {
+            let (inverse, log_inverse) = LinkUnderTest::inverse_and_log_inverse(eta);
+            assert_relative_eq!(inverse, expected_log_inverse.exp());
+            assert_eq!(log_inverse, Some(expected_log_inverse));
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn positive_links_can_supply_inverse_and_log_inverse_together() {
+        for eta in [-10.0, -1.0, 0.0, 1.0, 10.0] {
+            let (inverse, log_inverse) = Log::inverse_and_log_inverse(eta);
+            assert_eq!(inverse, Log::inverse(eta));
+            assert_eq!(log_inverse, Some(eta));
+
+            let (inverse, log_inverse) = Softplus::inverse_and_log_inverse(eta);
+            assert_eq!(inverse, Softplus::inverse(eta));
+            assert_eq!(log_inverse, Some(inverse.ln()));
+
+            let (inverse, log_inverse) = LogPlus::<2>::inverse_and_log_inverse(eta);
+            assert_eq!(inverse, LogPlus::<2>::inverse(eta));
+            assert_eq!(log_inverse, Some(inverse.ln()));
+        }
+    }
+
+    #[test]
+    fn custom_positive_links_keep_the_default_fused_fallback() {
+        assert_eq!(
+            CustomPositiveLink::inverse_and_log_inverse(0.5),
+            (CustomPositiveLink::inverse(0.5), None)
+        );
     }
 
     #[test]

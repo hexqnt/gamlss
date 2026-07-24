@@ -8,10 +8,11 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 use super::{
     cdf_location_scale, crps_location_scale, nll_gradient_location_scale, nll_location_scale,
-    quantile_location_scale,
+    nll_location_scale_with_log_sigma, quantile_location_scale,
 };
 
 /// Skew-normal distribution with identity/log/identity links.
@@ -54,14 +55,27 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: SkewNormalEta) -> (SkewNormalTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            SkewNormalTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu: NuLink::inverse(eta.nu),
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn nll_theta(y: f64, theta: SkewNormalTheta) -> f64 {
         nll_location_scale(y, theta.mu, theta.sigma, theta.nu)
     }
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewNormalEta) -> (f64, SkewNormalEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = nll_location_scale_with_log_sigma(y, theta.mu, theta.sigma, theta.nu, log_sigma);
         if !nll.is_finite() {
             return (nll, SkewNormalEta::from_array([f64::NAN; 3]));
         }
@@ -71,7 +85,7 @@ where
             nll,
             SkewNormalEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
                 nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
             },
         )
@@ -121,7 +135,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        nll_location_scale_with_log_sigma(y, theta.mu, theta.sigma, theta.nu, log_sigma)
     }
 
     #[inline]

@@ -68,6 +68,16 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> f64 {
+        Self::nll_log_location_log_sd_with_log_scale(y, theta, theta.log_sd.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_log_location_log_sd_with_log_scale(
+        y: f64,
+        theta: LogNormalLogLocationLogSdTheta,
+        log_scale: f64,
+    ) -> f64 {
         if y <= 0.0 || !y.is_finite() || !Self::valid_log_location_log_sd(theta) {
             return f64::INFINITY;
         }
@@ -75,15 +85,16 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
         let log_y = y.ln();
         let residual = log_y - theta.log_location;
         let z = residual / theta.log_sd;
-        log_y + HALF_LOG_2_PI + theta.log_sd.ln() + 0.5 * z * z
+        log_y + HALF_LOG_2_PI + log_scale + 0.5 * z * z
     }
 
     #[inline]
     fn gradient_log_location_log_sd(y: f64, theta: LogNormalLogLocationLogSdTheta) -> (f64, f64) {
-        let residual = y.ln() - theta.log_location;
+        let log_y = y.ln();
+        let residual = log_y - theta.log_location;
         let sigma2 = theta.log_sd * theta.log_sd;
         (
-            (theta.log_location - y.ln()) / sigma2,
+            -residual / sigma2,
             1.0 / theta.log_sd - residual * residual / (sigma2 * theta.log_sd),
         )
     }
@@ -268,9 +279,10 @@ mod tests {
     use statrs::distribution::{ContinuousCDF, LogNormal as StatrsLogNormal};
 
     use super::{
-        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdTheta, LogNormalMeanCv,
-        LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd, LogNormalMeanLogSdTheta,
-        LogNormalMedianLogSd,
+        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
+        LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd,
+        LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMedianLogSdEta,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
 
@@ -295,6 +307,64 @@ mod tests {
             &LogNormalMedianLogSd::new(),
             1.7,
             [1.2_f64.ln(), 0.8_f64.ln()],
+        );
+    }
+
+    #[test]
+    fn fused_logs_preserve_invalid_underflowed_natural_parameters() {
+        let canonical = LogNormalLogLocationLogSd::new();
+        assert!(
+            canonical
+                .nll_eta(
+                    1.0,
+                    &LogNormalLogLocationLogSdEta {
+                        log_location: 0.0,
+                        log_sd: -1_000.0,
+                    },
+                    &mut (),
+                )
+                .is_infinite()
+        );
+
+        let mean = LogNormalMeanLogSd::new();
+        assert!(
+            mean.nll_eta(
+                1.0,
+                &LogNormalMeanLogSdEta {
+                    mean: -1_000.0,
+                    log_sd: 0.0,
+                },
+                &mut (),
+            )
+            .is_infinite()
+        );
+
+        let median = LogNormalMedianLogSd::new();
+        assert!(
+            median
+                .nll_eta(
+                    1.0,
+                    &LogNormalMedianLogSdEta {
+                        median: -1_000.0,
+                        log_sd: 0.0,
+                    },
+                    &mut (),
+                )
+                .is_infinite()
+        );
+
+        let mean_cv = LogNormalMeanCv::new();
+        assert!(
+            mean_cv
+                .nll_eta(
+                    1.0,
+                    &LogNormalMeanCvEta {
+                        mean: -1_000.0,
+                        cv: 0.0,
+                    },
+                    &mut (),
+                )
+                .is_infinite()
         );
     }
 

@@ -225,7 +225,10 @@ impl NaturalCubicSplineBasis {
     }
 }
 
-/// Natural cubic spline predictor.
+/// Natural cubic spline predictor with on-demand row evaluation.
+///
+/// The design retains coordinates and basis metadata but does not materialize
+/// or cache observation rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NaturalCubicSplineDesign {
     x: Vec<f64>,

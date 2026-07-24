@@ -12,6 +12,7 @@ use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile}
 
 use crate::{
     initial::{robust_location_scale, weighted_values},
+    link::positive_inverse_and_log,
     shash_kernel as kernel,
 };
 
@@ -72,6 +73,24 @@ where
     }
 
     #[inline]
+    fn theta_and_logs_from_eta(eta: ShashEta) -> (ShashTheta, f64, f64, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        let (nu, log_nu) = positive_inverse_and_log::<NuLink>(eta.nu);
+        let (tau, log_tau) = positive_inverse_and_log::<TauLink>(eta.tau);
+        (
+            ShashTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu,
+                tau,
+            },
+            log_sigma,
+            log_nu,
+            log_tau,
+        )
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn transformed_z(y: f64, theta: ShashTheta) -> f64 {
         Self::transform(y, theta).1.latent
@@ -80,13 +99,34 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn transform(y: f64, theta: ShashTheta) -> (f64, kernel::Transform) {
+        Self::transform_with_log_nu(y, theta, theta.nu.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn transform_with_log_nu(y: f64, theta: ShashTheta, log_nu: f64) -> (f64, kernel::Transform) {
         let x = (y - theta.mu) / theta.sigma;
-        (x, kernel::transform_standardized(x, theta.nu, theta.tau))
+        (
+            x,
+            kernel::transform_standardized_with_log_nu(x, log_nu, theta.tau),
+        )
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: ShashTheta) -> f64 {
+        Self::nll_theta_with_logs(y, theta, theta.sigma.ln(), theta.nu.ln(), theta.tau.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_theta_with_logs(
+        y: f64,
+        theta: ShashTheta,
+        log_sigma: f64,
+        log_nu: f64,
+        log_tau: f64,
+    ) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
@@ -99,19 +139,19 @@ where
             return f64::INFINITY;
         }
 
-        let (x, transformed) = Self::transform(y, theta);
+        let (x, transformed) = Self::transform_with_log_nu(y, theta, log_nu);
         if !transformed.h.is_finite() || !transformed.latent.is_finite() {
             return f64::INFINITY;
         }
 
-        theta.sigma.ln() - theta.tau.ln() + x.hypot(1.0).ln()
+        log_sigma - log_tau + x.hypot(1.0).ln()
             - kernel::log_cosh(transformed.h)
             - unit_normal_log_pdf(transformed.latent)
     }
 
     #[inline]
-    fn gradient_eta(y: f64, eta: ShashEta, theta: ShashTheta) -> ShashEta {
-        let (x, transformed) = Self::transform(y, theta);
+    fn gradient_eta_with_log_nu(y: f64, eta: ShashEta, theta: ShashTheta, log_nu: f64) -> ShashEta {
+        let (x, transformed) = Self::transform_with_log_nu(y, theta, log_nu);
         let cosh_h = transformed.latent.hypot(1.0);
         let d_h = transformed
             .latent
@@ -130,13 +170,13 @@ where
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: ShashEta) -> (f64, ShashEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma, log_nu, log_tau) = Self::theta_and_logs_from_eta(eta);
+        let nll = Self::nll_theta_with_logs(y, theta, log_sigma, log_nu, log_tau);
         if !nll.is_finite() {
             return (nll, ShashEta::from_array([f64::NAN; 4]));
         }
 
-        (nll, Self::gradient_eta(y, eta, theta))
+        (nll, Self::gradient_eta_with_log_nu(y, eta, theta, log_nu))
     }
 }
 
@@ -185,7 +225,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma, log_nu, log_tau) = Self::theta_and_logs_from_eta(*eta);
+        Self::nll_theta_with_logs(y, theta, log_sigma, log_nu, log_tau)
     }
 
     #[inline]

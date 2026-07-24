@@ -2,9 +2,13 @@ use std::ops::Range;
 
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
-use crate::local::{LocalBasis, open_uniform_local_basis, open_uniform_local_basis_derivative};
+use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
+use crate::local::{
+    LocalBasis, PreparedLocalBasis, open_uniform_local_basis, open_uniform_local_basis_derivative,
+    prepare_open_uniform_local_basis,
+};
 use crate::row_basis::SplineRowBasis;
-use crate::{SplineError, SplineOrder};
+use crate::{OnDemandSplineDesign, SplineError, SplineOrder};
 
 /// Metadata for an open-uniform spline predictor.
 ///
@@ -108,14 +112,42 @@ impl OpenUniformSplineBasis {
     ///
     /// Returns an error if `x` contains non-finite values.
     pub fn design(&self, x: &[f64]) -> Result<OpenUniformSplineDesign, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
+        let prepared_rows = x
+            .iter()
+            .copied()
+            .map(|value| {
+                if !value.is_finite() {
+                    return Err(SplineError::NonFiniteValue);
+                }
+                let u = (value - self.min) / self.span();
+                Ok(prepare_open_uniform_local_basis(
+                    u,
+                    self.order,
+                    self.n_basis,
+                    self.n_intervals,
+                ))
+            })
+            .collect::<Result<_, _>>()?;
 
         Ok(OpenUniformSplineDesign {
-            x: x.to_vec(),
+            x: x.into(),
+            prepared_rows,
             basis: *self,
         })
+    }
+
+    /// Builds a low-memory design that recomputes local row geometry on demand.
+    ///
+    /// Unlike [`Self::design`], this retains only the coordinates and basis
+    /// metadata. Use it when the additional prepared-row cache is less
+    /// important than minimizing persistent memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] if `x` contains a non-finite
+    /// coordinate.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, SplineError> {
+        OnDemandSplineDesign::new(x, *self)
     }
 
     /// Visits non-zero basis values for one input coordinate without allocating.
@@ -184,19 +216,43 @@ impl OpenUniformSplineBasis {
     }
 }
 
-/// Open-uniform spline predictor with local sparse row computation.
+impl OnDemandSplineDesign<OpenUniformSplineBasis> {
+    /// Derivative of the predictor contribution with respect to the original
+    /// coordinate `x`.
+    #[must_use]
+    #[inline]
+    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert!(row < self.x().len());
+        debug_assert_eq!(beta.len(), self.n_basis());
+
+        let basis = self.basis();
+        let span = basis.span();
+        let u = (self.x()[row] - basis.min) / span;
+        open_uniform_local_basis_derivative(u, basis.order, basis.n_basis, basis.n_intervals)
+            .dot(beta)
+            / span
+    }
+}
+
+/// Open-uniform spline predictor with compact prepared row geometry.
 ///
-/// Unlike [`crate::BSplineBasis`], stores the original data and computes basis functions "on the fly" via a compact `LocalBasis`, without materializing the full design matrix. See [`OpenUniformSplineBasis`] for the knot construction and extrapolation rule.
+/// Construction evaluates every local basis once. Each retained row stores its original `f64` coordinate plus compact geometry containing one `usize` start index and four `f64` weights; it never materializes an `nrows × n_basis` matrix. For repeated model passes without this row cache, use [`OpenUniformSplineBasis::on_demand_design`]. For one-shot evaluation, use [`OpenUniformSplineBasis::for_each_value_basis`] or [`crate::SplineBasis1d`].
+///
+/// See [`OpenUniformSplineBasis`] for the knot construction and extrapolation rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenUniformSplineDesign {
-    x: Vec<f64>,
+    x: Box<[f64]>,
+    prepared_rows: Box<[PreparedLocalBasis]>,
     basis: OpenUniformSplineBasis,
 }
 
 impl OpenUniformSplineDesign {
     /// Builds an open-uniform spline design from a data range.
     ///
-    /// Returns an error if the data is empty or contains non-finite values.
+    /// # Errors
+    ///
+    /// Returns an error if the data is empty, contains non-finite values, has
+    /// a degenerate range, or `n_basis` is insufficient for `order`.
     pub fn from_data(x: &[f64], n_basis: usize, order: SplineOrder) -> Result<Self, SplineError> {
         OpenUniformSplineBasis::from_data(x, n_basis, order)?.design(x)
     }
@@ -204,6 +260,11 @@ impl OpenUniformSplineDesign {
     /// Builds an open-uniform spline design with an explicit finite range.
     ///
     /// `min` and `max` must be finite and `min < max`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `x` or the range contains non-finite values,
+    /// `min >= max`, or `n_basis` is insufficient for `order`.
     pub fn with_range(
         x: &[f64],
         min: f64,
@@ -236,8 +297,20 @@ impl OpenUniformSplineDesign {
     }
 
     #[inline]
-    fn basis_for_row(&self, row: usize) -> LocalBasis {
-        self.basis.local_basis(self.x[row])
+    fn prepared_basis_for_row(&self, row: usize) -> &PreparedLocalBasis {
+        &self.prepared_rows[row]
+    }
+
+    #[inline]
+    fn active_weights_for_row(&self, row: usize) -> Range<usize> {
+        let width = self.basis.order.degree() + 1;
+        if self.x[row] <= self.basis.min {
+            0..2
+        } else if self.x[row] >= self.basis.max {
+            width - 2..width
+        } else {
+            0..width
+        }
     }
 
     #[inline]
@@ -276,7 +349,9 @@ impl SplineRowBasis for OpenUniformSplineDesign {
 
     #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.basis_for_row(row).for_each(f);
+        let active = self.active_weights_for_row(row);
+        self.prepared_basis_for_row(row)
+            .for_each_contiguous(active, f);
     }
 }
 impl PredictorBlock for OpenUniformSplineDesign {
@@ -292,8 +367,9 @@ impl PredictorBlock for OpenUniformSplineDesign {
 
     #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        let basis = self.basis_for_row(row);
-        basis.dot(beta)
+        let active = self.active_weights_for_row(row);
+        self.prepared_basis_for_row(row)
+            .dot_contiguous(active, beta)
     }
 
     #[inline]
@@ -307,7 +383,9 @@ impl PredictorBlock for OpenUniformSplineDesign {
                 continue;
             }
             let row = rows.start + offset;
-            self.basis_for_row(row).add_scaled(score, grad);
+            let active = self.active_weights_for_row(row);
+            self.prepared_basis_for_row(row)
+                .add_scaled_contiguous(active, score, grad);
         }
     }
 
@@ -335,7 +413,9 @@ impl PredictorBlock for OpenUniformSplineDesign {
             if scaled_score == 0.0 {
                 continue;
             }
-            self.basis_for_row(row).add_scaled(scaled_score, grad);
+            let active = self.active_weights_for_row(row);
+            self.prepared_basis_for_row(row)
+                .add_scaled_contiguous(active, scaled_score, grad);
         }
     }
 }
@@ -349,8 +429,9 @@ impl LinearPredictorGeometry for OpenUniformSplineDesign {
             if weight == 0.0 {
                 continue;
             }
-            self.basis_for_row(row)
-                .add_scaled_outer(weight, self.basis.n_basis, out);
+            let active = self.active_weights_for_row(row);
+            self.prepared_basis_for_row(row)
+                .add_scaled_outer_contiguous(active, weight, self.basis.n_basis, out);
         }
 
         Ok(())
@@ -376,8 +457,9 @@ impl LinearPredictorGeometry for OpenUniformSplineDesign {
             if scaled_weight == 0.0 {
                 continue;
             }
-            self.basis_for_row(row)
-                .add_scaled_outer(scaled_weight, self.basis.n_basis, out);
+            let active = self.active_weights_for_row(row);
+            self.prepared_basis_for_row(row)
+                .add_scaled_outer_contiguous(active, scaled_weight, self.basis.n_basis, out);
         }
 
         Ok(())
@@ -404,54 +486,4 @@ impl LinearPredictorGeometry for OpenUniformSplineDesign {
         self.add_weighted_gradient_by(row_scores, multiplier, &[], out);
         Ok(())
     }
-}
-
-#[inline]
-fn validate_gram_lengths(
-    nrows: usize,
-    nparams: usize,
-    row_weights: &[f64],
-    out: &[f64],
-) -> Result<(), ModelError> {
-    validate_row_values_len(nrows, row_weights)?;
-    let expected_values = nparams
-        .checked_mul(nparams)
-        .ok_or(ModelError::ArithmeticOverflow {
-            context: "linear predictor geometry Gram value count",
-        })?;
-    if out.len() != expected_values {
-        return Err(ModelError::DesignSize {
-            expected_values,
-            actual_values: out.len(),
-        });
-    }
-    Ok(())
-}
-
-#[inline]
-fn validate_transpose_lengths(
-    nrows: usize,
-    nparams: usize,
-    row_scores: &[f64],
-    out: &[f64],
-) -> Result<(), ModelError> {
-    validate_row_values_len(nrows, row_scores)?;
-    if out.len() != nparams {
-        return Err(ModelError::GradientLength {
-            expected: nparams,
-            actual: out.len(),
-        });
-    }
-    Ok(())
-}
-
-#[inline]
-const fn validate_row_values_len(nrows: usize, row_values: &[f64]) -> Result<(), ModelError> {
-    if row_values.len() != nrows {
-        return Err(ModelError::WeightLength {
-            expected: nrows,
-            actual: row_values.len(),
-        });
-    }
-    Ok(())
 }

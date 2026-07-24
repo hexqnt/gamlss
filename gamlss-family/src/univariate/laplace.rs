@@ -10,6 +10,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 use crate::constants::LOG_2;
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 /// Laplace distribution with `Identity` link for `mu` and `Log` link for `sigma`.
 pub type LaplaceMuSigma = Laplace<Identity, Log>;
@@ -63,6 +64,18 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: LaplaceEta) -> (LaplaceTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            LaplaceTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn valid_theta(theta: LaplaceTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
@@ -73,11 +86,16 @@ where
     /// sigma.
     #[inline]
     fn nll_theta(y: f64, theta: LaplaceTheta) -> f64 {
+        Self::nll_theta_with_log_sigma(y, theta, theta.sigma.ln())
+    }
+
+    #[inline]
+    fn nll_theta_with_log_sigma(y: f64, theta: LaplaceTheta, log_sigma: f64) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
-        LOG_2 + theta.sigma.ln() + (y - theta.mu).abs() / theta.sigma
+        LOG_2 + log_sigma + (y - theta.mu).abs() / theta.sigma
     }
 
     /// Computes NLL and gradient with respect to eta for one observation.
@@ -86,8 +104,8 @@ where
     /// `residual == 0`).
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: LaplaceEta) -> (f64, LaplaceEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = Self::nll_theta_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -99,6 +117,7 @@ where
         }
 
         let residual = y - theta.mu;
+        let absolute_standardized_residual = residual.abs() / theta.sigma;
         let d_nll_d_mu = if residual > 0.0 {
             -1.0 / theta.sigma
         } else if residual < 0.0 {
@@ -106,11 +125,11 @@ where
         } else {
             0.0
         };
-        let d_nll_d_sigma = 1.0 / theta.sigma - residual.abs() / (theta.sigma * theta.sigma);
 
         let gradient_eta = LaplaceEta {
             mu: d_nll_d_mu * MuLink::derivative_inverse(eta.mu),
-            sigma: d_nll_d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+            sigma: (1.0 - absolute_standardized_residual)
+                * SigmaLink::derivative_log_inverse(eta.sigma),
         };
 
         (nll, gradient_eta)
@@ -158,7 +177,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        Self::nll_theta_with_log_sigma(y, theta, log_sigma)
     }
 
     #[inline]

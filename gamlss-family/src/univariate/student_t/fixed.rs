@@ -8,10 +8,11 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 use super::{
     StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
-    student_t_standard_cdf, student_t_standard_quantile,
+    student_t_nll_theta_with_log_sigma, student_t_standard_cdf, student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with a fixed number of degrees of freedom.
@@ -64,6 +65,18 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: StudentTEta) -> (StudentTTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            StudentTTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
         student_t_nll_theta(self.degrees_of_freedom, y, theta)
     }
@@ -71,8 +84,8 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = self.nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = student_t_nll_theta_with_log_sigma(self.degrees_of_freedom, y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -89,7 +102,7 @@ where
             nll,
             StudentTEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
             },
         )
     }
@@ -136,7 +149,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        self.nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        student_t_nll_theta_with_log_sigma(self.degrees_of_freedom, y, theta, log_sigma)
     }
 
     #[inline]

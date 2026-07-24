@@ -37,6 +37,9 @@ impl MonotoneDirection {
 /// $$
 ///
 /// Thus `beta[0]` is an unconstrained intercept and `beta[i + 1]` controls basis index $i$. Because $I_i^{\prime}(x)\ge0$, this construction enforces $s\\,\eta^{\prime}(x)=\sum_i a_i I_i^{\prime}(x)\ge0$ for every coefficient vector; no penalty or post-fit projection is needed.
+///
+/// Basis rows are evaluated on demand; the design retains coordinates and
+/// [`ISplineBasis`] metadata but no row cache.
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonotoneISplineDesign {

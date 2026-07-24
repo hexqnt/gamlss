@@ -14,6 +14,7 @@ use gamlss_special::{
 
 use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 #[inline]
 pub(super) fn log_standardized_scale(power: f64) -> f64 {
@@ -85,6 +86,21 @@ where
     }
 
     #[inline]
+    fn theta_and_logs_from_eta(eta: PowerExponentialEta) -> (PowerExponentialTheta, f64, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        let (nu, log_nu) = positive_inverse_and_log::<NuLink>(eta.nu);
+        (
+            PowerExponentialTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu,
+            },
+            log_sigma,
+            log_nu,
+        )
+    }
+
+    #[inline]
     fn scale_c(nu: f64) -> f64 {
         standardized_scale(nu)
     }
@@ -96,6 +112,16 @@ where
 
     #[inline]
     fn nll_theta(y: f64, theta: PowerExponentialTheta) -> f64 {
+        Self::nll_theta_with_logs(y, theta, theta.sigma.ln(), theta.nu.ln())
+    }
+
+    #[inline]
+    fn nll_theta_with_logs(
+        y: f64,
+        theta: PowerExponentialTheta,
+        log_sigma: f64,
+        log_nu: f64,
+    ) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
@@ -109,8 +135,7 @@ where
         let log_c = log_standardized_scale(theta.nu);
         let c = log_c.exp();
         let z = ((y - theta.mu) / (c * theta.sigma)).abs();
-        LOG_2 + log_c + theta.sigma.ln() + ln_gamma(1.0 / theta.nu) - theta.nu.ln()
-            + z.powf(theta.nu)
+        LOG_2 + log_c + log_sigma + ln_gamma(1.0 / theta.nu) - log_nu + z.powf(theta.nu)
     }
 
     #[inline]
@@ -141,8 +166,8 @@ where
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: PowerExponentialEta) -> (f64, PowerExponentialEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma, log_nu) = Self::theta_and_logs_from_eta(eta);
+        let nll = Self::nll_theta_with_logs(y, theta, log_sigma, log_nu);
         if !nll.is_finite() {
             return (
                 nll,
@@ -159,8 +184,8 @@ where
             nll,
             PowerExponentialEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
-                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
+                nu: gradient.nu * theta.nu * NuLink::derivative_log_inverse(eta.nu),
             },
         )
     }
@@ -209,7 +234,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma, log_nu) = Self::theta_and_logs_from_eta(*eta);
+        Self::nll_theta_with_logs(y, theta, log_sigma, log_nu)
     }
 
     #[inline]

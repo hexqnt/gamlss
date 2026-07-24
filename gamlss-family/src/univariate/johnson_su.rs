@@ -11,6 +11,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{unit_normal_cdf, unit_normal_log_pdf, unit_normal_quantile};
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 /// Johnson SU distribution with identity/log/identity/log links.
 pub type JohnsonSuMuSigmaNuTau = JohnsonSu<Identity, Log, Identity, Log>;
@@ -53,8 +54,30 @@ where
     }
 
     #[inline]
+    fn theta_and_logs_from_eta(eta: JohnsonSuEta) -> (JohnsonSuTheta, f64, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        let (tau, log_tau) = positive_inverse_and_log::<TauLink>(eta.tau);
+        (
+            JohnsonSuTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu: NuLink::inverse(eta.nu),
+                tau,
+            },
+            log_sigma,
+            log_tau,
+        )
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: JohnsonSuTheta) -> f64 {
+        Self::nll_theta_with_logs(y, theta, theta.sigma.ln(), theta.tau.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_theta_with_logs(y: f64, theta: JohnsonSuTheta, log_sigma: f64, log_tau: f64) -> f64 {
         if !y.is_finite()
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
@@ -68,7 +91,7 @@ where
 
         let s = (y - theta.mu) / theta.sigma;
         let z = theta.tau.mul_add(s.asinh(), theta.nu);
-        theta.sigma.ln() - theta.tau.ln() + 0.5 * (s * s).ln_1p() - unit_normal_log_pdf(z)
+        log_sigma - log_tau + 0.5 * (s * s).ln_1p() - unit_normal_log_pdf(z)
     }
 
     #[inline]
@@ -89,8 +112,8 @@ where
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: JohnsonSuEta) -> (f64, JohnsonSuEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma, log_tau) = Self::theta_and_logs_from_eta(eta);
+        let nll = Self::nll_theta_with_logs(y, theta, log_sigma, log_tau);
         if !nll.is_finite() {
             return (nll, JohnsonSuEta::from_array([f64::NAN; 4]));
         }
@@ -100,9 +123,9 @@ where
             nll,
             JohnsonSuEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
                 nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
-                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+                tau: gradient.tau * theta.tau * TauLink::derivative_log_inverse(eta.tau),
             },
         )
     }
@@ -153,7 +176,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma, log_tau) = Self::theta_and_logs_from_eta(*eta);
+        Self::nll_theta_with_logs(y, theta, log_sigma, log_tau)
     }
 
     #[inline]

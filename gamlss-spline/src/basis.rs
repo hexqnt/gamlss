@@ -1,8 +1,8 @@
 use gamlss_core::ModelError;
 
 use crate::{
-    BSplineBasis, ISplineBasis, MSplineBasis, NaturalCubicSplineBasis, OpenUniformSplineBasis,
-    SplineError, TruncatedPowerBasis,
+    BSplineBasis, CyclicSplineSpec, ISplineBasis, MSplineBasis, NaturalCubicSplineBasis,
+    OpenUniformSplineBasis, PeriodicSplineSpec, SplineError, TruncatedPowerBasis,
 };
 
 /// Common one-dimensional spline basis evaluation API.
@@ -10,9 +10,32 @@ use crate::{
 /// This trait is intended for feature engineering and interop code that wants
 /// to evaluate a fitted basis shape without depending on GAMLSS predictor
 /// blocks. It is implemented for the crate's reusable basis metadata types.
+/// Wrap a basis in [`crate::OnDemandSplineDesign`] when repeated indexed model
+/// passes are required without retaining per-row geometry.
+///
+/// Implementations must emit indices smaller than [`Self::n_basis`] at most
+/// once per row. If [`Self::validate_coordinate`] succeeds, subsequent
+/// [`Self::for_each_basis`] calls for the same immutable basis and coordinate
+/// must also succeed.
 pub trait SplineBasis1d {
     /// Number of basis functions.
     fn n_basis(&self) -> usize;
+
+    /// Validates one input coordinate without evaluating its basis row.
+    ///
+    /// The default accepts every finite coordinate. Implementations whose
+    /// coordinate transform can fail for a finite input must override this
+    /// method. [`crate::OnDemandSplineDesign`] uses it to establish its
+    /// infallible hot-path invariant without computing and discarding every
+    /// row during construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] when `x` is not finite.
+    #[inline]
+    fn validate_coordinate(&self, x: f64) -> Result<(), SplineError> {
+        reject_non_finite(x)
+    }
 
     /// Visits non-zero basis-function values at `x` without allocating.
     ///
@@ -52,6 +75,31 @@ pub trait SplineBasis1d {
     }
 }
 
+impl<T> SplineBasis1d for &T
+where
+    T: SplineBasis1d + ?Sized,
+{
+    #[inline]
+    fn n_basis(&self) -> usize {
+        T::n_basis(*self)
+    }
+
+    #[inline]
+    fn validate_coordinate(&self, x: f64) -> Result<(), SplineError> {
+        T::validate_coordinate(*self, x)
+    }
+
+    #[inline]
+    fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
+        T::for_each_basis(*self, x, f)
+    }
+
+    #[inline]
+    fn evaluate_into(&self, x: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        T::evaluate_into(*self, x, out)
+    }
+}
+
 impl SplineBasis1d for BSplineBasis {
     #[inline]
     fn n_basis(&self) -> usize {
@@ -61,11 +109,7 @@ impl SplineBasis1d for BSplineBasis {
     #[inline]
     fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
         reject_non_finite(x)?;
-        for (index, weight) in self.evaluate(x).into_iter().enumerate() {
-            if weight != 0.0 {
-                f(index, weight);
-            }
-        }
+        Self::for_each_basis(self, x, &mut f);
         Ok(())
     }
 
@@ -82,6 +126,35 @@ impl SplineBasis1d for OpenUniformSplineBasis {
     #[inline]
     fn n_basis(&self) -> usize {
         self.n_basis()
+    }
+
+    #[inline]
+    fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
+        self.for_each_value_basis(x, f)
+    }
+}
+
+impl SplineBasis1d for CyclicSplineSpec {
+    #[inline]
+    fn n_basis(&self) -> usize {
+        self.n_basis()
+    }
+
+    #[inline]
+    fn for_each_basis(&self, phi: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
+        self.for_each_value_basis(phi, f)
+    }
+}
+
+impl SplineBasis1d for PeriodicSplineSpec {
+    #[inline]
+    fn n_basis(&self) -> usize {
+        self.n_basis()
+    }
+
+    #[inline]
+    fn validate_coordinate(&self, x: f64) -> Result<(), SplineError> {
+        self.phase(x).map(|_| ())
     }
 
     #[inline]

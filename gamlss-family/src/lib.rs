@@ -105,6 +105,7 @@ mod constants;
 mod crps;
 mod domain;
 mod initial;
+mod link;
 /// Homogeneous finite-mixture distributions.
 pub mod mixture;
 /// Multivariate distributions.

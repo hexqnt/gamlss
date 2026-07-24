@@ -60,3 +60,13 @@ fn high_level_crate_reexports_prepared_cyclic_penalty() {
     assert_eq!(penalty.order(), 2);
     assert_eq!(penalty.coefficients().len(), 3);
 }
+
+#[test]
+fn high_level_prelude_reexports_on_demand_spline_api() {
+    use gamlss::prelude::*;
+
+    let basis = CyclicSplineSpec::new(6, SplineOrder::Cubic).unwrap();
+    let design: OnDemandSplineDesign<_> = basis.on_demand_design(&[0.0, 0.25]).unwrap();
+    assert_eq!(design.nrows(), 2);
+    assert_eq!(design.n_basis(), 6);
+}

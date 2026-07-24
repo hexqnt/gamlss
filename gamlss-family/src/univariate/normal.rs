@@ -14,6 +14,7 @@ use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
 use crate::constants::{HALF_LOG_2_PI, INV_SQRT_2_PI, INV_SQRT_PI};
 use crate::domain::{ScalarObservationDomain, is_finite_location_scale};
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 const DEFAULT_INITIAL_LOG_SIGMA: f64 = 0.0;
 
@@ -94,6 +95,18 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: NormalEta) -> (NormalTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            NormalTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn valid_theta(theta: NormalTheta) -> bool {
         normal_valid_theta(theta)
     }
@@ -114,8 +127,8 @@ where
     /// inverse-link derivative separately.
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: NormalEta) -> (f64, NormalEta) {
-        let theta = Self::theta_from_eta(eta);
-        let (nll, z) = normal_nll_and_standardized_residual(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let (nll, z) = normal_nll_and_standardized_residual_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -176,7 +189,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        normal_nll_and_standardized_residual_with_log_sigma(y, theta, log_sigma).0
     }
 
     #[inline]
@@ -360,13 +374,22 @@ pub(crate) fn normal_nll_theta(y: f64, theta: NormalTheta) -> f64 {
 
 #[inline]
 fn normal_nll_and_standardized_residual(y: f64, theta: NormalTheta) -> (f64, f64) {
+    normal_nll_and_standardized_residual_with_log_sigma(y, theta, theta.sigma.ln())
+}
+
+#[inline]
+fn normal_nll_and_standardized_residual_with_log_sigma(
+    y: f64,
+    theta: NormalTheta,
+    log_sigma: f64,
+) -> (f64, f64) {
     if !y.is_finite() || !normal_valid_theta(theta) {
         return (f64::INFINITY, f64::NAN);
     }
 
     let residual = y - theta.mu;
     let z = residual / theta.sigma;
-    let nll = (0.5 * z).mul_add(z, HALF_LOG_2_PI + theta.sigma.ln());
+    let nll = (0.5 * z).mul_add(z, HALF_LOG_2_PI + log_sigma);
     (nll, z)
 }
 
@@ -402,7 +425,7 @@ mod tests {
     use gamlss_core::TrySimulate;
     use gamlss_core::{
         ClampedLog, DenseDesign, Family, HasCdf, HasCrps, HasDensity, HasDeviance, HasInitialEta,
-        HasLogDensity, HasQuantile, Identity, NoPenalty, Objective, Softplus,
+        HasLogDensity, HasQuantile, Identity, Link, NoPenalty, Objective, PositiveLink, Softplus,
     };
     use statrs::distribution::{ContinuousCDF, Normal as StatrsNormal};
 
@@ -410,6 +433,25 @@ mod tests {
         DEFAULT_INITIAL_LOG_SIGMA, Normal, NormalEta, NormalMuSigma, NormalTheta, normal_gamlss,
     };
     use crate::test_support::assert_gradient_matches_finite_difference;
+
+    struct CustomPositiveScale;
+
+    impl Link<f64> for CustomPositiveScale {
+        fn inverse(eta: f64) -> f64 {
+            eta.exp() + 1.0
+        }
+
+        fn derivative_inverse(eta: f64) -> f64 {
+            eta.exp()
+        }
+    }
+
+    impl PositiveLink<f64> for CustomPositiveScale {
+        fn derivative_log_inverse(eta: f64) -> f64 {
+            let exp_eta = eta.exp();
+            exp_eta / (exp_eta + 1.0)
+        }
+    }
 
     #[test]
     fn normal_gradient_matches_finite_difference() {
@@ -420,6 +462,12 @@ mod tests {
     #[test]
     fn normal_softplus_scale_gradient_matches_finite_difference() {
         let family = Normal::<Identity, Softplus>::new();
+        assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
+    }
+
+    #[test]
+    fn normal_custom_positive_link_uses_compatible_log_fallback() {
+        let family = Normal::<Identity, CustomPositiveScale>::new();
         assert_gradient_matches_finite_difference::<_, 2>(&family, 1.7, [0.4, -0.2]);
     }
 

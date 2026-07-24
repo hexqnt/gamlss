@@ -3,7 +3,10 @@ use gamlss_core::{
     ParameterParts, PositiveLink,
 };
 
-use crate::initial::{positive_floor, robust_location_scale, weighted_values};
+use crate::{
+    initial::{positive_floor, robust_location_scale, weighted_values},
+    link::positive_inverse_and_log,
+};
 
 use super::{LogNormal, LogNormalLogLocationLogSdTheta};
 
@@ -33,8 +36,16 @@ define_two_positive_parameter_blocks! {
 impl LogNormalMedianLogSdTheta {
     #[inline]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
+        self.log_location_log_sd_with_log_median(self.median.ln())
+    }
+
+    #[inline]
+    const fn log_location_log_sd_with_log_median(
+        self,
+        log_median: f64,
+    ) -> LogNormalLogLocationLogSdTheta {
         LogNormalLogLocationLogSdTheta {
-            log_location: self.median.ln(),
+            log_location: log_median,
             log_sd: self.log_sd,
         }
     }
@@ -51,22 +62,55 @@ where
     }
 
     #[inline]
+    fn valid_theta(theta: LogNormalMedianLogSdTheta) -> bool {
+        theta.median > 0.0
+            && theta.median.is_finite()
+            && theta.log_sd > 0.0
+            && theta.log_sd.is_finite()
+    }
+
+    #[inline]
+    fn theta_canonical_and_log_scale_from_eta(
+        eta: LogNormalMedianLogSdEta,
+    ) -> (
+        LogNormalMedianLogSdTheta,
+        LogNormalLogLocationLogSdTheta,
+        f64,
+    ) {
+        let (median, log_median) = positive_inverse_and_log::<MedianLink>(eta.median);
+        let (log_sd, log_scale) = positive_inverse_and_log::<LogSdLink>(eta.log_sd);
+        let theta = LogNormalMedianLogSdTheta { median, log_sd };
+        (
+            theta,
+            theta.log_location_log_sd_with_log_median(log_median),
+            log_scale,
+        )
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: LogNormalMedianLogSdEta,
     ) -> (f64, LogNormalMedianLogSdEta) {
-        let theta = Self::theta_from_eta(eta);
-        let canonical = theta.log_location_log_sd();
-        let nll = Self::nll_log_location_log_sd(y, canonical);
+        let (theta, canonical, log_scale) = Self::theta_canonical_and_log_scale_from_eta(eta);
+        if !Self::valid_theta(theta) {
+            return (
+                f64::INFINITY,
+                LogNormalMedianLogSdEta::from_array([f64::NAN; 2]),
+            );
+        }
+        let nll = Self::nll_log_location_log_sd_with_log_scale(y, canonical, log_scale);
         if !nll.is_finite() {
             return (nll, LogNormalMedianLogSdEta::from_array([f64::NAN; 2]));
         }
 
-        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
-        let d_median = d_location / theta.median;
+        let (d_location, d_scale) = Self::gradient_log_location_log_sd(y, canonical);
         (
             nll,
-            eta.chain_gradient::<MedianLink, LogSdLink>(d_median, d_log_sd),
+            LogNormalMedianLogSdEta {
+                median: d_location * MedianLink::derivative_log_inverse(eta.median),
+                log_sd: d_scale * theta.log_sd * LogSdLink::derivative_log_inverse(eta.log_sd),
+            },
         )
     }
 }
@@ -102,7 +146,11 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(*eta).log_location_log_sd())
+        let (theta, canonical, log_scale) = Self::theta_canonical_and_log_scale_from_eta(*eta);
+        if !Self::valid_theta(theta) {
+            return f64::INFINITY;
+        }
+        Self::nll_log_location_log_sd_with_log_scale(y, canonical, log_scale)
     }
 
     #[inline]

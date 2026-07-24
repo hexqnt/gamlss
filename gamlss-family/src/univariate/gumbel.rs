@@ -11,6 +11,7 @@ use gamlss_special::exponential_integral_e1;
 use crate::constants::{EULER_MASCHERONI, LOG_2};
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{positive_floor, weighted_quantile, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 /// Gumbel distribution with identity link for location and log link for scale.
 pub type GumbelMuSigma = Gumbel<Identity, Log>;
@@ -50,24 +51,41 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: GumbelEta) -> (GumbelTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            GumbelTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn valid_theta(theta: GumbelTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
 
     #[inline]
     fn nll_theta(y: f64, theta: GumbelTheta) -> f64 {
+        Self::nll_theta_with_log_sigma(y, theta, theta.sigma.ln())
+    }
+
+    #[inline]
+    fn nll_theta_with_log_sigma(y: f64, theta: GumbelTheta, log_sigma: f64) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
         let z = (y - theta.mu) / theta.sigma;
-        theta.sigma.ln() + z + (-z).exp()
+        log_sigma + z + (-z).exp()
     }
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GumbelEta) -> (f64, GumbelEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = Self::nll_theta_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -82,10 +100,10 @@ where
         let exp_neg_z = (-z).exp();
         let d_z = 1.0 - exp_neg_z;
         let d_mu = -d_z / theta.sigma;
-        let d_sigma = z.mul_add(-d_z, 1.0) / theta.sigma;
+        let d_log_sigma = z.mul_add(-d_z, 1.0);
         let gradient_eta = GumbelEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+            sigma: d_log_sigma * SigmaLink::derivative_log_inverse(eta.sigma),
         };
 
         (nll, gradient_eta)
@@ -133,7 +151,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        Self::nll_theta_with_log_sigma(y, theta, log_sigma)
     }
 
     #[inline]

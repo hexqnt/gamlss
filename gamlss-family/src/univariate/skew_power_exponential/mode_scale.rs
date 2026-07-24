@@ -8,13 +8,17 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use crate::initial::{robust_location_scale, weighted_values};
+use crate::{
+    initial::{robust_location_scale, weighted_values},
+    link::positive_inverse_and_log,
+};
 
 #[cfg(feature = "rand")]
 use super::try_sample_mode_scale;
 use super::{
-    cdf_mode_scale, crps_mode_scale, mode_scale_to_mean_sd, nll_and_gradient_mode_scale,
-    nll_mode_scale, quantile_mode_scale, valid_mode_scale,
+    ModeScaleLogValues, cdf_mode_scale, crps_mode_scale, mode_scale_to_mean_sd,
+    nll_and_gradient_mode_scale_with_logs, nll_mode_scale, nll_mode_scale_with_logs,
+    quantile_mode_scale, valid_mode_scale,
 };
 
 /// Two-piece skew power-exponential with identity/log/log/log links.
@@ -69,13 +73,41 @@ where
     }
 
     #[inline]
+    fn theta_and_logs_from_eta(
+        eta: SkewPowerExponentialEta,
+    ) -> (SkewPowerExponentialTheta, ModeScaleLogValues) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        let (skew_ratio, log_skew_ratio) = positive_inverse_and_log::<SkewLink>(eta.skew_ratio);
+        let (power, log_power) = positive_inverse_and_log::<PowerLink>(eta.power);
+        (
+            SkewPowerExponentialTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                skew_ratio,
+                power,
+            },
+            ModeScaleLogValues {
+                sigma: log_sigma,
+                skew_ratio: log_skew_ratio,
+                power: log_power,
+            },
+        )
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: SkewPowerExponentialEta,
     ) -> (f64, SkewPowerExponentialEta) {
-        let theta = Self::theta_from_eta(eta);
-        let (nll, gradient) =
-            nll_and_gradient_mode_scale(y, theta.mu, theta.sigma, theta.skew_ratio, theta.power);
+        let (theta, logs) = Self::theta_and_logs_from_eta(eta);
+        let (nll, gradient) = nll_and_gradient_mode_scale_with_logs(
+            y,
+            theta.mu,
+            theta.sigma,
+            theta.skew_ratio,
+            theta.power,
+            logs,
+        );
         if !nll.is_finite() || !gradient.is_finite() {
             return (nll, SkewPowerExponentialEta::from_array([f64::NAN; 4]));
         }
@@ -83,10 +115,10 @@ where
             nll,
             SkewPowerExponentialEta {
                 mu: gradient.location * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.scale * SigmaLink::derivative_inverse(eta.sigma),
-                skew_ratio: gradient.log_skew_ratio * SkewLink::derivative_inverse(eta.skew_ratio)
-                    / theta.skew_ratio,
-                power: gradient.power * PowerLink::derivative_inverse(eta.power),
+                sigma: gradient.scale * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
+                skew_ratio: gradient.log_skew_ratio
+                    * SkewLink::derivative_log_inverse(eta.skew_ratio),
+                power: gradient.power * theta.power * PowerLink::derivative_log_inverse(eta.power),
             },
         )
     }
@@ -140,8 +172,15 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut ()) -> f64 {
-        let theta = Self::theta_from_eta(*eta);
-        nll_mode_scale(y, theta.mu, theta.sigma, theta.skew_ratio, theta.power)
+        let (theta, logs) = Self::theta_and_logs_from_eta(*eta);
+        nll_mode_scale_with_logs(
+            y,
+            theta.mu,
+            theta.sigma,
+            theta.skew_ratio,
+            theta.power,
+            logs,
+        )
     }
 
     #[inline]

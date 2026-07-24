@@ -122,6 +122,7 @@ macro_rules! define_two_positive_parameter_blocks {
 
             /// Pulls natural-scale NLL derivatives back through the two independent inverse links.
             #[inline]
+            #[allow(dead_code)]
             fn chain_gradient<FirstLink, SecondLink>(
                 self,
                 d_first: f64,

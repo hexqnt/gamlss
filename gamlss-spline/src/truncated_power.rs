@@ -242,7 +242,10 @@ impl TruncatedPowerBasis {
     }
 }
 
-/// Truncated power spline predictor.
+/// Truncated power spline predictor with on-demand row evaluation.
+///
+/// The design retains coordinates and basis metadata but does not materialize
+/// or cache observation rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TruncatedPowerDesign {
     x: Vec<f64>,

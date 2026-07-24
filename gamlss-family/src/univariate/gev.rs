@@ -9,6 +9,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::is_finite_location_scale;
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 const XI_EPSILON: f64 = 1.0e-8;
 
@@ -51,6 +52,19 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: GevEta) -> (GevTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            GevTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu: NuLink::inverse(eta.nu),
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn valid_theta(theta: GevTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma) && theta.nu.is_finite()
     }
@@ -58,6 +72,12 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: GevTheta) -> f64 {
+        Self::nll_theta_with_log_sigma(y, theta, theta.sigma.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_theta_with_log_sigma(y: f64, theta: GevTheta, log_sigma: f64) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
@@ -66,7 +86,7 @@ where
         if theta.nu.abs() < XI_EPSILON {
             let exp_neg_z = (-z).exp();
             let d_nu = Self::gumbel_limit_nu_score(z, exp_neg_z);
-            return theta.sigma.ln() + z + exp_neg_z + theta.nu * d_nu;
+            return log_sigma + z + exp_neg_z + theta.nu * d_nu;
         }
 
         let t = theta.nu.mul_add(z, 1.0);
@@ -74,7 +94,7 @@ where
             return f64::INFINITY;
         }
         let inv = t.powf(-1.0 / theta.nu);
-        theta.sigma.ln() + (1.0 / theta.nu + 1.0) * t.ln() + inv
+        log_sigma + (1.0 / theta.nu + 1.0) * t.ln() + inv
     }
 
     #[inline]
@@ -114,8 +134,8 @@ where
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: GevEta) -> (f64, GevEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = Self::nll_theta_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (nll, GevEta::from_array([f64::NAN; 3]));
         }
@@ -125,7 +145,7 @@ where
             nll,
             GevEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
                 nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
             },
         )
@@ -175,7 +195,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        Self::nll_theta_with_log_sigma(y, theta, log_sigma)
     }
 
     #[inline]

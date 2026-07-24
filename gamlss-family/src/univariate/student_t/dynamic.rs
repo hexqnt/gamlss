@@ -8,10 +8,11 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 use super::{
     StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
-    student_t_standard_cdf, student_t_standard_quantile,
+    student_t_nll_theta_with_log_sigma, student_t_standard_cdf, student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with estimated degrees of freedom.
@@ -57,6 +58,19 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: StudentTMuSigmaTauEta) -> (StudentTMuSigmaTauTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            StudentTMuSigmaTauTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                tau: TauLink::inverse(eta.tau),
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn nll_theta(y: f64, theta: StudentTMuSigmaTauTheta) -> f64 {
         if !valid_dynamic_theta(theta) {
             return f64::INFINITY;
@@ -69,8 +83,12 @@ where
         y: f64,
         eta: StudentTMuSigmaTauEta,
     ) -> (f64, StudentTMuSigmaTauEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = if valid_dynamic_theta(theta) {
+            student_t_nll_theta_with_log_sigma(theta.tau, y, theta.location_scale(), log_sigma)
+        } else {
+            f64::INFINITY
+        };
         if !nll.is_finite() {
             return (nll, StudentTMuSigmaTauEta::from_array([f64::NAN; 3]));
         }
@@ -80,8 +98,8 @@ where
             nll,
             StudentTMuSigmaTauEta {
                 mu: gradient.mu * MuLink::derivative_inverse(eta.mu),
-                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
-                tau: gradient.tau * TauLink::derivative_inverse(eta.tau),
+                sigma: gradient.sigma * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
+                tau: gradient.tau * theta.tau * TauLink::derivative_log_inverse(eta.tau),
             },
         )
     }
@@ -130,7 +148,11 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        if !valid_dynamic_theta(theta) {
+            return f64::INFINITY;
+        }
+        student_t_nll_theta_with_log_sigma(theta.tau, y, theta.location_scale(), log_sigma)
     }
 
     #[inline]

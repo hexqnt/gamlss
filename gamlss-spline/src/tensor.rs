@@ -16,6 +16,11 @@ use crate::row_basis::SplineRowBasis;
 /// $$
 ///
 /// Here $n_A$ and $n_B$ are [`TensorSplineDesign::left_nparams`] and [`TensorSplineDesign::right_nparams`]. Coefficients use row-major tensor order: pair $(i,j)$ is stored at $i n_B+j$. The two bases must describe the same observation rows; this is a row-wise Kronecker product, not a Cartesian product of rows.
+///
+/// The tensor retains its two input designs as supplied and does not
+/// materialize tensor rows. Combining prepared component designs keeps their
+/// prepared caches; combining [`crate::OnDemandSplineDesign`] components keeps
+/// the tensor fully on demand.
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorSplineDesign<A, B> {

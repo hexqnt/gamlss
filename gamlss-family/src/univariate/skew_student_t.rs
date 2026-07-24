@@ -50,6 +50,18 @@ fn standard_density(z: f64, nu: f64, tau: f64) -> f64 {
 
 #[inline]
 fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
+    nll_location_scale_with_log_sigma(y, mu, sigma, nu, tau, sigma.ln())
+}
+
+#[inline]
+fn nll_location_scale_with_log_sigma(
+    y: f64,
+    mu: f64,
+    sigma: f64,
+    nu: f64,
+    tau: f64,
+    log_sigma: f64,
+) -> f64 {
     if !y.is_finite() || !valid_location_scale(mu, sigma, nu, tau) {
         return f64::INFINITY;
     }
@@ -60,7 +72,7 @@ fn nll_location_scale(y: f64, mu: f64, sigma: f64, nu: f64, tau: f64) -> f64 {
         return f64::INFINITY;
     }
 
-    sigma.ln() - LOG_2 - student_t_log_pdf_standardized(z, tau) - skew.ln()
+    log_sigma - LOG_2 - student_t_log_pdf_standardized(z, tau) - skew.ln()
 }
 
 #[inline]

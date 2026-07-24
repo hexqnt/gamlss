@@ -1,6 +1,6 @@
 use gamlss_core::DenseDesign;
 
-use crate::SplineError;
+use crate::{OnDemandSplineDesign, SplineError};
 
 /// B-spline basis with degree $p$ and non-decreasing knot vector $\boldsymbol{t}=(t_0,\ldots,t_{M-1})$.
 ///
@@ -99,6 +99,20 @@ impl BSplineBasis {
         self.knots.len() - self.degree - 1
     }
 
+    /// Builds a predictor that retains `x` and evaluates basis rows on demand.
+    ///
+    /// This uses `O(nrows + n_basis)` storage instead of the
+    /// `O(nrows * n_basis)` storage used by [`Self::design_matrix`]. The basis
+    /// metadata is cloned once; row evaluation does not allocate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] if `x` contains a non-finite
+    /// coordinate.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, SplineError> {
+        OnDemandSplineDesign::new(x, self.clone())
+    }
+
     /// Values of all basis functions at point `x`.
     #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
@@ -112,6 +126,21 @@ impl BSplineBasis {
     /// `out.len()` must equal [`Self::n_basis`].
     pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
         self.fill_values(x, out);
+    }
+
+    /// Visits non-zero basis-function values at `x` without allocating.
+    #[inline]
+    #[allow(clippy::float_cmp)]
+    pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
+        let Some(active) = self.active_basis_range(x) else {
+            return;
+        };
+        for index in active {
+            let weight = self.basis_value(index, self.degree, x);
+            if weight != 0.0 {
+                f(index, weight);
+            }
+        }
     }
 
     /// Dense design matrix where each row contains `evaluate(x_i)`.
@@ -136,6 +165,40 @@ impl BSplineBasis {
         for (index, value) in out.iter_mut().enumerate() {
             *value = self.basis_value(index, self.degree, x);
         }
+    }
+
+    #[allow(clippy::float_cmp)]
+    fn active_basis_range(&self, x: f64) -> Option<std::ops::RangeInclusive<usize>> {
+        let n_basis = self.n_basis();
+        let mut first = n_basis;
+        let mut last = 0;
+        let mut found = false;
+
+        let upper = self.knots.partition_point(|knot| *knot <= x);
+        if upper > 0 && upper < self.knots.len() {
+            let interval = upper - 1;
+            first = interval.saturating_sub(self.degree).min(n_basis);
+            last = interval.min(n_basis - 1);
+            found = first <= last;
+        }
+
+        let closed_interval = n_basis - 1;
+        if x == self.knots[n_basis] {
+            let closed_first = closed_interval.saturating_sub(self.degree);
+            first = if found {
+                first.min(closed_first)
+            } else {
+                closed_first
+            };
+            last = if found {
+                last.max(closed_interval)
+            } else {
+                closed_interval
+            };
+            found = true;
+        }
+
+        found.then_some(first..=last)
     }
 
     #[allow(clippy::float_cmp, clippy::suboptimal_flops)]

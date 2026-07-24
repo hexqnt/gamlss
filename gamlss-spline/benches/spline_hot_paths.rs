@@ -46,9 +46,10 @@ fn benchmark_design_case(
     coverage: Coverage,
 ) {
     let x = coordinates(nobs);
-    let local =
+    let prepared =
         OpenUniformSplineDesign::with_range(&x, 0.0, 1.0, n_basis, SplineOrder::Cubic).unwrap();
-    let dense_design = local.to_dense_design().unwrap();
+    let on_demand = prepared.basis().on_demand_design(&x).unwrap();
+    let dense_design = prepared.to_dense_design().unwrap();
     let dense = LinearPredictorBlock::new(&dense_design);
     let beta = coefficients(n_basis);
     let scores = row_scores(nobs);
@@ -57,12 +58,23 @@ fn benchmark_design_case(
     let mut group = criterion.benchmark_group(format!("open_uniform_cubic/n{nobs}/k{n_basis}"));
     group.throughput(Throughput::Elements(nobs as u64));
 
-    group.bench_function("eta_rows_local", |bencher| {
+    group.bench_function("eta_rows_prepared", |bencher| {
         bencher.iter(|| {
             let beta = black_box(beta.as_slice());
             let mut checksum = 0.0;
             for row in 0..nobs {
-                checksum += local.eta_row(row, beta);
+                checksum += prepared.eta_row(row, beta);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("eta_rows_on_demand", |bencher| {
+        bencher.iter(|| {
+            let beta = black_box(beta.as_slice());
+            let mut checksum = 0.0;
+            for row in 0..nobs {
+                checksum += on_demand.eta_row(row, beta);
             }
             black_box(checksum);
         });
@@ -79,16 +91,29 @@ fn benchmark_design_case(
         });
     });
 
-    let mut local_gradient = vec![0.0; n_basis];
-    group.bench_function("vjp_local", |bencher| {
+    let mut prepared_gradient = vec![0.0; n_basis];
+    group.bench_function("vjp_prepared", |bencher| {
         bencher.iter(|| {
-            local_gradient.fill(0.0);
-            local.add_gradient(
+            prepared_gradient.fill(0.0);
+            prepared.add_gradient(
                 black_box(&scores),
                 black_box(&beta),
-                black_box(&mut local_gradient),
+                black_box(&mut prepared_gradient),
             );
-            black_box(&local_gradient);
+            black_box(&prepared_gradient);
+        });
+    });
+
+    let mut on_demand_gradient = vec![0.0; n_basis];
+    group.bench_function("vjp_on_demand", |bencher| {
+        bencher.iter(|| {
+            on_demand_gradient.fill(0.0);
+            on_demand.add_gradient(
+                black_box(&scores),
+                black_box(&beta),
+                black_box(&mut on_demand_gradient),
+            );
+            black_box(&on_demand_gradient);
         });
     });
 
@@ -106,14 +131,25 @@ fn benchmark_design_case(
     });
 
     if coverage == Coverage::Full {
-        let mut local_gram = vec![0.0; n_basis * n_basis];
-        group.bench_function("weighted_gram_local", |bencher| {
+        let mut prepared_gram = vec![0.0; n_basis * n_basis];
+        group.bench_function("weighted_gram_prepared", |bencher| {
             bencher.iter(|| {
-                local_gram.fill(0.0);
-                local
-                    .add_weighted_gram(black_box(&weights), black_box(&mut local_gram))
+                prepared_gram.fill(0.0);
+                prepared
+                    .add_weighted_gram(black_box(&weights), black_box(&mut prepared_gram))
                     .unwrap();
-                black_box(&local_gram);
+                black_box(&prepared_gram);
+            });
+        });
+
+        let mut on_demand_gram = vec![0.0; n_basis * n_basis];
+        group.bench_function("weighted_gram_on_demand", |bencher| {
+            bencher.iter(|| {
+                on_demand_gram.fill(0.0);
+                on_demand
+                    .add_weighted_gram(black_box(&weights), black_box(&mut on_demand_gram))
+                    .unwrap();
+                black_box(&on_demand_gram);
             });
         });
 
@@ -128,12 +164,12 @@ fn benchmark_design_case(
             });
         });
 
-        let local_basis = local.basis();
-        group.bench_function("basis_rows_local_sparse", |bencher| {
+        let sparse_basis = prepared.basis();
+        group.bench_function("basis_rows_sparse", |bencher| {
             bencher.iter(|| {
                 let mut checksum = 0.0;
                 for value in black_box(&x) {
-                    local_basis
+                    sparse_basis
                         .for_each_value_basis(*value, |_, weight| checksum += weight)
                         .unwrap();
                 }

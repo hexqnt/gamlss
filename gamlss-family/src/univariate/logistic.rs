@@ -9,6 +9,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::{is_finite_location_scale, is_probability};
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 
 /// Logistic distribution with identity link for location and log link for scale.
 pub type LogisticMuSigma = Logistic<Identity, Log>;
@@ -61,6 +62,18 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: LogisticEta) -> (LogisticTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            LogisticTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn valid_theta(theta: LogisticTheta) -> bool {
         is_finite_location_scale(theta.mu, theta.sigma)
     }
@@ -88,19 +101,25 @@ where
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_theta(y: f64, theta: LogisticTheta) -> f64 {
+        Self::nll_theta_with_log_sigma(y, theta, theta.sigma.ln())
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_theta_with_log_sigma(y: f64, theta: LogisticTheta, log_sigma: f64) -> f64 {
         if !y.is_finite() || !Self::valid_theta(theta) {
             return f64::INFINITY;
         }
 
         let z = (y - theta.mu) / theta.sigma;
-        theta.sigma.ln() + z + 2.0 * Self::log_one_plus_exp(-z)
+        log_sigma + z + 2.0 * Self::log_one_plus_exp(-z)
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: LogisticEta) -> (f64, LogisticEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = Self::nll_theta_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -114,10 +133,10 @@ where
         let z = (y - theta.mu) / theta.sigma;
         let d_z = 2.0 * Self::logistic(z) - 1.0;
         let d_mu = -d_z / theta.sigma;
-        let d_sigma = z.mul_add(-d_z, 1.0) / theta.sigma;
+        let d_log_sigma = z.mul_add(-d_z, 1.0);
         let gradient_eta = LogisticEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
-            sigma: d_sigma * SigmaLink::derivative_inverse(eta.sigma),
+            sigma: d_log_sigma * SigmaLink::derivative_log_inverse(eta.sigma),
         };
 
         (nll, gradient_eta)
@@ -165,7 +184,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        Self::nll_theta_with_log_sigma(y, theta, log_sigma)
     }
 
     #[inline]

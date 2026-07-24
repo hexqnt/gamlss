@@ -3,7 +3,10 @@ use gamlss_core::{
     ObservationView, ParameterParts, PositiveLink,
 };
 
-use crate::initial::{positive_floor, robust_location_scale, weighted_values};
+use crate::{
+    initial::{positive_floor, robust_location_scale, weighted_values},
+    link::positive_inverse_and_log,
+};
 
 use super::{LogNormal, LogNormalMeanCvTheta, LogNormalMeanLogSdTheta, LogNormalMedianLogSdTheta};
 
@@ -82,22 +85,36 @@ where
     }
 
     #[inline]
+    fn theta_and_log_scale_from_eta(
+        eta: LogNormalLogLocationLogSdEta,
+    ) -> (LogNormalLogLocationLogSdTheta, f64) {
+        let (log_sd, log_scale) = positive_inverse_and_log::<LogSdLink>(eta.log_sd);
+        (
+            LogNormalLogLocationLogSdTheta {
+                log_location: LocationLink::inverse(eta.log_location),
+                log_sd,
+            },
+            log_scale,
+        )
+    }
+
+    #[inline]
     fn nll_and_gradient_eta_values(
         y: f64,
         eta: LogNormalLogLocationLogSdEta,
     ) -> (f64, LogNormalLogLocationLogSdEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_log_location_log_sd(y, theta);
+        let (theta, log_scale) = Self::theta_and_log_scale_from_eta(eta);
+        let nll = Self::nll_log_location_log_sd_with_log_scale(y, theta, log_scale);
         if !nll.is_finite() {
             return (nll, LogNormalLogLocationLogSdEta::from_array([f64::NAN; 2]));
         }
 
-        let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, theta);
+        let (d_location, d_scale) = Self::gradient_log_location_log_sd(y, theta);
         (
             nll,
             LogNormalLogLocationLogSdEta {
                 log_location: d_location * LocationLink::derivative_inverse(eta.log_location),
-                log_sd: d_log_sd * LogSdLink::derivative_inverse(eta.log_sd),
+                log_sd: d_scale * theta.log_sd * LogSdLink::derivative_log_inverse(eta.log_sd),
             },
         )
     }
@@ -134,7 +151,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(*eta))
+        let (theta, log_scale) = Self::theta_and_log_scale_from_eta(*eta);
+        Self::nll_log_location_log_sd_with_log_scale(y, theta, log_scale)
     }
 
     #[inline]

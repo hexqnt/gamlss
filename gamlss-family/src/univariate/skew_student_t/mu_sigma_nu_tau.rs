@@ -11,13 +11,14 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::{student_t_cdf_standardized, student_t_log_pdf_standardized};
 
 use crate::initial::{robust_location_scale, weighted_values};
+use crate::link::positive_inverse_and_log;
 use crate::numeric::finite_difference_gradient_eta;
 
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
 use super::{
-    cdf_location_scale, crps_location_scale, nll_location_scale, quantile_location_scale,
-    skew_argument,
+    cdf_location_scale, crps_location_scale, nll_location_scale, nll_location_scale_with_log_sigma,
+    quantile_location_scale, skew_argument,
 };
 
 /// Skew Student-t distribution with identity/log/identity/log links.
@@ -68,6 +69,20 @@ where
     }
 
     #[inline]
+    fn theta_and_log_sigma_from_eta(eta: SkewStudentTEta) -> (SkewStudentTTheta, f64) {
+        let (sigma, log_sigma) = positive_inverse_and_log::<SigmaLink>(eta.sigma);
+        (
+            SkewStudentTTheta {
+                mu: MuLink::inverse(eta.mu),
+                sigma,
+                nu: NuLink::inverse(eta.nu),
+                tau: TauLink::inverse(eta.tau),
+            },
+            log_sigma,
+        )
+    }
+
+    #[inline]
     fn nll_theta(y: f64, theta: SkewStudentTTheta) -> f64 {
         nll_location_scale(y, theta.mu, theta.sigma, theta.nu, theta.tau)
     }
@@ -92,17 +107,35 @@ where
     }
 
     #[inline]
-    fn tau_gradient_eta(y: f64, eta: SkewStudentTEta) -> f64 {
-        let [tau] = finite_difference_gradient_eta::<_, f64, 1>(eta.tau, |tau| {
-            Self::nll_theta(y, Self::theta_from_eta(SkewStudentTEta { tau, ..eta }))
+    fn tau_gradient_eta(y: f64, eta_tau: f64, theta: SkewStudentTTheta, log_sigma: f64) -> f64 {
+        let [tau] = finite_difference_gradient_eta::<_, f64, 1>(eta_tau, |eta_tau| {
+            let theta = SkewStudentTTheta {
+                tau: TauLink::inverse(eta_tau),
+                ..theta
+            };
+            nll_location_scale_with_log_sigma(
+                y,
+                theta.mu,
+                theta.sigma,
+                theta.nu,
+                theta.tau,
+                log_sigma,
+            )
         });
         tau
     }
 
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: SkewStudentTEta) -> (f64, SkewStudentTEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
+        let nll = nll_location_scale_with_log_sigma(
+            y,
+            theta.mu,
+            theta.sigma,
+            theta.nu,
+            theta.tau,
+            log_sigma,
+        );
         if !nll.is_finite() {
             return (nll, SkewStudentTEta::from_array([f64::NAN; 4]));
         }
@@ -113,9 +146,9 @@ where
             nll,
             SkewStudentTEta {
                 mu: d_location * MuLink::derivative_inverse(eta.mu),
-                sigma: d_scale * SigmaLink::derivative_inverse(eta.sigma),
+                sigma: d_scale * theta.sigma * SigmaLink::derivative_log_inverse(eta.sigma),
                 nu: d_skewness * NuLink::derivative_inverse(eta.nu),
-                tau: Self::tau_gradient_eta(y, eta),
+                tau: Self::tau_gradient_eta(y, eta.tau, theta, log_sigma),
             },
         )
     }
@@ -167,7 +200,8 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_theta(y, Self::theta_from_eta(*eta))
+        let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
+        nll_location_scale_with_log_sigma(y, theta.mu, theta.sigma, theta.nu, theta.tau, log_sigma)
     }
 
     #[inline]

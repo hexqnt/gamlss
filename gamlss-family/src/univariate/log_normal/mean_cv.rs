@@ -3,7 +3,10 @@ use gamlss_core::{
     ParameterParts, PositiveLink,
 };
 
-use crate::initial::{positive_floor, weighted_summary, weighted_values};
+use crate::{
+    initial::{positive_floor, weighted_summary, weighted_values},
+    link::positive_inverse_and_log,
+};
 
 use super::{LogNormal, LogNormalLogLocationLogSdTheta};
 
@@ -33,6 +36,16 @@ define_two_positive_parameter_blocks! {
 impl LogNormalMeanCvTheta {
     #[inline]
     pub(super) fn log_location_log_sd(self) -> LogNormalLogLocationLogSdTheta {
+        self.log_location_log_sd_with_logs(self.mean.ln(), self.cv.ln())
+            .0
+    }
+
+    #[inline]
+    fn log_location_log_sd_with_logs(
+        self,
+        log_mean: f64,
+        log_cv: f64,
+    ) -> (LogNormalLogLocationLogSdTheta, f64) {
         let log_sd_squared = if self.cv <= 1.0 {
             (self.cv * self.cv).ln_1p()
         } else {
@@ -43,10 +56,18 @@ impl LogNormalMeanCvTheta {
         } else {
             log_sd_squared.sqrt()
         };
-        LogNormalLogLocationLogSdTheta {
-            log_location: 0.5f64.mul_add(-log_sd_squared, self.mean.ln()),
-            log_sd,
-        }
+        let log_scale = if log_sd_squared == 0.0 {
+            log_cv
+        } else {
+            0.5 * log_sd_squared.ln()
+        };
+        (
+            LogNormalLogLocationLogSdTheta {
+                log_location: 0.5f64.mul_add(-log_sd_squared, log_mean),
+                log_sd,
+            },
+            log_scale,
+        )
     }
 }
 
@@ -61,11 +82,29 @@ where
     }
 
     #[inline]
+    fn valid_theta(theta: LogNormalMeanCvTheta) -> bool {
+        theta.mean > 0.0 && theta.mean.is_finite() && theta.cv > 0.0 && theta.cv.is_finite()
+    }
+
+    #[inline]
+    fn theta_canonical_and_log_scale_from_eta(
+        eta: LogNormalMeanCvEta,
+    ) -> (LogNormalMeanCvTheta, LogNormalLogLocationLogSdTheta, f64) {
+        let (mean, log_mean) = positive_inverse_and_log::<MeanLink>(eta.mean);
+        let (cv, log_cv) = positive_inverse_and_log::<CvLink>(eta.cv);
+        let theta = LogNormalMeanCvTheta { mean, cv };
+        let (canonical, log_scale) = theta.log_location_log_sd_with_logs(log_mean, log_cv);
+        (theta, canonical, log_scale)
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(y: f64, eta: LogNormalMeanCvEta) -> (f64, LogNormalMeanCvEta) {
-        let theta = Self::theta_from_eta(eta);
-        let canonical = theta.log_location_log_sd();
-        let nll = Self::nll_log_location_log_sd(y, canonical);
+        let (theta, canonical, log_scale) = Self::theta_canonical_and_log_scale_from_eta(eta);
+        if !Self::valid_theta(theta) {
+            return (f64::INFINITY, LogNormalMeanCvEta::from_array([f64::NAN; 2]));
+        }
+        let nll = Self::nll_log_location_log_sd_with_log_scale(y, canonical, log_scale);
         if !nll.is_finite() {
             return (nll, LogNormalMeanCvEta::from_array([f64::NAN; 2]));
         }
@@ -73,11 +112,16 @@ where
         let (d_location, d_log_sd) = Self::gradient_log_location_log_sd(y, canonical);
         let inverse_hypot = 1.0 / theta.cv.hypot(1.0);
         let cv_over_one_plus_cv2 = (theta.cv * inverse_hypot) * inverse_hypot;
-        let d_mean = d_location / theta.mean;
         let d_cv = -d_location * cv_over_one_plus_cv2
             + d_log_sd * (cv_over_one_plus_cv2 / canonical.log_sd);
 
-        (nll, eta.chain_gradient::<MeanLink, CvLink>(d_mean, d_cv))
+        (
+            nll,
+            LogNormalMeanCvEta {
+                mean: d_location * MeanLink::derivative_log_inverse(eta.mean),
+                cv: d_cv * theta.cv * CvLink::derivative_log_inverse(eta.cv),
+            },
+        )
     }
 }
 
@@ -112,7 +156,11 @@ where
 
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
-        Self::nll_log_location_log_sd(y, Self::theta_from_eta(*eta).log_location_log_sd())
+        let (theta, canonical, log_scale) = Self::theta_canonical_and_log_scale_from_eta(*eta);
+        if !Self::valid_theta(theta) {
+            return f64::INFINITY;
+        }
+        Self::nll_log_location_log_sd_with_log_scale(y, canonical, log_scale)
     }
 
     #[inline]

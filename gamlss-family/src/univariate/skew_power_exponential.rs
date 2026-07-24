@@ -73,6 +73,29 @@ impl StandardizedScale {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub(super) struct ModeScaleLogValues {
+    pub(super) sigma: f64,
+    pub(super) skew_ratio: f64,
+    pub(super) power: f64,
+}
+
+impl ModeScaleLogValues {
+    #[inline]
+    fn from_natural(sigma: f64, skew_ratio: f64, power: f64) -> Self {
+        Self {
+            sigma: sigma.ln(),
+            skew_ratio: skew_ratio.ln(),
+            power: power.ln(),
+        }
+    }
+
+    #[inline]
+    const fn is_finite(self) -> bool {
+        self.sigma.is_finite() && self.skew_ratio.is_finite() && self.power.is_finite()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 struct PointGeometry {
     residual: f64,
     log_distance: f64,
@@ -81,11 +104,11 @@ struct PointGeometry {
 
 impl PointGeometry {
     #[inline]
-    fn new(
+    fn new_with_logs(
         y: f64,
         mu: f64,
-        sigma: f64,
-        skew_ratio: f64,
+        log_sigma: f64,
+        log_skew_ratio: f64,
         power: f64,
         standardized_scale: StandardizedScale,
     ) -> Self {
@@ -97,14 +120,13 @@ impl PointGeometry {
                 radial_power: 0.0,
             };
         }
-        let log_skew_ratio = skew_ratio.ln();
         let log_side_scale = if residual < 0.0 {
             log_skew_ratio
         } else {
             -log_skew_ratio
         };
         let log_distance =
-            residual.abs().ln() + log_side_scale - sigma.ln() - standardized_scale.log_value;
+            residual.abs().ln() + log_side_scale - log_sigma - standardized_scale.log_value;
         Self {
             residual,
             log_distance,
@@ -145,8 +167,8 @@ pub(super) fn valid_mode_scale(mu: f64, sigma: f64, skew_ratio: f64, power: f64)
 }
 
 #[inline]
-fn log_skew_normalizer(skew_ratio: f64) -> f64 {
-    let magnitude = skew_ratio.ln().abs();
+fn log_skew_normalizer_from_log(log_skew_ratio: f64) -> f64 {
+    let magnitude = log_skew_ratio.abs();
     magnitude + (-2.0 * magnitude).exp().ln_1p()
 }
 
@@ -162,24 +184,23 @@ fn skew_difference(skew_ratio: f64) -> f64 {
 
 #[inline]
 fn nll_mode_scale_unchecked(
-    sigma: f64,
-    skew_ratio: f64,
+    logs: ModeScaleLogValues,
     power: f64,
     standardized_scale: StandardizedScale,
     point: PointGeometry,
 ) -> f64 {
-    sigma.ln()
+    logs.sigma
         + standardized_scale.log_value
         + ln_gamma(1.0 / power)
-        + log_skew_normalizer(skew_ratio)
-        - power.ln()
+        + log_skew_normalizer_from_log(logs.skew_ratio)
+        - logs.power
         + point.radial_power
 }
 
 #[inline]
 fn gradient_mode_scale_unchecked(
     sigma: f64,
-    skew_ratio: f64,
+    logs: ModeScaleLogValues,
     power: f64,
     point: PointGeometry,
     d_log_standardized_scale: f64,
@@ -209,7 +230,7 @@ fn gradient_mode_scale_unchecked(
             -radial_score / point.residual
         },
         scale: (1.0 - radial_score) / sigma,
-        log_skew_ratio: skew_ratio.ln().tanh() + side_log_score,
+        log_skew_ratio: logs.skew_ratio.tanh() + side_log_score,
         power: d_log_standardized_scale - digamma(1.0 / power) / (power * power) - 1.0 / power
             + d_radial_d_power,
     }
@@ -223,33 +244,75 @@ pub(super) fn nll_mode_scale(y: f64, mu: f64, sigma: f64, skew_ratio: f64, power
     let Some(standardized_scale) = StandardizedScale::from_power(power) else {
         return f64::INFINITY;
     };
-    let point = PointGeometry::new(y, mu, sigma, skew_ratio, power, standardized_scale);
-    nll_mode_scale_unchecked(sigma, skew_ratio, power, standardized_scale, point)
+    let logs = ModeScaleLogValues::from_natural(sigma, skew_ratio, power);
+    let point = PointGeometry::new_with_logs(
+        y,
+        mu,
+        logs.sigma,
+        logs.skew_ratio,
+        power,
+        standardized_scale,
+    );
+    nll_mode_scale_unchecked(logs, power, standardized_scale, point)
 }
 
 #[inline]
-pub(super) fn nll_and_gradient_mode_scale(
+pub(super) fn nll_mode_scale_with_logs(
     y: f64,
     mu: f64,
     sigma: f64,
     skew_ratio: f64,
     power: f64,
+    logs: ModeScaleLogValues,
+) -> f64 {
+    if !y.is_finite() || !valid_mode_scale(mu, sigma, skew_ratio, power) || !logs.is_finite() {
+        return f64::INFINITY;
+    }
+    let Some(standardized_scale) = StandardizedScale::from_power(power) else {
+        return f64::INFINITY;
+    };
+    let point = PointGeometry::new_with_logs(
+        y,
+        mu,
+        logs.sigma,
+        logs.skew_ratio,
+        power,
+        standardized_scale,
+    );
+    nll_mode_scale_unchecked(logs, power, standardized_scale, point)
+}
+
+#[inline]
+pub(super) fn nll_and_gradient_mode_scale_with_logs(
+    y: f64,
+    mu: f64,
+    sigma: f64,
+    skew_ratio: f64,
+    power: f64,
+    logs: ModeScaleLogValues,
 ) -> (f64, NllGradient) {
-    if !y.is_finite() || !valid_mode_scale(mu, sigma, skew_ratio, power) {
+    if !y.is_finite() || !valid_mode_scale(mu, sigma, skew_ratio, power) || !logs.is_finite() {
         return (f64::INFINITY, NllGradient::nan());
     }
     let Some(standardized_scale) = StandardizedScale::from_power(power) else {
         return (f64::INFINITY, NllGradient::nan());
     };
-    let point = PointGeometry::new(y, mu, sigma, skew_ratio, power, standardized_scale);
-    let nll = nll_mode_scale_unchecked(sigma, skew_ratio, power, standardized_scale, point);
+    let point = PointGeometry::new_with_logs(
+        y,
+        mu,
+        logs.sigma,
+        logs.skew_ratio,
+        power,
+        standardized_scale,
+    );
+    let nll = nll_mode_scale_unchecked(logs, power, standardized_scale, point);
     if !nll.is_finite() {
         return (nll, NllGradient::nan());
     }
     let d_log_standardized_scale = d_log_standardized_scale_d_power(power);
     (
         nll,
-        gradient_mode_scale_unchecked(sigma, skew_ratio, power, point, d_log_standardized_scale),
+        gradient_mode_scale_unchecked(sigma, logs, power, point, d_log_standardized_scale),
     )
 }
 
@@ -408,38 +471,29 @@ pub(super) fn nll_mean_sd(y: f64, mean: f64, sigma: f64, skew_ratio: f64, power:
     let Some(geometry) = mean_sd_to_mode_scale(mean, sigma, skew_ratio, power) else {
         return f64::INFINITY;
     };
-    let point = PointGeometry::new(
+    let logs = ModeScaleLogValues::from_natural(geometry.scale, skew_ratio, power);
+    let point = PointGeometry::new_with_logs(
         y,
         geometry.mode,
-        geometry.scale,
-        skew_ratio,
+        logs.sigma,
+        logs.skew_ratio,
         power,
         geometry.standardized_scale,
     );
-    nll_mode_scale_unchecked(
-        geometry.scale,
-        skew_ratio,
-        power,
-        geometry.standardized_scale,
-        point,
-    )
+    nll_mode_scale_unchecked(logs, power, geometry.standardized_scale, point)
 }
 
 #[inline]
 fn gradient_mean_sd_from_geometry(
     skew_ratio: f64,
+    logs: ModeScaleLogValues,
     power: f64,
     geometry: ModeScaleGeometry,
     point: PointGeometry,
     d_log_standardized_scale: f64,
 ) -> NllGradient {
-    let raw = gradient_mode_scale_unchecked(
-        geometry.scale,
-        skew_ratio,
-        power,
-        point,
-        d_log_standardized_scale,
-    );
+    let raw =
+        gradient_mode_scale_unchecked(geometry.scale, logs, power, point, d_log_standardized_scale);
     if !raw.is_finite() {
         return NllGradient::nan();
     }
@@ -489,21 +543,16 @@ pub(super) fn nll_and_gradient_mean_sd(
     let Some(geometry) = mean_sd_to_mode_scale(mean, sigma, skew_ratio, power) else {
         return (f64::INFINITY, NllGradient::nan());
     };
-    let point = PointGeometry::new(
+    let logs = ModeScaleLogValues::from_natural(geometry.scale, skew_ratio, power);
+    let point = PointGeometry::new_with_logs(
         y,
         geometry.mode,
-        geometry.scale,
-        skew_ratio,
+        logs.sigma,
+        logs.skew_ratio,
         power,
         geometry.standardized_scale,
     );
-    let nll = nll_mode_scale_unchecked(
-        geometry.scale,
-        skew_ratio,
-        power,
-        geometry.standardized_scale,
-        point,
-    );
+    let nll = nll_mode_scale_unchecked(logs, power, geometry.standardized_scale, point);
     if !nll.is_finite() {
         return (nll, NllGradient::nan());
     }
@@ -512,6 +561,7 @@ pub(super) fn nll_and_gradient_mean_sd(
         nll,
         gradient_mean_sd_from_geometry(
             skew_ratio,
+            logs,
             power,
             geometry,
             point,
