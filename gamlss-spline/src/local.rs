@@ -52,11 +52,26 @@ impl LocalBasis {
     /// Dot product of the basis with coefficients.
     #[inline]
     pub(crate) fn dot(self, beta: &[f64]) -> f64 {
-        let mut value = 0.0;
-        self.for_each(|index, weight| {
-            value = beta[index].mul_add(weight, value);
-        });
-        value
+        match self.len {
+            0 => 0.0,
+            1 => beta[self.indices[0]].mul_add(self.weights[0], 0.0),
+            2 => {
+                let value = beta[self.indices[0]].mul_add(self.weights[0], 0.0);
+                beta[self.indices[1]].mul_add(self.weights[1], value)
+            }
+            3 => {
+                let value = beta[self.indices[0]].mul_add(self.weights[0], 0.0);
+                let value = beta[self.indices[1]].mul_add(self.weights[1], value);
+                beta[self.indices[2]].mul_add(self.weights[2], value)
+            }
+            4 => {
+                let value = beta[self.indices[0]].mul_add(self.weights[0], 0.0);
+                let value = beta[self.indices[1]].mul_add(self.weights[1], value);
+                let value = beta[self.indices[2]].mul_add(self.weights[2], value);
+                beta[self.indices[3]].mul_add(self.weights[3], value)
+            }
+            _ => unreachable!("local spline basis stores at most four entries"),
+        }
     }
 }
 
@@ -161,11 +176,51 @@ impl PreparedLocalBasis {
 
     #[inline]
     pub(crate) fn dot_contiguous(&self, active: Range<usize>, beta: &[f64]) -> f64 {
-        let mut value = 0.0;
-        self.for_each_contiguous(active, |index, weight| {
-            value = beta[index].mul_add(weight, value);
-        });
-        value
+        debug_assert!(active.start < active.end && active.end <= self.weights.len());
+
+        match (active.start, active.end) {
+            (0, 2) => {
+                let [beta0, beta1] = &beta[self.start..self.start + 2] else {
+                    unreachable!("two-element coefficient slice")
+                };
+                let value = beta0.mul_add(self.weights[0], 0.0);
+                beta1.mul_add(self.weights[1], value)
+            }
+            (0, 3) => {
+                let [beta0, beta1, beta2] = &beta[self.start..self.start + 3] else {
+                    unreachable!("three-element coefficient slice")
+                };
+                let value = beta0.mul_add(self.weights[0], 0.0);
+                let value = beta1.mul_add(self.weights[1], value);
+                beta2.mul_add(self.weights[2], value)
+            }
+            (0, 4) => {
+                let [beta0, beta1, beta2, beta3] = &beta[self.start..self.start + 4] else {
+                    unreachable!("four-element coefficient slice")
+                };
+                let value = beta0.mul_add(self.weights[0], 0.0);
+                let value = beta1.mul_add(self.weights[1], value);
+                let value = beta2.mul_add(self.weights[2], value);
+                beta3.mul_add(self.weights[3], value)
+            }
+            (1, 3) => {
+                let start = self.start + 1;
+                let [beta1, beta2] = &beta[start..start + 2] else {
+                    unreachable!("two-element coefficient slice")
+                };
+                let value = beta1.mul_add(self.weights[1], 0.0);
+                beta2.mul_add(self.weights[2], value)
+            }
+            (2, 4) => {
+                let start = self.start + 2;
+                let [beta2, beta3] = &beta[start..start + 2] else {
+                    unreachable!("two-element coefficient slice")
+                };
+                let value = beta2.mul_add(self.weights[2], 0.0);
+                beta3.mul_add(self.weights[3], value)
+            }
+            _ => unreachable!("unsupported prepared spline row layout"),
+        }
     }
 
     #[inline]
@@ -178,18 +233,76 @@ impl PreparedLocalBasis {
             return self.dot_contiguous(0..width, beta);
         }
 
-        let mut value = 0.0;
-        self.for_each_wrapped_fallback(width, remaining, |index, weight| {
-            value = beta[index].mul_add(weight, value);
-        });
-        value
+        match width {
+            2 => {
+                let value = beta[self.start].mul_add(self.weights[0], 0.0);
+                beta[wrapped_index(self.start, 1, n_basis)].mul_add(self.weights[1], value)
+            }
+            3 => {
+                let value = beta[self.start].mul_add(self.weights[0], 0.0);
+                let value =
+                    beta[wrapped_index(self.start, 1, n_basis)].mul_add(self.weights[1], value);
+                beta[wrapped_index(self.start, 2, n_basis)].mul_add(self.weights[2], value)
+            }
+            4 => {
+                let value = beta[self.start].mul_add(self.weights[0], 0.0);
+                let value =
+                    beta[wrapped_index(self.start, 1, n_basis)].mul_add(self.weights[1], value);
+                let value =
+                    beta[wrapped_index(self.start, 2, n_basis)].mul_add(self.weights[2], value);
+                beta[wrapped_index(self.start, 3, n_basis)].mul_add(self.weights[3], value)
+            }
+            _ => unreachable!("prepared cyclic spline row has width two through four"),
+        }
     }
 
     #[inline]
     pub(crate) fn add_scaled_contiguous(&self, active: Range<usize>, scale: f64, out: &mut [f64]) {
-        self.for_each_contiguous(active, |index, weight| {
-            out[index] = scale.mul_add(weight, out[index]);
-        });
+        debug_assert!(active.start < active.end && active.end <= self.weights.len());
+
+        match (active.start, active.end) {
+            (0, 2) => {
+                let [out0, out1] = &mut out[self.start..self.start + 2] else {
+                    unreachable!("two-element output slice")
+                };
+                *out0 = scale.mul_add(self.weights[0], *out0);
+                *out1 = scale.mul_add(self.weights[1], *out1);
+            }
+            (0, 3) => {
+                let [out0, out1, out2] = &mut out[self.start..self.start + 3] else {
+                    unreachable!("three-element output slice")
+                };
+                *out0 = scale.mul_add(self.weights[0], *out0);
+                *out1 = scale.mul_add(self.weights[1], *out1);
+                *out2 = scale.mul_add(self.weights[2], *out2);
+            }
+            (0, 4) => {
+                let [out0, out1, out2, out3] = &mut out[self.start..self.start + 4] else {
+                    unreachable!("four-element output slice")
+                };
+                *out0 = scale.mul_add(self.weights[0], *out0);
+                *out1 = scale.mul_add(self.weights[1], *out1);
+                *out2 = scale.mul_add(self.weights[2], *out2);
+                *out3 = scale.mul_add(self.weights[3], *out3);
+            }
+            (1, 3) => {
+                let start = self.start + 1;
+                let [out1, out2] = &mut out[start..start + 2] else {
+                    unreachable!("two-element output slice")
+                };
+                *out1 = scale.mul_add(self.weights[1], *out1);
+                *out2 = scale.mul_add(self.weights[2], *out2);
+            }
+            (2, 4) => {
+                let start = self.start + 2;
+                let [out2, out3] = &mut out[start..start + 2] else {
+                    unreachable!("two-element output slice")
+                };
+                *out2 = scale.mul_add(self.weights[2], *out2);
+                *out3 = scale.mul_add(self.weights[3], *out3);
+            }
+            _ => unreachable!("unsupported prepared spline row layout"),
+        }
     }
 
     #[inline]
@@ -209,9 +322,30 @@ impl PreparedLocalBasis {
             return;
         }
 
-        self.for_each_wrapped_fallback(width, remaining, |index, weight| {
-            out[index] = scale.mul_add(weight, out[index]);
-        });
+        match width {
+            2 => {
+                let index1 = wrapped_index(self.start, 1, n_basis);
+                out[self.start] = scale.mul_add(self.weights[0], out[self.start]);
+                out[index1] = scale.mul_add(self.weights[1], out[index1]);
+            }
+            3 => {
+                let index1 = wrapped_index(self.start, 1, n_basis);
+                let index2 = wrapped_index(self.start, 2, n_basis);
+                out[self.start] = scale.mul_add(self.weights[0], out[self.start]);
+                out[index1] = scale.mul_add(self.weights[1], out[index1]);
+                out[index2] = scale.mul_add(self.weights[2], out[index2]);
+            }
+            4 => {
+                let index1 = wrapped_index(self.start, 1, n_basis);
+                let index2 = wrapped_index(self.start, 2, n_basis);
+                let index3 = wrapped_index(self.start, 3, n_basis);
+                out[self.start] = scale.mul_add(self.weights[0], out[self.start]);
+                out[index1] = scale.mul_add(self.weights[1], out[index1]);
+                out[index2] = scale.mul_add(self.weights[2], out[index2]);
+                out[index3] = scale.mul_add(self.weights[3], out[index3]);
+            }
+            _ => unreachable!("prepared cyclic spline row has width two through four"),
+        }
     }
 
     #[inline]
@@ -778,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::float_cmp)]
     fn prepared_open_rows_preserve_indices_and_weights() {
         for order in [
             SplineOrder::Linear,
@@ -808,7 +942,7 @@ mod tests {
                     let prepared = prepare_open_uniform_local_basis(u, order, n_basis, n_intervals);
                     let active = open_uniform_active_weights(u, width);
                     let mut actual = Vec::new();
-                    prepared.for_each_contiguous(active, |index, weight| {
+                    prepared.for_each_contiguous(active.clone(), |index, weight| {
                         actual.push((index, weight));
                     });
 
@@ -817,7 +951,30 @@ mod tests {
                         "order={order:?}, n_basis={n_basis}, u={u:?}"
                     );
 
-                    let scale = 0.7;
+                    let beta = (0..n_basis)
+                        .map(|index| (index as f64).mul_add(0.125, -0.25))
+                        .collect::<Vec<_>>();
+                    let expected_dot = expected.iter().fold(0.0, |value, &(index, weight)| {
+                        beta[index].mul_add(weight, value)
+                    });
+                    assert_eq!(
+                        prepared.dot_contiguous(active.clone(), &beta),
+                        expected_dot,
+                        "dot product: order={order:?}, n_basis={n_basis}, u={u:?}"
+                    );
+
+                    let scale = 0.7_f64;
+                    let mut expected_gradient = vec![0.5; n_basis];
+                    for &(index, weight) in &expected {
+                        expected_gradient[index] = scale.mul_add(weight, expected_gradient[index]);
+                    }
+                    let mut actual_gradient = vec![0.5; n_basis];
+                    prepared.add_scaled_contiguous(active.clone(), scale, &mut actual_gradient);
+                    assert_eq!(
+                        actual_gradient, expected_gradient,
+                        "gradient: order={order:?}, n_basis={n_basis}, u={u:?}"
+                    );
+
                     let mut expected_outer = vec![0.0; n_basis * n_basis];
                     for (local_j, &(j, weight_j)) in expected.iter().enumerate() {
                         let scaled_j = scale * weight_j;
@@ -828,12 +985,7 @@ mod tests {
                         }
                     }
                     let mut actual_outer = vec![0.0; n_basis * n_basis];
-                    prepared.add_scaled_outer_contiguous(
-                        open_uniform_active_weights(u, width),
-                        scale,
-                        n_basis,
-                        &mut actual_outer,
-                    );
+                    prepared.add_scaled_outer_contiguous(active, scale, n_basis, &mut actual_outer);
                     assert_eq!(
                         actual_outer, expected_outer,
                         "outer product: order={order:?}, n_basis={n_basis}, u={u:?}"

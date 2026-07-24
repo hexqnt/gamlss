@@ -5,8 +5,8 @@ use std::{hint::black_box, time::Duration};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use gamlss_core::{LinearPredictorBlock, LinearPredictorGeometry, Penalty, PredictorBlock};
 use gamlss_spline::{
-    BSplineBasis, DifferencePenalty, OpenUniformSplineDesign, PreparedDifferencePenalty,
-    SplineOrder, SplineRowBasisExt,
+    BSplineBasis, CyclicSplineDesign, DifferencePenalty, OpenUniformSplineDesign,
+    PreparedDifferencePenalty, SplineOrder, SplineRowBasisExt,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,20 @@ fn coordinates(nobs: usize) -> Vec<f64> {
     (0..nobs)
         .map(|row| row as f64 / (nobs - 1) as f64)
         .collect()
+}
+
+fn phases(nobs: usize) -> Vec<f64> {
+    (0..nobs)
+        .map(|row| (row as f64 + 0.5) / nobs as f64)
+        .collect()
+}
+
+const fn order_name(order: SplineOrder) -> &'static str {
+    match order {
+        SplineOrder::Linear => "linear",
+        SplineOrder::Quadratic => "quadratic",
+        SplineOrder::Cubic => "cubic",
+    }
 }
 
 fn coefficients(nparams: usize) -> Vec<f64> {
@@ -43,11 +57,11 @@ fn benchmark_design_case(
     criterion: &mut Criterion,
     nobs: usize,
     n_basis: usize,
+    order: SplineOrder,
     coverage: Coverage,
 ) {
     let x = coordinates(nobs);
-    let prepared =
-        OpenUniformSplineDesign::with_range(&x, 0.0, 1.0, n_basis, SplineOrder::Cubic).unwrap();
+    let prepared = OpenUniformSplineDesign::with_range(&x, 0.0, 1.0, n_basis, order).unwrap();
     let on_demand = prepared.basis().on_demand_design(&x).unwrap();
     let dense_design = prepared.to_dense_design().unwrap();
     let dense = LinearPredictorBlock::new(&dense_design);
@@ -55,7 +69,10 @@ fn benchmark_design_case(
     let scores = row_scores(nobs);
     let weights = row_weights(nobs);
 
-    let mut group = criterion.benchmark_group(format!("open_uniform_cubic/n{nobs}/k{n_basis}"));
+    let mut group = criterion.benchmark_group(format!(
+        "open_uniform_{}/n{nobs}/k{n_basis}",
+        order_name(order)
+    ));
     group.throughput(Throughput::Elements(nobs as u64));
 
     group.bench_function("eta_rows_prepared", |bencher| {
@@ -177,7 +194,7 @@ fn benchmark_design_case(
             });
         });
 
-        let full_basis = BSplineBasis::open_uniform_from_data(&x, n_basis, 3).unwrap();
+        let full_basis = BSplineBasis::open_uniform_from_data(&x, n_basis, order.degree()).unwrap();
         let mut full_values = vec![0.0; n_basis];
         group.bench_function("basis_rows_full_buffer", |bencher| {
             bencher.iter(|| {
@@ -190,6 +207,99 @@ fn benchmark_design_case(
             });
         });
     }
+
+    group.finish();
+}
+
+fn benchmark_cyclic_case(
+    criterion: &mut Criterion,
+    nobs: usize,
+    n_basis: usize,
+    order: SplineOrder,
+) {
+    let phi = phases(nobs);
+    let prepared = CyclicSplineDesign::new(&phi, n_basis, order).unwrap();
+    let on_demand = prepared.spec().on_demand_design(&phi).unwrap();
+    let dense_design = prepared.to_dense_design().unwrap();
+    let dense = LinearPredictorBlock::new(&dense_design);
+    let beta = coefficients(n_basis);
+    let scores = row_scores(nobs);
+
+    let mut group =
+        criterion.benchmark_group(format!("cyclic_{}/n{nobs}/k{n_basis}", order_name(order)));
+    group.throughput(Throughput::Elements(nobs as u64));
+
+    group.bench_function("eta_rows_prepared", |bencher| {
+        bencher.iter(|| {
+            let beta = black_box(beta.as_slice());
+            let mut checksum = 0.0;
+            for row in 0..nobs {
+                checksum += prepared.eta_row(row, beta);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("eta_rows_on_demand", |bencher| {
+        bencher.iter(|| {
+            let beta = black_box(beta.as_slice());
+            let mut checksum = 0.0;
+            for row in 0..nobs {
+                checksum += on_demand.eta_row(row, beta);
+            }
+            black_box(checksum);
+        });
+    });
+
+    group.bench_function("eta_rows_dense", |bencher| {
+        bencher.iter(|| {
+            let beta = black_box(beta.as_slice());
+            let mut checksum = 0.0;
+            for row in 0..nobs {
+                checksum += dense.eta_row(row, beta);
+            }
+            black_box(checksum);
+        });
+    });
+
+    let mut prepared_gradient = vec![0.0; n_basis];
+    group.bench_function("vjp_prepared", |bencher| {
+        bencher.iter(|| {
+            prepared_gradient.fill(0.0);
+            prepared.add_gradient(
+                black_box(&scores),
+                black_box(&beta),
+                black_box(&mut prepared_gradient),
+            );
+            black_box(&prepared_gradient);
+        });
+    });
+
+    let mut on_demand_gradient = vec![0.0; n_basis];
+    group.bench_function("vjp_on_demand", |bencher| {
+        bencher.iter(|| {
+            on_demand_gradient.fill(0.0);
+            on_demand.add_gradient(
+                black_box(&scores),
+                black_box(&beta),
+                black_box(&mut on_demand_gradient),
+            );
+            black_box(&on_demand_gradient);
+        });
+    });
+
+    let mut dense_gradient = vec![0.0; n_basis];
+    group.bench_function("vjp_dense", |bencher| {
+        bencher.iter(|| {
+            dense_gradient.fill(0.0);
+            dense.add_gradient(
+                black_box(&scores),
+                black_box(&beta),
+                black_box(&mut dense_gradient),
+            );
+            black_box(&dense_gradient);
+        });
+    });
 
     group.finish();
 }
@@ -230,10 +340,30 @@ fn benchmark_penalty_case(criterion: &mut Criterion, n_basis: usize) {
 }
 
 fn spline_hot_paths(criterion: &mut Criterion) {
-    benchmark_design_case(criterion, 1_000, 16, Coverage::Full);
-    benchmark_design_case(criterion, 1_000, 64, Coverage::Full);
-    benchmark_design_case(criterion, 100_000, 16, Coverage::HotPath);
-    benchmark_design_case(criterion, 100_000, 64, Coverage::HotPath);
+    benchmark_design_case(criterion, 1_000, 16, SplineOrder::Cubic, Coverage::Full);
+    benchmark_design_case(criterion, 1_000, 64, SplineOrder::Cubic, Coverage::Full);
+    benchmark_design_case(
+        criterion,
+        100_000,
+        16,
+        SplineOrder::Cubic,
+        Coverage::HotPath,
+    );
+    benchmark_design_case(
+        criterion,
+        100_000,
+        64,
+        SplineOrder::Cubic,
+        Coverage::HotPath,
+    );
+    benchmark_design_case(
+        criterion,
+        100_000,
+        16,
+        SplineOrder::Quadratic,
+        Coverage::HotPath,
+    );
+    benchmark_cyclic_case(criterion, 100_000, 16, SplineOrder::Cubic);
 
     benchmark_penalty_case(criterion, 16);
     benchmark_penalty_case(criterion, 64);
