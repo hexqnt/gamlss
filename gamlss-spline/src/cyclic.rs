@@ -471,4 +471,3 @@ impl OnDemandSplineDesign<CyclicSplineSpec> {
         self.basis().eta_derivative_at(self.x()[row], beta)
     }
 }
-

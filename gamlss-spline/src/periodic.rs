@@ -352,4 +352,3 @@ impl OnDemandSplineDesign<PeriodicSplineSpec> {
         spec.cyclic.eta_derivative_at(phase, beta) / spec.period
     }
 }
-
