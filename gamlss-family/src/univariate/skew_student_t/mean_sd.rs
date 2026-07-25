@@ -1,0 +1,359 @@
+use std::marker::PhantomData;
+
+use gamlss_core::{
+    AboveTwoLink, Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, LogPlus, Mean, Nu, ObservationView, ParameterParts,
+    PositiveLink, Sigma, Tau,
+};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+
+use crate::initial::{robust_location_scale, weighted_values};
+use crate::numeric::finite_difference_gradient_eta;
+
+use super::mu_sigma_nu_tau::SkewStudentTTheta;
+#[cfg(feature = "rand")]
+use super::try_sample_location_scale;
+use super::{
+    cdf_location_scale, crps_location_scale, mean_sd_to_location_scale, nll_location_scale,
+    quantile_location_scale,
+};
+
+/// Skew Student-t distribution parameterized by mean, standard deviation, skewness and `tau > 2`.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
+pub type SkewStudentTMeanSdNuTau = SkewStudentTMeanSd<Identity, Log, Identity, LogPlus<2>>;
+
+/// Azzalini/ST1-style skew Student-t family parameterized by mean and standard deviation.
+///
+/// Its NLL gradient currently uses a finite-difference fallback and should be
+/// treated as a training slow path until an analytic gradient is added.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/distributions/skew_student_t_mean_sd.svg")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkewStudentTMeanSd<
+    MeanLink = Identity,
+    SigmaLink = Log,
+    NuLink = Identity,
+    TauLink = LogPlus<2>,
+> {
+    marker: PhantomData<(MeanLink, SigmaLink, NuLink, TauLink)>,
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    /// Creates a stateless mean/SD skew Student-t family.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: SkewStudentTMeanSdEta) -> SkewStudentTMeanSdTheta {
+        SkewStudentTMeanSdTheta {
+            mean: MeanLink::inverse(eta.mean),
+            sigma: SigmaLink::inverse(eta.sigma),
+            nu: NuLink::inverse(eta.nu),
+            tau: TauLink::inverse(eta.tau),
+        }
+    }
+
+    #[inline]
+    fn nll_theta(y: f64, theta: SkewStudentTMeanSdTheta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::INFINITY;
+        };
+
+        nll_location_scale(
+            y,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: SkewStudentTMeanSdEta,
+    ) -> (f64, SkewStudentTMeanSdEta) {
+        let nll = Self::nll_theta(y, Self::theta_from_eta(eta));
+        if !nll.is_finite() {
+            return (nll, SkewStudentTMeanSdEta::from_array([f64::NAN; 4]));
+        }
+
+        let gradient =
+            finite_difference_gradient_eta::<_, SkewStudentTMeanSdEta, 4>(eta, |probe| {
+                Self::nll_theta(y, Self::theta_from_eta(probe))
+            });
+        (nll, SkewStudentTMeanSdEta::from_array(gradient))
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> Default
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, SigmaLink, NuLink, TauLink> for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>;
+    parameters = (Mean, Sigma, Nu, Tau);
+    arity = 4;
+);
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> Family
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    type Eta = SkewStudentTMeanSdEta;
+    type Theta = SkewStudentTMeanSdTheta;
+    type GradientEta = SkewStudentTMeanSdEta;
+    type Observation<'obs> = f64;
+    type Workspace = ();
+
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
+    }
+
+    #[inline]
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
+    }
+
+    #[inline]
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> InitialEtaFromObservations<4>
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + Link<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    NuLink: InitialEtaFromTheta<f64> + Link<f64>,
+    TauLink: InitialEtaFromTheta<f64> + AboveTwoLink<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
+        let Some((mean, sigma)) = robust_location_scale(&values) else {
+            return SkewStudentTMeanSdEta {
+                mean: MeanLink::initial_eta_from_theta(0.0),
+                sigma: SigmaLink::initial_eta_from_theta(1.0),
+                nu: NuLink::initial_eta_from_theta(0.0),
+                tau: TauLink::initial_eta_from_theta(5.0),
+            };
+        };
+
+        SkewStudentTMeanSdEta {
+            mean: MeanLink::initial_eta_from_theta(mean),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+            nu: NuLink::initial_eta_from_theta(0.0),
+            tau: TauLink::initial_eta_from_theta(5.0),
+        }
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> HasCdf
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        cdf_location_scale(
+            y,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> HasQuantile
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+
+        quantile_location_scale(
+            p,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+impl<MeanLink, SigmaLink, NuLink, TauLink> HasCrps
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let Some(location_scale) = theta.location_scale() else {
+            return f64::NAN;
+        };
+        crps_location_scale(
+            y,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, SigmaLink, NuLink, TauLink> TrySimulate<Rng>
+    for SkewStudentTMeanSd<MeanLink, SigmaLink, NuLink, TauLink>
+where
+    Rng: rand::Rng,
+    MeanLink: Link<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+    TauLink: AboveTwoLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError> {
+        let Some(location_scale) = theta.location_scale() else {
+            return Err(SimulationError::InvalidParameters(
+                "mean/SD skew Student-t theta",
+            ));
+        };
+        try_sample_location_scale(
+            rng,
+            location_scale.mu,
+            location_scale.sigma,
+            location_scale.nu,
+            location_scale.tau,
+        )
+    }
+}
+
+/// Predictors for mean/SD skew Student-t on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewStudentTMeanSdEta {
+    /// Mean predictor.
+    pub mean: f64,
+    /// Standard-deviation predictor.
+    pub sigma: f64,
+    /// Skewness predictor.
+    pub nu: f64,
+    /// Degrees-of-freedom predictor.
+    pub tau: f64,
+}
+
+impl ParameterParts<4> for SkewStudentTMeanSdEta {
+    #[inline]
+    fn from_array(values: [f64; 4]) -> Self {
+        Self {
+            mean: values[0],
+            sigma: values[1],
+            nu: values[2],
+            tau: values[3],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mean,
+            1 => self.sigma,
+            2 => self.nu,
+            3 => self.tau,
+            _ => unreachable!("mean/SD skew student-t eta only has indices 0 through 3"),
+        }
+    }
+}
+
+/// Natural-scale mean/SD skew Student-t parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkewStudentTMeanSdTheta {
+    /// Mathematical mean.
+    pub mean: f64,
+    /// Positive standard deviation.
+    pub sigma: f64,
+    /// Skewness parameter.
+    pub nu: f64,
+    /// Degrees of freedom, greater than two.
+    pub tau: f64,
+}
+
+impl SkewStudentTMeanSdTheta {
+    #[inline]
+    fn location_scale(self) -> Option<SkewStudentTTheta> {
+        let (mu, sigma) = mean_sd_to_location_scale(self.mean, self.sigma, self.nu, self.tau)?;
+        Some(SkewStudentTTheta {
+            mu,
+            sigma,
+            nu: self.nu,
+            tau: self.tau,
+        })
+    }
+}

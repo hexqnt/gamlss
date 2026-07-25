@@ -27,11 +27,16 @@ proptest! {
         assert_gradient_matches_finite_difference::<_, 2>(&StudentTMuSigma::default(), y_real, [eta1, eta2]);
 
         assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&RayleighScale::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&ChiDegreesOfFreedom::new(), y_positive, [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&ChiSquaredDegreesOfFreedom::new(), y_positive, [eta1]);
         assert_gradient_matches_finite_difference::<_, 2>(&GammaShapeRate::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&InverseGaussianMuShape::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&LogLogisticScaleShape::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LogNormalLogLocationLogSd::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LomaxShapeScale::new(), y_positive, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&WeibullScaleShape::new(), y_positive, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 2>(&GeneralizedParetoScaleShape::new(), y_positive, [eta1, eta2.abs()]);
 
         assert_gradient_matches_finite_difference::<_, 2>(&BetaMeanPrecision::new(), y_unit, [eta1, eta2]);
     }
@@ -44,6 +49,8 @@ proptest! {
         eta2 in -3.0_f64..3.0,
     ) {
         assert_gradient_matches_finite_difference::<_, 1>(&BernoulliProbability::new(), f64::from(binary), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&BinomialFixedTrialsProbability::try_new(50).unwrap(), f64::from(count), [eta1]);
+        assert_gradient_matches_finite_difference::<_, 1>(&GeometricMean::new(), f64::from(count), [eta1]);
         assert_gradient_matches_finite_difference::<_, 1>(&PoissonMean::new(), f64::from(count), [eta1]);
         assert_gradient_matches_finite_difference::<_, 2>(&NegativeBinomialMeanSize::new(), f64::from(count), [eta1, eta2]);
     }
@@ -55,6 +62,11 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         &SkewNormalMuSigmaNu::new(),
         0.4,
         [0.1, -0.2, 0.3],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &SkewNormalMuSigmaNu::new(),
+        -0.7,
+        [0.1, -0.2, -1.1],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &SkewNormalMeanSdNu::new(),
@@ -70,6 +82,11 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         &SkewStudentTMuSigmaNuTau::new(),
         0.4,
         [0.1, -0.2, 0.3, 5.0_f64.ln()],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 4>(
+        &SkewStudentTMuSigmaNuTau::new(),
+        -0.7,
+        [0.1, -0.2, -1.1, 5.0_f64.ln()],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 4>(
         &SkewStudentTMeanSdNuTau::new(),
@@ -94,12 +111,22 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GeneralizedGammaScaleSigmaNu::new(),
         1.4,
+        [0.1, -0.2, -0.5],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &GeneralizedGammaScaleSigmaNu::new(),
+        1.4,
         [0.1, -0.2, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GevMuSigmaShape::new(),
         0.4,
         [0.1, -0.2, 0.1],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &GevMuSigmaShape::new(),
+        0.4,
+        [0.1, -0.2, -0.2],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &GevMuSigmaShape::new(),
@@ -112,8 +139,18 @@ fn higher_parameter_continuous_family_gradients_match_finite_differences() {
         [0.2, -0.3, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanDispersionPower::new(),
+        0.0,
+        [0.2, -0.3, 0.0],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &TweedieMeanCvPower::new(),
         1.4,
+        [0.2, -0.3, 0.0],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &TweedieMeanCvPower::new(),
+        0.0,
         [0.2, -0.3, 0.0],
     );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(

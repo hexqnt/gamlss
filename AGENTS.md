@@ -22,6 +22,8 @@
 * `gamlss-formula` — optional dynamic formula/builder layer, который компилируется в typed models.
 * `gamlss-transform` — target transforms, их persisted state и domain-aware inverse transforms.
 * `gamlss-diagnostics` — post-fit diagnostics extension APIs: PIT/CDF values, quantile residuals, CRPS summaries и будущие helpers для fitted parameters, predictions, worm plots и centile curves.
+* `gamlss-datasets` — встроенные и синтетические наборы данных для примеров и экспериментов.
+* `gamlss-bayes` — байесовские априорные распределения коэффициентов и потенциалы апостериорного распределения.
 
 ## Принципы дизайна
 
@@ -39,6 +41,7 @@
 * Предпочитать stable Rust. Nightly допустим, если он действительно улучшает дизайн или производительность.
 * Писать идиоматичный Rust с явным ownership, typed errors и небольшими сфокусированными модулями.
 * Публичные API должны иметь rustdoc, если поведение или инварианты не очевидны.
+* В LaTeX-формулах внутри rustdoc для переноса строки пиши `\\\\`: после обработки Markdown в HTML останется требуемая KaTeX-команда `\\`.
 * Для recoverable errors использовать `Result`; не использовать panic для обычной валидации входных данных.
 * `unsafe` не добавлять без явного согласования. Любой согласованный `unsafe` должен быть изолирован, задокументирован и покрыт тестами.
 
@@ -84,3 +87,4 @@ cargo test --workspace --all-features
 * Делать минимальные сфокусированные изменения, сохраняя границы crate-ов.
 * При изменении публичного поведения обновлять examples, rustdoc или tests.
 * Не переписывать архитектуру ради сходства с R-пакетами; сохранять Rust-native abstractions.
+* Не делай жёсткий перенос строк в обычном тексте: каждый абзац оставляй одной строкой.

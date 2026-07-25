@@ -12,8 +12,8 @@ pub enum SplineError {
     #[error("spline input contains a non-finite value")]
     NonFiniteValue,
 
-    /// Data range does not have two distinct finite boundaries.
-    #[error("spline range must have distinct finite boundaries")]
+    /// Data range does not have two distinct finite boundaries and a finite span.
+    #[error("spline range must have distinct finite boundaries and a finite span")]
     InvalidRange,
 
     /// Number of basis functions is insufficient for the spline degree.
@@ -72,8 +72,8 @@ pub enum FourierError {
     #[error("Fourier input contains a non-finite value")]
     NonFiniteValue,
 
-    /// Period must be a finite positive number.
-    #[error("Fourier period must be finite and positive")]
+    /// Period must be positive and both it and its angular frequency must be finite.
+    #[error("Fourier period must be positive with finite period and angular frequency")]
     InvalidPeriod,
 
     /// Number of harmonics must be positive.

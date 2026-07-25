@@ -1,4 +1,8 @@
-use crate::model::ObservationView;
+use crate::{
+    ModelError,
+    model::{ObservationView, ParameterPath},
+    shape::{ParameterShape, ShapeValues},
+};
 
 /// Dense expected information matrix for a fixed-arity family.
 ///
@@ -45,12 +49,57 @@ impl<const K: usize> DenseInformation<K> {
     }
 }
 
+/// Exact family-local identity of a runtime predictor topology.
+///
+/// The key is compared only between instances of the same concrete family
+/// type. Its parts must encode every instance setting that changes coordinate
+/// ordering or meaning, even when the total coordinate count stays unchanged.
+/// It is construction-time metadata and is never inspected in the row hot path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct DynamicLayoutKey {
+    parts: Vec<usize>,
+}
+
+impl DynamicLayoutKey {
+    /// Creates a family-local layout key from exact structural parts.
+    #[must_use]
+    #[inline]
+    pub const fn new(parts: Vec<usize>) -> Self {
+        Self { parts }
+    }
+
+    /// Creates a key for a topology determined by one runtime dimension.
+    #[must_use]
+    #[inline]
+    pub fn from_dimension(dimension: usize) -> Self {
+        Self::new(vec![dimension])
+    }
+
+    /// Returns the exact family-local structural parts.
+    #[must_use]
+    #[inline]
+    pub fn parts(&self) -> &[usize] {
+        &self.parts
+    }
+
+    /// Consumes the key and returns its structural parts.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> Vec<usize> {
+        self.parts
+    }
+}
+
 /// Distribution contract for the compiled GAMLSS objective.
 ///
-/// Custom distributions implement this trait. Parameter arity, parameter roles
-/// and link-function compatibility are specified through
-/// [`ParameterizedFamily`], so the hot path stays typed without dynamic
-/// lookup.
+/// The predictor layer is responsible for computing raw link-scale
+/// [`Eta`](Self::Eta) values from covariates and coefficients. This trait owns
+/// the distribution-side interpretation of those values: applying links,
+/// enforcing dependent constraints, constructing valid natural-scale
+/// [`Theta`](Self::Theta), and evaluating likelihood/gradient terms. Keep
+/// distribution parameterizations such as Cholesky covariance, `D R D`
+/// covariance, simplex weights, or ordered cutpoints in `Family::theta` and the
+/// family gradient logic rather than in predictor blocks.
 ///
 /// Implementations should treat `nll`/`nll_eta` as negative log-likelihood
 /// contributions for one observation. Invalid observation or parameter domains
@@ -70,8 +119,18 @@ pub trait Family {
     type Eta;
     /// Distribution parameters on the natural scale.
     type Theta;
-    /// Gradient of the negative log-likelihood with respect to `Eta`.
-    type NllGradientEta;
+    /// Exact gradient of the negative log-likelihood with respect to `Eta`.
+    ///
+    /// A carrier may preserve an exact factorization useful to a composite
+    /// family, such as responsibility times conditional gradient in a finite
+    /// mixture. Codecs must materialize the final scalar derivative for every
+    /// predictor coordinate before model execution.
+    type GradientEta;
+    /// Reusable per-family buffers for likelihood evaluation.
+    type Workspace;
+
+    /// Creates reusable buffers for this family.
+    fn workspace(&self) -> Self::Workspace;
 
     /// Converts link-scale predictors to distribution parameters.
     ///
@@ -80,25 +139,271 @@ pub trait Family {
     /// parameters — for example correlations, covariance factors, ordered
     /// cutpoints, or simplex weights — should be handled here by transforming
     /// the full `Eta` value into a valid natural-scale [`Theta`](Self::Theta).
-    fn theta(&self, eta: Self::Eta) -> Self::Theta;
+    /// Predictor blocks should not need to know the statistical geometry of a
+    /// particular distribution to produce valid raw predictors.
+    fn theta(&self, eta: &Self::Eta, workspace: &mut Self::Workspace) -> Self::Theta;
     /// Negative log-likelihood for one observation on the natural scale.
-    fn nll(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn nll(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        workspace: &mut Self::Workspace,
+    ) -> f64;
     /// Negative log-likelihood for one observation on the link scale.
-    fn nll_eta(&self, observation: Self::Observation<'_>, eta: Self::Eta) -> f64 {
-        self.nll(observation, self.theta(eta))
+    fn nll_eta(
+        &self,
+        observation: Self::Observation<'_>,
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> f64 {
+        let theta = self.theta(eta, workspace);
+        self.nll(observation, &theta, workspace)
     }
     /// Negative log-likelihood and NLL gradient w.r.t. `Eta` for one observation.
     ///
-    /// `NllGradientEta` is the gradient of the negative log-likelihood with
-    /// respect to the link-scale predictors `Eta`, after applying the chain
-    /// rule for the family links. It must have the same arity and ordering as
-    /// `Eta`.
+    /// `GradientEta` represents the exact gradient of the negative
+    /// log-likelihood with respect to the link-scale predictors `Eta`, after
+    /// applying the chain rule for family links. It must map unambiguously to
+    /// the same predictor coordinates and ordering as `Eta`; composite carriers
+    /// may retain exact factors until their compilation codec materializes
+    /// scalar scores.
     fn nll_and_gradient_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta);
 }
+
+/// Opt-in codec between a distribution family and the static compiled-model executor.
+///
+/// [`Family`] remains the complete likelihood contract and does not imply that
+/// its runtime configuration has a static predictor topology. Implementing this
+/// trait selects one known [`ParameterShape`] and maps its scalar values to and
+/// from the family's named `Eta` carriers.
+pub trait CompilableFamily: Family {
+    /// Static predictor-coordinate geometry for this family.
+    type Shape: ParameterShape;
+
+    /// Builds the family's link-scale carrier from shape values.
+    fn eta_from_shape(values: ShapeValues<Self::Shape>) -> Self::Eta;
+
+    /// Materializes the final scalar derivative for every shape leaf.
+    ///
+    /// Implementations must resolve all factors stored in `GradientEta` here;
+    /// predictor blocks receive plain per-coordinate scores only.
+    fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape>;
+
+    /// Sample-aware initial link-scale values in shape topology.
+    fn initial_shape<'obs, Obs>(&self, _obs: &'obs Obs) -> ShapeValues<Self::Shape>
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        Self::Shape::zeros()
+    }
+
+    /// Validates family-instance invariants required by compiled fitting.
+    fn validate_compiled(&self) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+/// Opt-in codec for runtime-dimensional compiled families.
+///
+/// This is intentionally separate from the const-generic [`ParameterShape`]
+/// tree. It keeps runtime dimension explicit while allowing a monomorphic
+/// predictor type and allocation-free row likelihood/gradient evaluation.
+pub trait DynamicallyCompilableFamily: Family {
+    /// Number of scalar predictor coordinates for this family instance.
+    fn dynamic_parameter_count(&self) -> usize;
+
+    /// Exact identity of this instance's runtime predictor topology.
+    ///
+    /// Implementations must include all configuration that affects coordinate
+    /// ordering or semantics, not only the coordinate count.
+    fn dynamic_layout_key(&self) -> DynamicLayoutKey;
+
+    /// Converts a flat predictor-coordinate row into the family's eta carrier.
+    fn eta_from_flat(&self, values: &[f64]) -> Self::Eta;
+
+    /// Writes a materialized family gradient into flat coordinate order.
+    fn gradient_to_flat(&self, gradient: &Self::GradientEta, out: &mut [f64]);
+
+    /// Computes NLL directly from flat eta coordinates.
+    ///
+    /// Runtime-dimensional families must implement this operation without
+    /// materializing [`Family::Eta`]. Compiled value and pointwise paths call it
+    /// once per active observation and rely on the caller-owned workspace for
+    /// reusable storage.
+    fn nll_eta_flat(
+        &self,
+        observation: Self::Observation<'_>,
+        values: &[f64],
+        workspace: &mut Self::Workspace,
+    ) -> f64;
+
+    /// Computes fused NLL and an in-place flat gradient from flat eta coordinates.
+    ///
+    /// Runtime-dimensional families must implement this hot-path operation
+    /// without materializing [`Family::Eta`] or [`Family::GradientEta`]. `gradient`
+    /// uses the same coordinate order as `values` and must be fully overwritten.
+    fn nll_and_gradient_eta_flat(
+        &self,
+        observation: Self::Observation<'_>,
+        values: &[f64],
+        gradient: &mut [f64],
+        workspace: &mut Self::Workspace,
+    ) -> f64;
+
+    /// Semantic role and nested path for one flat coordinate.
+    fn dynamic_parameter_coordinate(&self, index: usize) -> (&'static str, ParameterPath);
+
+    /// Dataset-aware flat eta initializer.
+    ///
+    /// Implementations must return exactly
+    /// [`dynamic_parameter_count`](Self::dynamic_parameter_count) values in the
+    /// same coordinate order used by [`eta_from_flat`](Self::eta_from_flat).
+    fn initial_flat<'obs, Obs>(&self, _obs: &'obs Obs) -> Vec<f64>
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        vec![0.0; self.dynamic_parameter_count()]
+    }
+
+    /// Validates runtime family configuration for compiled fitting.
+    fn validate_dynamic_compiled(&self) -> Result<(), ModelError> {
+        if self.dynamic_parameter_count() == 0 {
+            Err(ModelError::InvalidParameter {
+                parameter: "dynamic parameter count",
+                expected: "positive",
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Implements [`CompilableFamily`] for an ordinary fixed-arity scalar family.
+///
+/// This macro is primarily intended for distribution crates. Links deliberately
+/// do not appear in the shape: they remain an implementation detail of the
+/// family named by the `impl` header.
+#[macro_export]
+macro_rules! impl_scalar_compilable_family {
+    (
+        impl for $family:ty;
+        parameters = ($($parameter:ty),+ $(,)?);
+        arity = $arity:literal $(;)?
+    ) => {
+        impl $crate::CompilableFamily for $family
+        where
+            $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
+            <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
+            <$family as $crate::Family>::GradientEta: $crate::ParameterParts<$arity>,
+        {
+            type Shape = $crate::shape::ScalarTuple<($($parameter,)+), $arity>;
+
+            fn eta_from_shape(values: [f64; $arity]) -> Self::Eta {
+                <Self::Eta as $crate::ParameterParts<$arity>>::from_array(values)
+            }
+
+            fn gradient_to_shape(gradient: &Self::GradientEta) -> [f64; $arity] {
+                std::array::from_fn(|index| {
+                    <Self::GradientEta as $crate::ParameterParts<$arity>>::part(gradient, index)
+                })
+            }
+
+            fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> [f64; $arity]
+            where
+                Obs: $crate::ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+            {
+                let eta = self.initial_eta_from_observations(obs);
+                std::array::from_fn(|index| {
+                    <Self::Eta as $crate::ParameterParts<$arity>>::part(&eta, index)
+                })
+            }
+        }
+    };
+    (
+        impl<$($generic:ident),+> for $family:ty;
+        parameters = ($($parameter:ty),+ $(,)?);
+        arity = $arity:literal $(;)?
+    ) => {
+        impl<$($generic),+> $crate::CompilableFamily for $family
+        where
+            $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
+            <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
+            <$family as $crate::Family>::GradientEta: $crate::ParameterParts<$arity>,
+        {
+            type Shape = $crate::shape::ScalarTuple<($($parameter,)+), $arity>;
+
+            #[inline]
+            fn eta_from_shape(values: [f64; $arity]) -> Self::Eta {
+                <Self::Eta as $crate::ParameterParts<$arity>>::from_array(values)
+            }
+
+            #[inline]
+            fn gradient_to_shape(gradient: &Self::GradientEta) -> [f64; $arity] {
+                std::array::from_fn(|index| {
+                    <Self::GradientEta as $crate::ParameterParts<$arity>>::part(gradient, index)
+                })
+            }
+
+            fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> [f64; $arity]
+            where
+                Obs: $crate::ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+            {
+                let eta = self.initial_eta_from_observations(obs);
+                std::array::from_fn(|index| {
+                    <Self::Eta as $crate::ParameterParts<$arity>>::part(&eta, index)
+                })
+            }
+        }
+    };
+}
+
+/// Error returned when a distribution cannot generate a sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationError {
+    /// The number of parameter values does not match the output buffer length.
+    SampleCountMismatch {
+        /// Number of supplied natural-scale parameter values.
+        theta_count: usize,
+        /// Number of caller-provided sample slots.
+        output_count: usize,
+    },
+    /// Natural-scale parameters are outside the sampler's domain.
+    InvalidParameters(&'static str),
+    /// The random backend rejected otherwise representable parameters.
+    BackendRejected(&'static str),
+    /// Generated normalization or arithmetic was non-finite.
+    NumericalFailure(&'static str),
+}
+
+impl std::fmt::Display for SimulationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SampleCountMismatch {
+                theta_count,
+                output_count,
+            } => write!(
+                formatter,
+                "simulation sample count mismatch: {theta_count} parameter values for {output_count} output slots"
+            ),
+            Self::InvalidParameters(detail) => {
+                write!(formatter, "invalid simulation parameters: {detail}")
+            }
+            Self::BackendRejected(detail) => {
+                write!(formatter, "sampling backend rejected parameters: {detail}")
+            }
+            Self::NumericalFailure(detail) => {
+                write!(formatter, "numerical simulation failure: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SimulationError {}
 
 /// Extension trait for families that provide diagonal Fisher information.
 ///
@@ -114,14 +419,15 @@ pub trait HasDiagonalFisherInfo: Family {
     /// observation on the link scale.
     ///
     /// The `fisher` component must have the same arity and ordering as
-    /// [`Family::Eta`] and [`Family::NllGradientEta`]. Each element is
+    /// [`Family::Eta`] and [`Family::GradientEta`]. Each element is
     /// `E[-∂²ℓ/∂η_k²]`, the expected negative second derivative with
     /// respect to the k-th link-scale predictor, given the observation.
     fn nll_gradient_and_diagonal_fisher_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, Self::NllGradientEta);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, Self::GradientEta);
 }
 
 /// Extension trait for families that provide dense expected information.
@@ -132,16 +438,20 @@ pub trait HasDiagonalFisherInfo: Family {
 pub trait HasExpectedInformation<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::NllGradientEta: ParameterParts<K>,
+    Self::GradientEta: ParameterParts<K>,
 {
     /// Negative log-likelihood, NLL gradient, and dense expected information
     /// per observation on the link scale.
     fn nll_gradient_and_expected_information_eta(
         &self,
         observation: Self::Observation<'_>,
-        eta: Self::Eta,
-    ) -> (f64, Self::NllGradientEta, DenseInformation<K>);
+        eta: &Self::Eta,
+        workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta, DenseInformation<K>);
 }
+
+/// Marker trait for families with a compile-time fixed observation dimension.
+pub trait FixedDimensionalFamily<const D: usize>: Family {}
 
 /// Container for eta or NLL gradient in a family with fixed arity `K`.
 ///
@@ -175,7 +485,7 @@ impl ParameterParts<1> for f64 {
 impl ParameterParts<2> for (f64, f64) {
     #[inline]
     fn from_array(values: [f64; 2]) -> Self {
-        (values[0], values[1])
+        values.into()
     }
 
     #[inline]
@@ -191,7 +501,7 @@ impl ParameterParts<2> for (f64, f64) {
 impl ParameterParts<3> for (f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 3]) -> Self {
-        (values[0], values[1], values[2])
+        values.into()
     }
 
     #[inline]
@@ -208,7 +518,7 @@ impl ParameterParts<3> for (f64, f64, f64) {
 impl ParameterParts<4> for (f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 4]) -> Self {
-        (values[0], values[1], values[2], values[3])
+        values.into()
     }
 
     #[inline]
@@ -226,7 +536,7 @@ impl ParameterParts<4> for (f64, f64, f64, f64) {
 impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 5]) -> Self {
-        (values[0], values[1], values[2], values[3], values[4])
+        values.into()
     }
 
     #[inline]
@@ -245,9 +555,7 @@ impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
 impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 6]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5],
-        )
+        values.into()
     }
 
     #[inline]
@@ -267,9 +575,7 @@ impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
 impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 7]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5], values[6],
-        )
+        values.into()
     }
 
     #[inline]
@@ -290,9 +596,7 @@ impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
 impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     #[inline]
     fn from_array(values: [f64; 8]) -> Self {
-        (
-            values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
-        )
+        values.into()
     }
 
     #[inline]
@@ -311,31 +615,13 @@ impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
     }
 }
 
-/// Family with a fixed number of parameters, parameter roles and link functions.
-///
-/// `Params` and `Links` are specified as tuples of the same length as the
-/// family arity.
-/// Their order defines the order of predictor blocks, gradient parts and flat
-/// coefficient ranges in compiled models.
-///
-/// `Links` describe the independent scalar link contracts for parameter
-/// blocks. More complex dependent constraints are still expressed by
-/// [`Family::theta`], which sees the full link-scale parameter set.
-pub trait ParameterizedFamily<const K: usize>: Family
+/// Sample-aware initialization for scalar-parameter families.
+pub trait InitialEtaFromObservations<const K: usize>: Family
 where
     Self::Eta: ParameterParts<K>,
-    Self::NllGradientEta: ParameterParts<K>,
+    Self::GradientEta: ParameterParts<K>,
 {
-    /// Parameter roles of the family.
-    type Params;
-    /// Link functions of the family parameters.
-    type Links;
-
     /// Sample-aware initial predictors on the link scale.
-    ///
-    /// Built-in families override this with robust distribution-specific
-    /// heuristics. The default keeps custom families source-compatible and
-    /// starts all optimizer parameters at zero.
     fn initial_eta_from_observations<'obs, Obs>(&self, _obs: &'obs Obs) -> Self::Eta
     where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
@@ -344,16 +630,84 @@ where
     }
 }
 
-/// Distribution helper for the CDF.
+/// Distribution helper for the canonical CDF of a family.
+///
+/// For scalar families this is the ordinary univariate CDF. For multivariate
+/// families this is the joint lower-orthant CDF,
+/// `P(Y_1 <= y_1, ..., Y_d <= y_d)`, evaluated at the full observation value.
 pub trait HasCdf: Family {
-    /// CDF at point `y` for natural-scale parameters.
+    /// CDF at observation `y` for natural-scale parameters.
     ///
     /// Implementations should return a non-finite value for invalid query
     /// points or parameter domains rather than panicking, matching the base
     /// [`Family`] likelihood contract. For finite query points outside but
     /// below the distribution support, implementations should return the
     /// boundary probability `0.0`.
-    fn cdf(&self, y: f64, theta: Self::Theta) -> f64;
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64;
+}
+
+/// Distribution helper for component-wise marginal CDFs.
+///
+/// This is separate from [`HasCdf`] because the canonical multivariate CDF is a
+/// joint CDF. Marginal CDFs need a component selector for multivariate
+/// observations.
+pub trait HasMarginalCdf: Family {
+    /// Marginal CDF for `component` at scalar point `y`.
+    ///
+    /// Implementations should return a non-finite value for an invalid
+    /// component index or invalid parameter domain rather than panicking.
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64;
+}
+
+impl<F> HasMarginalCdf for F
+where
+    F: HasCdf + for<'obs> Family<Observation<'obs> = f64>,
+{
+    #[inline]
+    fn marginal_cdf(&self, component: usize, y: f64, theta: &Self::Theta) -> f64 {
+        if component == 0 {
+            self.cdf(y, theta)
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+/// Narrow runtime observation-dimension capability.
+pub trait HasObservationDimension: Family {
+    /// Number of scalar coordinates in one observation.
+    fn observation_dimension(&self) -> usize;
+}
+
+/// Distribution helper for ordered conditional CDFs.
+pub trait HasConditionalCdf: HasObservationDimension {
+    /// Evaluates `P(Y_component <= y | Y_0..Y_component-1 = preceding)`.
+    ///
+    /// Invalid component indices, parameter domains, or insufficient
+    /// conditioning values are represented by `NaN`.
+    fn conditional_cdf(
+        &self,
+        component: usize,
+        y: f64,
+        preceding: &[f64],
+        theta: &Self::Theta,
+    ) -> f64;
+}
+
+/// Distribution helper for ordered Rosenblatt transforms.
+pub trait HasRosenblattTransform: HasObservationDimension {
+    /// Writes one conditional PIT value per observation coordinate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::ResponseLength`] when `out` does not match the
+    /// family's observation dimension.
+    fn rosenblatt_into(
+        &self,
+        observation: Self::Observation<'_>,
+        theta: &Self::Theta,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>;
 }
 
 /// Distribution helper for the quantile function.
@@ -362,7 +716,7 @@ pub trait HasQuantile: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// probabilities or parameter domains rather than panicking.
-    fn quantile(&self, p: f64, theta: Self::Theta) -> f64;
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for log-density or log-mass evaluation.
@@ -372,8 +726,9 @@ pub trait HasQuantile: Family {
 /// trait, while discrete families expose a log-PMF.
 pub trait HasLogDensity: Family {
     /// Log-density or log-mass at `observation` for natural-scale parameters.
-    fn log_density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
-        -self.nll(observation, theta)
+    fn log_density(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        let mut workspace = self.workspace();
+        -self.nll(observation, theta, &mut workspace)
     }
 }
 
@@ -386,7 +741,7 @@ impl<T> HasLogDensity for T where T: Family {}
 /// [`Family::nll`] and [`Family::nll_and_gradient_eta`].
 pub trait HasDensity: HasLogDensity {
     /// Density or mass at `observation` for natural-scale parameters.
-    fn density(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64 {
+    fn density(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
         self.log_density(observation, theta).exp()
     }
 }
@@ -399,13 +754,106 @@ pub trait HasCrps: Family {
     ///
     /// Implementations should return a non-finite value for invalid
     /// observation or parameter domains rather than panicking.
-    fn crps(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn crps(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
-/// Distribution helper for simulation.
-pub trait CanSimulate<Rng>: Family {
-    /// Generates one value for natural-scale parameters.
-    fn sample(&self, rng: &mut Rng, theta: Self::Theta) -> f64;
+/// Distribution helper for fallible simulation.
+///
+/// Implementations must return an error rather than an invalid sentinel such
+/// as `NaN`. Consequently, every value returned through `Ok` must be a valid
+/// observation for the supplied natural-scale parameters.
+pub trait TrySimulate<Rng>: Family {
+    /// Generated sample representation.
+    ///
+    /// Scalar families commonly use `f64`; multivariate families may use
+    /// arrays or dynamically allocated vectors.
+    type Sample;
+
+    /// Attempts to generate one sample for natural-scale parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulationError`] when the parameters are outside the
+    /// sampler's domain, the random backend rejects them, or the generated
+    /// arithmetic is non-finite.
+    fn try_sample(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+    ) -> Result<Self::Sample, SimulationError>;
+
+    /// Attempts to generate one sample into caller-provided storage.
+    ///
+    /// The default implementation replaces `out` with [`Self::try_sample`].
+    /// Families with dynamically sized samples can override this method to
+    /// reuse allocations owned by `out`. On error, an overriding
+    /// implementation may leave `out` partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::try_sample`].
+    #[inline]
+    fn try_sample_into(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut Self::Sample,
+    ) -> Result<(), SimulationError> {
+        *out = self.try_sample(rng, theta)?;
+        Ok(())
+    }
+
+    /// Attempts to fill caller-provided storage with independent samples.
+    ///
+    /// If generation fails, the successfully generated prefix remains in
+    /// `out`; the element at which generation failed may be partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced while generating an element.
+    #[inline]
+    fn try_fill(
+        &self,
+        rng: &mut Rng,
+        theta: &Self::Theta,
+        out: &mut [Self::Sample],
+    ) -> Result<(), SimulationError> {
+        for sample in out {
+            self.try_sample_into(rng, theta, sample)?;
+        }
+        Ok(())
+    }
+
+    /// Attempts to generate one sample for each natural-scale parameter value.
+    ///
+    /// `thetas` and `out` must have equal lengths. A length mismatch is
+    /// detected before the output buffer or random-number generator is used.
+    /// If sample generation subsequently fails, the successfully generated
+    /// prefix remains in `out`; the failing element may be partially modified.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulationError::SampleCountMismatch`] when the slice lengths
+    /// differ, or the first error produced while generating an element.
+    #[inline]
+    fn try_fill_varying(
+        &self,
+        rng: &mut Rng,
+        thetas: &[Self::Theta],
+        out: &mut [Self::Sample],
+    ) -> Result<(), SimulationError> {
+        if thetas.len() != out.len() {
+            return Err(SimulationError::SampleCountMismatch {
+                theta_count: thetas.len(),
+                output_count: out.len(),
+            });
+        }
+
+        for (theta, sample) in thetas.iter().zip(out) {
+            self.try_sample_into(rng, theta, sample)?;
+        }
+        Ok(())
+    }
 }
 
 /// Distribution helper for per-observation deviance.
@@ -419,7 +867,7 @@ pub trait HasDeviance: Family {
     /// Implementations should return a non-finite value for invalid observation
     /// or parameter domains rather than panicking, matching the rest of the
     /// family helper contracts.
-    fn deviance(&self, observation: Self::Observation<'_>, theta: Self::Theta) -> f64;
+    fn deviance(&self, observation: Self::Observation<'_>, theta: &Self::Theta) -> f64;
 }
 
 /// Distribution helper for family-specific link-scale initialization.

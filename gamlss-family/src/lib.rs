@@ -1,188 +1,215 @@
 #![forbid(unsafe_code)]
 //! Distributions, likelihood and NLL gradients for GAMLSS.
 
-pub use beinf::{Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta};
-pub use bernoulli::{Bernoulli, BernoulliEta, BernoulliProbability, BernoulliTheta};
-pub use beta::{Beta, BetaEta, BetaMeanPrecision, BetaTheta};
-pub use exponential::Exponential;
-pub use exponential::{
-    ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, ExponentialRate, ExponentialRateEta,
-    ExponentialRateTheta,
+#[cfg(feature = "multivariate")]
+pub use multivariate::IndependentVec;
+#[cfg(feature = "multivariate")]
+pub use multivariate::normal::{
+    DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
+    DynMvNormalCholeskyTheta, MvNormalCholesky, MvNormalCholeskyDefault, MvNormalCholeskyEta,
+    MvNormalCholeskyTheta, MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+    MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta,
 };
-pub use gamma::{
-    Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape,
-    GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta,
-    GammaTheta,
+#[cfg(feature = "multivariate")]
+pub use multivariate::student_t::{
+    MvStudentTCholesky, MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+    MvStudentTMeanStdPartialCorr, MvStudentTMeanStdPartialCorrDefault,
+    MvStudentTMeanStdPartialCorrEta, MvStudentTMeanStdPartialCorrTheta,
 };
-pub use generalized_gamma::{
+#[cfg(feature = "multivariate")]
+pub use multivariate::{
+    DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+    DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
+    DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
+    FixedLogRatioCholesky, FixedLowerTriangular, FixedPartialCorrelations,
+    LogisticNormalAlrCholesky, LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta,
+    LogisticNormalAlrCholeskyTheta, MultinomialEta, MultinomialFixedTrials, MultinomialTheta,
+    MultinomialVaryingTrials, MvLogNormalCholesky, MvLogNormalCholeskyDefault,
+    MvLogNormalCholeskyEta, MvLogNormalCholeskyTheta, MvPoissonCommonShock,
+    MvPoissonCommonShockDefault, MvPoissonCommonShockEta, MvPoissonCommonShockTheta,
+    MvPowerExponentialCholesky, MvPowerExponentialCholeskyDefault, MvPowerExponentialCholeskyEta,
+    MvPowerExponentialCholeskyTheta, MvPowerExponentialMeanStdPartialCorr,
+    MvPowerExponentialMeanStdPartialCorrDefault, MvPowerExponentialMeanStdPartialCorrEta,
+    MvPowerExponentialMeanStdPartialCorrTheta, MvShashMuSigmaNuTauPartialCorr,
+    MvShashMuSigmaNuTauPartialCorrDefault, MvShashMuSigmaNuTauPartialCorrEta,
+    MvShashMuSigmaNuTauPartialCorrTheta, MvSinhArcsinhMuSigmaNuTauPartialCorr,
+    MvSinhArcsinhMuSigmaNuTauPartialCorrDefault, MvSinhArcsinhMuSigmaNuTauPartialCorrEta,
+    MvSinhArcsinhMuSigmaNuTauPartialCorrTheta, MvSkewNormalCholesky, MvSkewNormalCholeskyDefault,
+    MvSkewNormalCholeskyEta, MvSkewNormalCholeskyTheta, MvSkewNormalLocationKernelStdPartialCorr,
+    MvSkewNormalLocationKernelStdPartialCorrDefault, MvSkewNormalLocationKernelStdPartialCorrEta,
+    MvSkewNormalLocationKernelStdPartialCorrTheta, MvSkewStudentTFixedTauCholesky,
+    MvSkewStudentTFixedTauCholeskyDefault, MvSkewStudentTFixedTauCholeskyEta,
+    MvSkewStudentTFixedTauCholeskyTheta, PackedLowerTriangular,
+};
+pub use univariate::{
+    Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta, BernoulliProbability,
+    BernoulliTheta, Beta, BetaBinomial, BetaBinomialEta, BetaBinomialMeanPrecision,
+    BetaBinomialTheta, BetaEta, BetaMeanPrecision, BetaTheta, BinomialEta, BinomialFixedTrials,
+    BinomialFixedTrialsProbability, BinomialTheta, BinomialVaryingTrials,
+    BinomialVaryingTrialsProbability, Categorical, CategoricalEta, CategoricalTheta, Chi,
+    ChiDegreesOfFreedom, ChiEta, ChiSquared, ChiSquaredDegreesOfFreedom, ChiSquaredEta,
+    ChiSquaredTheta, ChiTheta, Exponential, ExponentialMean, ExponentialMeanEta,
+    ExponentialMeanTheta, ExponentialRate, ExponentialRateEta, ExponentialRateTheta, Gamma,
+    GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta,
+    GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta, GammaShapeRateTheta, Ged, GedMuSigmaNu,
     GeneralizedGamma, GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta,
-};
-pub use gev::{Gev, GevEta, GevMuSigmaShape, GevTheta};
-pub use gumbel::{Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta};
-pub use inverse_gaussian::{
-    InverseGaussian, InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
-    InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
-    InverseGaussianTheta,
-};
-pub use johnson_su::{JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta};
-pub use laplace::{Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta};
-pub use log_normal::{
-    LogNormal, LogNormalEta, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
-    LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
-    LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
-    LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta,
-};
-pub use logistic::{Logistic, LogisticEta, LogisticMuSigma, LogisticTheta};
-pub use lomax::{Lomax, LomaxEta, LomaxShapeScale, LomaxTheta};
-pub use negative_binomial::{
-    NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
-    NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
-    NegativeBinomialMeanSize, NegativeBinomialTheta,
-};
-pub use normal::{Normal, NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, normal_gamlss};
-pub use poisson::{Poisson, PoissonEta, PoissonMean, PoissonTheta};
-pub use power_exponential::{
-    Ged, GedMuSigmaNu, PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu,
-    PowerExponentialTheta,
-};
-pub use shash::{Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta};
-pub use skew_normal::{
-    SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu,
-    SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
-};
-pub use skew_student_t::{
-    SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd, SkewStudentTMeanSdEta,
-    SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta, SkewStudentTMuSigmaNuTau, SkewStudentTTheta,
-};
-pub use student_t::{
-    StudentT, StudentTDynamic, StudentTEta, StudentTMuSdTau, StudentTMuSdTauEta,
-    StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauEta,
-    StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta,
-};
-pub use tweedie::{
-    Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
-    TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta,
-};
-pub use weibull::{
-    Weibull, WeibullEta, WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta,
-    WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta,
-};
-pub use zaga::{
-    Zaga, ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
-    ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
-    ZagaTotalMeanCvZeroProbabilityTheta,
-};
-pub use zinb::{
-    Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta, ZinbMeanSizeZeroProbability, ZinbTheta,
-    ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityEta,
-    ZinbTotalMeanSizeZeroProbabilityTheta,
-};
-pub use zip::{
-    Zip, ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
-    ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta,
+    GeneralizedPareto, GeneralizedParetoEta, GeneralizedParetoScaleShape, GeneralizedParetoTheta,
+    Geometric, GeometricEta, GeometricMean, GeometricTheta, Gev, GevEta, GevMuSigmaShape, GevTheta,
+    Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian, InverseGaussianEta,
+    InverseGaussianMeanCv, InverseGaussianMeanCvEta, InverseGaussianMeanCvTheta,
+    InverseGaussianMeanShape, InverseGaussianMuShape, InverseGaussianTheta, JohnsonSu,
+    JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, Laplace, LaplaceEta, LaplaceMuSigma,
+    LaplaceTheta, LogLogistic, LogLogisticEta, LogLogisticScaleShape, LogLogisticTheta, LogNormal,
+    LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
+    LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd,
+    LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd, LogNormalMedianLogSdEta,
+    LogNormalMedianLogSdTheta, Logistic, LogisticEta, LogisticMuSigma, LogisticTheta, Lomax,
+    LomaxEta, LomaxShapeScale, LomaxTheta, NegativeBinomial, NegativeBinomialEta,
+    NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
+    NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize, NegativeBinomialTheta, Normal,
+    NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean,
+    PoissonTheta, PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu,
+    PowerExponentialTheta, Rayleigh, RayleighEta, RayleighScale, RayleighTheta, Shash, ShashEta,
+    ShashMuSigmaNuTau, ShashTheta, SinhArcsinh, SinhArcsinhEta, SinhArcsinhMuSigmaNuTau,
+    SinhArcsinhTheta, SkewNormal, SkewNormalEta, SkewNormalMeanSd, SkewNormalMeanSdEta,
+    SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewNormalMuSigmaNu, SkewNormalTheta,
+    SkewPowerExponential, SkewPowerExponentialEta, SkewPowerExponentialMeanSd,
+    SkewPowerExponentialMeanSdEta, SkewPowerExponentialMeanSdSkewPower,
+    SkewPowerExponentialMeanSdTheta, SkewPowerExponentialMuSigmaSkewPower,
+    SkewPowerExponentialTheta, SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd,
+    SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
+    SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
+    StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau,
+    StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta, Tweedie,
+    TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta, TweedieMeanCvPowerTheta,
+    TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullMeanShape, WeibullMeanShapeEta,
+    WeibullMeanShapeTheta, WeibullScaleShape, WeibullScaleShapeEta, WeibullScaleShapeTheta, Zaga,
+    ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
+    ZagaComponentMeanCvZeroProbabilityTheta, ZagaTotalMeanCvZeroProbability,
+    ZagaTotalMeanCvZeroProbabilityEta, ZagaTotalMeanCvZeroProbabilityTheta, Zinb,
+    ZinbComponentMeanSizeZeroProbability, ZinbComponentMeanSizeZeroProbabilityEta,
+    ZinbComponentMeanSizeZeroProbabilityTheta, ZinbTotalMeanSizeZeroProbability,
+    ZinbTotalMeanSizeZeroProbabilityEta, ZinbTotalMeanSizeZeroProbabilityTheta, Zip,
+    ZipComponentMeanZeroProbability, ZipComponentMeanZeroProbabilityEta,
+    ZipComponentMeanZeroProbabilityTheta, ZipTotalMeanZeroProbability,
+    ZipTotalMeanZeroProbabilityEta, ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
 };
 
-/// Beta inflated at zero and one distribution.
-pub mod beinf;
-/// Bernoulli distribution.
-pub mod bernoulli;
-/// Beta distribution.
-pub mod beta;
+pub use domain::ScalarObservationDomain;
+pub use mixture::{
+    FactorizedComponentGradient, Mixture, MixtureEta, MixtureGradient, MixtureTheta,
+    MixtureWorkspace,
+};
+
+mod constants;
+mod crps;
 mod domain;
-/// Exponential distribution.
-pub mod exponential;
-/// Gamma distribution.
-pub mod gamma;
-/// Generalized gamma distribution.
-pub mod generalized_gamma;
-/// Generalized extreme value distribution.
-pub mod gev;
-/// Maximum-type Gumbel distribution.
-pub mod gumbel;
 mod initial;
-/// Inverse Gaussian distribution.
-pub mod inverse_gaussian;
-/// Johnson SU distribution.
-pub mod johnson_su;
-/// Laplace distribution.
-pub mod laplace;
-/// Log-normal distribution.
-pub mod log_normal;
-/// Logistic distribution.
-pub mod logistic;
-/// Lomax distribution.
-pub mod lomax;
-/// Negative binomial distribution.
-pub mod negative_binomial;
-/// Normal distribution.
-pub mod normal;
+mod link;
+/// Homogeneous finite-mixture distributions.
+pub mod mixture;
+/// Multivariate distributions.
+#[cfg(feature = "multivariate")]
+pub mod multivariate;
 mod numeric;
-/// Poisson distribution.
-pub mod poisson;
-/// Power exponential / generalized error distribution.
-pub mod power_exponential;
-/// Sinh-arcsinh distribution.
-pub mod shash;
-/// Skew-normal distribution.
-pub mod skew_normal;
-/// Skew Student-t distribution.
-pub mod skew_student_t;
-/// Student distribution with a fixed number of degrees of freedom.
-pub mod student_t;
-/// Tweedie compound Poisson-gamma distribution.
-pub mod tweedie;
-/// Weibull distribution.
-pub mod weibull;
-/// Zero-adjusted gamma distribution.
-pub mod zaga;
-/// Zero-inflated negative binomial distribution.
-pub mod zinb;
-/// Zero-inflated Poisson distribution.
-pub mod zip;
+mod shash_kernel;
+#[cfg(feature = "rand")]
+mod simulation;
+/// Univariate distributions.
+pub mod univariate;
 
 /// Most commonly used imports from `gamlss-family`.
 pub mod prelude {
+    #[cfg(feature = "multivariate")]
+    pub use crate::{
+        DirichletMeanPrecision, DirichletMeanPrecisionEta, DirichletMeanPrecisionTheta,
+        DirichletMultinomialFixedTrials, DirichletMultinomialMeanPrecisionEta,
+        DirichletMultinomialMeanPrecisionTheta, DirichletMultinomialVaryingTrials,
+        DynMvNormalCholesky, DynMvNormalCholeskyDefault, DynMvNormalCholeskyEta,
+        DynMvNormalCholeskyTheta, FixedLogRatioCholesky, FixedLowerTriangular,
+        FixedPartialCorrelations, IndependentVec, LogisticNormalAlrCholesky,
+        LogisticNormalAlrCholeskyDefault, LogisticNormalAlrCholeskyEta,
+        LogisticNormalAlrCholeskyTheta, MultinomialEta, MultinomialFixedTrials, MultinomialTheta,
+        MultinomialVaryingTrials, MvLogNormalCholesky, MvLogNormalCholeskyDefault,
+        MvLogNormalCholeskyEta, MvLogNormalCholeskyTheta, MvNormalCholesky,
+        MvNormalCholeskyDefault, MvNormalCholeskyEta, MvNormalCholeskyTheta,
+        MvNormalMeanStdPartialCorr, MvNormalMeanStdPartialCorrDefault,
+        MvNormalMeanStdPartialCorrEta, MvNormalMeanStdPartialCorrTheta, MvPoissonCommonShock,
+        MvPoissonCommonShockDefault, MvPoissonCommonShockEta, MvPoissonCommonShockTheta,
+        MvPowerExponentialCholesky, MvPowerExponentialCholeskyDefault,
+        MvPowerExponentialCholeskyEta, MvPowerExponentialCholeskyTheta,
+        MvPowerExponentialMeanStdPartialCorr, MvPowerExponentialMeanStdPartialCorrDefault,
+        MvPowerExponentialMeanStdPartialCorrEta, MvPowerExponentialMeanStdPartialCorrTheta,
+        MvShashMuSigmaNuTauPartialCorr, MvShashMuSigmaNuTauPartialCorrDefault,
+        MvShashMuSigmaNuTauPartialCorrEta, MvShashMuSigmaNuTauPartialCorrTheta,
+        MvSinhArcsinhMuSigmaNuTauPartialCorr, MvSinhArcsinhMuSigmaNuTauPartialCorrDefault,
+        MvSinhArcsinhMuSigmaNuTauPartialCorrEta, MvSinhArcsinhMuSigmaNuTauPartialCorrTheta,
+        MvSkewNormalCholesky, MvSkewNormalCholeskyDefault, MvSkewNormalCholeskyEta,
+        MvSkewNormalCholeskyTheta, MvSkewNormalLocationKernelStdPartialCorr,
+        MvSkewNormalLocationKernelStdPartialCorrDefault,
+        MvSkewNormalLocationKernelStdPartialCorrEta, MvSkewNormalLocationKernelStdPartialCorrTheta,
+        MvSkewStudentTFixedTauCholesky, MvSkewStudentTFixedTauCholeskyDefault,
+        MvSkewStudentTFixedTauCholeskyEta, MvSkewStudentTFixedTauCholeskyTheta, MvStudentTCholesky,
+        MvStudentTCholeskyDefault, MvStudentTCholeskyEta, MvStudentTCholeskyTheta,
+        MvStudentTMeanStdPartialCorr, MvStudentTMeanStdPartialCorrDefault,
+        MvStudentTMeanStdPartialCorrEta, MvStudentTMeanStdPartialCorrTheta, PackedLowerTriangular,
+    };
+
     pub use crate::{
         Beinf, BeinfEta, BeinfMuSigmaNuTau, BeinfTheta, Bernoulli, BernoulliEta,
-        BernoulliProbability, BernoulliTheta, Beta, BetaEta, BetaMeanPrecision, BetaTheta,
-        Exponential, ExponentialMean, ExponentialMeanEta, ExponentialMeanTheta, ExponentialRate,
-        ExponentialRateEta, ExponentialRateTheta, Gamma, GammaEta, GammaMeanCv, GammaMeanCvEta,
-        GammaMeanCvTheta, GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate,
-        GammaShapeRateEta, GammaShapeRateTheta, GammaTheta, Ged, GedMuSigmaNu, GeneralizedGamma,
-        GeneralizedGammaEta, GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta, Gev, GevEta,
-        GevMuSigmaShape, GevTheta, Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian,
-        InverseGaussianEta, InverseGaussianMeanCv, InverseGaussianMeanCvEta,
-        InverseGaussianMeanCvTheta, InverseGaussianMeanShape, InverseGaussianMuShape,
-        InverseGaussianTheta, JohnsonSu, JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta,
-        Laplace, LaplaceEta, LaplaceMuSigma, LaplaceTheta, LogNormal, LogNormalEta,
-        LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta, LogNormalLogLocationLogSdTheta,
-        LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta, LogNormalMeanLogSd,
-        LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
-        LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, LogNormalTheta, Logistic, LogisticEta,
-        LogisticMuSigma, LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta,
-        NegativeBinomial, NegativeBinomialEta, NegativeBinomialMeanDispersion,
-        NegativeBinomialMeanDispersionEta, NegativeBinomialMeanDispersionTheta,
-        NegativeBinomialMeanSize, NegativeBinomialTheta, Normal, NormalEta, NormalGamlss,
-        NormalMuSigma, NormalTheta, Poisson, PoissonEta, PoissonMean, PoissonTheta,
-        PowerExponential, PowerExponentialEta, PowerExponentialMuSigmaNu, PowerExponentialTheta,
-        Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SkewNormal, SkewNormalEta,
-        SkewNormalMeanSd, SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta,
-        SkewNormalMuSigmaNu, SkewNormalTheta, SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd,
+        BernoulliProbability, BernoulliTheta, Beta, BetaBinomial, BetaBinomialEta,
+        BetaBinomialMeanPrecision, BetaBinomialTheta, BetaEta, BetaMeanPrecision, BetaTheta,
+        BinomialEta, BinomialFixedTrials, BinomialFixedTrialsProbability, BinomialTheta,
+        BinomialVaryingTrials, BinomialVaryingTrialsProbability, Categorical, CategoricalEta,
+        CategoricalTheta, Chi, ChiDegreesOfFreedom, ChiEta, ChiSquared, ChiSquaredDegreesOfFreedom,
+        ChiSquaredEta, ChiSquaredTheta, ChiTheta, Exponential, ExponentialMean, ExponentialMeanEta,
+        ExponentialMeanTheta, ExponentialRate, ExponentialRateEta, ExponentialRateTheta,
+        FactorizedComponentGradient, Gamma, GammaMeanCv, GammaMeanCvEta, GammaMeanCvTheta,
+        GammaMeanShape, GammaMeanShapeEta, GammaMeanShapeTheta, GammaShapeRate, GammaShapeRateEta,
+        GammaShapeRateTheta, Ged, GedMuSigmaNu, GeneralizedGamma, GeneralizedGammaEta,
+        GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta, GeneralizedPareto,
+        GeneralizedParetoEta, GeneralizedParetoScaleShape, GeneralizedParetoTheta, Geometric,
+        GeometricEta, GeometricMean, GeometricTheta, Gev, GevEta, GevMuSigmaShape, GevTheta,
+        Gumbel, GumbelEta, GumbelMuSigma, GumbelTheta, InverseGaussian, InverseGaussianEta,
+        InverseGaussianMeanCv, InverseGaussianMeanCvEta, InverseGaussianMeanCvTheta,
+        InverseGaussianMeanShape, InverseGaussianMuShape, InverseGaussianTheta, JohnsonSu,
+        JohnsonSuEta, JohnsonSuMuSigmaNuTau, JohnsonSuTheta, Laplace, LaplaceEta, LaplaceMuSigma,
+        LaplaceTheta, LogLogistic, LogLogisticEta, LogLogisticScaleShape, LogLogisticTheta,
+        LogNormal, LogNormalLogLocationLogSd, LogNormalLogLocationLogSdEta,
+        LogNormalLogLocationLogSdTheta, LogNormalMeanCv, LogNormalMeanCvEta, LogNormalMeanCvTheta,
+        LogNormalMeanLogSd, LogNormalMeanLogSdEta, LogNormalMeanLogSdTheta, LogNormalMedianLogSd,
+        LogNormalMedianLogSdEta, LogNormalMedianLogSdTheta, Logistic, LogisticEta, LogisticMuSigma,
+        LogisticTheta, Lomax, LomaxEta, LomaxShapeScale, LomaxTheta, Mixture, MixtureEta,
+        MixtureGradient, MixtureTheta, NegativeBinomial, NegativeBinomialEta,
+        NegativeBinomialMeanDispersion, NegativeBinomialMeanDispersionEta,
+        NegativeBinomialMeanDispersionTheta, NegativeBinomialMeanSize, NegativeBinomialTheta,
+        Normal, NormalEta, NormalGamlss, NormalMuSigma, NormalTheta, Poisson, PoissonEta,
+        PoissonMean, PoissonTheta, PowerExponential, PowerExponentialEta,
+        PowerExponentialMuSigmaNu, PowerExponentialTheta, Rayleigh, RayleighEta, RayleighScale,
+        RayleighTheta, Shash, ShashEta, ShashMuSigmaNuTau, ShashTheta, SinhArcsinh, SinhArcsinhEta,
+        SinhArcsinhMuSigmaNuTau, SinhArcsinhTheta, SkewNormal, SkewNormalEta, SkewNormalMeanSd,
+        SkewNormalMeanSdEta, SkewNormalMeanSdNu, SkewNormalMeanSdTheta, SkewNormalMuSigmaNu,
+        SkewNormalTheta, SkewPowerExponential, SkewPowerExponentialEta, SkewPowerExponentialMeanSd,
+        SkewPowerExponentialMeanSdEta, SkewPowerExponentialMeanSdSkewPower,
+        SkewPowerExponentialMeanSdTheta, SkewPowerExponentialMuSigmaSkewPower,
+        SkewPowerExponentialTheta, SkewStudentT, SkewStudentTEta, SkewStudentTMeanSd,
         SkewStudentTMeanSdEta, SkewStudentTMeanSdNuTau, SkewStudentTMeanSdTheta,
         SkewStudentTMuSigmaNuTau, SkewStudentTTheta, StudentT, StudentTDynamic, StudentTEta,
         StudentTMuSdTau, StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTMuSigma,
         StudentTMuSigmaTau, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta, StudentTStdDev,
         StudentTTheta, Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
-        TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta, Weibull, WeibullEta,
+        TweedieMeanCvPowerTheta, TweedieMeanDispersionPower, TweedieTheta, Weibull,
         WeibullMeanShape, WeibullMeanShapeEta, WeibullMeanShapeTheta, WeibullScaleShape,
-        WeibullScaleShapeEta, WeibullScaleShapeTheta, WeibullTheta, Zaga,
-        ZagaComponentMeanCvZeroProbability, ZagaEta, ZagaMeanSigmaZeroProbability, ZagaTheta,
+        WeibullScaleShapeEta, WeibullScaleShapeTheta, Zaga, ZagaComponentMeanCvZeroProbability,
+        ZagaComponentMeanCvZeroProbabilityEta, ZagaComponentMeanCvZeroProbabilityTheta,
         ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityEta,
-        ZagaTotalMeanCvZeroProbabilityTheta, Zinb, ZinbComponentMeanSizeZeroProbability, ZinbEta,
-        ZinbMeanSizeZeroProbability, ZinbTheta, ZinbTotalMeanSizeZeroProbability,
-        ZinbTotalMeanSizeZeroProbabilityEta, ZinbTotalMeanSizeZeroProbabilityTheta, Zip,
-        ZipComponentMeanZeroProbability, ZipEta, ZipMeanZeroProbability, ZipTheta,
-        ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
+        ZagaTotalMeanCvZeroProbabilityTheta, Zinb, ZinbComponentMeanSizeZeroProbability,
+        ZinbComponentMeanSizeZeroProbabilityEta, ZinbComponentMeanSizeZeroProbabilityTheta,
+        ZinbTotalMeanSizeZeroProbability, ZinbTotalMeanSizeZeroProbabilityEta,
+        ZinbTotalMeanSizeZeroProbabilityTheta, Zip, ZipComponentMeanZeroProbability,
+        ZipComponentMeanZeroProbabilityEta, ZipComponentMeanZeroProbabilityTheta,
+        ZipTotalMeanZeroProbability, ZipTotalMeanZeroProbabilityEta,
+        ZipTotalMeanZeroProbabilityTheta, normal_gamlss,
     };
 }
 
@@ -201,7 +228,7 @@ pub(crate) mod test_support {
     ) where
         F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
         assert_gradient_matches_finite_difference_with_tolerance::<F, K>(
             family,
@@ -221,9 +248,10 @@ pub(crate) mod test_support {
     ) where
         F: for<'obs> Family<Observation<'obs> = f64>,
         F::Eta: ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
-        let (_, gradient) = family.nll_and_gradient_eta(y, F::Eta::from_array(eta));
+        let (_, gradient) =
+            family.nll_and_gradient_eta(y, &F::Eta::from_array(eta), &mut family.workspace());
 
         for index in 0..K {
             let mut plus = eta;
@@ -231,9 +259,10 @@ pub(crate) mod test_support {
             let mut minus = eta;
             minus[index] -= epsilon;
 
-            let finite_difference = (family.nll_eta(y, F::Eta::from_array(plus))
-                - family.nll_eta(y, F::Eta::from_array(minus)))
-                / (2.0 * epsilon);
+            let finite_difference =
+                (family.nll_eta(y, &F::Eta::from_array(plus), &mut family.workspace())
+                    - family.nll_eta(y, &F::Eta::from_array(minus), &mut family.workspace()))
+                    / (2.0 * epsilon);
             let actual = gradient.part(index);
 
             assert!(
@@ -272,24 +301,27 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod initializer_tests {
-    use gamlss_core::{Family, ParameterParts, ParameterizedFamily};
+    use gamlss_core::{Family, InitialEtaFromObservations, ParameterParts};
 
     use crate::{
-        BeinfMuSigmaNuTau, BernoulliProbability, BetaMeanPrecision, GammaShapeRate,
-        GeneralizedGammaScaleSigmaNu, GevMuSigmaShape, GumbelMuSigma, InverseGaussianMuShape,
-        JohnsonSuMuSigmaNuTau, LaplaceMuSigma, LogNormalLogLocationLogSd, LogisticMuSigma,
-        LomaxShapeScale, NegativeBinomialMeanSize, NormalMuSigma, PoissonMean,
-        PowerExponentialMuSigmaNu, ShashMuSigmaNuTau, SkewNormalMuSigmaNu,
-        SkewStudentTMuSigmaNuTau, StudentTMuSigma, TweedieMeanDispersionPower, WeibullScaleShape,
-        ZagaMeanSigmaZeroProbability, ZinbMeanSizeZeroProbability, ZipMeanZeroProbability,
+        BeinfMuSigmaNuTau, BernoulliProbability, BetaMeanPrecision, ChiDegreesOfFreedom,
+        ChiSquaredDegreesOfFreedom, GammaShapeRate, GeneralizedGammaScaleSigmaNu,
+        GeneralizedParetoScaleShape, GeometricMean, GevMuSigmaShape, GumbelMuSigma,
+        InverseGaussianMuShape, JohnsonSuMuSigmaNuTau, LaplaceMuSigma, LogLogisticScaleShape,
+        LogNormalLogLocationLogSd, LogisticMuSigma, LomaxShapeScale, NegativeBinomialMeanSize,
+        NormalMuSigma, PoissonMean, PowerExponentialMuSigmaNu, RayleighScale, ShashMuSigmaNuTau,
+        SkewNormalMuSigmaNu, SkewPowerExponentialMeanSdSkewPower,
+        SkewPowerExponentialMuSigmaSkewPower, SkewStudentTMuSigmaNuTau, StudentTMuSigma,
+        TweedieMeanDispersionPower, WeibullScaleShape, ZagaComponentMeanCvZeroProbability,
+        ZinbComponentMeanSizeZeroProbability, ZipComponentMeanZeroProbability,
     };
 
     #[allow(clippy::needless_pass_by_value)]
     fn assert_finite_initial_eta<F, const K: usize>(family: F, data: &[f64], probe: f64)
     where
-        F: for<'obs> Family<Observation<'obs> = f64> + ParameterizedFamily<K>,
+        F: for<'obs> Family<Observation<'obs> = f64> + InitialEtaFromObservations<K>,
         F::Eta: Copy + ParameterParts<K>,
-        F::NllGradientEta: ParameterParts<K>,
+        F::GradientEta: ParameterParts<K>,
     {
         let obs: &[f64] = data;
         let eta = family.initial_eta_from_observations(&obs);
@@ -300,7 +332,9 @@ mod initializer_tests {
             );
         }
         assert!(
-            family.nll_eta(probe, eta).is_finite(),
+            family
+                .nll_eta(probe, &eta, &mut family.workspace())
+                .is_finite(),
             "initialized eta should produce finite nll"
         );
     }
@@ -310,6 +344,16 @@ mod initializer_tests {
         assert_finite_initial_eta::<_, 1>(BernoulliProbability::new(), &[0.0, 1.0, 1.0], 1.0);
         assert_finite_initial_eta::<_, 4>(BeinfMuSigmaNuTau::new(), &[0.0, 0.2, 0.8, 1.0], 0.5);
         assert_finite_initial_eta::<_, 2>(BetaMeanPrecision::new(), &[0.1, 0.5, 0.9], 0.5);
+        assert_finite_initial_eta::<_, 1>(GeometricMean::new(), &[0.0, 1.0, 3.0], 1.0);
+        assert_finite_initial_eta::<_, 1>(RayleighScale::new(), &[0.5, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(LogLogisticScaleShape::new(), &[0.5, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 1>(ChiDegreesOfFreedom::new(), &[0.5, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 1>(ChiSquaredDegreesOfFreedom::new(), &[0.5, 1.0, 2.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(
+            GeneralizedParetoScaleShape::new(),
+            &[0.0, 1.0, 2.0],
+            1.0,
+        );
         assert_finite_initial_eta::<_, 2>(GammaShapeRate::new(), &[0.2, 1.0, 2.0], 1.0);
         assert_finite_initial_eta::<_, 3>(
             GeneralizedGammaScaleSigmaNu::new(),
@@ -334,21 +378,35 @@ mod initializer_tests {
         assert_finite_initial_eta::<_, 3>(PowerExponentialMuSigmaNu::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 4>(ShashMuSigmaNuTau::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 3>(SkewNormalMuSigmaNu::new(), &[-1.0, 0.0, 3.0], 0.0);
+        assert_finite_initial_eta::<_, 4>(
+            SkewPowerExponentialMuSigmaSkewPower::new(),
+            &[-1.0, 0.0, 3.0],
+            0.0,
+        );
+        assert_finite_initial_eta::<_, 4>(
+            SkewPowerExponentialMeanSdSkewPower::new(),
+            &[-1.0, 0.0, 3.0],
+            0.0,
+        );
         assert_finite_initial_eta::<_, 4>(SkewStudentTMuSigmaNuTau::new(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 2>(StudentTMuSigma::default(), &[-1.0, 0.0, 3.0], 0.0);
         assert_finite_initial_eta::<_, 3>(TweedieMeanDispersionPower::new(), &[0.0, 1.0, 3.0], 1.0);
         assert_finite_initial_eta::<_, 2>(WeibullScaleShape::new(), &[0.5, 1.5, 3.0], 1.5);
         assert_finite_initial_eta::<_, 3>(
-            ZagaMeanSigmaZeroProbability::new(),
+            ZagaComponentMeanCvZeroProbability::new(),
             &[0.0, 1.0, 3.0],
             1.0,
         );
         assert_finite_initial_eta::<_, 3>(
-            ZinbMeanSizeZeroProbability::new(),
+            ZinbComponentMeanSizeZeroProbability::new(),
             &[0.0, 1.0, 4.0],
             1.0,
         );
-        assert_finite_initial_eta::<_, 2>(ZipMeanZeroProbability::new(), &[0.0, 1.0, 4.0], 1.0);
+        assert_finite_initial_eta::<_, 2>(
+            ZipComponentMeanZeroProbability::new(),
+            &[0.0, 1.0, 4.0],
+            1.0,
+        );
     }
 
     #[test]

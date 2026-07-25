@@ -10,9 +10,18 @@ documentation = "https://docs.rs/gamlss-transform"
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = [
+    "src/**/*",
+    "doc-assets/*",
+    "Cargo.toml",
+    "README.md",
+]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [dependencies]
+gamlss-special.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

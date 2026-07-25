@@ -78,8 +78,10 @@ where
     F::Eta: Copy + ParameterParts<K>,
 {
     let eta = F::Eta::from_array(eta);
-    let via_eta = family.nll_eta(y, eta);
-    let via_theta = family.nll(y, family.theta(eta));
+    let mut workspace = family.workspace();
+    let via_eta = family.nll_eta(y, &eta, &mut workspace);
+    let theta = family.theta(&eta, &mut workspace);
+    let via_theta = family.nll(y, &theta, &mut workspace);
 
     if via_eta.is_finite() && via_theta.is_finite() {
         assert_close(via_eta, via_theta, 1.0e-12, 1.0e-12);
@@ -102,7 +104,7 @@ pub fn assert_gradient_matches_finite_difference<F, const K: usize>(
 ) where
     F: for<'obs> Family<Observation<'obs> = f64>,
     F::Eta: Copy + ParameterParts<K>,
-    F::NllGradientEta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
 {
     assert_gradient_matches_finite_difference_with(
         family,
@@ -121,7 +123,7 @@ pub fn assert_new_family_gradient_matches_finite_difference<F, const K: usize>(
 ) where
     F: for<'obs> Family<Observation<'obs> = f64>,
     F::Eta: Copy + ParameterParts<K>,
-    F::NllGradientEta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
 {
     assert_gradient_matches_finite_difference_with(
         family,
@@ -143,10 +145,11 @@ fn assert_gradient_matches_finite_difference_with<F, const K: usize, S>(
 ) where
     F: for<'obs> Family<Observation<'obs> = f64>,
     F::Eta: Copy + ParameterParts<K>,
-    F::NllGradientEta: ParameterParts<K>,
+    F::GradientEta: ParameterParts<K>,
     S: Fn(f64) -> f64,
 {
-    let (_, gradient) = family.nll_and_gradient_eta(y, F::Eta::from_array(eta));
+    let (_, gradient) =
+        family.nll_and_gradient_eta(y, &F::Eta::from_array(eta), &mut family.workspace());
 
     for index in 0..K {
         let epsilon = step(eta[index]);
@@ -155,9 +158,10 @@ fn assert_gradient_matches_finite_difference_with<F, const K: usize, S>(
         let mut minus = eta;
         minus[index] -= epsilon;
 
-        let finite_difference = (family.nll_eta(y, F::Eta::from_array(plus))
-            - family.nll_eta(y, F::Eta::from_array(minus)))
-            / (2.0 * epsilon);
+        let finite_difference =
+            (family.nll_eta(y, &F::Eta::from_array(plus), &mut family.workspace())
+                - family.nll_eta(y, &F::Eta::from_array(minus), &mut family.workspace()))
+                / (2.0 * epsilon);
         let actual = gradient.part(index);
 
         assert!(
@@ -177,13 +181,13 @@ where
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf + HasQuantile,
     F::Theta: Copy,
 {
-    let y = family.quantile(p, theta);
+    let y = family.quantile(p, &theta);
     assert!(
         y.is_finite(),
         "{} quantile({p}) returned {y:?}",
         std::any::type_name::<F>()
     );
-    let cdf = family.cdf(y, theta);
+    let cdf = family.cdf(y, &theta);
     assert_close_with_context(
         cdf,
         p,
@@ -198,17 +202,17 @@ where
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf + HasQuantile,
     F::Theta: Copy,
 {
-    let q = family.quantile(p, theta);
+    let q = family.quantile(p, &theta);
     assert!(q.is_finite(), "quantile({p}) returned {q:?}");
     assert_eq!(q.fract(), 0.0, "discrete quantile should be integral");
 
-    let cdf_at_q = family.cdf(q, theta);
+    let cdf_at_q = family.cdf(q, &theta);
     assert!(
         cdf_at_q + 1.0e-14 >= p,
         "cdf(q) must be at least p; p={p:?}, q={q:?}, cdf={cdf_at_q:?}"
     );
     if q > 0.0 {
-        let cdf_below_q = family.cdf(q - 1.0, theta);
+        let cdf_below_q = family.cdf(q - 1.0, &theta);
         assert!(
             cdf_below_q < p + 1.0e-14,
             "cdf(q - 1) must be below p; p={p:?}, q={q:?}, cdf={cdf_below_q:?}"
@@ -223,7 +227,7 @@ where
 {
     let mut previous = f64::NEG_INFINITY;
     for &y in ys {
-        let cdf = family.cdf(y, theta);
+        let cdf = family.cdf(y, &theta);
         assert!(cdf.is_finite(), "cdf({y}) returned {cdf:?}");
         assert!(
             cdf + 1.0e-14 >= previous,
@@ -256,15 +260,15 @@ pub fn assert_density_integrates_over_quantile_bracket<F>(
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf + HasQuantile + HasDensity,
     F::Theta: Copy,
 {
-    let lower = family.quantile(tail_probability, theta);
-    let upper = family.quantile(1.0 - tail_probability, theta);
+    let lower = family.quantile(tail_probability, &theta);
+    let upper = family.quantile(1.0 - tail_probability, &theta);
     assert!(
         lower.is_finite() && upper.is_finite() && lower < upper,
         "invalid integration bracket [{lower:?}, {upper:?}]"
     );
 
-    let integral = integrate_simpson(lower, upper, 1024, |y| family.density(y, theta));
-    let expected = family.cdf(upper, theta) - family.cdf(lower, theta);
+    let integral = integrate_simpson(lower, upper, 1024, |y| family.density(y, &theta));
+    let expected = family.cdf(upper, &theta) - family.cdf(lower, &theta);
     assert_close(integral, expected, 0.0, tolerance);
     assert_close(integral, 1.0, 0.0, tolerance + 2.0 * tail_probability);
 }
@@ -278,14 +282,14 @@ pub fn assert_discrete_mass_sums_to_one<F>(
     F: for<'obs> Family<Observation<'obs> = f64> + HasQuantile + HasDensity,
     F::Theta: Copy,
 {
-    let upper = family.quantile(upper_p, theta);
+    let upper = family.quantile(upper_p, &theta);
     assert!(
         upper.is_finite() && upper >= 0.0,
         "invalid discrete upper quantile {upper:?}"
     );
     let upper = upper as u64;
     let mass = (0..=upper)
-        .map(|count| family.density(count as f64, theta))
+        .map(|count| family.density(count as f64, &theta))
         .sum::<f64>();
     assert_close(mass, upper_p, 0.0, tolerance + (1.0 - upper_p));
     assert_close(mass, 1.0, 0.0, tolerance + (1.0 - upper_p));
@@ -333,13 +337,13 @@ pub fn assert_continuous_statrs_reference<F, R>(
 {
     for &y in ys {
         assert_close(
-            family.cdf(y, theta),
+            family.cdf(y, &theta),
             reference.cdf(y),
             0.0,
             tolerances.cdf_abs,
         );
         assert_close(
-            family.density(y, theta),
+            family.density(y, &theta),
             reference.pdf(y),
             tolerances.density_rel,
             tolerances.density_abs,
@@ -348,7 +352,7 @@ pub fn assert_continuous_statrs_reference<F, R>(
 
     for p in REFERENCE_PROBABILITIES {
         assert_close(
-            family.quantile(p, theta),
+            family.quantile(p, &theta),
             reference.inverse_cdf(p),
             0.0,
             tolerances.quantile_abs,
@@ -369,13 +373,13 @@ pub fn assert_discrete_statrs_reference<F, R>(
 {
     for count in counts {
         assert_close(
-            family.cdf(count as f64, theta),
+            family.cdf(count as f64, &theta),
             reference.cdf(count),
             0.0,
             tolerance,
         );
         assert_close(
-            family.density(count as f64, theta),
+            family.density(count as f64, &theta),
             reference.pmf(count),
             tolerance,
             tolerance,
@@ -392,11 +396,11 @@ pub fn assert_discrete_or_continuous_generalized_inverse<F>(
     F: for<'obs> Family<Observation<'obs> = f64> + HasCdf + HasQuantile,
     F::Theta: Copy,
 {
-    let q = family.quantile(p, theta);
+    let q = family.quantile(p, &theta);
     assert!(q.is_finite(), "quantile({p}) returned {q:?}");
     assert!(
-        family.cdf(q, theta) + tolerance >= p,
+        family.cdf(q, &theta) + tolerance >= p,
         "cdf(q) must be at least p; p={p:?}, q={q:?}, cdf={:?}",
-        family.cdf(q, theta)
+        family.cdf(q, &theta)
     );
 }

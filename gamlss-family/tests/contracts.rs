@@ -33,7 +33,7 @@ fn nll_eta_matches_nll_after_theta_transform_for_builtin_families() {
     assert_nll_eta_matches_theta::<_, 2>(&NegativeBinomialMeanDispersion::new(), 3.0, [1.2, -1.0]);
     assert_nll_eta_matches_theta::<_, 2>(&WeibullScaleShape::new(), 1.4, [0.2, -0.3]);
     assert_nll_eta_matches_theta::<_, 2>(&WeibullMeanShape::new(), 1.4, [0.2, -0.3]);
-    assert_nll_eta_matches_theta::<_, 2>(&ZipMeanZeroProbability::new(), 3.0, [1.2, -1.0]);
+    assert_nll_eta_matches_theta::<_, 2>(&ZipComponentMeanZeroProbability::new(), 3.0, [1.2, -1.0]);
     assert_nll_eta_matches_theta::<_, 2>(&ZipTotalMeanZeroProbability::new(), 3.0, [1.2, -1.0]);
 
     assert_nll_eta_matches_theta::<_, 3>(
@@ -50,7 +50,7 @@ fn nll_eta_matches_nll_after_theta_transform_for_builtin_families() {
     assert_nll_eta_matches_theta::<_, 3>(&TweedieMeanDispersionPower::new(), 1.4, [0.2, -0.3, 0.0]);
     assert_nll_eta_matches_theta::<_, 3>(&TweedieMeanCvPower::new(), 1.4, [0.2, -0.3, 0.0]);
     assert_nll_eta_matches_theta::<_, 3>(
-        &ZagaMeanSigmaZeroProbability::new(),
+        &ZagaComponentMeanCvZeroProbability::new(),
         1.4,
         [0.2, -0.3, -1.0],
     );
@@ -60,7 +60,7 @@ fn nll_eta_matches_nll_after_theta_transform_for_builtin_families() {
         [0.2, -0.3, -1.0],
     );
     assert_nll_eta_matches_theta::<_, 3>(
-        &ZinbMeanSizeZeroProbability::new(),
+        &ZinbComponentMeanSizeZeroProbability::new(),
         3.0,
         [1.2, 0.4, -1.0],
     );

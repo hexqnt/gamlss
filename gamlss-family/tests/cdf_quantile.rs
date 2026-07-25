@@ -34,11 +34,16 @@ proptest! {
         assert_continuous_inverse(&StudentTMuSigma::default(), p, StudentTTheta { mu: location, sigma: scale }, 2.0e-6);
 
         assert_continuous_inverse(&ExponentialRate::new(), p, ExponentialRateTheta { rate: shape }, 2.0e-10);
-        assert_continuous_inverse(&GammaShapeRate::new(), p, GammaTheta { shape, rate: scale }, 2.0e-7);
+        assert_continuous_inverse(&RayleighScale::new(), p, RayleighTheta { scale }, 2.0e-10);
+        assert_continuous_inverse(&ChiDegreesOfFreedom::new(), p, ChiTheta { degrees_of_freedom: shape }, 2.0e-7);
+        assert_continuous_inverse(&ChiSquaredDegreesOfFreedom::new(), p, ChiSquaredTheta { degrees_of_freedom: shape }, 2.0e-7);
+        assert_continuous_inverse(&GammaShapeRate::new(), p, GammaShapeRateTheta { shape, rate: scale }, 2.0e-7);
         assert_continuous_inverse(&InverseGaussianMuShape::new(), p, InverseGaussianTheta { mu: scale, shape }, 2.0e-7);
-        assert_continuous_inverse(&LogNormalLogLocationLogSd::new(), p, LogNormalTheta { log_location: location, log_sd: scale }, 2.0e-7);
+        assert_continuous_inverse(&LogLogisticScaleShape::new(), p, LogLogisticTheta { scale, shape }, 2.0e-10);
+        assert_continuous_inverse(&LogNormalLogLocationLogSd::new(), p, LogNormalLogLocationLogSdTheta { log_location: location, log_sd: scale }, 2.0e-7);
         assert_continuous_inverse(&LomaxShapeScale::new(), p, LomaxTheta { shape, scale }, 2.0e-10);
-        assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullTheta { shape, scale }, 2.0e-10);
+        assert_continuous_inverse(&WeibullScaleShape::new(), p, WeibullScaleShapeTheta { shape, scale }, 2.0e-10);
+        assert_continuous_inverse(&GeneralizedParetoScaleShape::new(), p, GeneralizedParetoTheta { scale, shape }, 2.0e-10);
 
         assert_continuous_inverse(&BetaMeanPrecision::new(), p, BetaTheta { mu: mu_unit, precision: shape + 2.0 }, 5.0e-6);
     }
@@ -51,6 +56,8 @@ proptest! {
         bernoulli_mu in 0.01_f64..0.99,
     ) {
         assert_discrete_inverse(&BernoulliProbability::new(), p, BernoulliTheta { mu: bernoulli_mu });
+        assert_discrete_inverse(&BinomialFixedTrialsProbability::try_new(40).unwrap(), p, BinomialTheta { probability: bernoulli_mu });
+        assert_discrete_inverse(&GeometricMean::new(), p, GeometricTheta { mean: mu });
         assert_discrete_inverse(&PoissonMean::new(), p, PoissonTheta { mu });
         assert_discrete_inverse(&NegativeBinomialMeanSize::new(), p, NegativeBinomialTheta { mu, shape });
     }
@@ -117,12 +124,52 @@ fn continuous_density_integrates_approximately_to_one() {
     );
     assert_density_integrates_over_quantile_bracket(
         &GammaShapeRate::new(),
-        GammaTheta {
+        GammaShapeRateTheta {
             shape: 2.4,
             rate: 1.3,
         },
         1.0e-4,
         7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &RayleighScale::new(),
+        RayleighTheta { scale: 1.3 },
+        1.0e-4,
+        2.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &LogLogisticScaleShape::new(),
+        LogLogisticTheta {
+            scale: 1.3,
+            shape: 2.4,
+        },
+        1.0e-4,
+        1.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ChiDegreesOfFreedom::new(),
+        ChiTheta {
+            degrees_of_freedom: 3.7,
+        },
+        1.0e-4,
+        7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ChiSquaredDegreesOfFreedom::new(),
+        ChiSquaredTheta {
+            degrees_of_freedom: 4.5,
+        },
+        1.0e-4,
+        7.0e-5,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GeneralizedParetoScaleShape::new(),
+        GeneralizedParetoTheta {
+            scale: 1.3,
+            shape: 0.2,
+        },
+        1.0e-4,
+        2.0e-4,
     );
     assert_density_integrates_over_quantile_bracket(
         &GumbelMuSigma::new(),
@@ -153,7 +200,7 @@ fn continuous_density_integrates_approximately_to_one() {
     );
     assert_density_integrates_over_quantile_bracket(
         &LogNormalLogLocationLogSd::new(),
-        LogNormalTheta {
+        LogNormalLogLocationLogSdTheta {
             log_location: 0.1,
             log_sd: 0.7,
         },
@@ -189,12 +236,89 @@ fn continuous_density_integrates_approximately_to_one() {
     );
     assert_density_integrates_over_quantile_bracket(
         &WeibullScaleShape::new(),
-        WeibullTheta {
+        WeibullScaleShapeTheta {
             shape: 2.0,
             scale: 1.4,
         },
         1.0e-4,
         5.0e-5,
+    );
+}
+
+#[test]
+fn extended_continuous_densities_integrate_to_their_cdf_mass() {
+    assert_density_integrates_over_quantile_bracket(
+        &SkewNormalMuSigmaNu::new(),
+        SkewNormalTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &PowerExponentialMuSigmaNu::new(),
+        PowerExponentialTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 1.5,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &ShashMuSigmaNuTau::new(),
+        ShashTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+            tau: 1.2,
+        },
+        1.0e-4,
+        3.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &JohnsonSuMuSigmaNuTau::new(),
+        JohnsonSuTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.3,
+            tau: 1.1,
+        },
+        1.0e-4,
+        2.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GeneralizedGammaScaleSigmaNu::new(),
+        GeneralizedGammaTheta {
+            scale: 1.2,
+            sigma: 0.6,
+            nu: -0.8,
+        },
+        1.0e-4,
+        5.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &GevMuSigmaShape::new(),
+        GevTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: -0.2,
+        },
+        1.0e-4,
+        3.0e-4,
+    );
+    assert_density_integrates_over_quantile_bracket(
+        &SkewStudentTMuSigmaNuTau::new(),
+        SkewStudentTTheta {
+            mu: 0.1,
+            sigma: 1.2,
+            nu: 0.7,
+            tau: 5.0,
+        },
+        1.0e-3,
+        1.5e-3,
     );
 }
 
@@ -217,6 +341,37 @@ fn discrete_mass_sums_approximately_to_one() {
         NegativeBinomialTheta {
             mu: 5.0,
             shape: 2.5,
+        },
+        1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &GeometricMean::new(),
+        GeometricTheta { mean: 3.0 },
+        1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &BinomialFixedTrialsProbability::try_new(20).unwrap(),
+        BinomialTheta { probability: 0.35 },
+        1.0,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &ZipComponentMeanZeroProbability::new(),
+        ZipComponentMeanZeroProbabilityTheta {
+            component_mean: 4.0,
+            zero_probability: 0.25,
+        },
+        1.0 - 1.0e-10,
+        2.0e-12,
+    );
+    assert_discrete_mass_sums_to_one(
+        &ZinbComponentMeanSizeZeroProbability::new(),
+        ZinbComponentMeanSizeZeroProbabilityTheta {
+            component_mean: 5.0,
+            size: 2.5,
+            zero_probability: 0.25,
         },
         1.0 - 1.0e-10,
         2.0e-12,
@@ -271,7 +426,7 @@ fn extended_continuous_family_quantiles_invert_cdfs() {
         &GeneralizedGammaScaleSigmaNu::new(),
         0.4,
         GeneralizedGammaTheta {
-            mu: 1.2,
+            scale: 1.2,
             sigma: 0.6,
             nu: 0.8,
         },
@@ -300,8 +455,8 @@ fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
     let lambda = theta.mean.powf(2.0 - theta.power) / (theta.dispersion * (2.0 - theta.power));
     let atom = (-lambda).exp();
 
-    assert_close(tweedie.cdf(0.0, theta), atom, 0.0, 1.0e-14);
-    assert_eq!(tweedie.quantile(0.5 * atom, theta), 0.0);
+    assert_close(tweedie.cdf(0.0, &theta), atom, 0.0, 1.0e-14);
+    assert_eq!(tweedie.quantile(0.5 * atom, &theta), 0.0);
 
     let grid = [0.0_f64, 0.05, 0.25, 1.0, 2.0, 5.0, 10.0];
     assert_cdf_monotone(&tweedie, theta, &grid);
@@ -310,9 +465,11 @@ fn tweedie_cdf_quantile_and_positive_density_are_consistent() {
     }
 
     let lower = 1.0e-4;
-    let upper = tweedie.quantile(0.95, theta);
-    let integral = integrate_simpson(lower, upper, 2048, |y| (-tweedie.nll(y, theta)).exp());
-    let expected = tweedie.cdf(upper, theta) - tweedie.cdf(lower, theta);
+    let upper = tweedie.quantile(0.95, &theta);
+    let integral = integrate_simpson(lower, upper, 2048, |y| {
+        (-tweedie.nll(y, &theta, &mut tweedie.workspace())).exp()
+    });
+    let expected = tweedie.cdf(upper, &theta) - tweedie.cdf(lower, &theta);
     assert_close(integral, expected, 0.0, 3.0e-4);
 }
 
@@ -365,31 +522,31 @@ fn tail_quantiles_follow_distribution_contracts() {
 fn mixed_distribution_quantiles_are_generalized_inverses() {
     for p in [1.0e-12, 0.05, 0.25, 0.5, 0.9, 1.0 - 1.0e-12] {
         assert_discrete_or_continuous_generalized_inverse(
-            &ZipMeanZeroProbability::new(),
+            &ZipComponentMeanZeroProbability::new(),
             p,
-            ZipTheta {
-                mu: 3.0,
-                sigma: 0.25,
+            ZipComponentMeanZeroProbabilityTheta {
+                component_mean: 3.0,
+                zero_probability: 0.25,
             },
             1.0e-12,
         );
         assert_discrete_or_continuous_generalized_inverse(
-            &ZinbMeanSizeZeroProbability::new(),
+            &ZinbComponentMeanSizeZeroProbability::new(),
             p,
-            ZinbTheta {
-                mu: 3.0,
-                shape: 1.5,
-                nu: 0.25,
+            ZinbComponentMeanSizeZeroProbabilityTheta {
+                component_mean: 3.0,
+                size: 1.5,
+                zero_probability: 0.25,
             },
             1.0e-12,
         );
         assert_discrete_or_continuous_generalized_inverse(
-            &ZagaMeanSigmaZeroProbability::new(),
+            &ZagaComponentMeanCvZeroProbability::new(),
             p,
-            ZagaTheta {
-                mu: 2.0,
-                sigma: 0.5,
-                nu: 0.25,
+            ZagaComponentMeanCvZeroProbabilityTheta {
+                component_mean: 2.0,
+                cv: 0.5,
+                zero_probability: 0.25,
             },
             1.0e-7,
         );

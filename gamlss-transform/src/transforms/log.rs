@@ -1,6 +1,18 @@
-use crate::{TargetTransform, TransformError, map_slice_into, validate_positive};
+use crate::transforms::{
+    TargetTransform, TransformError, validate_positive, validate_positive_value,
+};
 
 /// Log transform for strictly positive targets.
+///
+/// $$
+/// T(y)=\log y,
+/// \qquad
+/// T^{-1}(z)=e^z,
+/// \qquad y>0.
+/// $$
+///
+/// Here $z=T(y)$ is the value passed to [`TargetTransform::inverse`]. The transform is stateless and maps $(0,\infty)$ onto $\mathbb{R}$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Log;
 
@@ -23,21 +35,8 @@ impl TargetTransform for Log {
     }
 
     #[inline]
-    fn transform_slice(state: &Self::State, y: &[f64]) -> Result<Vec<f64>, TransformError> {
-        let mut out = vec![0.0; y.len()];
-        Self::transform_into(state, y, &mut out)?;
-        Ok(out)
-    }
-
-    #[inline]
-    fn transform_into(
-        state: &Self::State,
-        y: &[f64],
-        out: &mut [f64],
-    ) -> Result<(), TransformError> {
-        map_slice_into(y, out, validate_positive, |value| {
-            Self::transform(state, value)
-        })
+    fn validate_transform_value(_: &Self::State, y: f64) -> Result<(), TransformError> {
+        validate_positive_value(y)
     }
 }
 

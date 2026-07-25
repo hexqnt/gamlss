@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::ModelError;
 
 /// Simple dense matrix in row-major order.
@@ -194,17 +196,26 @@ impl DesignMatrix for DenseDesign {
     }
 
     #[inline]
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-        debug_assert_eq!(weights.len(), self.nrows);
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(weights.len(), rows.len());
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, weight) in weights.iter().copied().enumerate() {
+        if self.ncols == 0 {
+            return;
+        }
+
+        let start = rows.start * self.ncols;
+        let end = rows.end * self.ncols;
+        for (weight, row_values) in weights
+            .iter()
+            .copied()
+            .zip(self.values[start..end].chunks_exact(self.ncols))
+        {
             if weight == 0.0 {
                 continue;
             }
 
-            let offset = row * self.ncols;
-            let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
                 *out_value = x.mul_add(weight, *out_value);
             }
@@ -219,10 +230,10 @@ impl DesignMatrix for DenseDesign {
         }
 
         #[allow(clippy::float_cmp)]
-        let has_intercept = (0..self.nrows).all(|row| {
-            let first_value = self.values[row * self.ncols];
-            first_value == 1.0
-        });
+        let has_intercept = self
+            .values
+            .chunks_exact(self.ncols)
+            .all(|row_values| row_values[0] == 1.0);
         if !has_intercept {
             return false;
         }
@@ -232,34 +243,41 @@ impl DesignMatrix for DenseDesign {
     }
 
     #[inline]
-    fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
-        debug_assert_eq!(weights.len(), self.nrows);
-        debug_assert_eq!(multiplier.len(), self.nrows);
-        debug_assert_eq!(out.len(), self.ncols);
-
-        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
-    }
-
-    #[inline]
-    fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
-    where
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(weights.len(), self.nrows);
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(weights.len(), rows.len());
         debug_assert_eq!(out.len(), self.ncols);
 
-        for (row, weight) in weights.iter().copied().enumerate() {
+        if self.ncols == 0 {
+            return;
+        }
+
+        let start = rows.start * self.ncols;
+        let end = rows.end * self.ncols;
+        for (offset, (weight, row_values)) in weights
+            .iter()
+            .copied()
+            .zip(self.values[start..end].chunks_exact(self.ncols))
+            .enumerate()
+        {
             if weight == 0.0 {
                 continue;
             }
 
+            let row = rows.start + offset;
             let scaled_weight = weight * multiplier.multiplier_at(row);
             if scaled_weight == 0.0 {
                 continue;
             }
 
-            let offset = row * self.ncols;
-            let row_values = &self.values[offset..offset + self.ncols];
             for (out_value, x) in out.iter_mut().zip(row_values) {
                 *out_value = x.mul_add(scaled_weight, *out_value);
             }
@@ -304,12 +322,12 @@ impl RowMultiplier for UnitRowMultiplier {
 
 /// Minimal design matrix contract for the model hot path.
 ///
-/// Implementations must interpret `beta` as a vector of length `ncols()` and
-/// `weights` as a vector of length `nrows()`. Methods are not required to
-/// re-check lengths in release builds, so the calling code validates sizes
-/// upfront. Weighted operations must treat an exactly zero row weight as
-/// disabling that row: they should not read its row multiplier or design
-/// values.
+/// Implementations must interpret `beta` as a vector of length `ncols()`.
+/// Whole-matrix operations receive `nrows()` weights; range operations receive
+/// one weight per selected row. Methods are not required to re-check lengths in
+/// release builds, so calling code validates sizes upfront. Weighted operations
+/// must treat an exactly zero row weight as disabling that row: they should not
+/// read its row multiplier or design values.
 pub trait DesignMatrix {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -317,8 +335,18 @@ pub trait DesignMatrix {
     fn ncols(&self) -> usize;
     /// Dot product of row `row` with `beta`.
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Adds `X[rows, :]^T weights` into `out`.
+    ///
+    /// `weights` contains one value per selected row. Implementations must be
+    /// additive across disjoint contiguous ranges so the compiled executor can
+    /// evaluate gradients with bounded-memory score tiles.
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]);
     /// Adds `X^T weights` into `out`.
-    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]);
+    #[inline]
+    fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_t_mul_vec_range(0..self.nrows(), weights, out);
+    }
     /// Writes a constant predictor start into `out` when this matrix has an
     /// intercept-like coefficient.
     ///
@@ -332,28 +360,48 @@ pub trait DesignMatrix {
     }
     /// Adds `X^T (weights * multiplier)` into `out`.
     ///
-    /// Default implementation materializes scaled weights. Matrix
-    /// implementations used in hot paths should override this method when they
-    /// can fuse scaling into their transpose multiply.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_t_mul_vec_by_range`].
     #[inline]
     fn add_weighted_t_mul_vec(&self, weights: &[f64], multiplier: &[f64], out: &mut [f64]) {
         debug_assert_eq!(weights.len(), multiplier.len());
-
-        self.add_weighted_t_mul_vec_by(weights, multiplier, out);
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_weighted_t_mul_vec_by_range(0..self.nrows(), weights, multiplier, out);
     }
 
     /// Adds `X^T (weights * multiplier(row))` into `out`.
     ///
-    /// This variant lets nested predictor blocks provide a lazily evaluated
-    /// row multiplier and avoid materializing scaled weights. Matrix
-    /// implementations with direct row access should override this method.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_t_mul_vec_by_range`].
     #[inline]
     fn add_weighted_t_mul_vec_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
     where
         M: RowMultiplier + ?Sized,
     {
-        let scaled_weights = scale_active_rows(weights, multiplier);
-        self.add_t_mul_vec(&scaled_weights, out);
+        debug_assert_eq!(weights.len(), self.nrows());
+        self.add_weighted_t_mul_vec_by_range(0..self.nrows(), weights, multiplier, out);
+    }
+
+    /// Adds `X[rows, :]^T (weights * multiplier(row))` into `out`.
+    ///
+    /// `weights` is range-local, while `multiplier` continues to use absolute
+    /// observation indices. The default materializes range-local scaled
+    /// weights; implementations with direct row access should override this
+    /// method to fuse scaling into their transpose multiply.
+    #[inline]
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(weights.len(), rows.len());
+        let scaled_weights = scale_active_rows_range(weights, rows.clone(), multiplier);
+        self.add_t_mul_vec_range(rows, &scaled_weights, out);
     }
 
     /// Adds `X^T diag(weights) X` into `out`.
@@ -383,9 +431,8 @@ pub trait DesignMatrix {
             }
             unit_beta[k] = 1.0;
 
-            for row in 0..nrows {
-                let weight = weights[row];
-                w_xk[row] = if weight == 0.0 {
+            for ((row, weight), out_value) in weights.iter().copied().enumerate().zip(&mut w_xk) {
+                *out_value = if weight == 0.0 {
                     0.0
                 } else {
                     self.dot_row(row, &unit_beta) * weight
@@ -413,6 +460,67 @@ pub trait DesignMatrix {
     }
 }
 
+/// Borrows an existing design matrix without cloning its storage.
+///
+/// Every operation is forwarded to the underlying implementation so custom
+/// optimized weighted and Gram kernels remain available through a shared
+/// reference.
+impl<T> DesignMatrix for &T
+where
+    T: DesignMatrix + ?Sized,
+{
+    #[inline]
+    fn nrows(&self) -> usize {
+        T::nrows(*self)
+    }
+
+    #[inline]
+    fn ncols(&self) -> usize {
+        T::ncols(*self)
+    }
+
+    #[inline]
+    fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
+        T::dot_row(*self, row, beta)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+        T::add_t_mul_vec_range(*self, rows, weights, out);
+    }
+
+    #[inline]
+    fn set_constant_start(&self, value: f64, out: &mut [f64]) -> bool {
+        T::set_constant_start(*self, value, out)
+    }
+
+    #[inline]
+    fn add_weighted_t_mul_vec_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        T::add_weighted_t_mul_vec_by_range(*self, rows, weights, multiplier, out);
+    }
+
+    #[inline]
+    fn gram_weighted(&self, weights: &[f64], out: &mut [f64]) {
+        T::gram_weighted(*self, weights, out);
+    }
+
+    #[inline]
+    fn gram_weighted_by<M>(&self, weights: &[f64], multiplier: &M, out: &mut [f64])
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        T::gram_weighted_by(*self, weights, multiplier, out);
+    }
+}
+
 /// Row-wise multiplier used by fused weighted transpose products.
 pub trait RowMultiplier {
     /// Multiplier value for `row`.
@@ -431,14 +539,28 @@ pub(crate) fn scale_active_rows<M>(values: &[f64], multiplier: &M) -> Vec<f64>
 where
     M: RowMultiplier + ?Sized,
 {
+    scale_active_rows_range(values, 0..values.len(), multiplier)
+}
+
+#[inline]
+pub(crate) fn scale_active_rows_range<M>(
+    values: &[f64],
+    rows: Range<usize>,
+    multiplier: &M,
+) -> Vec<f64>
+where
+    M: RowMultiplier + ?Sized,
+{
+    debug_assert_eq!(values.len(), rows.len());
     values
         .iter()
         .copied()
         .enumerate()
-        .map(|(row, value)| {
+        .map(|(offset, value)| {
             if value == 0.0 {
                 0.0
             } else {
+                let row = rows.start + offset;
                 value * multiplier.multiplier_at(row)
             }
         })
@@ -459,7 +581,16 @@ fn add_dense_weighted_gram_by<M>(
     debug_assert_eq!(values.len(), nrows * ncols);
     debug_assert_eq!(out.len(), ncols * ncols);
 
-    for (row, weight) in weights.iter().copied().enumerate() {
+    if ncols == 0 {
+        return;
+    }
+
+    for (row, (weight, row_values)) in weights
+        .iter()
+        .copied()
+        .zip(values.chunks_exact(ncols))
+        .enumerate()
+    {
         if weight == 0.0 {
             continue;
         }
@@ -469,8 +600,6 @@ fn add_dense_weighted_gram_by<M>(
             continue;
         }
 
-        let row_offset = row * ncols;
-        let row_values = &values[row_offset..row_offset + ncols];
         for (j, x_j) in row_values.iter().copied().enumerate() {
             let xw_j = x_j * scaled_weight;
             for (k, x_k) in row_values.iter().copied().enumerate().skip(j) {
@@ -492,6 +621,8 @@ fn checked_len(nrows: usize, ncols: usize, context: &'static str) -> Result<usiz
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use super::{DenseDesign, DesignMatrix, RowMultiplier};
     use approx::assert_relative_eq;
 
@@ -512,6 +643,35 @@ mod tests {
 
         assert_relative_eq!(out[0], 6.5);
         assert_relative_eq!(out[1], 9.0);
+    }
+
+    #[test]
+    fn borrowed_design_forwards_all_specialized_operations() {
+        let owned = DenseDesign::from_rows(&[[1.0, 2.0], [3.0, 4.0]]);
+        let borrowed = &owned;
+
+        assert_eq!(DesignMatrix::nrows(&borrowed), 2);
+        assert_eq!(DesignMatrix::ncols(&borrowed), 2);
+        assert_relative_eq!(DesignMatrix::dot_row(&borrowed, 1, &[2.0, -1.0]), 2.0);
+
+        let mut start = [0.0; 2];
+        assert!(DesignMatrix::set_constant_start(
+            &&DenseDesign::intercept(2),
+            3.0,
+            &mut start[..1],
+        ));
+        assert_relative_eq!(start[0], 3.0);
+
+        let mut transpose = [0.0; 2];
+        DesignMatrix::add_weighted_t_mul_vec(&borrowed, &[0.5, 2.0], &[2.0, 0.25], &mut transpose);
+        assert_relative_eq!(transpose[0], 2.5);
+        assert_relative_eq!(transpose[1], 4.0);
+
+        let mut gram = [0.0; 4];
+        DesignMatrix::gram_weighted(&borrowed, &[0.5, 2.0], &mut gram);
+        for (actual, expected) in gram.iter().zip([18.5, 25.0, 25.0, 34.0]) {
+            assert_relative_eq!(*actual, expected);
+        }
     }
 
     #[test]
@@ -654,8 +814,8 @@ mod tests {
                 self.0.dot_row(row, beta)
             }
 
-            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-                self.0.add_t_mul_vec(weights, out);
+            fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec_range(rows, weights, out);
             }
         }
 
@@ -694,8 +854,8 @@ mod tests {
                 self.0.dot_row(row, beta)
             }
 
-            fn add_t_mul_vec(&self, weights: &[f64], out: &mut [f64]) {
-                self.0.add_t_mul_vec(weights, out);
+            fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
+                self.0.add_t_mul_vec_range(rows, weights, out);
             }
         }
 

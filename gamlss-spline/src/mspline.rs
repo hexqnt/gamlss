@@ -1,9 +1,24 @@
-use gamlss_core::{PredictorBlock, RowMultiplier};
+use std::ops::Range;
 
-use crate::SplineError;
+use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
+
+use crate::local::{LocalBasis, bspline_active_range, bspline_local_basis, bspline_value};
+use crate::prepared::PreparedContiguousGeometry;
 use crate::row_basis::SplineRowBasis;
+use crate::validation::finite_data_range;
+use crate::{OnDemandSplineDesign, SplineError};
 
 /// M-spline basis with normalized non-negative basis functions.
+///
+/// For degree $p$ and the B-spline $B_{i,p}$ on the same knot vector $\boldsymbol t$, this implementation uses
+///
+/// $$
+/// M_{i,p}(x)
+/// =\frac{p+1}{t_{i+p+1}-t_i}B_{i,p}(x).
+/// $$
+///
+/// A zero denominator produces the zero basis function. Otherwise $M_{i,p}(x)\ge0$ and its integral over $\lbrack t_i,t_{i+p+1}\rbrack$ is one. The symbols $p$ and $\boldsymbol t$ correspond to [`MSplineBasis::degree`] and [`MSplineBasis::knots`]; degrees above three are rejected.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MSplineBasis {
     knots: Vec<f64>,
@@ -48,18 +63,7 @@ impl MSplineBasis {
             return Err(SplineError::NotEnoughBasis { n_basis, degree });
         }
 
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for value in x.iter().copied() {
-            if !value.is_finite() {
-                return Err(SplineError::NonFiniteValue);
-            }
-            min = min.min(value);
-            max = max.max(value);
-        }
-        if min >= max {
-            return Err(SplineError::InvalidRange);
-        }
+        let (min, max) = finite_data_range(x)?;
 
         let interior = n_basis.saturating_sub(degree + 1);
         let mut knots = Vec::with_capacity(n_basis + degree + 1);
@@ -74,13 +78,17 @@ impl MSplineBasis {
 
     /// Builds a predictor design.
     pub fn design(&self, x: &[f64]) -> Result<MSplineDesign, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
+        let prepared = PreparedContiguousGeometry::try_from_basis(x, self, self.degree + 1)?;
         Ok(MSplineDesign {
-            x: x.to_vec(),
+            x: x.into(),
+            prepared,
             basis: self.clone(),
         })
+    }
+
+    /// Builds a low-memory predictor that reevaluates row geometry on demand.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, SplineError> {
+        OnDemandSplineDesign::new(x, self.clone())
     }
 
     /// Knot vector.
@@ -118,19 +126,43 @@ impl MSplineBasis {
     #[inline]
     pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis);
+        out.fill(0.0);
+        self.for_each_basis(x, |index, weight| out[index] = weight);
+    }
 
-        for (index, value) in out.iter_mut().enumerate() {
-            *value = self.evaluate_one(index, x);
-        }
+    /// Evaluates first derivatives of all basis functions at `x`.
+    #[must_use]
+    pub fn evaluate_derivative(&self, x: f64) -> Vec<f64> {
+        let mut values = vec![0.0; self.n_basis];
+        self.evaluate_derivative_into(x, &mut values);
+        values
+    }
+
+    /// Writes first derivatives of all basis functions at `x` into `out`.
+    ///
+    /// `out.len()` must equal [`Self::n_basis`].
+    #[inline]
+    pub fn evaluate_derivative_into(&self, x: f64, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), self.n_basis);
+        out.fill(0.0);
+        self.for_each_derivative_basis(x, |index, weight| out[index] = weight);
     }
 
     /// Visits non-zero basis-function values at `x` without allocating.
     #[inline]
     pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
-        for index in 0..self.n_basis {
-            let weight = self.evaluate_one(index, x);
-            if weight != 0.0 {
-                f(index, weight);
+        self.local_basis(x).for_each(&mut f);
+    }
+
+    /// Visits non-zero first derivatives at `x` without allocating.
+    #[inline]
+    pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
+        if let Some(active) = bspline_active_range(&self.knots, self.n_basis, self.degree, x) {
+            for index in active {
+                let weight = self.evaluate_derivative_one(index, x);
+                if weight != 0.0 {
+                    f(index, weight);
+                }
             }
         }
     }
@@ -147,12 +179,47 @@ impl MSplineBasis {
         (self.degree + 1) as f64 * bspline_value(&self.knots, self.n_basis, index, self.degree, x)
             / denom
     }
+
+    /// Evaluates the first derivative of one basis function at `x`.
+    #[must_use]
+    #[inline]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn evaluate_derivative_one(&self, index: usize, x: f64) -> f64 {
+        if self.degree == 0 {
+            return 0.0;
+        }
+
+        let denom = self.knots[index + self.degree + 1] - self.knots[index];
+        if denom <= 0.0 {
+            return 0.0;
+        }
+
+        let scale = (self.degree + 1) as f64 / denom;
+        scale * bspline_derivative_value(&self.knots, self.n_basis, index, self.degree, x)
+    }
+
+    #[inline]
+    #[allow(clippy::cast_precision_loss)]
+    pub(crate) fn local_basis(&self, x: f64) -> LocalBasis {
+        let mut local = LocalBasis::default();
+        bspline_local_basis(&self.knots, self.n_basis, self.degree, x).for_each(|index, weight| {
+            let denom = self.knots[index + self.degree + 1] - self.knots[index];
+            if denom > 0.0 {
+                local.push_nonzero(index, (self.degree + 1) as f64 * weight / denom);
+            }
+        });
+        local
+    }
 }
 
-/// M-spline predictor.
+/// M-spline predictor with compact prepared row geometry.
+///
+/// Each row stores no more than `degree + 1` contiguous weights. Use
+/// [`MSplineBasis::on_demand_design`] for the lower-memory alternative.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MSplineDesign {
-    x: Vec<f64>,
+    x: Box<[f64]>,
+    prepared: PreparedContiguousGeometry,
     basis: MSplineBasis,
 }
 
@@ -185,20 +252,11 @@ impl MSplineDesign {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
 
-        let h = 1.0e-6;
-        let x = self.x[row];
-        let plus = self.dot_at(x + h, beta);
-        let minus = self.dot_at(x - h, beta);
-        (plus - minus) / (2.0 * h)
-    }
-
-    #[inline]
-    #[allow(clippy::suboptimal_flops)]
-    fn dot_at(&self, x: f64, beta: &[f64]) -> f64 {
         let mut value = 0.0;
-        self.basis.for_each_basis(x, |index, weight| {
-            value += beta[index] * weight;
-        });
+        self.basis
+            .for_each_derivative_basis(self.x[row], |index, weight| {
+                value = weight.mul_add(beta[index], value);
+            });
         value
     }
 }
@@ -206,7 +264,7 @@ impl MSplineDesign {
 impl SplineRowBasis for MSplineDesign {
     #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.prepared.nrows()
     }
 
     #[inline]
@@ -215,15 +273,15 @@ impl SplineRowBasis for MSplineDesign {
     }
 
     #[inline]
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        self.basis.for_each_basis(self.x[row], &mut f);
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        self.prepared.for_each(row, f);
     }
 }
 
 impl PredictorBlock for MSplineDesign {
     #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.prepared.nrows()
     }
 
     #[inline]
@@ -236,40 +294,24 @@ impl PredictorBlock for MSplineDesign {
         debug_assert!(row < self.x.len());
         debug_assert_eq!(beta.len(), self.basis.n_basis());
 
-        self.dot_at(self.x[row], beta)
+        self.prepared.dot(row, beta)
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
-    fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (row, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] += score * weight;
-            });
-        }
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        self.prepared
+            .add_gradient_range(self.basis.n_basis(), rows, scores, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by_range<M>(
         &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(multiplier.len(), self.x.len());
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by<M>(
-        &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         _: &[f64],
@@ -277,56 +319,83 @@ impl PredictorBlock for MSplineDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.x.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (row, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            let scaled_score = score * multiplier.multiplier_at(row);
-            if scaled_score == 0.0 {
-                continue;
-            }
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] = scaled_score.mul_add(weight, grad[index]);
-            });
-        }
+        self.prepared.add_weighted_gradient_by_range(
+            self.basis.n_basis(),
+            rows,
+            scores,
+            multiplier,
+            grad,
+        );
     }
 }
 
-#[allow(clippy::suboptimal_flops)]
-pub(crate) fn bspline_value(
+impl LinearPredictorGeometry for MSplineDesign {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.prepared
+            .add_weighted_gram(self.basis.n_basis(), row_weights, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.prepared
+            .add_weighted_gram_by(self.basis.n_basis(), row_weights, multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.prepared
+            .add_t_mul_vec(self.basis.n_basis(), row_scores, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.prepared
+            .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn bspline_derivative_value(
     knots: &[f64],
     n_basis: usize,
     index: usize,
     degree: usize,
     x: f64,
 ) -> f64 {
-    if degree == 0 {
-        let left = knots[index];
-        let right = knots[index + 1];
-        let is_last_basis = index + 1 == n_basis;
+    debug_assert!(degree > 0);
 
-        #[allow(clippy::float_cmp)]
-        if (left <= x && x < right) || (is_last_basis && x == right) {
-            1.0
-        } else {
-            0.0
-        }
-    } else {
-        let mut value = 0.0;
-        let left_denom = knots[index + degree] - knots[index];
-        if left_denom > 0.0 {
-            value += (x - knots[index]) / left_denom
-                * bspline_value(knots, n_basis, index, degree - 1, x);
-        }
-
-        let right_denom = knots[index + degree + 1] - knots[index + 1];
-        if right_denom > 0.0 {
-            value += (knots[index + degree + 1] - x) / right_denom
-                * bspline_value(knots, n_basis, index + 1, degree - 1, x);
-        }
-        value
+    let degree_f64 = degree as f64;
+    let mut value = 0.0;
+    let left_denom = knots[index + degree] - knots[index];
+    if left_denom > 0.0 {
+        value = (degree_f64 / left_denom)
+            .mul_add(bspline_value(knots, n_basis, index, degree - 1, x), value);
     }
+
+    let right_denom = knots[index + degree + 1] - knots[index + 1];
+    if right_denom > 0.0 {
+        value = (-degree_f64 / right_denom).mul_add(
+            bspline_value(knots, n_basis, index + 1, degree - 1, x),
+            value,
+        );
+    }
+
+    value
 }

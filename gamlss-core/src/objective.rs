@@ -1,4 +1,4 @@
-use crate::{ModelError, ParameterSlice};
+use crate::{ModelError, ParameterDescriptor, ParameterSlice};
 
 /// Convenience adapter for optimizing one coefficient block at a time.
 ///
@@ -15,12 +15,10 @@ pub struct BlockObjective<'a, O> {
     /// Full beta vector with the current block values patched in before each
     /// objective call.
     full_beta: Vec<f64>,
-    /// Working block beta vector.
-    working_beta: Vec<f64>,
     /// Working full gradient vector.
     full_grad: Vec<f64>,
-    /// Slice of the block being optimized.
-    block: ParameterSlice,
+    /// Full descriptor of the predictor leaf being optimized.
+    descriptor: ParameterDescriptor,
 }
 
 impl<'a, O> BlockObjective<'a, O>
@@ -31,7 +29,8 @@ where
     ///
     /// Prefer typed model helpers such as
     /// [`crate::Gamlss::block_objective_for`] when working with compiled
-    /// models; they select the [`ParameterSlice`] from the model layout.
+    /// models; their name-only and descriptor-aware selectors validate the
+    /// chosen model layout entry.
     ///
     /// # Errors
     ///
@@ -43,31 +42,56 @@ where
         full_beta: Vec<f64>,
         block: ParameterSlice,
     ) -> Result<Self, ModelError> {
-        let full_grad = vec![0.0; full_objective.dim()];
+        Self::try_new_for_descriptor(
+            full_objective,
+            full_beta,
+            ParameterDescriptor::whole(block.name, block.range),
+        )
+    }
 
-        validate_block_range(&block, full_beta.len())?;
-        if full_grad.len() != full_beta.len() {
+    /// Creates a block objective for one full parameter descriptor.
+    ///
+    /// This constructor preserves nested path metadata selected from a compiled
+    /// model. It validates only the objective dimension and descriptor range;
+    /// use [`crate::Gamlss::block_objective_for_descriptor`] to additionally
+    /// verify that the descriptor belongs to a particular model layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::BetaLength`] when `full_beta.len()` does not match
+    /// `full_objective.dim()`. Returns [`ModelError::BlockRangeOutOfBounds`]
+    /// when `descriptor.range` is not contained in the full beta vector.
+    pub fn try_new_for_descriptor(
+        full_objective: &'a mut O,
+        full_beta: Vec<f64>,
+        descriptor: ParameterDescriptor,
+    ) -> Result<Self, ModelError> {
+        let dim = full_objective.dim();
+        if dim != full_beta.len() {
             return Err(ModelError::BetaLength {
-                expected: full_grad.len(),
+                expected: dim,
                 actual: full_beta.len(),
             });
         }
-
-        let working_beta = full_beta[block.range.clone()].to_vec();
-        debug_assert_eq!(working_beta.len(), block.range.len());
+        validate_block_range(&descriptor, dim)?;
 
         Ok(Self {
             full_objective,
             full_beta,
-            working_beta,
-            full_grad,
-            block,
+            full_grad: vec![0.0; dim],
+            descriptor,
         })
     }
 
+    /// Full parameter descriptor selected for this objective.
+    #[must_use]
+    #[inline]
+    pub const fn descriptor(&self) -> &ParameterDescriptor {
+        &self.descriptor
+    }
+
     fn update_block_beta(&mut self, block_beta: &[f64]) {
-        self.working_beta.copy_from_slice(block_beta);
-        self.full_beta[self.block.range.clone()].copy_from_slice(&self.working_beta);
+        self.full_beta[self.descriptor.range.clone()].copy_from_slice(block_beta);
     }
 }
 
@@ -79,11 +103,11 @@ where
     type Error = O::Error;
 
     fn dim(&self) -> usize {
-        self.block.range.len()
+        self.descriptor.range.len()
     }
 
     fn value(&mut self, block_beta: &[f64]) -> Result<f64, Self::Error> {
-        validate_block_len("parameters", block_beta.len(), self.block.range.len())?;
+        validate_block_len("parameters", block_beta.len(), self.descriptor.range.len())?;
 
         self.update_block_beta(block_beta);
         self.full_objective.value(&self.full_beta)
@@ -94,14 +118,14 @@ where
     }
 
     fn value_gradient(&mut self, block_beta: &[f64], grad: &mut [f64]) -> Result<f64, Self::Error> {
-        validate_block_len("parameters", block_beta.len(), self.block.range.len())?;
-        validate_block_len("gradient", grad.len(), self.block.range.len())?;
+        validate_block_len("parameters", block_beta.len(), self.descriptor.range.len())?;
+        validate_block_len("gradient", grad.len(), self.descriptor.range.len())?;
 
         self.update_block_beta(block_beta);
         let value = self
             .full_objective
             .value_gradient(&self.full_beta, &mut self.full_grad)?;
-        grad.copy_from_slice(&self.full_grad[self.block.range.clone()]);
+        grad.copy_from_slice(&self.full_grad[self.descriptor.range.clone()]);
         Ok(value)
     }
 }
@@ -154,14 +178,17 @@ fn validate_block_len(
     }
 }
 
-const fn validate_block_range(block: &ParameterSlice, dim: usize) -> Result<(), ModelError> {
-    if block.range.start <= block.range.end && block.range.end <= dim {
+const fn validate_block_range(
+    descriptor: &ParameterDescriptor,
+    dim: usize,
+) -> Result<(), ModelError> {
+    if descriptor.range.start <= descriptor.range.end && descriptor.range.end <= dim {
         Ok(())
     } else {
         Err(ModelError::BlockRangeOutOfBounds {
-            parameter: block.name,
-            start: block.range.start,
-            end: block.range.end,
+            parameter: descriptor.role,
+            start: descriptor.range.start,
+            end: descriptor.range.end,
             dim,
         })
     }
@@ -212,7 +239,6 @@ mod tests {
         )
         .unwrap();
         let full_beta_capacity = objective.full_beta.capacity();
-        let working_beta_capacity = objective.working_beta.capacity();
         let grad_capacity = objective.full_grad.capacity();
         let mut grad = vec![0.0; objective.dim()];
 
@@ -226,14 +252,11 @@ mod tests {
 
         assert_eq!(grad, vec![6.0, 7.0]);
         assert_eq!(objective.full_beta, vec![1.0, 6.0, 7.0]);
-        assert_eq!(objective.working_beta, vec![6.0, 7.0]);
         assert_eq!(objective.full_beta.capacity(), full_beta_capacity);
-        assert_eq!(objective.working_beta.capacity(), working_beta_capacity);
         assert_eq!(objective.full_grad.capacity(), grad_capacity);
 
         assert_eq!(objective.value(&[8.0, 9.0]).unwrap(), 73.0);
         assert_eq!(objective.full_beta.capacity(), full_beta_capacity);
-        assert_eq!(objective.working_beta.capacity(), working_beta_capacity);
         assert_eq!(objective.full_grad.capacity(), grad_capacity);
     }
 

@@ -10,7 +10,16 @@ documentation = "https://docs.rs/gamlss-spline"
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = [
+    "src/**/*",
+    "doc-assets/*",
+    "benches/**/*",
+    "Cargo.toml",
+    "README.md",
+]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [dependencies]
 gamlss-core.workspace = true
@@ -18,6 +27,11 @@ thiserror.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "spline_hot_paths"
+harness = false
 
 [lints]
 workspace = true

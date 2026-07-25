@@ -18,7 +18,7 @@ gamlss-special.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
-gamlss-family.workspace = true
+gamlss-family = { workspace = true, features = ["multivariate"] }
 
 [lints]
 workspace = true

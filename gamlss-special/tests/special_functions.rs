@@ -5,11 +5,13 @@
 )]
 use approx::assert_relative_eq;
 use gamlss_special::{
-    digamma, discrete_quantile, included_count, integrate_finite, invert_bounded_cdf,
-    invert_positive_cdf, invert_real_cdf, ln_beta, ln_gamma, log_add_exp, log_ndtr,
-    normal_mills_ratio, owens_t, regularized_beta, regularized_gamma_lower,
+    bernoulli_kl, categorical_kl, digamma, digamma_delta, digamma_minus_ln, discrete_quantile,
+    included_count, integrate_finite, invert_bounded_cdf, invert_positive_cdf, invert_real_cdf,
+    ln_beta, ln_gamma, ln_gamma_delta, ln_gamma_stirling_residual, ln_multivariate_beta,
+    log_add_exp, log_ndtr, normal_mills_ratio, owens_t, regularized_beta,
+    regularized_beta_complement, regularized_gamma_lower, regularized_gamma_upper,
     student_t_cdf_standardized, student_t_log_pdf_standardized, student_t_nll_constant,
-    unit_normal_cdf, unit_normal_quantile,
+    unit_normal_cdf, unit_normal_log_sf, unit_normal_quantile, unit_normal_sf,
 };
 use statrs::distribution::{Continuous, ContinuousCDF, Normal as StatrsNormal, StudentsT};
 
@@ -40,6 +42,15 @@ fn ln_gamma_matches_known_constants() {
         epsilon = 1.0e-12
     );
     assert_relative_eq!(ln_gamma(5.0), 24.0_f64.ln(), epsilon = 1.0e-12);
+}
+
+#[test]
+fn multivariate_log_beta_matches_gamma_definition() {
+    let alpha = [2.0, 3.0, 5.0];
+    let expected = alpha.iter().copied().map(ln_gamma).sum::<f64>() - ln_gamma(10.0);
+    assert_relative_eq!(ln_multivariate_beta(&alpha), expected, epsilon = 1.0e-13);
+    assert!(ln_multivariate_beta(&[1.0]).is_nan());
+    assert!(ln_multivariate_beta(&[1.0, 0.0]).is_nan());
 }
 
 #[test]
@@ -110,6 +121,96 @@ fn ln_beta_matches_statrs_reference_grid() {
 }
 
 #[test]
+fn ln_gamma_delta_and_ln_beta_handle_large_ratios() {
+    assert_close(ln_gamma_delta(1.0e16, 1.0), (1.0e16_f64).ln(), 0.0, 1.0e-12);
+    assert_close(ln_beta(1.0e16, 1.0), -36.841_361_487_904_734, 0.0, 1.0e-12);
+    assert_close(ln_beta(1.0e16, 0.5), -17.848_315_801_027_667, 0.0, 1.0e-12);
+    assert_close(
+        ln_beta(1.0e12, 1.0e12),
+        -1_386_294_361_132.440_7,
+        0.0,
+        1.0e-2,
+    );
+}
+
+#[test]
+fn stirling_residuals_preserve_large_argument_corrections() {
+    for value in [0.25, 1.0, 3.5, 8.0, 100.0] {
+        assert_close(
+            ln_gamma_stirling_residual(value),
+            ln_gamma(value) - value * value.ln() + value,
+            1.0e-13,
+            1.0e-13,
+        );
+        assert_close(
+            digamma_minus_ln(value),
+            digamma(value) - value.ln(),
+            1.0e-12,
+            1.0e-13,
+        );
+    }
+
+    let large = 1.0e16_f64;
+    assert_close(
+        ln_gamma_stirling_residual(large),
+        -gamlss_special::unit_normal_log_pdf(0.0) - 0.5 * large.ln(),
+        0.0,
+        1.0e-14,
+    );
+    assert_close(digamma_minus_ln(large), -0.5 / large, 0.0, 1.0e-32);
+    assert!(ln_gamma_stirling_residual(0.0).is_nan());
+    assert!(digamma_minus_ln(f64::INFINITY).is_nan());
+}
+
+#[test]
+fn bernoulli_kl_preserves_near_equal_probabilities() {
+    assert_eq!(bernoulli_kl(0.5, 0.5), 0.0);
+    assert_close(
+        bernoulli_kl(0.4, 0.7),
+        0.4 * (0.4_f64 / 0.7).ln() + 0.6 * (0.6_f64 / 0.3).ln(),
+        1.0e-14,
+        1.0e-14,
+    );
+
+    let reference = f64::from_bits(0.5_f64.to_bits() + 1);
+    let difference = reference - 0.5;
+    assert_close(
+        bernoulli_kl(0.5, reference),
+        2.0 * difference * difference,
+        1.0e-15,
+        1.0e-45,
+    );
+    assert!(bernoulli_kl(0.0, 0.5).is_nan());
+}
+
+#[test]
+fn categorical_kl_handles_near_equal_and_boundary_probabilities() {
+    let probability = [0.25, 0.25, 0.5];
+    let difference = 2.0_f64.powi(-40);
+    let reference = [0.25 + difference, 0.25 - difference, 0.5];
+    assert_close(
+        categorical_kl(&probability, &reference),
+        4.0 * difference * difference,
+        1.0e-12,
+        1.0e-38,
+    );
+
+    let probability = [0.0, 0.4, 0.6];
+    let reference = [0.2, 0.3, 0.5];
+    assert_close(
+        categorical_kl(&probability, &reference),
+        0.4 * (0.4_f64 / 0.3).ln() + 0.6 * (0.6_f64 / 0.5).ln(),
+        1.0e-14,
+        1.0e-14,
+    );
+    assert!(categorical_kl(&[], &[]).is_nan());
+    assert!(categorical_kl(&[0.2, -0.2], &[0.5, 0.5]).is_nan());
+    assert!(categorical_kl(&[0.5, 0.5], &[1.0, 0.0]).is_nan());
+    assert!(categorical_kl(&[f64::MAX, f64::MAX], &[0.5, 0.5]).is_nan());
+    assert!(categorical_kl(&[0.5, 0.5], &[f64::MAX, f64::MAX]).is_nan());
+}
+
+#[test]
 fn digamma_matches_known_constants_and_recurrence() {
     let euler_gamma = 0.577_215_664_901_532_9;
 
@@ -135,8 +236,31 @@ fn digamma_matches_statrs_reference_grid() {
 }
 
 #[test]
+fn digamma_delta_preserves_small_large_argument_differences() {
+    for (base, increment) in [(0.1_f64, 0.5_f64), (8.0, 0.5), (25.0, 3.5)] {
+        assert_close(
+            digamma_delta(base, increment),
+            statrs::function::gamma::digamma(base + increment)
+                - statrs::function::gamma::digamma(base),
+            2.0e-12,
+            2.0e-12,
+        );
+    }
+
+    assert_close(digamma_delta(1.0e16, 1.0), 1.0e-16, 0.0, 1.0e-31);
+    assert_tail_close(
+        digamma_delta(1.0, f64::EPSILON),
+        std::f64::consts::PI.powi(2) * f64::EPSILON / 6.0,
+        2.0e-14,
+    );
+    assert_eq!(digamma_delta(2.0, 0.0), 0.0);
+    assert!(digamma_delta(0.0, 1.0).is_nan());
+}
+
+#[test]
 fn unit_normal_cdf_matches_reference_points() {
     assert_relative_eq!(unit_normal_cdf(0.0), 0.5, epsilon = 1.0e-15);
+    assert_relative_eq!(unit_normal_sf(0.0), 0.5, epsilon = 1.0e-15);
     assert_relative_eq!(
         unit_normal_cdf(1.0),
         0.841_344_746_068_542_9,
@@ -144,6 +268,11 @@ fn unit_normal_cdf_matches_reference_points() {
     );
     assert_relative_eq!(
         unit_normal_cdf(-1.0),
+        0.158_655_253_931_457_07,
+        epsilon = 1.0e-15
+    );
+    assert_relative_eq!(
+        unit_normal_sf(1.0),
         0.158_655_253_931_457_07,
         epsilon = 1.0e-15
     );
@@ -207,6 +336,10 @@ fn log_ndtr_and_mills_ratio_stay_finite_in_left_tail() {
     assert!(mills.is_finite());
     assert!(mills > 40.0 && mills < 40.1, "mills was {mills}");
 
+    let extreme_mills = normal_mills_ratio(-1.0e154);
+    assert!(extreme_mills.is_finite());
+    assert_close(extreme_mills / 1.0e154, 1.0, 0.0, 1.0e-15);
+
     assert_eq!(log_ndtr(f64::INFINITY), 0.0);
     assert_eq!(log_ndtr(f64::NEG_INFINITY), f64::NEG_INFINITY);
     assert!(log_ndtr(f64::NAN).is_nan());
@@ -238,6 +371,27 @@ fn log_ndtr_matches_high_precision_left_tail_references() {
 }
 
 #[test]
+fn log_ndtr_keeps_positive_tail_significance() {
+    for (z, expected, abs_tol) in [
+        (6.0_f64, -9.865_876_450_376_98e-10, 1.0e-18),
+        (8.0, -6.220_960_574_271_743e-16, 1.0e-24),
+    ] {
+        assert_close(log_ndtr(z), expected, 0.0, abs_tol);
+    }
+}
+
+#[test]
+fn unit_normal_log_sf_matches_log_ndtr_symmetry() {
+    for z in [-8.0_f64, -2.0, 0.0, 2.0, 8.0, 40.0] {
+        assert_close(unit_normal_log_sf(z), log_ndtr(-z), 0.0, 1.0e-14);
+    }
+
+    assert_eq!(unit_normal_log_sf(f64::INFINITY), f64::NEG_INFINITY);
+    assert_eq!(unit_normal_log_sf(f64::NEG_INFINITY), 0.0);
+    assert!(unit_normal_log_sf(f64::NAN).is_nan());
+}
+
+#[test]
 fn standardized_student_t_helpers_match_statrs_reference() {
     for nu in [1.5_f64, 2.5, 5.0, 30.0] {
         let reference = StudentsT::new(0.0, 1.0, nu).unwrap();
@@ -263,6 +417,13 @@ fn standardized_student_t_helpers_match_statrs_reference() {
             );
         }
     }
+
+    assert_close(
+        student_t_nll_constant(1.0e16),
+        0.918_938_533_204_672_8,
+        0.0,
+        2.0e-15,
+    );
 
     assert!(student_t_log_pdf_standardized(0.0, 0.0).is_nan());
     assert!(student_t_cdf_standardized(0.0, 0.0).is_nan());
@@ -293,6 +454,11 @@ fn regularized_beta_matches_simple_cases() {
     assert_relative_eq!(regularized_beta(1.0, 1.0, 0.25), 0.25, epsilon = 1.0e-14);
     assert_relative_eq!(regularized_beta(2.0, 1.0, 0.5), 0.25, epsilon = 1.0e-14);
     assert_relative_eq!(regularized_beta(1.0, 2.0, 0.5), 0.75, epsilon = 1.0e-14);
+    assert_relative_eq!(
+        regularized_beta_complement(1.0, 2.0, 0.5),
+        0.25,
+        epsilon = 1.0e-14
+    );
 }
 
 #[test]
@@ -316,8 +482,28 @@ fn regularized_beta_matches_statrs_reference_grid() {
 }
 
 #[test]
+fn regularized_beta_complement_matches_statrs_reference_grid() {
+    for (a, b, x) in [
+        (0.1_f64, 0.2_f64, 1.0e-8_f64),
+        (0.1, 5.0, 0.8),
+        (0.5, 0.5, 0.99),
+        (2.0, 7.0, 0.25),
+        (25.0, 30.0, 0.45),
+        (75.0, 80.0, 0.55),
+    ] {
+        assert_close(
+            regularized_beta_complement(a, b, x),
+            1.0 - statrs::function::beta::beta_reg(a, b, x),
+            2.0e-11,
+            2.0e-12,
+        );
+    }
+}
+
+#[test]
 fn regularized_gamma_lower_matches_simple_cases() {
     assert_relative_eq!(regularized_gamma_lower(1.0, 2.0), 1.0 - (-2.0_f64).exp());
+    assert_relative_eq!(regularized_gamma_upper(1.0, 2.0), (-2.0_f64).exp());
     assert_relative_eq!(
         regularized_gamma_lower(2.0, 2.0),
         1.0 - 3.0 * (-2.0_f64).exp(),
@@ -343,6 +529,35 @@ fn regularized_gamma_lower_matches_statrs_reference_grid() {
             statrs::function::gamma::gamma_lr(a, x),
             2.0e-11,
             2.0e-12,
+        );
+        assert_close(
+            regularized_gamma_upper(a, x),
+            statrs::function::gamma::gamma_ur(a, x),
+            2.0e-11,
+            2.0e-12,
+        );
+        assert_close(
+            regularized_gamma_lower(a, x) + regularized_gamma_upper(a, x),
+            1.0,
+            0.0,
+            2.0e-12,
+        );
+    }
+}
+
+#[test]
+fn regularized_gamma_lower_handles_large_central_shape() {
+    for (a, x, expected) in [
+        (100_000.0_f64, 100_000.0_f64, 0.500_420_522_110_365_2),
+        (100_000.0, 100_100.0, 0.624_445_130_704_405_5),
+        (100_000.0, 99_900.0, 0.376_274_892_754_343_3),
+    ] {
+        assert_close(regularized_gamma_lower(a, x), expected, 0.0, 1.0e-9);
+        assert_close(
+            regularized_gamma_lower(a, x) + regularized_gamma_upper(a, x),
+            1.0,
+            0.0,
+            1.0e-12,
         );
     }
 }
@@ -371,6 +586,10 @@ fn owens_t_satisfies_basic_symmetry_and_special_cases() {
             1.0e-12,
         );
     }
+
+    assert_close(owens_t(0.0, 51.0), 0.246_879_714_683_123_8, 0.0, 1.0e-14);
+    assert_close(owens_t(0.5, 51.0), 0.154_268_769_362_993_5, 0.0, 1.0e-14);
+    assert_close(owens_t(1.0, 51.0), 0.079_327_626_965_728_5, 0.0, 1.0e-14);
 }
 
 #[test]

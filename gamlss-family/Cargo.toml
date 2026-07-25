@@ -10,10 +10,23 @@ documentation = "https://docs.rs/gamlss-family"
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = [
+    "src/**/*",
+    "doc-assets/katex-header.html",
+    "doc-assets/distributions/*",
+    "benches/**/*",
+    "examples/**/*",
+    "Cargo.toml",
+    "README.md",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [features]
 default = []
+multivariate = []
 rand = ["dep:rand", "dep:rand_distr"]
 
 [dependencies]
@@ -24,8 +37,19 @@ rand_distr = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx.workspace = true
+criterion.workspace = true
+dhat = "0.3.3"
 proptest = "1.11.0"
-statrs = "0.18"
+statrs = "0.19"
+
+[[example]]
+name = "objective_memory"
+required-features = ["multivariate"]
+
+[[bench]]
+name = "objective"
+harness = false
+required-features = ["multivariate"]
 
 [lints]
 workspace = true

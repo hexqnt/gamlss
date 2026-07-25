@@ -1,0 +1,22 @@
+# Оглавление
+
+- [Введение](./00-introduction/introduction.md)
+- [Вероятностная регрессия](./00-introduction/distributional-regression.md)
+
+# I. Одномерные GAMLSS-модели
+
+- [Нормальная модель с линейным средним](./01-univariate/normal-location-model.md)
+- [Нормальная модель с переменным масштабом](./01-univariate/normal-location-scale-model.md)
+- [Сплайн-предикторы положения, масштаба и асимметрии](./01-univariate/a1-skew-normal-splines.md)
+
+# II. Многомерные нормальные модели
+
+- [Многомерная нормальная модель](./02-multivariate/multivariate-normal-model.md)
+
+# III. Конечные смеси распределений
+
+- [Двухкомпонентная гауссовская смесь для данных Old Faithful](./03-mixtures/gaussian-mixture-model.md)
+
+# Приложения
+
+- [Литература и дополнительные материалы](./90-appendices/further-reading.md)

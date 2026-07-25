@@ -1,8 +1,26 @@
-use gamlss_core::DenseDesign;
+use std::ops::Range;
 
-use crate::SplineError;
+use gamlss_core::{
+    DenseDesign, LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier,
+};
 
-/// B-spline basis with a given degree and knot vector.
+use crate::local::{bspline_active_range, bspline_local_basis, bspline_value};
+use crate::prepared::PreparedContiguousGeometry;
+use crate::validation::{finite_data_range, validate_coordinates};
+use crate::{OnDemandSplineDesign, SplineError, SplineRowBasis};
+
+/// B-spline basis with degree $p$ and non-decreasing knot vector $\boldsymbol{t}=(t_0,\ldots,t_{M-1})$.
+///
+/// The degree-zero basis is $B_{i,0}(x)=\mathbf{1}\\!\left\\{t_i\le x<t_{i+1}\right\\}$. Higher degrees use the Cox--de Boor recursion
+///
+/// $$
+/// B_{i,p}(x)
+/// =\frac{x-t_i}{t_{i+p}-t_i}B_{i,p-1}(x)
+/// \mathbin{+}\frac{t_{i+p+1}-x}{t_{i+p+1}-t_{i+1}}B_{i+1,p-1}(x).
+/// $$
+///
+/// Here $\mathbf{1}_A$ is the indicator of set $A$. A recurrence term with a zero denominator contributes zero. At the right boundary the implementation closes the last degree-zero interval so that an open basis includes its final endpoint. The code fields satisfy $p=\mathtt{degree}$, $M=\mathtt{knots.len()}$, and [`BSplineBasis::n_basis`] returns $M-p-1$.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BSplineBasis {
     degree: usize,
@@ -43,19 +61,7 @@ impl BSplineBasis {
             return Err(SplineError::NotEnoughBasis { n_basis, degree });
         }
 
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for value in x.iter().copied() {
-            if !value.is_finite() {
-                return Err(SplineError::NonFiniteValue);
-            }
-            min = min.min(value);
-            max = max.max(value);
-        }
-
-        if min >= max {
-            return Err(SplineError::InvalidRange);
-        }
+        let (min, max) = finite_data_range(x)?;
 
         let interior = n_basis.saturating_sub(degree + 1);
         let mut knots = Vec::with_capacity(n_basis + degree + 1);
@@ -88,6 +94,39 @@ impl BSplineBasis {
         self.knots.len() - self.degree - 1
     }
 
+    /// Builds a predictor that retains `x` and evaluates basis rows on demand.
+    ///
+    /// This uses `O(nrows + n_basis)` storage instead of the
+    /// `O(nrows * n_basis)` storage used by [`Self::design_matrix`]. The basis
+    /// metadata is cloned once; row evaluation does not allocate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] if `x` contains a non-finite
+    /// coordinate.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, SplineError> {
+        OnDemandSplineDesign::new(x, self.clone())
+    }
+
+    /// Builds a compact prepared predictor for repeated model passes.
+    ///
+    /// Each row stores only its contiguous non-zero coefficient range and
+    /// weights. Storage is `O(nrows * (degree + 1))`, independent of the total
+    /// basis count for a fixed degree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] for a non-finite coordinate or
+    /// [`SplineError::ParameterOverflow`] if the row storage size overflows.
+    pub fn design(&self, x: &[f64]) -> Result<BSplineDesign, SplineError> {
+        let prepared = PreparedContiguousGeometry::try_from_basis(x, self, self.degree + 1)?;
+        Ok(BSplineDesign {
+            x: x.into(),
+            prepared,
+            basis: self.clone(),
+        })
+    }
+
     /// Values of all basis functions at point `x`.
     #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
@@ -103,11 +142,27 @@ impl BSplineBasis {
         self.fill_values(x, out);
     }
 
+    /// Visits non-zero basis-function values at `x` without allocating.
+    #[inline]
+    #[allow(clippy::float_cmp)]
+    pub fn for_each_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
+        if self.degree <= 3 {
+            bspline_local_basis(&self.knots, self.n_basis(), self.degree, x).for_each(f);
+        } else if let Some(active) =
+            bspline_active_range(&self.knots, self.n_basis(), self.degree, x)
+        {
+            for index in active {
+                let weight = bspline_value(&self.knots, self.n_basis(), index, self.degree, x);
+                if weight != 0.0 {
+                    f(index, weight);
+                }
+            }
+        }
+    }
+
     /// Dense design matrix where each row contains `evaluate(x_i)`.
     pub fn design_matrix(&self, x: &[f64]) -> Result<DenseDesign, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
+        validate_coordinates(x)?;
 
         let n_basis = self.n_basis();
         let mut values = Vec::with_capacity(x.len() * n_basis);
@@ -122,38 +177,157 @@ impl BSplineBasis {
     fn fill_values(&self, x: f64, out: &mut [f64]) {
         debug_assert_eq!(out.len(), self.n_basis());
 
-        for (index, value) in out.iter_mut().enumerate() {
-            *value = self.basis_value(index, self.degree, x);
+        if x.is_finite() {
+            out.fill(0.0);
+            self.for_each_basis(x, |index, weight| out[index] = weight);
+        } else {
+            for (index, value) in out.iter_mut().enumerate() {
+                *value = bspline_value(&self.knots, self.n_basis(), index, self.degree, x);
+            }
         }
     }
+}
 
-    #[allow(clippy::float_cmp, clippy::suboptimal_flops)]
-    fn basis_value(&self, index: usize, degree: usize, x: f64) -> f64 {
-        if degree == 0 {
-            let left = self.knots[index];
-            let right = self.knots[index + 1];
-            let is_last_basis = index + 1 == self.n_basis();
-            if (left <= x && x < right) || (is_last_basis && x == right) {
-                1.0
-            } else {
-                0.0
-            }
-        } else {
-            let mut value = 0.0;
-            let left_denom = self.knots[index + degree] - self.knots[index];
-            if left_denom > 0.0 {
-                value +=
-                    (x - self.knots[index]) / left_denom * self.basis_value(index, degree - 1, x);
-            }
+/// General-knot B-spline predictor with compact prepared row geometry.
+///
+/// Unlike [`BSplineBasis::design_matrix`], this representation retains only
+/// the at-most-`degree + 1` active weights per observation. Use
+/// [`BSplineBasis::on_demand_design`] when even that row cache is undesirable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BSplineDesign {
+    x: Box<[f64]>,
+    prepared: PreparedContiguousGeometry,
+    basis: BSplineBasis,
+}
 
-            let right_denom = self.knots[index + degree + 1] - self.knots[index + 1];
-            if right_denom > 0.0 {
-                value += (self.knots[index + degree + 1] - x) / right_denom
-                    * self.basis_value(index + 1, degree - 1, x);
-            }
+impl BSplineDesign {
+    /// Basis metadata suitable for evaluating new coordinates.
+    #[must_use]
+    #[inline]
+    pub const fn basis(&self) -> &BSplineBasis {
+        &self.basis
+    }
 
-            value
-        }
+    /// Original input coordinates.
+    #[must_use]
+    #[inline]
+    pub fn x(&self) -> &[f64] {
+        &self.x
+    }
+
+    /// Number of spline coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
+        self.basis.n_basis()
+    }
+}
+
+impl SplineRowBasis for BSplineDesign {
+    #[inline]
+    fn nrows(&self) -> usize {
+        self.prepared.nrows()
+    }
+
+    #[inline]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+        self.prepared.for_each(row, f);
+    }
+}
+
+impl PredictorBlock for BSplineDesign {
+    #[inline]
+    fn nrows(&self) -> usize {
+        self.prepared.nrows()
+    }
+
+    #[inline]
+    fn nparams(&self) -> usize {
+        self.basis.n_basis()
+    }
+
+    #[inline]
+    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert_eq!(beta.len(), self.basis.n_basis());
+        self.prepared.dot(row, beta)
+    }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
+    }
+
+    #[inline]
+    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        self.prepared
+            .add_gradient_range(self.basis.n_basis(), rows, scores, grad);
+    }
+
+    #[inline]
+    fn add_weighted_gradient_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        multiplier: &M,
+        _: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        self.prepared.add_weighted_gradient_by_range(
+            self.basis.n_basis(),
+            rows,
+            scores,
+            multiplier,
+            grad,
+        );
+    }
+}
+
+impl LinearPredictorGeometry for BSplineDesign {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.prepared
+            .add_weighted_gram(self.basis.n_basis(), row_weights, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.prepared
+            .add_weighted_gram_by(self.basis.n_basis(), row_weights, multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.prepared
+            .add_t_mul_vec(self.basis.n_basis(), row_scores, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.prepared
+            .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
     }
 }
 

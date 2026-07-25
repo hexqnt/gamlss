@@ -10,6 +10,23 @@
 //! scale values where that convention is already part of the surrounding
 //! distribution code.
 
+const LANCZOS_SHIFT: f64 = 6.5;
+const EULER_MASCHERONI: f64 = 0.577_215_664_901_532_9;
+const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
+const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
+
+const LANCZOS_COEFFICIENTS: [f64; 9] = [
+    0.999_999_999_999_809_9,
+    676.520_368_121_885_1,
+    -1_259.139_216_722_402_8,
+    771.323_428_777_653_1,
+    -176.615_029_162_140_6,
+    12.507_343_278_686_905,
+    -0.138_571_095_265_720_12,
+    9.984_369_578_019_572e-6,
+    1.505_632_735_149_311_6e-7,
+];
+
 #[inline]
 fn is_probability(value: f64) -> bool {
     (0.0..=1.0).contains(&value) && value.is_finite()
@@ -55,6 +72,19 @@ fn polynomial_descending_with_implicit_leading_one(value: f64, coefficients: &[f
     })
 }
 
+#[inline]
+fn lanczos_sum(value: f64) -> f64 {
+    let shifted = value - 1.0;
+    let mut sum = LANCZOS_COEFFICIENTS[0];
+
+    #[allow(clippy::cast_precision_loss)]
+    for (index, coefficient) in LANCZOS_COEFFICIENTS.iter().copied().enumerate().skip(1) {
+        sum += coefficient / (shifted + index as f64);
+    }
+
+    sum
+}
+
 /// Natural logarithm of the absolute gamma function via the Lanczos approximation.
 ///
 /// Returns `NaN` at poles and for non-finite negative inputs. For positive
@@ -63,18 +93,6 @@ fn polynomial_descending_with_implicit_leading_one(value: f64, coefficients: &[f
 #[must_use]
 #[inline]
 pub fn ln_gamma(value: f64) -> f64 {
-    const COEFFICIENTS: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
-
     if value == f64::INFINITY {
         return f64::INFINITY;
     }
@@ -90,16 +108,64 @@ pub fn ln_gamma(value: f64) -> f64 {
         return std::f64::consts::PI.ln() - sin_pi.abs().ln() - ln_gamma(1.0 - value);
     }
 
-    let shifted = value - 1.0;
-    let mut x = COEFFICIENTS[0];
+    let x = lanczos_sum(value);
+    let t = value + LANCZOS_SHIFT;
 
-    #[allow(clippy::cast_precision_loss)]
-    for (index, coefficient) in COEFFICIENTS.iter().copied().enumerate().skip(1) {
-        x += coefficient / (shifted + index as f64);
+    (value - 0.5).mul_add(t.ln(), HALF_LOG_2_PI) - t + x.ln()
+}
+
+/// Difference `ln(Gamma(base + increment)) - ln(Gamma(base))` for positive arguments.
+///
+/// This avoids cancellation when `base` is large and `increment` is small, which is common in beta normalizing constants and gamma-ratio terms.
+#[must_use]
+#[inline]
+pub fn ln_gamma_delta(base: f64, increment: f64) -> f64 {
+    if base <= 0.0 || increment < 0.0 || !base.is_finite() || !increment.is_finite() {
+        return f64::NAN;
     }
-    let t = shifted + 7.5;
+    if increment == 0.0 {
+        return 0.0;
+    }
 
-    (shifted + 0.5).mul_add(t.ln(), 0.5 * (2.0 * std::f64::consts::PI).ln()) - t + x.ln()
+    let target = base + increment;
+    if !target.is_finite() {
+        return f64::INFINITY;
+    }
+    if base < 0.5 {
+        return ln_gamma(target) - ln_gamma(base);
+    }
+
+    let t = base + LANCZOS_SHIFT;
+    let log_power = increment.mul_add(t.ln(), (target - 0.5) * (increment / t).ln_1p());
+    log_power - increment + (lanczos_sum(target) / lanczos_sum(base)).ln()
+}
+
+/// Residual `ln(Gamma(x)) - x * ln(x) + x` for positive finite `x`.
+///
+/// The direct expression catastrophically cancels for large `x`; the
+/// Stirling series keeps the logarithmic remainder representable.
+#[must_use]
+#[inline]
+pub fn ln_gamma_stirling_residual(value: f64) -> f64 {
+    if value <= 0.0 || !value.is_finite() {
+        return f64::NAN;
+    }
+    if value < 8.0 {
+        return value.mul_add(1.0 - value.ln(), ln_gamma(value));
+    }
+
+    let inverse = 1.0 / value;
+    let inverse2 = inverse * inverse;
+    let inverse3 = inverse2 * inverse;
+    let inverse5 = inverse3 * inverse2;
+    let inverse7 = inverse5 * inverse2;
+    let inverse9 = inverse7 * inverse2;
+    let inverse11 = inverse9 * inverse2;
+    0.5f64.mul_add(-value.ln(), HALF_LOG_2_PI) + inverse / 12.0 - inverse3 / 360.0
+        + inverse5 / 1_260.0
+        - inverse7 / 1_680.0
+        + inverse9 / 1_188.0
+        - 691.0 * inverse11 / 360_360.0
 }
 
 /// Natural logarithm of the beta function for positive finite arguments.
@@ -110,7 +176,60 @@ pub fn ln_beta(a: f64, b: f64) -> f64 {
         return f64::NAN;
     }
 
-    ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
+    let small = a.min(b);
+    let large = a.max(b);
+    ln_gamma(small) - ln_gamma_delta(large, small)
+}
+
+/// Logarithm of the multivariate beta function.
+///
+/// The sequential beta identity avoids subtracting one large `ln_gamma(sum)`
+/// from a separately accumulated sum of large gamma terms.
+#[must_use]
+pub fn ln_multivariate_beta(alpha: &[f64]) -> f64 {
+    if alpha.len() < 2
+        || alpha
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return f64::NAN;
+    }
+
+    let mut prefix = alpha[0];
+    let mut value = 0.0;
+    for component in alpha.iter().copied().skip(1) {
+        value += ln_beta(prefix, component);
+        prefix += component;
+        if !prefix.is_finite() {
+            return f64::NAN;
+        }
+    }
+    value
+}
+
+/// Baseline softmax with a representable strictly-positive result.
+///
+/// The final logit is fixed to zero. Finite logit differences that would make
+/// `exp` underflow are saturated at the smallest normal exponent, preserving
+/// the interior-simplex invariant in `f64`.
+#[must_use]
+pub fn baseline_softmax<const D: usize>(mut logits: [f64; D]) -> [f64; D] {
+    if D == 0 || logits.iter().any(|value| !value.is_finite()) {
+        return [f64::NAN; D];
+    }
+    logits[D - 1] = 0.0;
+    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min_exponent = f64::MIN_POSITIVE.ln();
+    let mut weights = [0.0; D];
+    let mut sum = 0.0;
+    for (weight, logit) in weights.iter_mut().zip(logits) {
+        *weight = (logit - max).max(min_exponent).exp();
+        sum += *weight;
+    }
+    for weight in &mut weights {
+        *weight /= sum;
+    }
+    weights
 }
 
 /// Returns `true` for finite counts represented on the shared `f64` observation path.
@@ -165,14 +284,209 @@ pub fn log_add_exp(log_left: f64, log_right: f64) -> f64 {
     }
 
     let max = log_left.max(log_right);
-    max + ((log_left - max).exp() + (log_right - max).exp()).ln()
+    max + (-(log_left - log_right).abs()).exp().ln_1p()
+}
+
+/// Kullback-Leibler divergence between Bernoulli probabilities.
+///
+/// Both probabilities must lie strictly inside `(0, 1)`. A local series
+/// preserves the quadratic divergence when the probabilities are nearly
+/// equal and the two first-order log terms would otherwise cancel.
+#[must_use]
+pub fn bernoulli_kl(probability: f64, reference: f64) -> f64 {
+    if !(0.0..1.0).contains(&probability)
+        || !(0.0..1.0).contains(&reference)
+        || !probability.is_finite()
+        || !reference.is_finite()
+    {
+        return f64::NAN;
+    }
+
+    let complement = 1.0 - probability;
+    let difference = reference - probability;
+    let relative_probability = difference / probability;
+    let relative_complement = -difference / complement;
+    if relative_probability.abs().max(relative_complement.abs()) <= 0.25 {
+        let mut probability_power = relative_probability * relative_probability;
+        let mut complement_power = relative_complement * relative_complement;
+        let mut sum = 0.0;
+        for order in 2..=128 {
+            let order_f = f64::from(order);
+            let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
+            let term = sign * probability.mul_add(probability_power, complement * complement_power)
+                / order_f;
+            let magnitude = probability
+                .mul_add(probability_power.abs(), complement * complement_power.abs())
+                / order_f;
+            sum += term;
+            if magnitude <= f64::EPSILON * sum.abs() {
+                break;
+            }
+            probability_power *= relative_probability;
+            complement_power *= relative_complement;
+        }
+        sum.max(0.0)
+    } else {
+        (-probability).mul_add(
+            relative_probability.ln_1p(),
+            -complement * relative_complement.ln_1p(),
+        )
+    }
+}
+
+/// Kullback-Leibler divergence between categorical probability vectors.
+///
+/// `probability` may lie on the simplex boundary, while every `reference` component must be strictly positive. The vectors are expected to have the same normalization; a local series preserves the divergence when their components are nearly equal and direct log-ratio terms would cancel.
+///
+/// Returns `NaN` for an empty vector, a negative or non-finite probability, a non-positive or non-finite reference component, a non-finite component sum, or an all-zero probability vector.
+#[must_use]
+pub fn categorical_kl<const K: usize>(probability: &[f64; K], reference: &[f64; K]) -> f64 {
+    let probability_sum = probability.iter().sum::<f64>();
+    let reference_sum = reference.iter().sum::<f64>();
+    if K == 0
+        || probability
+            .iter()
+            .any(|value| *value < 0.0 || !value.is_finite())
+        || reference
+            .iter()
+            .any(|value| *value <= 0.0 || !value.is_finite())
+        || probability_sum <= 0.0
+        || !probability_sum.is_finite()
+        || !reference_sum.is_finite()
+    {
+        return f64::NAN;
+    }
+
+    let relative: [f64; K] = std::array::from_fn(|category| {
+        let value = probability[category];
+        if value > 0.0 {
+            (reference[category] - value) / value
+        } else {
+            0.0
+        }
+    });
+    let use_series = probability
+        .iter()
+        .zip(relative.iter())
+        .all(|(value, relative)| *value <= 0.0 || relative.abs() <= 0.25);
+    if use_series {
+        let mut powers = relative;
+        let mut sum = 0.0;
+        for order in 1..=128 {
+            let order_f = f64::from(order);
+            let weighted_power = probability
+                .iter()
+                .zip(powers.iter())
+                .map(|(weight, power)| weight * power)
+                .sum::<f64>();
+            let magnitude = probability
+                .iter()
+                .zip(powers.iter())
+                .map(|(weight, power)| weight * power.abs())
+                .sum::<f64>()
+                / order_f;
+            let sign = if order % 2 == 0 { 1.0 } else { -1.0 };
+            sum += sign * weighted_power / order_f;
+            if order > 1 && magnitude <= f64::EPSILON * sum.abs() {
+                break;
+            }
+            for (power, relative) in powers.iter_mut().zip(relative.iter()) {
+                *power *= relative;
+            }
+        }
+        sum
+    } else {
+        probability
+            .iter()
+            .zip(reference)
+            .filter(|(value, _)| **value > 0.0)
+            .map(|(value, reference)| value * (value.ln() - reference.ln()))
+            .sum()
+    }
+}
+
+/// Exponential integral `E1(x) = integral_x^inf exp(-t) / t dt`.
+///
+/// Returns `NaN` for negative or `NaN` inputs, positive infinity at zero, and
+/// zero at positive infinity.
+#[must_use]
+pub fn exponential_integral_e1(x: f64) -> f64 {
+    if x < 0.0 || x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::INFINITY;
+    }
+    if x == f64::INFINITY {
+        return 0.0;
+    }
+
+    if x <= 1.0 {
+        exponential_integral_e1_series(x)
+    } else {
+        exponential_integral_e1_continued_fraction(x)
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn exponential_integral_e1_series(x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-16;
+
+    let mut factorial_term = -x;
+    let mut sum = factorial_term;
+    for iteration in 2..=MAX_ITERATIONS {
+        let k = iteration as f64;
+        factorial_term *= -x / k;
+        let term = factorial_term / k;
+        sum += term;
+        if term.abs() <= EPSILON * sum.abs().max(1.0) {
+            break;
+        }
+    }
+
+    -EULER_MASCHERONI - x.ln() - sum
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn exponential_integral_e1_continued_fraction(x: f64) -> f64 {
+    const MAX_ITERATIONS: usize = 1_000;
+    const EPSILON: f64 = 1.0e-14;
+    const TINY: f64 = 1.0e-300;
+
+    let mut b = x + 1.0;
+    let mut c = 1.0 / TINY;
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for iteration in 1..=MAX_ITERATIONS {
+        let i = iteration as f64;
+        let a = -(i * i);
+        b += 2.0;
+
+        d = a.mul_add(d, b);
+        if d.abs() < TINY {
+            d = TINY;
+        }
+        c = b + a / c;
+        if c.abs() < TINY {
+            c = TINY;
+        }
+        d = 1.0 / d;
+        let delta = c * d;
+        h *= delta;
+        if (delta - 1.0).abs() <= EPSILON {
+            break;
+        }
+    }
+
+    (-x).exp() * h
 }
 
 /// Standard normal log-density.
 #[must_use]
 #[inline]
 pub fn unit_normal_log_pdf(z: f64) -> f64 {
-    const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;
     (0.5 * z).mul_add(-z, -HALF_LOG_2_PI)
 }
 
@@ -180,8 +494,7 @@ pub fn unit_normal_log_pdf(z: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_nll_constant(nu: f64) -> f64 {
-    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) + ln_gamma(0.5 * nu)
-        - ln_gamma(f64::midpoint(nu, 1.0))
+    f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) - ln_gamma_delta(0.5 * nu, 0.5)
 }
 
 /// Standard Student-t log-density.
@@ -198,7 +511,7 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
         return f64::NEG_INFINITY;
     }
 
-    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()
+    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * log_one_plus_square_over_positive(t, nu)
 }
 
 /// Standard Student-t CDF.
@@ -208,21 +521,53 @@ pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_cdf_standardized(t: f64, nu: f64) -> f64 {
+    student_t_log_cdf_standardized(t, nu).exp()
+}
+
+/// Logarithm of the standard Student-t CDF.
+///
+/// Unlike taking the logarithm of [`student_t_cdf_standardized`], this keeps
+/// finite log-probabilities in the far negative tail after the probability
+/// itself has underflowed.
+#[must_use]
+#[inline]
+pub fn student_t_log_cdf_standardized(t: f64, nu: f64) -> f64 {
     if nu <= 0.0 || !nu.is_finite() || t.is_nan() {
         return f64::NAN;
     }
     if !t.is_finite() {
-        return if t.is_sign_negative() { 0.0 } else { 1.0 };
+        return if t.is_sign_negative() {
+            f64::NEG_INFINITY
+        } else {
+            0.0
+        };
     }
     if t == 0.0 {
-        return 0.5;
+        return -std::f64::consts::LN_2;
     }
 
-    let beta = regularized_beta(0.5 * nu, 0.5, nu / t.mul_add(t, nu));
-    if t < 0.0 {
-        0.5 * beta
+    let log_x = -log_one_plus_square_over_positive(t, nu);
+    let x = log_x.exp();
+    let a = 0.5 * nu;
+    let log_beta = if x == 0.0 {
+        a * log_x - ln_beta(a, 0.5) - a.ln()
     } else {
-        0.5f64.mul_add(-beta, 1.0)
+        log_regularized_beta(a, 0.5, x)
+    };
+    if t < 0.0 {
+        log_beta - std::f64::consts::LN_2
+    } else {
+        (-0.5 * log_beta.exp()).ln_1p()
+    }
+}
+
+#[inline]
+fn log_one_plus_square_over_positive(value: f64, positive: f64) -> f64 {
+    let log_ratio = 0.5_f64.mul_add(-positive.ln(), value.abs().ln());
+    if log_ratio <= 0.0 {
+        (2.0 * log_ratio).exp().ln_1p()
+    } else {
+        2.0_f64.mul_add(log_ratio, (-2.0 * log_ratio).exp().ln_1p())
     }
 }
 
@@ -244,40 +589,171 @@ pub fn digamma(value: f64) -> f64 {
     }
 
     let inv = 1.0 / x;
-    let inv2 = inv * inv;
-    0.5f64.mul_add(-inv, result + x.ln()) - inv2 / 12.0 + inv2 * inv2 / 120.0
-        - inv2 * inv2 * inv2 / 252.0
-        + inv2 * inv2 * inv2 * inv2 / 240.0
+    let inv_sq = inv * inv;
+    let inv_fourth = inv_sq * inv_sq;
+    let inv_sixth = inv_fourth * inv_sq;
+    let inv_eighth = inv_fourth * inv_fourth;
+    let inv_tenth = inv_eighth * inv_sq;
+    let inv_twelfth = inv_tenth * inv_sq;
+    0.5f64.mul_add(-inv, result + x.ln()) - inv_sq / 12.0 + inv_fourth / 120.0 - inv_sixth / 252.0
+        + inv_eighth / 240.0
+        - 5.0 * inv_tenth / 660.0
+        + 691.0 * inv_twelfth / 32_760.0
+}
+
+/// Difference `digamma(x) - ln(x)` for positive finite `x`.
+///
+/// The asymptotic form avoids subtracting nearly equal logarithms for large
+/// arguments.
+#[must_use]
+#[inline]
+pub fn digamma_minus_ln(value: f64) -> f64 {
+    if value <= 0.0 || !value.is_finite() {
+        return f64::NAN;
+    }
+    if value < 8.0 {
+        return digamma(value) - value.ln();
+    }
+
+    let inverse = 1.0 / value;
+    let inverse_squared = inverse * inverse;
+    let inverse_fourth = inverse_squared * inverse_squared;
+    let inverse_sixth = inverse_fourth * inverse_squared;
+    let inverse_eighth = inverse_fourth * inverse_fourth;
+    let inverse_tenth = inverse_eighth * inverse_squared;
+    let inverse_twelfth = inverse_tenth * inverse_squared;
+    (-0.5_f64).mul_add(inverse, -inverse_squared / 12.0) + inverse_fourth / 120.0
+        - inverse_sixth / 252.0
+        + inverse_eighth / 240.0
+        - 5.0 * inverse_tenth / 660.0
+        + 691.0 * inverse_twelfth / 32_760.0
+}
+
+/// Difference `digamma(base + increment) - digamma(base)` for positive arguments.
+///
+/// This evaluates the large-argument asymptotic series term by term, avoiding
+/// cancellation when `increment` is smaller than the spacing between nearby
+/// representable values at `base`.
+#[must_use]
+pub fn digamma_delta(base: f64, increment: f64) -> f64 {
+    if base <= 0.0 || increment < 0.0 || !base.is_finite() || !increment.is_finite() {
+        return f64::NAN;
+    }
+    if increment == 0.0 {
+        return 0.0;
+    }
+
+    let target = base + increment;
+    if !target.is_finite() {
+        return f64::INFINITY;
+    }
+    let mut shifted = base;
+    let mut recurrence = 0.0;
+    #[allow(clippy::while_float)]
+    while shifted < 8.0 {
+        let shifted_target = shifted + increment;
+        recurrence += if increment > shifted {
+            (1.0 - shifted / shifted_target) / shifted
+        } else {
+            increment / shifted / shifted_target
+        };
+        shifted += 1.0;
+    }
+
+    let ratio = increment / shifted;
+    let log_ratio = ratio.ln_1p();
+    let inv = 1.0 / shifted;
+    let inv_sq = inv * inv;
+    let inv_fourth = inv_sq * inv_sq;
+    let inv_sixth = inv_fourth * inv_sq;
+    let inv_eighth = inv_fourth * inv_fourth;
+    let inv_tenth = inv_eighth * inv_sq;
+    let inv_twelfth = inv_tenth * inv_sq;
+    let reciprocal_delta = 0.5 * inv * ratio / (1.0 + ratio);
+
+    recurrence + log_ratio + reciprocal_delta - inv_sq * (-2.0 * log_ratio).exp_m1() / 12.0
+        + inv_fourth * (-4.0 * log_ratio).exp_m1() / 120.0
+        - inv_sixth * (-6.0 * log_ratio).exp_m1() / 252.0
+        + inv_eighth * (-8.0 * log_ratio).exp_m1() / 240.0
+        - 5.0 * inv_tenth * (-10.0 * log_ratio).exp_m1() / 660.0
+        + 691.0 * inv_twelfth * (-12.0 * log_ratio).exp_m1() / 32_760.0
 }
 
 /// Regularized incomplete beta function `I_x(a, b)` for positive `a`, `b`.
 #[must_use]
 #[inline]
 pub fn regularized_beta(a: f64, b: f64, x: f64) -> f64 {
-    clamp_probability(regularized_beta_unchecked(a, b, x))
+    clamp_probability(regularized_beta_pair_unchecked(a, b, x).0)
 }
 
-#[allow(clippy::suboptimal_flops)]
-fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
+/// Complement of the regularized incomplete beta function, `1 - I_x(a, b)`.
+///
+/// This avoids subtracting from one in the upper tail when the continued
+/// fraction can compute the complement directly.
+#[must_use]
+#[inline]
+pub fn regularized_beta_complement(a: f64, b: f64, x: f64) -> f64 {
+    clamp_probability(regularized_beta_pair_unchecked(a, b, x).1)
+}
+
+/// Logarithm of the regularized incomplete beta function `I_x(a, b)`.
+///
+/// The lower-tail branch is evaluated directly in log space so callers can
+/// retain probabilities smaller than the normal floating-point range.
+#[must_use]
+#[inline]
+pub fn log_regularized_beta(a: f64, b: f64, x: f64) -> f64 {
     if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
         return f64::NAN;
     }
     if x == 0.0 {
-        return 0.0;
+        return f64::NEG_INFINITY;
     }
     #[allow(clippy::float_cmp)]
     if x == 1.0 {
-        return 1.0;
+        return 0.0;
     }
 
-    let log_front = -ln_beta(a, b) + a * x.ln() + b * (1.0 - x).ln();
-    let front = log_front.exp();
-
+    let log_front = b.mul_add((-x).ln_1p(), a.mul_add(x.ln(), -ln_beta(a, b)));
     if x < (a + 1.0) / (a + b + 2.0) {
+        log_front + beta_continued_fraction(a, b, x).ln() - a.ln()
+    } else {
+        let log_complement = log_front + beta_continued_fraction(b, a, 1.0 - x).ln() - b.ln();
+        (-log_complement.exp().clamp(0.0, 1.0)).ln_1p()
+    }
+}
+
+#[allow(clippy::suboptimal_flops)]
+fn regularized_beta_pair_unchecked(a: f64, b: f64, x: f64) -> (f64, f64) {
+    if a <= 0.0 || b <= 0.0 || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) {
+        return (f64::NAN, f64::NAN);
+    }
+    if x == 0.0 {
+        return (0.0, 1.0);
+    }
+    #[allow(clippy::float_cmp)]
+    if x == 1.0 {
+        return (1.0, 0.0);
+    }
+
+    let front = beta_front(a, b, x);
+    let term = if x < (a + 1.0) / (a + b + 2.0) {
         front * beta_continued_fraction(a, b, x) / a
     } else {
-        1.0 - front * beta_continued_fraction(b, a, 1.0 - x) / b
+        front * beta_continued_fraction(b, a, 1.0 - x) / b
+    };
+
+    if x < (a + 1.0) / (a + b + 2.0) {
+        (term, 1.0 - term)
+    } else {
+        (1.0 - term, term)
     }
+}
+
+#[inline]
+fn beta_front(a: f64, b: f64, x: f64) -> f64 {
+    b.mul_add((-x).ln_1p(), a.mul_add(x.ln(), -ln_beta(a, b)))
+        .exp()
 }
 
 /// Regularized lower incomplete gamma function `P(a, x)`.
@@ -285,6 +761,13 @@ fn regularized_beta_unchecked(a: f64, b: f64, x: f64) -> f64 {
 #[inline]
 pub fn regularized_gamma_lower(a: f64, x: f64) -> f64 {
     clamp_probability(regularized_gamma_lower_unchecked(a, x))
+}
+
+/// Regularized upper incomplete gamma function `Q(a, x) = 1 - P(a, x)`.
+#[must_use]
+#[inline]
+pub fn regularized_gamma_upper(a: f64, x: f64) -> f64 {
+    clamp_probability(regularized_gamma_upper_unchecked(a, x))
 }
 
 fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
@@ -295,6 +778,10 @@ fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
         return 0.0;
     }
 
+    if use_gamma_saddlepoint(a, x) {
+        return gamma_saddlepoint_pair(a, x).0;
+    }
+
     if x < a + 1.0 {
         gamma_lower_series(a, x)
     } else {
@@ -302,8 +789,56 @@ fn regularized_gamma_lower_unchecked(a: f64, x: f64) -> f64 {
     }
 }
 
+fn regularized_gamma_upper_unchecked(a: f64, x: f64) -> f64 {
+    if a <= 0.0 || !a.is_finite() || x < 0.0 || !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+
+    if use_gamma_saddlepoint(a, x) {
+        return gamma_saddlepoint_pair(a, x).1;
+    }
+
+    if x < a + 1.0 {
+        1.0 - gamma_lower_series(a, x)
+    } else {
+        gamma_upper_continued_fraction(a, x)
+    }
+}
+
+#[inline]
+fn use_gamma_saddlepoint(a: f64, x: f64) -> bool {
+    const MIN_SHAPE: f64 = 50_000.0;
+    const MAX_CENTERED_DISTANCE: f64 = 10.0;
+
+    a >= MIN_SHAPE && (x - a).abs() <= MAX_CENTERED_DISTANCE * a.sqrt()
+}
+
+fn gamma_saddlepoint_pair(a: f64, x: f64) -> (f64, f64) {
+    let sqrt_a = a.sqrt();
+    let centered = (x - a) / sqrt_a;
+    if centered.abs() <= 1.0e-5 {
+        let central_correction = centered + 1.0 / (3.0 * sqrt_a);
+        let lower = INV_SQRT_2_PI.mul_add(central_correction, 0.5);
+        return (lower, 1.0 - lower);
+    }
+
+    let lambda = x / a;
+    let eta = lambda - 1.0 - lambda.ln();
+    if eta <= 0.0 {
+        return (0.5, 0.5);
+    }
+
+    let r = (2.0 * a * eta).sqrt().copysign(lambda - 1.0);
+    let correction = unit_normal_log_pdf(r).exp() * (1.0 / r - 1.0 / centered);
+    let lower = unit_normal_cdf(r) + correction;
+    (lower, 1.0 - lower)
+}
+
 fn gamma_lower_series(a: f64, x: f64) -> f64 {
-    const MAX_ITERATIONS: usize = 1_000;
+    const MAX_ITERATIONS: usize = 10_000;
     const EPSILON: f64 = 1.0e-14;
 
     let mut term = 1.0 / a;
@@ -735,7 +1270,10 @@ pub fn unit_normal_cdf(z: f64) -> f64 {
     unit_normal_sf(-z)
 }
 
-fn unit_normal_sf(z: f64) -> f64 {
+/// Standard normal survival function `1 - Phi(z)`.
+#[must_use]
+#[inline]
+pub fn unit_normal_sf(z: f64) -> f64 {
     if z.is_nan() {
         return f64::NAN;
     }
@@ -747,6 +1285,13 @@ fn unit_normal_sf(z: f64) -> f64 {
     }
 
     clamp_probability(0.5 * unit_normal_erfc(z * std::f64::consts::FRAC_1_SQRT_2))
+}
+
+/// Natural logarithm of the standard normal survival function.
+#[must_use]
+#[inline]
+pub fn unit_normal_log_sf(z: f64) -> f64 {
+    log_ndtr(-z)
 }
 
 fn unit_normal_erfc(x: f64) -> f64 {
@@ -848,6 +1393,9 @@ pub fn log_ndtr(z: f64) -> f64 {
     if z <= -10.0 {
         return log_ndtr_left_tail(z);
     }
+    if z > 5.0 {
+        return (-unit_normal_sf(z)).ln_1p();
+    }
 
     unit_normal_cdf(z).ln()
 }
@@ -855,7 +1403,14 @@ pub fn log_ndtr(z: f64) -> f64 {
 fn log_ndtr_left_tail(z: f64) -> f64 {
     let x = -z;
     let inv2 = 1.0 / (x * x);
-    let correction = polynomial_descending(
+    let correction = normal_left_tail_correction(inv2);
+
+    unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
+}
+
+#[inline]
+fn normal_left_tail_correction(inv2: f64) -> f64 {
+    polynomial_descending(
         inv2,
         &[
             -34_459_425.0,
@@ -869,9 +1424,7 @@ fn log_ndtr_left_tail(z: f64) -> f64 {
             -1.0,
             1.0,
         ],
-    );
-
-    unit_normal_log_pdf(z) - x.ln() + correction.max(f64::MIN_POSITIVE).ln()
+    )
 }
 
 /// Standard normal Mills ratio `phi(z) / Phi(z)`.
@@ -891,6 +1444,12 @@ pub fn normal_mills_ratio(z: f64) -> f64 {
         return 0.0;
     }
 
+    if z <= -10.0 {
+        let x = -z;
+        let correction = normal_left_tail_correction(1.0 / (x * x));
+        return x / correction.max(f64::MIN_POSITIVE);
+    }
+
     let log_ratio = unit_normal_log_pdf(z) - log_ndtr(z);
     if log_ratio.is_nan() && z < 0.0 {
         // Both log terms may underflow to `-inf` for extreme finite left-tail
@@ -903,9 +1462,9 @@ pub fn normal_mills_ratio(z: f64) -> f64 {
 
 /// Owen's T function `T(h, a)`.
 ///
-/// This is primarily used for skew-normal CDF evaluation. The implementation
-/// uses adaptive Simpson integration, which is accurate enough for family
-/// helper APIs while keeping production dependencies unchanged.
+/// This is primarily used for skew-normal CDF evaluation. Arguments with
+/// `|a| > 1` are reduced by Owen's reciprocal identity, leaving adaptive
+/// Simpson integration on a bounded interval no wider than one.
 #[must_use]
 pub fn owens_t(h: f64, a: f64) -> f64 {
     if !h.is_finite() || !a.is_finite() {
@@ -917,8 +1476,8 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
 
     let sign = a.signum();
     let upper = a.abs();
-    if upper > 50.0 {
-        return sign * 0.5 * unit_normal_sf(h.abs());
+    if upper > 1.0 {
+        return sign * owens_t_reciprocal_reduction(h.abs(), upper);
     }
 
     let h2 = h * h;
@@ -928,6 +1487,19 @@ pub fn owens_t(h: f64, a: f64) -> f64 {
         (-0.5 * h2 * (1.0 + x * x)).exp() / (1.0 + x * x)
     });
     sign * integral / (2.0 * std::f64::consts::PI)
+}
+
+fn owens_t_reciprocal_reduction(h: f64, a: f64) -> f64 {
+    let scaled_h = h * a;
+    let cdf_h = unit_normal_cdf(h);
+    let cdf_scaled = unit_normal_cdf(scaled_h);
+    let reduced = if scaled_h.is_finite() {
+        owens_t(scaled_h, 1.0 / a)
+    } else {
+        0.0
+    };
+    let value = cdf_h.mul_add(-cdf_scaled, f64::midpoint(cdf_h, cdf_scaled)) - reduced;
+    value.clamp(0.0, 0.25)
 }
 
 /// Standard normal quantile using Wichura's AS241 rational approximation.
@@ -1021,5 +1593,80 @@ pub fn unit_normal_quantile(p: f64) -> f64 {
                 / polynomial_ascending_with_constant_one(r, &FAR_TAIL_DENOMINATOR)
         };
         if centered < 0.0 { -quantile } else { quantile }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+
+    use super::{
+        exponential_integral_e1, log_regularized_beta, regularized_beta,
+        student_t_cdf_standardized, student_t_log_cdf_standardized, student_t_log_pdf_standardized,
+    };
+
+    #[test]
+    fn exponential_integral_e1_matches_reference_values() {
+        assert_relative_eq!(
+            exponential_integral_e1(0.1),
+            1.822_923_958_419_390_6,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            exponential_integral_e1(1.0),
+            0.219_383_934_395_520_29,
+            epsilon = 1.0e-14
+        );
+        assert_relative_eq!(
+            exponential_integral_e1(10.0),
+            0.000_004_156_968_929_685_325,
+            epsilon = 1.0e-18
+        );
+    }
+
+    #[test]
+    fn exponential_integral_e1_handles_invalid_domains() {
+        assert!(exponential_integral_e1(-1.0).is_nan());
+        assert!(exponential_integral_e1(f64::NAN).is_nan());
+        assert!(exponential_integral_e1(0.0).is_infinite());
+        assert!(exponential_integral_e1(f64::INFINITY).abs() <= f64::EPSILON);
+    }
+
+    #[test]
+    fn log_regularized_beta_matches_probability_in_regular_range() {
+        for (a, b, x) in [(0.7, 0.5, 0.01), (2.5, 1.3, 0.4), (4.0, 2.0, 0.9)] {
+            assert_relative_eq!(
+                log_regularized_beta(a, b, x),
+                regularized_beta(a, b, x).ln(),
+                epsilon = 1.0e-13
+            );
+        }
+    }
+
+    #[test]
+    fn student_t_log_cdf_matches_cdf_and_retains_far_tail() {
+        for (t, nu) in [(-8.0, 3.0), (-0.7, 5.0), (0.0, 7.0), (2.5, 11.0)] {
+            assert_relative_eq!(
+                student_t_log_cdf_standardized(t, nu),
+                student_t_cdf_standardized(t, nu).ln(),
+                epsilon = 1.0e-13
+            );
+        }
+        let far_tail = student_t_log_cdf_standardized(-1.0e100, 5.0);
+        assert!(far_tail.is_finite());
+        assert!(far_tail < -1_000.0);
+
+        let cauchy_tail = student_t_log_cdf_standardized(-1.0e100, 1.0);
+        let cauchy_asymptotic = 100.0_f64.mul_add(-10.0_f64.ln(), -std::f64::consts::PI.ln());
+        assert_relative_eq!(cauchy_tail, cauchy_asymptotic, epsilon = 1.0e-12);
+        assert!(student_t_log_cdf_standardized(0.0, 0.0).is_nan());
+        assert!(student_t_log_cdf_standardized(f64::NAN, 5.0).is_nan());
+        let negative_infinity = student_t_log_cdf_standardized(f64::NEG_INFINITY, 5.0);
+        assert!(negative_infinity.is_infinite() && negative_infinity.is_sign_negative());
+        assert!(student_t_log_cdf_standardized(f64::INFINITY, 5.0).abs() <= f64::EPSILON);
+        assert!(student_t_log_pdf_standardized(-1.0e308, 5.0).is_finite());
+        let small_df_far_tail = student_t_cdf_standardized(-1.0e200, 0.01);
+        assert!(small_df_far_tail > 0.0);
+        assert!(small_df_far_tail < 0.5);
     }
 }

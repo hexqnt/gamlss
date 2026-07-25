@@ -1,7 +1,9 @@
+use std::ops::Range;
+
 use gamlss_core::{Link, PredictorBlock, RowMultiplier, Softplus};
 
-use crate::SplineError;
-use crate::ispline::ISplineBasis;
+use crate::ispline::{ISplineBasis, ISplineDesign};
+use crate::{SplineError, SplineRowBasis};
 
 /// Direction of a hard-monotone I-spline predictor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,10 +24,25 @@ impl MonotoneDirection {
 }
 
 /// Hard-monotone I-spline predictor using softplus-constrained increments.
+///
+/// Let $M$ be [`MonotoneISplineDesign::n_increments`], let $I_i(x)$ be basis index $i$ from [`ISplineBasis`], and let the unconstrained coefficient slice be $\boldsymbol\beta=(\beta_0,\ldots,\beta_M)$. The implementation uses
+///
+/// $$
+/// \begin{aligned}
+/// a_i &= \operatorname{softplus}(\beta_{i+1})>0,\qquad 0\le i<M, \\\\
+/// \eta(x) &= \beta_0+s\sum_{i=0}^{M-1}a_i I_i(x),
+/// \qquad
+/// s=\begin{cases}1,&\text{increasing},\\\\-1,&\text{decreasing}.\end{cases}
+/// \end{aligned}
+/// $$
+///
+/// Thus `beta[0]` is an unconstrained intercept and `beta[i + 1]` controls basis index $i$. Because $I_i^{\prime}(x)\ge0$, this construction enforces $s\\,\eta^{\prime}(x)=\sum_i a_i I_i^{\prime}(x)\ge0$ for every coefficient vector; no penalty or post-fit projection is needed.
+///
+/// Basis rows use the compact prepared representation from [`ISplineDesign`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonotoneISplineDesign {
-    x: Vec<f64>,
-    basis: ISplineBasis,
+    design: ISplineDesign,
     direction: MonotoneDirection,
 }
 
@@ -36,12 +53,8 @@ impl MonotoneISplineDesign {
         basis: ISplineBasis,
         direction: MonotoneDirection,
     ) -> Result<Self, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
         Ok(Self {
-            x: x.to_vec(),
-            basis,
+            design: ISplineDesign::from_owned_basis(x, basis)?,
             direction,
         })
     }
@@ -49,19 +62,19 @@ impl MonotoneISplineDesign {
     /// Returns the basis metadata.
     #[must_use]
     pub const fn basis(&self) -> &ISplineBasis {
-        &self.basis
+        self.design.basis()
     }
 
     /// Input coordinates.
     #[must_use]
     pub fn x(&self) -> &[f64] {
-        &self.x
+        self.design.x()
     }
 
     /// Number of positive increments.
     #[must_use]
     pub const fn n_increments(&self) -> usize {
-        self.basis.n_basis()
+        self.design.n_basis()
     }
 
     /// Monotonicity direction.
@@ -72,80 +85,85 @@ impl MonotoneISplineDesign {
 
     /// Predictor derivative with respect to `x`.
     #[must_use]
+    #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
+        debug_assert!(row < self.design.x().len());
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
-        self.basis
-            .evaluate_derivative(self.x[row])
-            .iter()
-            .zip(&beta[1..])
-            .map(|(basis, beta)| sign * Softplus::inverse(*beta) * basis)
-            .sum()
+        let beta_tail = &beta[1..];
+        let mut value = 0.0;
+        self.design
+            .basis()
+            .for_each_derivative_basis(self.design.x()[row], |index, basis| {
+                value = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, value);
+            });
+        value
     }
 
     #[allow(clippy::suboptimal_flops)]
+    #[inline]
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;
-        for (index, basis) in self.basis.evaluate(self.x[row]).into_iter().enumerate() {
-            grad[index + 1] += score * sign * basis * Softplus::derivative_inverse(beta[index + 1]);
-        }
+        self.design.for_each_row_basis(row, |index, basis| {
+            let scale = score * sign * Softplus::derivative_inverse(beta[index + 1]);
+            grad[index + 1] = scale.mul_add(basis, grad[index + 1]);
+        });
     }
 }
 
 impl PredictorBlock for MonotoneISplineDesign {
+    #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.design.x().len()
     }
 
+    #[inline]
     fn nparams(&self) -> usize {
-        1 + self.basis.n_basis()
+        1 + self.design.n_basis()
     }
 
+    #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
+        debug_assert!(row < self.design.x().len());
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
-        beta[0]
-            + self
-                .basis
-                .evaluate(self.x[row])
-                .iter()
-                .zip(&beta[1..])
-                .map(|(basis, beta)| sign * Softplus::inverse(*beta) * basis)
-                .sum::<f64>()
+        let beta_tail = &beta[1..];
+        let mut eta = beta[0];
+        self.design.for_each_row_basis(row, |index, basis| {
+            eta = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, eta);
+        });
+        eta
     }
 
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.x.len());
+    #[inline]
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert!(rows.end <= self.design.x().len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             self.add_row_gradient(row, score, beta, grad);
         }
     }
 
-    fn add_weighted_gradient(
-        &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        debug_assert_eq!(multiplier.len(), self.x.len());
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-    }
-
     #[inline]
-    fn add_weighted_gradient_by<M>(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         beta: &[f64],
@@ -153,14 +171,16 @@ impl PredictorBlock for MonotoneISplineDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.x.len());
+        debug_assert!(rows.end <= self.design.x().len());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
 
-        for (row, score) in scores.iter().copied().enumerate() {
+        for (offset, score) in scores.iter().copied().enumerate() {
             if score == 0.0 {
                 continue;
             }
+            let row = rows.start + offset;
             let scaled_score = score * multiplier.multiplier_at(row);
             if scaled_score == 0.0 {
                 continue;

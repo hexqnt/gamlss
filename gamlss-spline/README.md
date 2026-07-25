@@ -1,12 +1,11 @@
 # gamlss-spline
 
-Spline bases, penalties, and spline metadata for GAMLSS-style modeling in Rust.
+Spline bases and smoothness penalties for typed GAMLSS models in Rust.
 
-> **Status:** Actively developed. Public API, internals, numerical behavior, and
-> crate structure may still change before a stable 1.0 release.
+> **Status:** Actively developed. Public API, internals, numerical behavior, and crate structure may still change before a stable 1.0 release.
 
-This crate contains spline design components and smoothness penalties used by
-typed GAMLSS parameter blocks.
+## Design representations
 
-Use it when building smooth or periodic predictor terms and attaching spline
-penalties to typed parameter blocks.
+Reusable `*Basis` and `*Spec` values hold fitted metadata and can build prepared or on-demand designs. Prepared designs cache row geometry for repeated evaluation; on-demand designs retain coordinates and recompute rows to save memory. Both implement the same spline and predictor traits. For one-shot streams, use `SplineBasis1d::for_each_basis` directly.
+
+Most bases share common prepared or on-demand engines; I-spline and natural-cubic designs keep specialized geometry. `TensorSplineDesign` composes two existing designs row by row.

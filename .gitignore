@@ -1,4 +1,8 @@
 /target
+/book/book
 /docs/diagrams
+/issues
+
 gamlss-doc-diagrams-pseudographics.md
-issues.md
+dhat-objective-*.json
+gamlss-family/benches/results/2026-07-19-serial-memory.md

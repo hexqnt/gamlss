@@ -1,0 +1,503 @@
+use std::marker::PhantomData;
+
+use gamlss_core::{
+    Family, HasCdf, HasCrps, HasQuantile, Identity, InitialEtaFromObservations,
+    InitialEtaFromTheta, Link, Log, Nu, ObservationView, ParameterParts, PositiveLink, Scale,
+    Sigma,
+};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+
+use gamlss_special::{
+    digamma, invert_positive_cdf, ln_gamma, regularized_gamma_lower, regularized_gamma_upper,
+    unit_normal_cdf, unit_normal_log_pdf,
+};
+
+use crate::constants::HALF_LOG_2_PI;
+use crate::domain::is_positive_finite;
+use crate::initial::{positive_floor, weighted_summary, weighted_values};
+
+const NU_EPSILON: f64 = 1.0e-4;
+
+/// Generalized gamma scale/sigma/nu distribution with log/log/identity links.
+pub type GeneralizedGammaScaleSigmaNu = GeneralizedGamma<Log, Log, Identity>;
+/// Generalized gamma family with scale, sigma, and shape parameters.
+///
+/// The first parameter is the positive scale/location used in `(y / scale)`,
+/// not the arithmetic mean except in special cases.
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../doc-assets/distributions/generalized_gamma.svg")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneralizedGamma<ScaleLink = Log, SigmaLink = Log, NuLink = Identity> {
+    marker: PhantomData<(ScaleLink, SigmaLink, NuLink)>,
+}
+
+impl<ScaleLink, SigmaLink, NuLink> GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    /// Creates a stateless generalized gamma family.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: GeneralizedGammaEta) -> GeneralizedGammaTheta {
+        GeneralizedGammaTheta {
+            scale: ScaleLink::inverse(eta.scale),
+            sigma: SigmaLink::inverse(eta.sigma),
+            nu: NuLink::inverse(eta.nu),
+        }
+    }
+
+    #[inline]
+    fn valid_theta(theta: GeneralizedGammaTheta) -> bool {
+        is_positive_finite(theta.scale) && is_positive_finite(theta.sigma) && theta.nu.is_finite()
+    }
+
+    #[inline]
+    fn has_finite_mean(theta: GeneralizedGammaTheta) -> bool {
+        // For negative nu outside the log-normal limit, E[Y] exists exactly
+        // when k + 1 / nu > 0, where k = 1 / (sigma^2 * nu^2).
+        theta.nu >= 0.0
+            || theta.nu.abs() < NU_EPSILON
+            || theta.sigma * theta.sigma * theta.nu.abs() < 1.0
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_theta(y: f64, theta: GeneralizedGammaTheta) -> f64 {
+        if y <= 0.0 || !y.is_finite() || !Self::valid_theta(theta) {
+            return f64::INFINITY;
+        }
+        if theta.nu.abs() < NU_EPSILON {
+            let log_ratio = (y / theta.scale).ln();
+            let z = log_ratio / theta.sigma;
+            let (linear, quadratic) = Self::log_normal_limit_terms(log_ratio, theta.sigma);
+            return theta.nu.mul_add(
+                theta.nu.mul_add(quadratic, linear),
+                y.ln() + theta.sigma.ln() + HALF_LOG_2_PI + 0.5 * z * z,
+            );
+        }
+
+        let abs_nu = theta.nu.abs();
+        let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
+        let z = (y / theta.scale).powf(theta.nu);
+        -(k * k.ln() + k * z.ln() + abs_nu.ln() - k * z - ln_gamma(k) - y.ln())
+    }
+
+    #[inline]
+    fn log_normal_limit_terms(log_ratio: f64, sigma: f64) -> (f64, f64) {
+        let log_ratio_squared = log_ratio * log_ratio;
+        (
+            log_ratio_squared * log_ratio / (6.0 * sigma * sigma),
+            log_ratio_squared * log_ratio_squared / (24.0 * sigma * sigma) + sigma * sigma / 12.0,
+        )
+    }
+
+    #[inline]
+    fn gradient_theta(y: f64, theta: GeneralizedGammaTheta) -> GeneralizedGammaTheta {
+        let log_ratio = (y / theta.scale).ln();
+        if theta.nu.abs() < NU_EPSILON {
+            let sigma_squared = theta.sigma * theta.sigma;
+            let log_ratio_squared = log_ratio * log_ratio;
+            let (linear, quadratic) = Self::log_normal_limit_terms(log_ratio, theta.sigma);
+            let d_nll_d_log_ratio = log_ratio / sigma_squared
+                + theta.nu * log_ratio_squared / (2.0 * sigma_squared)
+                + theta.nu * theta.nu * log_ratio_squared * log_ratio / (6.0 * sigma_squared);
+            let d_linear_d_sigma =
+                -log_ratio_squared * log_ratio / (3.0 * theta.sigma * sigma_squared);
+            let d_quadratic_d_sigma = -log_ratio_squared * log_ratio_squared
+                / (12.0 * theta.sigma * sigma_squared)
+                + theta.sigma / 6.0;
+            return GeneralizedGammaTheta {
+                scale: -d_nll_d_log_ratio / theta.scale,
+                sigma: (theta.nu * theta.nu).mul_add(
+                    d_quadratic_d_sigma,
+                    theta.nu.mul_add(
+                        d_linear_d_sigma,
+                        1.0 / theta.sigma - log_ratio_squared / (theta.sigma * sigma_squared),
+                    ),
+                ),
+                nu: (2.0 * theta.nu).mul_add(quadratic, linear),
+            };
+        }
+
+        let k = 1.0 / (theta.sigma * theta.sigma * theta.nu * theta.nu);
+        let log_z = theta.nu * log_ratio;
+        let z = log_z.exp();
+        let d_k = digamma(k) - k.ln() - 1.0 - log_z + z;
+        let d_log_z = k * (z - 1.0);
+
+        GeneralizedGammaTheta {
+            scale: -d_log_z * theta.nu / theta.scale,
+            sigma: d_k * (-2.0 * k / theta.sigma),
+            nu: d_k * (-2.0 * k / theta.nu) + d_log_z * log_ratio - 1.0 / theta.nu,
+        }
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(y: f64, eta: GeneralizedGammaEta) -> (f64, GeneralizedGammaEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = Self::nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (nll, GeneralizedGammaEta::from_array([f64::NAN; 3]));
+        }
+
+        let gradient = Self::gradient_theta(y, theta);
+        (
+            nll,
+            GeneralizedGammaEta {
+                scale: gradient.scale * ScaleLink::derivative_inverse(eta.scale),
+                sigma: gradient.sigma * SigmaLink::derivative_inverse(eta.sigma),
+                nu: gradient.nu * NuLink::derivative_inverse(eta.nu),
+            },
+        )
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> Default for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+gamlss_core::impl_scalar_compilable_family!(
+    impl<ScaleLink, SigmaLink, NuLink> for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>;
+    parameters = (Scale, Sigma, Nu);
+    arity = 3;
+);
+
+impl<ScaleLink, SigmaLink, NuLink> Family for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    type Eta = GeneralizedGammaEta;
+    type Theta = GeneralizedGammaTheta;
+    type GradientEta = GeneralizedGammaEta;
+    type Observation<'obs> = f64;
+    type Workspace = ();
+
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
+    }
+
+    #[inline]
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, *theta)
+    }
+
+    #[inline]
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        Self::nll_theta(y, Self::theta_from_eta(*eta))
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> InitialEtaFromObservations<3>
+    for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    SigmaLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    NuLink: InitialEtaFromTheta<f64> + Link<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y > 0.0).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return GeneralizedGammaEta::from_array([0.0, 0.0, 0.0]);
+        };
+        let scale = positive_floor(summary.mean);
+        let sigma = positive_floor((summary.variance.sqrt() / scale).max(1.0e-3));
+
+        GeneralizedGammaEta {
+            scale: ScaleLink::initial_eta_from_theta(scale),
+            sigma: SigmaLink::initial_eta_from_theta(sigma),
+            nu: NuLink::initial_eta_from_theta(1.0),
+        }
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> HasCdf for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if !y.is_finite() || !Self::valid_theta(*theta) {
+            return f64::NAN;
+        }
+        if y <= 0.0 {
+            return 0.0;
+        }
+        if theta.nu.abs() < NU_EPSILON {
+            let z = (y / theta.scale).ln() / theta.sigma;
+            let correction =
+                theta.nu * theta.sigma * z.mul_add(z, 2.0) * unit_normal_log_pdf(z).exp() / 6.0;
+            return (unit_normal_cdf(z) + correction).clamp(0.0, 1.0);
+        }
+
+        let abs_nu = theta.nu.abs();
+        let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
+        let x = k * (y / theta.scale).powf(theta.nu);
+        if theta.nu > 0.0 {
+            regularized_gamma_lower(k, x)
+        } else {
+            regularized_gamma_upper(k, x)
+        }
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> HasQuantile for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if !Self::valid_theta(*theta) {
+            return f64::NAN;
+        }
+
+        invert_positive_cdf(p, |y| self.cdf(y, theta))
+    }
+}
+
+impl<ScaleLink, SigmaLink, NuLink> HasCrps for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        if y < 0.0 || !y.is_finite() || !Self::valid_theta(*theta) || !Self::has_finite_mean(*theta)
+        {
+            return f64::NAN;
+        }
+        crate::crps::integrate_cdf_crps(y, theta.scale, |x| self.cdf(x, theta))
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, ScaleLink, SigmaLink, NuLink> TrySimulate<Rng>
+    for GeneralizedGamma<ScaleLink, SigmaLink, NuLink>
+where
+    Rng: rand::Rng,
+    ScaleLink: PositiveLink<f64>,
+    SigmaLink: PositiveLink<f64>,
+    NuLink: Link<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        if !Self::valid_theta(*theta) {
+            return Err(SimulationError::InvalidParameters(
+                "generalized gamma theta",
+            ));
+        }
+
+        if theta.nu.abs() < NU_EPSILON {
+            let z = crate::simulation::standard_normal(rng);
+            return crate::simulation::ensure_finite(
+                theta.scale * (theta.sigma * z).exp(),
+                "generalized gamma log-normal limit",
+            );
+        }
+
+        let abs_nu = theta.nu.abs();
+        let k = 1.0 / (theta.sigma * theta.sigma * abs_nu * abs_nu);
+        let distribution = rand_distr::Gamma::new(k, 1.0 / k)
+            .map_err(|_| SimulationError::BackendRejected("generalized gamma shape/scale"))?;
+        let z = rand_distr::Distribution::sample(&distribution, rng);
+        let sample = theta.scale * z.powf(1.0 / theta.nu);
+        if sample.is_finite() {
+            Ok(sample)
+        } else {
+            Err(SimulationError::NumericalFailure(
+                "generalized gamma transform",
+            ))
+        }
+    }
+}
+
+/// Predictors for generalized gamma on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneralizedGammaEta {
+    /// Scale/location predictor.
+    ///
+    /// This controls the positive parameter used in `(y / scale)`; it is not
+    /// generally the arithmetic mean.
+    ///
+    pub scale: f64,
+    /// Scale predictor.
+    pub sigma: f64,
+    /// Shape predictor.
+    pub nu: f64,
+}
+
+impl ParameterParts<3> for GeneralizedGammaEta {
+    #[inline]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            scale: values[0],
+            sigma: values[1],
+            nu: values[2],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.scale,
+            1 => self.sigma,
+            2 => self.nu,
+            _ => unreachable!("generalized gamma eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale generalized gamma parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneralizedGammaTheta {
+    /// Positive scale/location parameter.
+    ///
+    /// This is the positive parameter used in `(y / scale)`; it is not
+    /// generally the arithmetic mean.
+    ///
+    pub scale: f64,
+    /// Positive scale parameter.
+    pub sigma: f64,
+    /// Shape parameter; `nu = 0` is the log-normal limit.
+    pub nu: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
+    use gamlss_core::{Family, HasCdf};
+
+    use super::{GeneralizedGammaScaleSigmaNu, GeneralizedGammaTheta};
+    use crate::test_support::assert_gradient_matches_finite_difference_with_tolerance;
+
+    #[test]
+    fn generalized_gamma_preserves_small_lower_tail_for_negative_shape() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let cdf = family.cdf(
+            0.01,
+            &GeneralizedGammaTheta {
+                scale: 1.0,
+                sigma: 1.0,
+                nu: -1.0,
+            },
+        );
+
+        assert!(cdf > 0.0);
+        assert_relative_eq!(cdf, (-100.0_f64).exp(), epsilon = 1.0e-55);
+    }
+
+    #[test]
+    fn log_normal_limit_gradient_matches_the_approximated_nll() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        assert_gradient_matches_finite_difference_with_tolerance::<_, 3>(
+            &family,
+            2.0,
+            [0.1, -0.3, 5.0e-5],
+            1.0e-6,
+            2.0e-7,
+        );
+    }
+
+    #[test]
+    fn log_normal_limit_shape_score_has_zero_expectation_at_the_log_location() {
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let (_, gradient) = family.nll_and_gradient_eta(
+            1.0,
+            &super::GeneralizedGammaEta {
+                scale: 0.0,
+                sigma: 0.0,
+                nu: 0.0,
+            },
+            &mut family.workspace(),
+        );
+
+        assert_relative_eq!(gradient.nu, 0.0, epsilon = f64::EPSILON);
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn generalized_gamma_sampling_returns_positive_values_and_errors_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = GeneralizedGammaScaleSigmaNu::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &GeneralizedGammaTheta {
+                    scale: 1.5,
+                    sigma: 0.7,
+                    nu: 0.8,
+                },
+            )
+            .unwrap();
+        assert!(sample > 0.0 && sample.is_finite());
+        let log_normal_limit = family
+            .try_sample(
+                &mut rng,
+                &GeneralizedGammaTheta {
+                    scale: 1.5,
+                    sigma: 0.7,
+                    nu: 0.0,
+                },
+            )
+            .unwrap();
+        assert!(log_normal_limit > 0.0 && log_normal_limit.is_finite());
+        assert!(
+            family
+                .try_sample(
+                    &mut rng,
+                    &GeneralizedGammaTheta {
+                        scale: 1.5,
+                        sigma: 0.0,
+                        nu: 0.8,
+                    }
+                )
+                .is_err()
+        );
+    }
+}

@@ -1,10 +1,19 @@
-use crate::{TargetTransform, TransformError, median_sorted, validate_non_empty_finite};
+use crate::transforms::{
+    TargetTransform, TransformError, median_sorted, validate_non_empty_finite,
+};
 
 /// Signed inverse-hyperbolic-sine transform with a fitted robust scale.
 ///
-/// `transform(y) = asinh(y / scale)`. Unlike a log transform, this is defined
-/// for negative, zero and positive finite targets while still compressing large
-/// magnitudes.
+/// With $s$ equal to the median of the absolute training targets $|y_i|$,
+///
+/// $$
+/// T(y)=\operatorname{asinh}\left(\frac{y}{s}\right),
+/// \qquad
+/// T^{-1}(z)=s\sinh z.
+/// $$
+///
+/// [`AsinhScaleState::scale`] stores $s$ and $z=T(y)$ is the transform-scale value. For an even sample the median is the midpoint of the two central sorted values; a zero median uses $s=1$. Unlike a log transform, this is defined for negative, zero, and positive finite targets while still compressing large magnitudes.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AsinhScale;
 

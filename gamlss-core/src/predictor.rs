@@ -1,6 +1,9 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Range};
 
-use crate::{DesignMatrix, Link, ModelError, RowMultiplier, Softplus, design::scale_active_rows};
+use crate::{
+    DesignMatrix, Link, ModelError, RowMultiplier, Softplus,
+    design::{scale_active_rows, scale_active_rows_range},
+};
 
 const EXPECTED_FINITE: &str = "finite";
 
@@ -69,8 +72,8 @@ where
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        self.x.add_t_mul_vec(scores, grad);
+    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        self.x.add_t_mul_vec_range(rows, scores, grad);
     }
 
     #[inline]
@@ -79,19 +82,9 @@ where
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
-        scores: &[f64],
-        multiplier: &[f64],
-        _: &[f64],
-        grad: &mut [f64],
-    ) {
-        self.x.add_weighted_t_mul_vec(scores, multiplier, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by<M>(
-        &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         _: &[f64],
@@ -99,7 +92,8 @@ where
     ) where
         M: RowMultiplier + ?Sized,
     {
-        self.x.add_weighted_t_mul_vec_by(scores, multiplier, grad);
+        self.x
+            .add_weighted_t_mul_vec_by_range(rows, scores, multiplier, grad);
     }
 
     #[inline]
@@ -243,8 +237,15 @@ where
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.nrows);
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
@@ -255,19 +256,23 @@ where
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: &[f64],
+        multiplier: &M,
         beta: &[f64],
         grad: &mut [f64],
-    ) {
-        debug_assert_eq!(scores.len(), self.nrows);
-        debug_assert_eq!(multiplier.len(), self.nrows);
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] = weighted_sum(scores, multiplier).mul_add(T::derivative(beta[0]), grad[0]);
+        let weighted = weighted_score_sum(rows.start, scores, multiplier);
+        grad[0] = weighted.mul_add(T::derivative(beta[0]), grad[0]);
     }
 
     #[inline]
@@ -337,8 +342,15 @@ impl PredictorBlock for FloorSoftplusScalar {
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.nrows);
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    ) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
@@ -349,20 +361,23 @@ impl PredictorBlock for FloorSoftplusScalar {
     }
 
     #[inline]
-    fn add_weighted_gradient(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: &[f64],
+        multiplier: &M,
         beta: &[f64],
         grad: &mut [f64],
-    ) {
-        debug_assert_eq!(scores.len(), self.nrows);
-        debug_assert_eq!(multiplier.len(), self.nrows);
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), 1);
         debug_assert_eq!(grad.len(), 1);
 
-        grad[0] = weighted_sum(scores, multiplier)
-            .mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
+        let weighted = weighted_score_sum(rows.start, scores, multiplier);
+        grad[0] = weighted.mul_add(Softplus::derivative_inverse(beta[0]), grad[0]);
     }
 
     #[inline]
@@ -432,10 +447,20 @@ impl PredictorBlock for OffsetBlock {
     }
 
     #[inline]
-    fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {}
+    fn add_gradient_range(&self, _: Range<usize>, _: &[f64], _: &[f64], _: &mut [f64]) {}
 
     #[inline]
-    fn add_weighted_gradient(&self, _: &[f64], _: &[f64], _: &[f64], _: &mut [f64]) {}
+    fn add_weighted_gradient_by_range<M>(
+        &self,
+        _: Range<usize>,
+        _: &[f64],
+        _: &M,
+        _: &[f64],
+        _: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+    }
 
     #[inline]
     fn zero_beta_constant_contribution(&self) -> Option<f64> {
@@ -578,32 +603,30 @@ where
     }
 
     #[inline]
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
-        debug_assert_eq!(scores.len(), self.nrows());
-        debug_assert_eq!(self.multiplier.len(), self.nrows());
-
-        self.inner
-            .add_weighted_gradient(scores, &self.multiplier, beta, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient(
+    fn add_gradient_range(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
-        multiplier: &[f64],
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert_eq!(scores.len(), self.nrows());
-        debug_assert_eq!(multiplier.len(), self.nrows());
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(self.multiplier.len(), self.nrows());
 
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+        self.inner.add_weighted_gradient_by_range(
+            rows,
+            scores,
+            self.multiplier.as_slice(),
+            beta,
+            grad,
+        );
     }
 
     #[inline]
-    fn add_weighted_gradient_by<M>(
+    fn add_weighted_gradient_by_range<M>(
         &self,
+        rows: Range<usize>,
         scores: &[f64],
         multiplier: &M,
         beta: &[f64],
@@ -611,7 +634,8 @@ where
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert_eq!(scores.len(), self.nrows());
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(self.multiplier.len(), self.nrows());
 
         let product_multiplier = ProductRowMultiplier {
@@ -619,7 +643,7 @@ where
             right: multiplier,
         };
         self.inner
-            .add_weighted_gradient_by(scores, &product_multiplier, beta, grad);
+            .add_weighted_gradient_by_range(rows, scores, &product_multiplier, beta, grad);
     }
 
     #[inline]
@@ -770,11 +794,12 @@ impl RowMultiplier for UnitRowMultiplier {
 /// scores back to that local coefficient slice.
 ///
 /// The model validates row counts before evaluation. In release builds,
-/// implementations may assume `row < nrows()`, `beta.len() == nparams()`,
-/// `scores.len() == nrows()` and `grad.len() == nparams()`. `add_gradient`
-/// must add into the existing `grad` buffer rather than clearing it. Gradient
-/// operations must treat an exactly zero score as disabling that row and avoid
-/// reading its multiplier or row geometry.
+/// implementations may assume that row ranges are within `0..nrows()`,
+/// `scores.len() == rows.len()`, `beta.len() == nparams()` and
+/// `grad.len() == nparams()`. Range gradient methods must add into the existing
+/// `grad` buffer rather than clearing it, and contributions over disjoint
+/// contiguous ranges must be additive. Exactly zero scores disable their rows:
+/// implementations must not read the corresponding multiplier or row geometry.
 pub trait PredictorBlock {
     /// Number of observations.
     fn nrows(&self) -> usize;
@@ -801,13 +826,24 @@ pub trait PredictorBlock {
     fn zero_beta_constant_contribution(&self) -> Option<f64> {
         None
     }
-    /// Adds the gradient contribution implied by `scores` into `grad`.
-    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]);
+    /// Adds the gradient contribution for `rows` implied by range-local `scores`.
+    fn add_gradient_range(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        beta: &[f64],
+        grad: &mut [f64],
+    );
+    /// Adds the gradient contribution for all observations.
+    #[inline]
+    fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
+        debug_assert_eq!(scores.len(), self.nrows());
+        self.add_gradient_range(0..self.nrows(), scores, beta, grad);
+    }
     /// Adds the gradient contribution implied by `scores * multiplier` into `grad`.
     ///
-    /// Default implementation materializes scaled scores and delegates to
-    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
-    /// this method when they can fuse the multiplier into their gradient pass.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_gradient_by_range`].
     #[inline]
     fn add_weighted_gradient(
         &self,
@@ -816,14 +852,14 @@ pub trait PredictorBlock {
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        self.add_weighted_gradient_by(scores, multiplier, beta, grad);
+        debug_assert_eq!(scores.len(), self.nrows());
+        self.add_weighted_gradient_by_range(0..self.nrows(), scores, multiplier, beta, grad);
     }
 
     /// Adds the gradient contribution implied by a lazy row multiplier.
     ///
-    /// Default implementation materializes scaled scores and delegates to
-    /// [`Self::add_gradient`]. Blocks used in nested hot paths should override
-    /// this method to keep row scaling fused through composed predictors.
+    /// This whole-range convenience method delegates to
+    /// [`Self::add_weighted_gradient_by_range`].
     #[inline]
     fn add_weighted_gradient_by<M>(
         &self,
@@ -835,9 +871,27 @@ pub trait PredictorBlock {
         M: RowMultiplier + ?Sized,
     {
         debug_assert_eq!(scores.len(), self.nrows());
+        self.add_weighted_gradient_by_range(0..self.nrows(), scores, multiplier, beta, grad);
+    }
 
-        let scaled_scores = scale_active_rows(scores, multiplier);
-        self.add_gradient(&scaled_scores, beta, grad);
+    /// Adds a lazily weighted gradient contribution for a contiguous row range.
+    ///
+    /// `scores` is range-local; `multiplier` is indexed by absolute row.
+    #[inline]
+    fn add_weighted_gradient_by_range<M>(
+        &self,
+        rows: Range<usize>,
+        scores: &[f64],
+        multiplier: &M,
+        beta: &[f64],
+        grad: &mut [f64],
+    ) where
+        M: RowMultiplier + ?Sized,
+    {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(scores.len(), rows.len());
+        let scaled_scores = scale_active_rows_range(scores, rows.clone(), multiplier);
+        self.add_gradient_range(rows, &scaled_scores, beta, grad);
     }
 
     /// Validates internal block consistency.
@@ -949,18 +1003,16 @@ pub trait CoefficientTransform {
 }
 
 #[inline]
-fn weighted_sum(scores: &[f64], multiplier: &[f64]) -> f64 {
+fn weighted_score_sum<M>(row_start: usize, scores: &[f64], multiplier: &M) -> f64
+where
+    M: RowMultiplier + ?Sized,
+{
     scores
         .iter()
         .copied()
         .enumerate()
-        .map(|(row, score)| {
-            if score == 0.0 {
-                0.0
-            } else {
-                score * multiplier[row]
-            }
-        })
+        .filter(|(_, score)| *score != 0.0)
+        .map(|(offset, score)| score * multiplier.multiplier_at(row_start + offset))
         .sum()
 }
 
@@ -1058,12 +1110,23 @@ macro_rules! impl_sum_block {
             }
 
             #[inline]
-            fn add_gradient(&self, scores: &[f64], beta: &[f64], grad: &mut [f64]) {
+            fn add_gradient_range(
+                &self,
+                rows: Range<usize>,
+                scores: &[f64],
+                beta: &[f64],
+                grad: &mut [f64],
+            ) {
                 let mut start = 0;
                 $(
                     let $var = &self.terms.$idx;
                     let end = start + $var.nparams();
-                    $var.add_gradient(scores, &beta[start..end], &mut grad[start..end]);
+                    $var.add_gradient_range(
+                        rows.clone(),
+                        scores,
+                        &beta[start..end],
+                        &mut grad[start..end],
+                    );
                     start = end;
                 )+
                 let _ = start;
@@ -1102,24 +1165,9 @@ macro_rules! impl_sum_block {
             }
 
             #[inline]
-            fn add_weighted_gradient(
+            fn add_weighted_gradient_by_range<M>(
                 &self,
-                scores: &[f64],
-                multiplier: &[f64],
-                beta: &[f64],
-                grad: &mut [f64],
-            ) {
-                debug_assert_eq!(scores.len(), self.nrows());
-                debug_assert_eq!(multiplier.len(), self.nrows());
-                debug_assert_eq!(beta.len(), self.nparams());
-                debug_assert_eq!(grad.len(), self.nparams());
-
-                self.add_weighted_gradient_by(scores, multiplier, beta, grad);
-            }
-
-            #[inline]
-            fn add_weighted_gradient_by<M>(
-                &self,
+                rows: Range<usize>,
                 scores: &[f64],
                 multiplier: &M,
                 beta: &[f64],
@@ -1127,7 +1175,8 @@ macro_rules! impl_sum_block {
             ) where
                 M: RowMultiplier + ?Sized,
             {
-                debug_assert_eq!(scores.len(), self.nrows());
+                debug_assert!(rows.end <= self.nrows());
+                debug_assert_eq!(scores.len(), rows.len());
                 debug_assert_eq!(beta.len(), self.nparams());
                 debug_assert_eq!(grad.len(), self.nparams());
 
@@ -1135,7 +1184,8 @@ macro_rules! impl_sum_block {
                 $(
                     let $var = &self.terms.$idx;
                     let end = start + $var.nparams();
-                    $var.add_weighted_gradient_by(
+                    $var.add_weighted_gradient_by_range(
+                        rows.clone(),
                         scores,
                         multiplier,
                         &beta[start..end],
@@ -1258,6 +1308,8 @@ impl_sum_block!(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use approx::assert_relative_eq;
 
     use crate::{
@@ -1285,7 +1337,7 @@ mod tests {
             beta[0]
         }
 
-        fn add_gradient(&self, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+        fn add_gradient_range(&self, _: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
             grad[0] += scores.iter().sum::<f64>();
         }
     }
@@ -1330,12 +1382,13 @@ mod tests {
             beta[0]
         }
 
-        fn add_gradient(&self, _: &[f64], _: &[f64], _: &mut [f64]) {
+        fn add_gradient_range(&self, _: Range<usize>, _: &[f64], _: &[f64], _: &mut [f64]) {
             panic!("composed lazy path must not materialize scores");
         }
 
-        fn add_weighted_gradient_by<M>(
+        fn add_weighted_gradient_by_range<M>(
             &self,
+            rows: Range<usize>,
             scores: &[f64],
             multiplier: &M,
             _: &[f64],
@@ -1343,9 +1396,9 @@ mod tests {
         ) where
             M: RowMultiplier + ?Sized,
         {
-            for (row, score) in scores.iter().copied().enumerate() {
+            for (offset, score) in scores.iter().copied().enumerate() {
                 if score != 0.0 {
-                    grad[0] = score.mul_add(multiplier.multiplier_at(row), grad[0]);
+                    grad[0] = score.mul_add(multiplier.multiplier_at(rows.start + offset), grad[0]);
                 }
             }
         }

@@ -4,8 +4,27 @@ const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
 const EXPECTED_FINITE_NONNEGATIVE: &str = "finite and >= 0";
 const EXPECTED_DIFFERENCE_ORDER_FOR_DIM: &str = "> 0 and < dimension";
 const EXPECTED_DIFFERENCE_COEFFICIENTS: &str = "consistent with difference penalty order";
+const FIRST_DIFFERENCE_COEFFICIENTS: [f64; 2] = [-1.0, 1.0];
+const SECOND_DIFFERENCE_COEFFICIENTS: [f64; 3] = [1.0, -2.0, 1.0];
 
 /// Difference penalty of order `order` for neighboring spline coefficients.
+///
+/// For a coefficient slice $\boldsymbol\beta=(\beta_0,\ldots,\beta_{n-1})$ and difference order $m<n$, define
+///
+/// $$
+/// \Delta^m\beta_i = \sum_{j=0}^{m}(-1)^{m-j}\binom{m}{j}\beta_{i+j}.
+/// $$
+///
+/// Here $\binom{m}{j}$ is a binomial coefficient.
+///
+/// The penalty value is the mean squared non-wrapping difference,
+///
+/// $$
+/// J_m(\boldsymbol\beta)= \frac{\lambda}{n-m}\sum_{i=0}^{n-m-1}\left(\Delta^m\beta_i\right)^2.
+/// $$
+///
+/// In code, $n=\mathtt{beta.len()}$, $m$ is [`DifferencePenalty::order`], and $\lambda$ is [`DifferencePenalty::lambda`]. The $n-m$ denominator is the number of non-wrapping differences and makes $\lambda$ approximately scale-stable as $n$ changes.
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DifferencePenalty {
     /// Penalty weight.
@@ -192,8 +211,20 @@ impl MatrixPenalty for PreparedDifferencePenalty {
 
 /// Cyclic finite-difference penalty for periodic coefficient vectors.
 ///
-/// Differs from [`DifferencePenalty`] in that differences are taken modulo
-/// the vector length (wrap-around).
+/// For the same $\boldsymbol\beta$, $m$, and $\lambda$ notation as [`DifferencePenalty`], cyclic indexing replaces $\beta_{i+j}$ with $\beta_{(i+j)\bmod n}$ and includes one difference starting at every coefficient:
+///
+/// $$
+/// J_m^{\mathrm{cyclic}}(\boldsymbol\beta)
+/// = \frac{\lambda}{n}
+///   \sum_{i=0}^{n-1}
+///   \left[
+///     \sum_{j=0}^{m}(-1)^{m-j}\binom{m}{j}
+///     \beta_{(i+j)\bmod n}
+///   \right]^2.
+/// $$
+///
+/// The denominator is $n$ because there is one wrapped difference per coefficient. In code, $m$ and $\lambda$ are [`CyclicDifferencePenalty::order`] and [`CyclicDifferencePenalty::lambda`].
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CyclicDifferencePenalty {
     /// Penalty weight.
@@ -474,32 +505,6 @@ pub struct SlopeLimitPenalty {
 }
 
 impl SlopeLimitPenalty {
-    /// Creates a slope limit penalty.
-    ///
-    /// `weight` — penalty strength, `scale` converts coefficient differences
-    /// into a physical slope, `cold_limit` and `warm_limit` — optional limits
-    /// (if `None`, the corresponding edge is not penalized).
-    ///
-    /// This constructor is unchecked and preserves the historical defensive
-    /// evaluation behavior: invalid `weight`, `scale` or limits make the
-    /// affected penalty contribution zero. Use [`Self::try_new`] for validated
-    /// runtime construction.
-    #[must_use]
-    #[inline]
-    pub const fn new(
-        weight: f64,
-        scale: f64,
-        cold_limit: Option<f64>,
-        warm_limit: Option<f64>,
-    ) -> Self {
-        Self {
-            weight,
-            scale,
-            cold_limit,
-            warm_limit,
-        }
-    }
-
     /// Creates a slope limit penalty with validated scalar parameters.
     ///
     /// # Errors
@@ -518,7 +523,12 @@ impl SlopeLimitPenalty {
         validate_positive_finite("penalty scale", scale)?;
         validate_limit("cold penalty limit", cold_limit)?;
         validate_limit("warm penalty limit", warm_limit)?;
-        Ok(Self::new(weight, scale, cold_limit, warm_limit))
+        Ok(Self {
+            weight,
+            scale,
+            cold_limit,
+            warm_limit,
+        })
     }
 
     /// Returns the penalty weight.
@@ -609,6 +619,9 @@ fn non_cyclic_difference_at(coefficients: &[f64], beta_window: &[f64]) -> f64 {
 }
 
 fn cyclic_difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if lambda == 0.0 {
+        return 0.0;
+    }
     if beta.is_empty() || beta.len() < coefficients.len() {
         return 0.0;
     }
@@ -631,7 +644,16 @@ fn add_cyclic_difference_penalty_gradient(
 ) {
     debug_assert_eq!(beta.len(), grad.len());
 
-    if beta.is_empty() || beta.len() < coefficients.len() {
+    if lambda == 0.0 || beta.is_empty() || beta.len() < coefficients.len() {
+        return;
+    }
+
+    if coefficients == FIRST_DIFFERENCE_COEFFICIENTS {
+        add_cyclic_first_difference_penalty_gradient(lambda, beta, grad);
+        return;
+    }
+    if coefficients == SECOND_DIFFERENCE_COEFFICIENTS {
+        add_cyclic_second_difference_penalty_gradient(lambda, beta, grad);
         return;
     }
 
@@ -668,6 +690,9 @@ fn add_cyclic_difference_penalty_matrix(
 }
 
 fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+    if lambda == 0.0 {
+        return 0.0;
+    }
     if beta.len() < coefficients.len() {
         return 0.0;
     }
@@ -691,7 +716,16 @@ fn add_difference_penalty_gradient(
 ) {
     debug_assert_eq!(beta.len(), grad.len());
 
-    if beta.len() < coefficients.len() {
+    if lambda == 0.0 || beta.len() < coefficients.len() {
+        return;
+    }
+
+    if coefficients == FIRST_DIFFERENCE_COEFFICIENTS {
+        add_first_difference_penalty_gradient(lambda, beta, grad);
+        return;
+    }
+    if coefficients == SECOND_DIFFERENCE_COEFFICIENTS {
+        add_second_difference_penalty_gradient(lambda, beta, grad);
         return;
     }
 
@@ -705,6 +739,93 @@ fn add_difference_penalty_gradient(
             let index = start + offset;
             grad[index] = (2.0 * scale * diff).mul_add(coefficient, grad[index]);
         }
+    }
+}
+
+fn add_cyclic_first_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 2);
+
+    let len = beta.len();
+    let scale = 2.0 * normalized_scale(lambda, len);
+    let last = len - 1;
+    for index in 0..len {
+        let previous = if index == 0 {
+            beta[last]
+        } else {
+            beta[index - 1]
+        };
+        let next = if index == last {
+            beta[0]
+        } else {
+            beta[index + 1]
+        };
+        let left = beta[index] - previous;
+        let right = next - beta[index];
+        grad[index] = scale.mul_add(left - right, grad[index]);
+    }
+}
+
+fn add_cyclic_second_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 3);
+
+    let len = beta.len();
+    let scale = 2.0 * normalized_scale(lambda, len);
+    let middle_scale = -2.0 * scale;
+    for start in 0..len {
+        let middle = wrap_offset(start, 1, len);
+        let right = wrap_offset(start, 2, len);
+        let diff = (beta[right] - beta[middle]) - (beta[middle] - beta[start]);
+        grad[start] = scale.mul_add(diff, grad[start]);
+        grad[middle] = middle_scale.mul_add(diff, grad[middle]);
+        grad[right] = scale.mul_add(diff, grad[right]);
+    }
+}
+
+fn add_first_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 2);
+
+    let len = beta.len();
+    let n_differences = len - 1;
+    let scale = 2.0 * normalized_scale(lambda, n_differences);
+    let last = len - 1;
+
+    grad[0] = scale.mul_add(beta[0] - beta[1], grad[0]);
+    for index in 1..last {
+        let left = beta[index] - beta[index - 1];
+        let right = beta[index + 1] - beta[index];
+        grad[index] = scale.mul_add(left - right, grad[index]);
+    }
+    grad[last] = scale.mul_add(beta[last] - beta[last - 1], grad[last]);
+}
+
+fn add_second_difference_penalty_gradient(lambda: f64, beta: &[f64], grad: &mut [f64]) {
+    debug_assert_eq!(beta.len(), grad.len());
+    debug_assert!(beta.len() >= 3);
+
+    let n_differences = beta.len() - 2;
+    let scale = 2.0 * normalized_scale(lambda, n_differences);
+    let middle_scale = -2.0 * scale;
+
+    for start in 0..n_differences {
+        let middle = start + 1;
+        let right = start + 2;
+        let diff = (beta[right] - beta[middle]) - (beta[middle] - beta[start]);
+        grad[start] = scale.mul_add(diff, grad[start]);
+        grad[middle] = middle_scale.mul_add(diff, grad[middle]);
+        grad[right] = scale.mul_add(diff, grad[right]);
+    }
+}
+
+#[inline]
+const fn wrap_offset(index: usize, offset: usize, len: usize) -> usize {
+    let wrapped = index + offset;
+    if wrapped >= len {
+        wrapped - len
+    } else {
+        wrapped
     }
 }
 
@@ -754,14 +875,6 @@ fn add_slope_limit_value(
     if beta.len() < 2 {
         return;
     }
-    if !penalty.weight.is_finite()
-        || penalty.weight <= 0.0
-        || !penalty.scale.is_finite()
-        || penalty.scale <= 0.0
-    {
-        return;
-    }
-
     let Some(limit) = (if cold {
         penalty.cold_limit
     } else {
@@ -769,10 +882,6 @@ fn add_slope_limit_value(
     }) else {
         return;
     };
-    if !limit.is_finite() || limit < 0.0 {
-        return;
-    }
-
     let (first, second) = if cold {
         (0, 1)
     } else {
@@ -939,7 +1048,7 @@ mod tests {
 
     use super::{
         CyclicDifferencePenalty, DifferencePenalty, EdgeMonotonicPenalty,
-        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty,
     };
 
     fn invalid_parameter(parameter: &'static str, expected: &'static str) -> ModelError {
@@ -1016,18 +1125,12 @@ mod tests {
     }
 
     #[test]
-    fn edge_and_slope_penalty_validation_reject_unchecked_invalid_scalars() {
+    fn edge_penalty_validation_rejects_unchecked_invalid_weight() {
         assert_eq!(
             EdgeMonotonicPenalty::new(f64::NAN)
                 .validate_dim(3)
                 .unwrap_err(),
             invalid_parameter("penalty weight", "finite and > 0")
-        );
-        assert_eq!(
-            SlopeLimitPenalty::new(1.0, f64::INFINITY, Some(0.0), None)
-                .validate_dim(3)
-                .unwrap_err(),
-            invalid_parameter("penalty scale", "finite and > 0")
         );
     }
 }

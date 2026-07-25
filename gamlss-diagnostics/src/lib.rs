@@ -8,6 +8,7 @@
 //! Current utilities include:
 //!
 //! - PIT/CDF residuals;
+//! - ordered multivariate Rosenblatt residuals;
 //! - CRPS summaries;
 //! - reusable diagnostics views for prediction rows.
 //!
@@ -31,8 +32,8 @@
 //! # use gamlss_family::Normal;
 //! # let y = [0.0, 1.0, -1.0];
 //! # let blocks = ParameterBlocks::new((
-//! #     ParameterBlock::<Mu, Identity, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
-//! #     ParameterBlock::<Sigma, Log, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+//! #     ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+//! #     ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
 //! # ));
 //! # let model = Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, &y)?;
 //! let parameters = [0.0, 0.0];
@@ -43,14 +44,16 @@
 //! ```
 
 use gamlss_core::{
-    Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, ModelError, ObservationView, PredictionView,
+    Family, Gamlss, GamlssBlocks, HasCdf, HasCrps, HasMarginalCdf, HasObservationDimension,
+    HasRosenblattTransform, ModelError, ObservationView, PredictionView,
 };
 use gamlss_special::unit_normal_quantile;
 
 /// Common diagnostics imports.
 pub mod prelude {
     pub use crate::{
-        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt, PredictionDiagnosticsView,
+        CdfDiagnosticsExt, CrpsDiagnosticsExt, MarginalCdfDiagnosticsExt, PredictionDiagnosticsExt,
+        PredictionDiagnosticsView, PredictionRosenblattDiagnosticsExt, RosenblattDiagnosticsExt,
     };
 }
 
@@ -161,16 +164,255 @@ where
         &self,
         parameters: &[f64],
         out: &mut [f64],
-        mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+        mut evaluate: impl FnMut(&F, f64, &F::Theta) -> f64,
     ) -> Result<(), ModelError> {
         validate_output_len(self.nrows(), out.len())?;
         self.prediction.for_each_theta(parameters, |row, theta| {
             out[row] = evaluate(
                 self.prediction.family(),
                 self.obs.observation_at(row),
-                theta,
+                &theta,
             );
         })
+    }
+}
+
+/// Explicit component-wise marginal PIT diagnostics for multivariate families.
+pub trait MarginalCdfDiagnosticsExt<F, Blocks> {
+    /// Returns marginal PIT values for one response coordinate.
+    ///
+    /// `observations` contains that coordinate in model row order. The explicit
+    /// scalar slice prevents a joint multivariate CDF from being mistaken for a
+    /// scalar PIT.
+    fn marginal_pit_values(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+    ) -> Result<Vec<f64>, ModelError>;
+
+    /// Writes marginal PIT values into `out`.
+    fn marginal_pit_values_into(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError>;
+}
+
+impl<F, Blocks, Obs> MarginalCdfDiagnosticsExt<F, Blocks> for Gamlss<F, Blocks, Obs>
+where
+    F: HasMarginalCdf + HasObservationDimension,
+    Blocks: GamlssBlocks<F>,
+    for<'obs> Obs: ObservationView<'obs, Observation = F::Observation<'obs>>,
+{
+    fn marginal_pit_values(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+    ) -> Result<Vec<f64>, ModelError> {
+        let mut out = vec![0.0; self.nobs()];
+        self.marginal_pit_values_into(parameters, component, observations, &mut out)?;
+        Ok(out)
+    }
+
+    fn marginal_pit_values_into(
+        &self,
+        parameters: &[f64],
+        component: usize,
+        observations: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        if component >= self.family().observation_dimension() {
+            return Err(ModelError::InvalidParameter {
+                parameter: "marginal PIT component",
+                expected: "inside the family observation dimension",
+            });
+        }
+        validate_output_len(self.nobs(), observations.len())?;
+        validate_output_len(self.nobs(), out.len())?;
+        self.for_each_theta(parameters, |row, theta| {
+            out[row] = self
+                .family()
+                .marginal_cdf(component, observations[row], &theta);
+        })
+    }
+}
+
+/// Ordered multivariate PIT diagnostics for a validated core [`PredictionView`].
+pub trait PredictionRosenblattDiagnosticsExt<F, PBlocks>
+where
+    F: HasRosenblattTransform,
+    PBlocks: GamlssBlocks<F>,
+{
+    /// Returns row-major Rosenblatt values with one contiguous coordinate block per row.
+    fn rosenblatt_values<'obs, PObs>(
+        &self,
+        parameters: &[f64],
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+
+    /// Writes row-major Rosenblatt values into `out`.
+    fn rosenblatt_values_into<'obs, PObs>(
+        &self,
+        parameters: &[f64],
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+}
+
+impl<F, PBlocks> PredictionRosenblattDiagnosticsExt<F, PBlocks> for PredictionView<'_, F, PBlocks>
+where
+    F: HasRosenblattTransform,
+    PBlocks: GamlssBlocks<F>,
+{
+    fn rosenblatt_values<'obs, PObs>(
+        &self,
+        parameters: &[f64],
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let len = checked_rosenblatt_len(self.nrows(), self.family().observation_dimension())?;
+        let mut out = vec![0.0; len];
+        self.rosenblatt_values_into(parameters, obs, &mut out)?;
+        Ok(out)
+    }
+
+    fn rosenblatt_values_into<'obs, PObs>(
+        &self,
+        parameters: &[f64],
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let nrows = self.nrows();
+        let actual = obs.len();
+        if actual != nrows {
+            return Err(ModelError::ResponseLength {
+                expected: nrows,
+                actual,
+            });
+        }
+        obs.validate()?;
+        let dimension = self.family().observation_dimension();
+        validate_output_len(checked_rosenblatt_len(nrows, dimension)?, out.len())?;
+
+        let family = self.family();
+        let mut transform_error = None;
+        self.for_each_theta(parameters, |row, theta| {
+            if transform_error.is_some() {
+                return;
+            }
+            let start = row * dimension;
+            transform_error = family
+                .rosenblatt_into(
+                    obs.observation_at(row),
+                    &theta,
+                    &mut out[start..start + dimension],
+                )
+                .err();
+        })?;
+        transform_error.map_or(Ok(()), Err)
+    }
+}
+
+/// Ordered multivariate PIT diagnostics for fitted GAMLSS models.
+pub trait RosenblattDiagnosticsExt<F, Blocks>
+where
+    F: HasRosenblattTransform,
+    Blocks: GamlssBlocks<F>,
+{
+    /// Returns row-major Rosenblatt values for the training observations.
+    ///
+    /// Coordinate order is the family observation order and therefore also the
+    /// conditioning order of the transform.
+    fn rosenblatt_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError>;
+
+    /// Writes row-major Rosenblatt values for the training observations into `out`.
+    fn rosenblatt_values_into(&self, parameters: &[f64], out: &mut [f64])
+    -> Result<(), ModelError>;
+
+    /// Returns row-major Rosenblatt values for compatible prediction rows.
+    fn rosenblatt_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+
+    /// Writes row-major Rosenblatt values for compatible prediction rows into `out`.
+    fn rosenblatt_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs;
+}
+
+impl<F, Blocks, Obs> RosenblattDiagnosticsExt<F, Blocks> for Gamlss<F, Blocks, Obs>
+where
+    F: HasRosenblattTransform,
+    Blocks: GamlssBlocks<F>,
+    for<'obs> Obs: ObservationView<'obs, Observation = F::Observation<'obs>>,
+{
+    fn rosenblatt_values(&self, parameters: &[f64]) -> Result<Vec<f64>, ModelError> {
+        self.prediction_view(self.blocks())?
+            .rosenblatt_values(parameters, self.obs())
+    }
+
+    fn rosenblatt_values_into(
+        &self,
+        parameters: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), ModelError> {
+        self.prediction_view(self.blocks())?
+            .rosenblatt_values_into(parameters, self.obs(), out)
+    }
+
+    fn rosenblatt_values_with_blocks<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+    ) -> Result<Vec<f64>, ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        self.prediction_view(blocks)?
+            .rosenblatt_values(parameters, obs)
+    }
+
+    fn rosenblatt_values_with_blocks_into<'obs, PBlocks, PObs>(
+        &self,
+        parameters: &[f64],
+        blocks: &PBlocks,
+        obs: &'obs PObs,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        PBlocks: GamlssBlocks<F>,
+        PObs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        self.prediction_view(blocks)?
+            .rosenblatt_values_into(parameters, obs, out)
     }
 }
 
@@ -498,7 +740,7 @@ where
                 return;
             }
 
-            let value = family.crps(obs.observation_at(row), theta);
+            let value = family.crps(obs.observation_at(row), &theta);
             weighted_sum = weight.mul_add(value, weighted_sum);
             weight_sum += weight;
         })?;
@@ -511,7 +753,7 @@ fn diagnostic_values_into<F, Blocks, Obs>(
     model: &Gamlss<F, Blocks, Obs>,
     parameters: &[f64],
     out: &mut [f64],
-    mut evaluate: impl FnMut(&F, f64, F::Theta) -> f64,
+    mut evaluate: impl FnMut(&F, f64, &F::Theta) -> f64,
 ) -> Result<(), ModelError>
 where
     F: for<'row> Family<Observation<'row> = f64>,
@@ -522,7 +764,7 @@ where
     let family = model.family();
     let obs = model.obs();
     model.for_each_theta(parameters, |row, theta| {
-        out[row] = evaluate(family, obs.observation_at(row), theta);
+        out[row] = evaluate(family, obs.observation_at(row), &theta);
     })
 }
 
@@ -548,53 +790,58 @@ const fn validate_output_len(expected: usize, actual: usize) -> Result<(), Model
     }
 }
 
-fn normalize_pit_values(values: Vec<f64>) -> Vec<f64> {
-    values.into_iter().map(unit_normal_quantile).collect()
+fn checked_rosenblatt_len(nrows: usize, dimension: usize) -> Result<usize, ModelError> {
+    nrows
+        .checked_mul(dimension)
+        .ok_or(ModelError::ArithmeticOverflow {
+            context: "row-major Rosenblatt diagnostics length",
+        })
+}
+
+fn normalize_pit_values(mut values: Vec<f64>) -> Vec<f64> {
+    for value in &mut values {
+        *value = unit_normal_quantile(*value);
+    }
+    values
 }
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        DenseDesign, Gamlss, Identity, LinearPredictorBlock, Log, ModelError, Mu, NoPenalty,
-        ParameterBlock, ParameterBlocks, Sigma,
+        CholeskyScale, DenseDesign, Gamlss, Identity, LinearPredictorBlock, Log,
+        LowerTriangularParameterBlock, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
+        Sigma, VectorParameterBlock,
     };
-    use gamlss_family::Normal;
+    use gamlss_family::{MvNormalCholeskyDefault, Normal};
 
     use super::{
-        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt, normalize_pit_values,
+        CdfDiagnosticsExt, CrpsDiagnosticsExt, PredictionDiagnosticsExt,
+        PredictionRosenblattDiagnosticsExt, RosenblattDiagnosticsExt, normalize_pit_values,
     };
 
     type TestModel<'a> = Gamlss<
         Normal<Identity, Log>,
-        (
-            ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-            ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-        ),
+        ParameterBlocks<(
+            ParameterBlock<Mu, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+            ParameterBlock<Sigma, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        )>,
         &'a [f64],
     >;
 
     type WeightedTestModel<'a> = Gamlss<
         Normal<Identity, Log>,
-        (
-            ParameterBlock<Mu, Identity, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-            ParameterBlock<Sigma, Log, LinearPredictorBlock<DenseDesign>, NoPenalty>,
-        ),
+        ParameterBlocks<(
+            ParameterBlock<Mu, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+            ParameterBlock<Sigma, LinearPredictorBlock<DenseDesign>, NoPenalty>,
+        )>,
         (&'a [f64], &'a [f64]),
     >;
 
     fn normal_intercept_model(y: &[f64]) -> TestModel<'_> {
         let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
         ));
 
         Gamlss::try_new(Normal::<Identity, Log>::new(), blocks, y).expect("valid normal model")
@@ -605,16 +852,8 @@ mod tests {
         weights: &'a [f64],
     ) -> WeightedTestModel<'a> {
         let blocks = ParameterBlocks::new((
-            ParameterBlock::<Mu, Identity, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
-            ParameterBlock::<Sigma, Log, _, _>::linear(
-                DenseDesign::intercept(y.len()),
-                NoPenalty,
-                0,
-            ),
+            ParameterBlock::<Mu, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
+            ParameterBlock::<Sigma, _, _>::linear(DenseDesign::intercept(y.len()), NoPenalty, 0),
         ));
 
         Gamlss::try_new_weighted(Normal::<Identity, Log>::new(), blocks, y, weights)
@@ -828,6 +1067,67 @@ mod tests {
             ModelError::ResponseLength {
                 expected: 1,
                 actual: 0
+            }
+        );
+    }
+
+    #[test]
+    fn rosenblatt_diagnostics_use_row_major_coordinate_order() {
+        let y = [[0.0, 0.0], [1.0, 1.5]];
+        let n = y.len();
+        let mu = VectorParameterBlock::<Mu, 2, _, _>::new(
+            [
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            0,
+        );
+        let cholesky = LowerTriangularParameterBlock::<CholeskyScale, 2, _, _>::new(
+            vec![
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+                LinearPredictorBlock::new(DenseDesign::intercept(n)),
+            ],
+            NoPenalty,
+            0,
+        );
+        let blocks = ParameterBlocks::new((mu, cholesky));
+        let model = Gamlss::try_new_with_observations(
+            MvNormalCholeskyDefault::<2>::new(),
+            blocks,
+            y.as_slice(),
+        )
+        .unwrap();
+        let parameters = [0.0, 0.0, 0.0, 0.5, 0.0];
+
+        let values = model.rosenblatt_values(&parameters).unwrap();
+        assert_eq!(values.len(), 4);
+        assert_relative_eq!(values[0], 0.5, epsilon = 1.0e-12);
+        assert_relative_eq!(values[1], 0.5, epsilon = 1.0e-12);
+        assert_relative_eq!(values[2], 0.841_344_746, epsilon = 1.0e-9);
+        assert_relative_eq!(values[3], 0.841_344_746, epsilon = 1.0e-9);
+
+        let prediction = model.prediction_view(model.blocks()).unwrap();
+        assert_eq!(
+            prediction
+                .rosenblatt_values(&parameters, &y.as_slice())
+                .unwrap(),
+            values
+        );
+        assert_eq!(
+            model
+                .rosenblatt_values_with_blocks(&parameters, model.blocks(), &y.as_slice())
+                .unwrap(),
+            values
+        );
+        assert_eq!(
+            model
+                .rosenblatt_values_into(&parameters, &mut [0.0; 3])
+                .unwrap_err(),
+            ModelError::ResponseLength {
+                expected: 4,
+                actual: 3,
             }
         );
     }

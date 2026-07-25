@@ -1,0 +1,340 @@
+use std::marker::PhantomData;
+
+use gamlss_core::{
+    Cv, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
+    Logit, ObservationView, ParameterParts, PositiveLink, TotalMean, UnitIntervalLink,
+    ZeroProbability,
+};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+
+use crate::initial::{positive_floor, probability_floor, weighted_summary, weighted_values};
+
+use super::{ZagaComponentMeanCvZeroProbabilityTheta, ZagaKernel};
+
+/// ZAGA distribution parameterized by unconditional mean $m$, component CV $c$, and zero-mass probability $\pi$.
+///
+/// The gamma component mean is derived as
+///
+/// $$
+/// \mu=\frac{m}{1-\pi},
+/// \qquad
+/// \mathbb{E}(Y)=m.
+/// $$
+///
+/// The default links are $m=\exp(\eta_m)$, $c=\exp(\eta_c)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+///
+/// These symbols correspond to the `total_mean`, `cv`, and `zero_probability` fields of [`ZagaTotalMeanCvZeroProbabilityTheta`] and [`ZagaTotalMeanCvZeroProbabilityEta`].
+///
+/// ### Parameterization examples
+#[cfg_attr(
+    doc,
+    doc = include_str!("../../../doc-assets/distributions/zaga_total_mean_cv.svg")
+)]
+#[allow(clippy::doc_markdown)]
+pub type ZagaTotalMeanCvZeroProbability = ZagaTotalMeanCv<Log, Log, Logit>;
+
+/// Predictors for ZAGA total-mean/CV/zero-probability on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZagaTotalMeanCvZeroProbabilityEta {
+    /// Total mean predictor.
+    pub total_mean: f64,
+    /// Gamma component coefficient-of-variation predictor.
+    pub cv: f64,
+    /// Zero-mass probability predictor.
+    pub zero_probability: f64,
+}
+
+impl ParameterParts<3> for ZagaTotalMeanCvZeroProbabilityEta {
+    #[inline]
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            total_mean: values[0],
+            cv: values[1],
+            zero_probability: values[2],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.total_mean,
+            1 => self.cv,
+            2 => self.zero_probability,
+            _ => unreachable!("ZAGA total-mean/CV eta only has indices 0 through 2"),
+        }
+    }
+}
+
+/// Natural-scale ZAGA total-mean/CV/zero-probability parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZagaTotalMeanCvZeroProbabilityTheta {
+    /// Positive unconditional mean.
+    pub total_mean: f64,
+    /// Positive gamma component coefficient of variation.
+    pub cv: f64,
+    /// Zero-mass probability in `(0, 1)`.
+    pub zero_probability: f64,
+}
+
+impl ZagaTotalMeanCvZeroProbabilityTheta {
+    #[inline]
+    fn component(self) -> ZagaComponentMeanCvZeroProbabilityTheta {
+        ZagaComponentMeanCvZeroProbabilityTheta {
+            component_mean: self.total_mean / (1.0 - self.zero_probability),
+            cv: self.cv,
+            zero_probability: self.zero_probability,
+        }
+    }
+}
+
+/// ZAGA total-mean/CV/zero-probability implementation carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZagaTotalMeanCv<MeanLink = Log, CvLink = Log, ZeroProbabilityLink = Logit> {
+    marker: PhantomData<(MeanLink, CvLink, ZeroProbabilityLink)>,
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    /// Creates a stateless ZAGA total-mean/CV family.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(
+        eta: ZagaTotalMeanCvZeroProbabilityEta,
+    ) -> ZagaTotalMeanCvZeroProbabilityTheta {
+        ZagaTotalMeanCvZeroProbabilityTheta {
+            total_mean: MeanLink::inverse(eta.total_mean),
+            cv: CvLink::inverse(eta.cv),
+            zero_probability: ZeroProbabilityLink::inverse(eta.zero_probability),
+        }
+    }
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> Default
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, CvLink, ZeroProbabilityLink> for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>;
+    parameters = (TotalMean, Cv, ZeroProbability);
+    arity = 3;
+);
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> Family
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Eta = ZagaTotalMeanCvZeroProbabilityEta;
+    type Theta = ZagaTotalMeanCvZeroProbabilityTheta;
+    type GradientEta = ZagaTotalMeanCvZeroProbabilityEta;
+    type Observation<'obs> = f64;
+    type Workspace = ();
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
+    }
+
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        ZagaKernel::nll_theta(y, theta.component())
+    }
+
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, workspace: &mut Self::Workspace) -> f64 {
+        let theta = Self::theta_from_eta(*eta);
+        self.nll(y, &theta, workspace)
+    }
+
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        let theta = Self::theta_from_eta(*eta);
+        let component = theta.component();
+        let nll = ZagaKernel::nll_theta(y, component);
+        if !nll.is_finite() {
+            return (
+                nll,
+                ZagaTotalMeanCvZeroProbabilityEta::from_array([f64::NAN; 3]),
+            );
+        }
+
+        let component_gradient = ZagaKernel::gradient_component_theta(y, component);
+        let one_minus_zero = 1.0 - theta.zero_probability;
+        let d_total_mean = component_gradient.component_mean / one_minus_zero;
+        let d_zero_probability = component_gradient.component_mean * theta.total_mean
+            / (one_minus_zero * one_minus_zero)
+            + component_gradient.zero_probability;
+        (
+            nll,
+            ZagaTotalMeanCvZeroProbabilityEta {
+                total_mean: d_total_mean * MeanLink::derivative_inverse(eta.total_mean),
+                cv: component_gradient.cv * CvLink::derivative_inverse(eta.cv),
+                zero_probability: d_zero_probability
+                    * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
+            },
+        )
+    }
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> InitialEtaFromObservations<3>
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    CvLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values =
+            weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
+        let positives = values
+            .iter()
+            .copied()
+            .filter(|(y, _)| *y > 0.0)
+            .collect::<Vec<_>>();
+        let summary = weighted_summary(&positives);
+        let total_mean = positive_floor(
+            weighted_summary(&values).map_or_else(|| summary.map_or(1.0, |s| s.mean), |s| s.mean),
+        );
+        let positive_mean = positive_floor(summary.map_or(total_mean, |s| s.mean));
+        let cv = positive_floor(summary.map_or(1.0, |s| s.variance.sqrt() / positive_mean));
+        let zero_weight = values
+            .iter()
+            .filter(|(y, _)| *y == 0.0)
+            .map(|(_, w)| *w)
+            .sum::<f64>();
+        let total_weight = values.iter().map(|(_, w)| *w).sum::<f64>();
+        let zero_probability = if total_weight > 0.0 {
+            zero_weight / total_weight
+        } else {
+            0.1
+        };
+
+        ZagaTotalMeanCvZeroProbabilityEta {
+            total_mean: MeanLink::initial_eta_from_theta(total_mean),
+            cv: CvLink::initial_eta_from_theta(cv),
+            zero_probability: ZeroProbabilityLink::initial_eta_from_theta(probability_floor(
+                zero_probability,
+            )),
+        }
+    }
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> HasCdf
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZagaKernel::cdf_theta(y, theta.component())
+    }
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> HasQuantile
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        ZagaKernel::quantile_theta(p, theta.component())
+    }
+}
+
+impl<MeanLink, CvLink, ZeroProbabilityLink> HasCrps
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZagaKernel::crps_theta(y, theta.component())
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, CvLink, ZeroProbabilityLink> TrySimulate<Rng>
+    for ZagaTotalMeanCv<MeanLink, CvLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        ZagaKernel::try_sample_component_theta(rng, theta.component())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
+
+    #[cfg(feature = "rand")]
+    use super::{ZagaTotalMeanCvZeroProbability, ZagaTotalMeanCvZeroProbabilityTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn total_mean_zaga_sampling_returns_nonnegative_values_and_errors_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZagaTotalMeanCvZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &ZagaTotalMeanCvZeroProbabilityTheta {
+                    total_mean: 1.5,
+                    cv: 0.7,
+                    zero_probability: 0.2,
+                },
+            )
+            .unwrap();
+        assert!(sample >= 0.0 && sample.is_finite());
+        assert!(
+            family
+                .try_sample(
+                    &mut rng,
+                    &ZagaTotalMeanCvZeroProbabilityTheta {
+                        total_mean: 1.5,
+                        cv: 0.0,
+                        zero_probability: 0.2,
+                    }
+                )
+                .is_err()
+        );
+    }
+}

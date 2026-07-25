@@ -2,8 +2,10 @@
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
-use gamlss_core::{Objective, Penalty};
-use gamlss_spline::{SplineError, SplineOrder};
+use gamlss_core::{DenseDesign, Objective, Penalty, PredictorBlock};
+use gamlss_spline::{
+    ISplineBasis, MonotoneDirection, MonotoneISplineDesign, SplineError, SplineOrder,
+};
 
 use super::*;
 
@@ -100,8 +102,8 @@ fn builds_normal_with_typed_columns_and_metadata() {
     let beta = vec![0.0, 0.5, -0.2];
 
     assert_eq!(built.model().nparams(), 3);
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..2);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 2..3);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..2);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 2..3);
     assert_eq!(built.schema().response.col, y);
     assert_eq!(built.terms()[0].terms[1].range(), 1..2);
     assert!(built.model_mut().value(&beta).unwrap().is_finite());
@@ -118,8 +120,8 @@ fn no_intercept_builds_parameter_without_implicit_intercept() {
         .unwrap();
 
     assert_eq!(built.coefficient_names(), vec!["mu.x", "sigma.(Intercept)"]);
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 1..2);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..1);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 1..2);
 
     let predicted = built.predict_theta(&[0.5, 0.0], &data).unwrap();
     assert_relative_eq!(predicted[0].mu, 1.0);
@@ -288,8 +290,8 @@ fn builds_supported_default_families() {
         .cv(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(gamma.layout().slice("mean").unwrap(), 0..2);
-    assert_eq!(gamma.layout().slice("cv").unwrap(), 2..3);
+    assert_eq!(gamma.layout().unique_slice("mean").unwrap().unwrap(), 0..2);
+    assert_eq!(gamma.layout().unique_slice("cv").unwrap().unwrap(), 2..3);
 
     let log_normal = log_normal()
         .response(y_pos.clone())
@@ -297,8 +299,14 @@ fn builds_supported_default_families() {
         .log_sd(intercept() + linear(x.clone()))
         .build(&data)
         .unwrap();
-    assert_eq!(log_normal.layout().slice("mean").unwrap(), 0..1);
-    assert_eq!(log_normal.layout().slice("log_sd").unwrap(), 1..3);
+    assert_eq!(
+        log_normal.layout().unique_slice("mean").unwrap().unwrap(),
+        0..1
+    );
+    assert_eq!(
+        log_normal.layout().unique_slice("log_sd").unwrap().unwrap(),
+        1..3
+    );
 
     let weibull = weibull()
         .response(y_pos.clone())
@@ -306,8 +314,14 @@ fn builds_supported_default_families() {
         .shape(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(weibull.layout().slice("mean").unwrap(), 0..2);
-    assert_eq!(weibull.layout().slice("shape").unwrap(), 2..3);
+    assert_eq!(
+        weibull.layout().unique_slice("mean").unwrap().unwrap(),
+        0..2
+    );
+    assert_eq!(
+        weibull.layout().unique_slice("shape").unwrap().unwrap(),
+        2..3
+    );
 
     let inverse_gaussian = inverse_gaussian()
         .response(y_pos)
@@ -315,8 +329,22 @@ fn builds_supported_default_families() {
         .shape(intercept())
         .build(&data)
         .unwrap();
-    assert_eq!(inverse_gaussian.layout().slice("mu").unwrap(), 0..2);
-    assert_eq!(inverse_gaussian.layout().slice("shape").unwrap(), 2..3);
+    assert_eq!(
+        inverse_gaussian
+            .layout()
+            .unique_slice("mu")
+            .unwrap()
+            .unwrap(),
+        0..2
+    );
+    assert_eq!(
+        inverse_gaussian
+            .layout()
+            .unique_slice("shape")
+            .unwrap()
+            .unwrap(),
+        2..3
+    );
 
     let beta = beta()
         .response(y_unit)
@@ -324,8 +352,11 @@ fn builds_supported_default_families() {
         .precision(intercept() + linear(x))
         .build(&data)
         .unwrap();
-    assert_eq!(beta.layout().slice("mu").unwrap(), 0..1);
-    assert_eq!(beta.layout().slice("precision").unwrap(), 1..3);
+    assert_eq!(beta.layout().unique_slice("mu").unwrap().unwrap(), 0..1);
+    assert_eq!(
+        beta.layout().unique_slice("precision").unwrap().unwrap(),
+        1..3
+    );
 }
 
 #[test]
@@ -356,7 +387,7 @@ fn pspline_stores_basis_and_reuses_it_for_prediction() {
     assert_eq!(range.clone(), 1..7);
 
     let blocks = built.prediction_blocks(&new_data).unwrap();
-    assert_eq!(blocks.0.len(), 7);
+    assert_eq!(blocks.as_inner().0.len(), 7);
     let theta = vec![0.0; built.model().nparams()];
     let predicted = built.predict_theta(&theta, &new_data).unwrap();
     assert_eq!(predicted.len(), 3);
@@ -376,8 +407,8 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..8);
-    assert_eq!(built.layout().slice("sigma").unwrap(), 8..9);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..8);
+    assert_eq!(built.layout().unique_slice("sigma").unwrap().unwrap(), 8..9);
     assert_eq!(built.terms()[0].terms[0].range(), 0..1);
     assert_eq!(built.terms()[0].terms[1].range(), 1..2);
     assert_eq!(built.terms()[0].terms[2].range(), 2..8);
@@ -396,11 +427,14 @@ fn mixed_terms_keep_layout_ranges_and_dense_order() {
     for (row, values) in built
         .model()
         .blocks()
+        .as_inner()
         .0
         .x()
         .dense()
         .values()
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .enumerate()
     {
         assert_relative_eq!(values[0], 1.0);
@@ -424,7 +458,7 @@ fn offset_changes_predictions_without_adding_coefficients() {
     let theta = [1.0, 2.0, 0.0];
     let predicted = built.predict_theta(&theta, &data).unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..2);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..2);
     assert_relative_eq!(predicted[0].mu, 13.0);
     assert_relative_eq!(predicted[1].mu, 25.0);
 }
@@ -448,7 +482,7 @@ fn factor_indicator_and_interaction_build_expected_metadata() {
         .build(&data)
         .unwrap();
 
-    assert_eq!(built.layout().slice("mu").unwrap(), 0..5);
+    assert_eq!(built.layout().unique_slice("mu").unwrap().unwrap(), 0..5);
     let names = built.coefficient_names();
     assert_eq!(
         names[..5],
@@ -561,6 +595,53 @@ fn advanced_numeric_terms_build_and_predict() {
 }
 
 #[test]
+fn monotone_weighted_gradient_skips_zero_score_multiplier_rows() {
+    let basis = ISplineBasis::open_uniform_from_data(&[0.0, 0.5, 1.0], 5, 3).unwrap();
+    let nparams = basis.n_basis() + 1;
+    let block = FormulaPredictorBlock::new(
+        DenseDesign::from_row_major(3, 0, Vec::new()).unwrap(),
+        None,
+        vec![crate::predictor::MonotoneSegment {
+            range: 0..nparams,
+            design: MonotoneISplineDesign::new(
+                &[0.0, 0.5, 1.0],
+                basis,
+                MonotoneDirection::Increasing,
+            )
+            .unwrap(),
+        }],
+        nparams,
+    );
+    let scores = [1.0, 0.0, 2.0];
+    let multiplier = [1.0, f64::NAN, 1.0];
+    let beta = vec![0.0; nparams];
+    let mut expected = vec![0.0; nparams];
+    let mut weighted = vec![0.0; nparams];
+    let mut tiled_weighted = vec![0.0; nparams];
+
+    block.add_gradient(&scores, &beta, &mut expected);
+    block.add_weighted_gradient(&scores, &multiplier, &beta, &mut weighted);
+    block.add_weighted_gradient_by_range(
+        0..1,
+        &scores[..1],
+        multiplier.as_slice(),
+        &beta,
+        &mut tiled_weighted,
+    );
+    block.add_weighted_gradient_by_range(
+        1..3,
+        &scores[1..],
+        multiplier.as_slice(),
+        &beta,
+        &mut tiled_weighted,
+    );
+
+    assert_eq!(weighted, expected);
+    assert_eq!(tiled_weighted, expected);
+    assert!(weighted.iter().all(|value| value.is_finite()));
+}
+
+#[test]
 fn reusable_prediction_design_matches_convenience_prediction() {
     let train = TestData::borrowed(&[("y", &[0.0, 1.0, 2.0]), ("x", &[1.0, 2.0, 3.0])]);
     let new_data = TestData::borrowed(&[("x", &[4.0, 5.0])]);
@@ -655,8 +736,12 @@ fn cyclic_pspline_prediction_blocks_preserve_penalty_metadata() {
     let theta = [0.0, 1.0, -1.0, 0.5, 0.25, -0.25];
     let mut grad = [0.0; 6];
 
-    let value = blocks.0.penalty().value(&theta);
-    blocks.0.penalty().add_gradient(&theta, &mut grad);
+    let value = blocks.as_inner().0.penalty().value(&theta);
+    blocks
+        .as_inner()
+        .0
+        .penalty()
+        .add_gradient(&theta, &mut grad);
 
     assert!(value > 0.0);
     assert!(grad.iter().any(|value| f64::abs(*value) > 1.0e-8));
@@ -714,5 +799,5 @@ fn prediction_reuses_training_spline_range_not_newdata_range() {
     assert_relative_eq!(basis.max(), 1.0);
 
     let blocks = built.prediction_blocks(&new_data).unwrap();
-    assert_eq!(blocks.0.len(), 5);
+    assert_eq!(blocks.as_inner().0.len(), 5);
 }

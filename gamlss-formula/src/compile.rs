@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use gamlss_core::{DenseDesign, ModelError};
+use gamlss_family::ScalarObservationDomain;
 use gamlss_spline::{
-    CyclicSplineSpec, FourierDesign, ISplineBasis, OpenUniformSplineBasis, SplineRowBasis,
-    TensorSplineDesign,
+    CyclicSplineSpec, FourierDesign, ISplineBasis, MonotoneISplineDesign, OpenUniformSplineBasis,
+    SplineRowBasis, TensorSplineDesign,
 };
 
 use crate::predictor::{FormulaPredictorBlock, MonotoneSegment};
@@ -12,13 +13,6 @@ use crate::{
     BoolCol, CatCol, Col, DataView, FittedTerm, FormulaError, FormulaPenalty, NumericCol,
     NumericResponse, ParameterTerms, TermExpr, TermSpec,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum ResponseDomain {
-    Finite,
-    Positive,
-    Unit,
-}
 
 #[derive(Debug)]
 enum PreparedDenseTerm<'a> {
@@ -86,20 +80,26 @@ impl RowMajorDesignBuilder {
 
     fn fill_intercept(&mut self, range: &Range<usize>) {
         debug_assert_eq!(range.len(), 1);
+        debug_assert!(range.end <= self.ncols);
 
         let col = range.start;
-        for row in 0..self.nrows {
-            self.set(row, col, 1.0);
+        for row_values in self.values.chunks_exact_mut(self.ncols) {
+            row_values[col] = 1.0;
         }
     }
 
     fn fill_column(&mut self, range: &Range<usize>, values: &[f64]) {
         debug_assert_eq!(range.len(), 1);
         debug_assert_eq!(values.len(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
         let col = range.start;
-        for (row, value) in values.iter().copied().enumerate() {
-            self.set(row, col, value);
+        for (row_values, value) in self
+            .values
+            .chunks_exact_mut(self.ncols)
+            .zip(values.iter().copied())
+        {
+            row_values[col] = value;
         }
     }
 
@@ -111,11 +111,16 @@ impl RowMajorDesignBuilder {
     ) -> Result<(), FormulaError> {
         debug_assert_eq!(range.len(), basis.n_basis());
         debug_assert_eq!(values.len(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
-        for (row, value) in values.iter().copied().enumerate() {
-            let row_offset = self.row_offset(row) + range.start;
+        for (row_values, value) in self
+            .values
+            .chunks_exact_mut(self.ncols)
+            .zip(values.iter().copied())
+        {
+            let basis_values = &mut row_values[range.clone()];
             basis.for_each_value_basis(value, |local_col, weight| {
-                self.values[row_offset + local_col] = weight;
+                basis_values[local_col] = weight;
             })?;
         }
         Ok(())
@@ -127,11 +132,12 @@ impl RowMajorDesignBuilder {
     {
         debug_assert_eq!(range.len(), basis.nparams());
         debug_assert_eq!(basis.nrows(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
 
-        for row in 0..self.nrows {
-            let row_offset = self.row_offset(row) + range.start;
+        for (row, row_values) in self.values.chunks_exact_mut(self.ncols).enumerate() {
+            let basis_values = &mut row_values[range.clone()];
             basis.for_each_row_basis(row, |local_col, weight| {
-                self.values[row_offset + local_col] = weight;
+                basis_values[local_col] = weight;
             });
         }
     }
@@ -142,15 +148,6 @@ impl RowMajorDesignBuilder {
             self.ncols,
             self.values,
         )?)
-    }
-
-    fn set(&mut self, row: usize, col: usize, value: f64) {
-        let index = self.row_offset(row) + col;
-        self.values[index] = value;
-    }
-
-    const fn row_offset(&self, row: usize) -> usize {
-        row * self.ncols
     }
 }
 
@@ -206,22 +203,20 @@ fn validate_weights(name: &str, values: &[f64]) -> Result<(), FormulaError> {
     Ok(())
 }
 
-fn validate_response_domain(
-    family: &'static str,
-    domain: ResponseDomain,
+fn validate_response_domain<F>(
+    family_name: &'static str,
+    family: &F,
     name: &str,
     values: &[f64],
-) -> Result<(), FormulaError> {
+) -> Result<(), FormulaError>
+where
+    F: ScalarObservationDomain + ?Sized,
+{
     for (row, value) in values.iter().copied().enumerate() {
-        let valid = match domain {
-            ResponseDomain::Finite => value.is_finite(),
-            ResponseDomain::Positive => value.is_finite() && value > 0.0,
-            ResponseDomain::Unit => value.is_finite() && value > 0.0 && value < 1.0,
-        };
-        if !valid {
+        if !family.observation_in_domain(value) {
             return Err(FormulaError::InvalidResponseDomain {
                 name: name.to_owned(),
-                family,
+                family: family_name,
                 row,
             });
         }
@@ -230,20 +225,21 @@ fn validate_response_domain(
 }
 
 #[allow(clippy::ref_option)]
-pub fn required_response<'a, D>(
-    family: &'static str,
-    domain: ResponseDomain,
+pub fn required_response<'a, D, F>(
+    family_name: &'static str,
+    family: &F,
     data: &'a D,
     response: &Option<Col<f64>>,
     weights: &Option<Col<f64>>,
 ) -> Result<(Col<f64>, NumericResponse<'a>), FormulaError>
 where
     D: DataView + ?Sized,
+    F: ScalarObservationDomain + ?Sized,
 {
     let col = response.clone().ok_or(FormulaError::MissingResponse)?;
     let values = data.f64_col(&col)?;
     validate_col_len(col.name(), values.as_slice(), data.nrows())?;
-    validate_response_domain(family, domain, col.name(), values.as_slice())?;
+    validate_response_domain(family_name, family, col.name(), values.as_slice())?;
 
     let Some(weight_col) = weights else {
         return Ok((col, values.into_response()));
@@ -529,9 +525,11 @@ where
                 );
                 monotone.push(MonotoneSegment {
                     range: range.clone(),
-                    values: values.as_slice().to_vec(),
-                    basis: basis.clone(),
-                    direction: term.direction,
+                    design: MonotoneISplineDesign::new(
+                        values.as_slice(),
+                        basis.clone(),
+                        term.direction,
+                    )?,
                 });
                 fitted.push(FittedTerm::Monotone {
                     col: term.col,
@@ -696,9 +694,11 @@ where
                 nparams = nparams.max(range.end);
                 monotone.push(MonotoneSegment {
                     range: range.clone(),
-                    values: values.as_slice().to_vec(),
-                    basis: basis.clone(),
-                    direction: *direction,
+                    design: MonotoneISplineDesign::new(
+                        values.as_slice(),
+                        basis.clone(),
+                        *direction,
+                    )?,
                 });
             }
         }
@@ -839,14 +839,18 @@ fn dense_from_prepared_terms(
 
 fn fill_flat_columns(builder: &mut RowMajorDesignBuilder, range: &Range<usize>, values: &[f64]) {
     debug_assert_eq!(values.len(), builder.nrows * range.len());
-    for row in 0..builder.nrows {
-        for local_col in 0..range.len() {
-            builder.set(
-                row,
-                range.start + local_col,
-                values[row * range.len() + local_col],
-            );
-        }
+    debug_assert!(range.end <= builder.ncols);
+
+    if range.is_empty() {
+        return;
+    }
+
+    for (row_values, source_values) in builder
+        .values
+        .chunks_exact_mut(builder.ncols)
+        .zip(values.chunks_exact(range.len()))
+    {
+        row_values[range.clone()].copy_from_slice(source_values);
     }
 }
 
@@ -857,7 +861,11 @@ fn factor_columns(
 ) -> Result<Vec<f64>, FormulaError> {
     let width = levels.len().saturating_sub(1);
     let mut columns = vec![0.0; values.len() * width];
-    for (row, value) in values.iter().enumerate() {
+    if width == 0 {
+        return Ok(columns);
+    }
+
+    for (row, (row_values, value)) in columns.chunks_exact_mut(width).zip(values).enumerate() {
         let Some(level_index) = levels.iter().position(|level| level == value) else {
             return Err(FormulaError::UnknownCategoryLevel {
                 name: name.to_owned(),
@@ -866,7 +874,7 @@ fn factor_columns(
             });
         };
         if level_index > 0 {
-            columns[row * width + level_index - 1] = 1.0;
+            row_values[level_index - 1] = 1.0;
         }
     }
     Ok(columns)

@@ -1,0 +1,432 @@
+use gamlss_special::{unit_normal_cdf, unit_normal_quantile};
+
+use crate::transforms::{
+    TargetTransform, TransformError, validate_finite_value, validate_non_empty_finite,
+    validate_output_len,
+};
+
+/// Empirical quantile transform to approximately uniform values.
+///
+/// Sort $n$ fitted observations and let $v_1<\cdots<v_m$ be their $m$ unique values. A value $v_j$ occupying one-based ranks $r_j,\ldots,s_j$ receives the average-rank plotting position
+///
+/// $$
+/// p_j=\frac{r_j+s_j-1}{2n}.
+/// $$
+///
+/// Thus an untied rank $r$ receives $(r-\tfrac12)/n$, while ties share one probability. For $1\le j<m$, values and probabilities between adjacent fitted knots use linear interpolation:
+///
+/// $$
+/// P(y)=p_j+\frac{y-v_j}{v_{j+1}-v_j}(p_{j+1}-p_j),
+/// \qquad
+/// Q(p)=v_j+\frac{p-p_j}{p_{j+1}-p_j}(v_{j+1}-v_j).
+/// $$
+///
+/// [`QuantileUniform::transform`] evaluates $P(y)$ and [`QuantileUniform::inverse`] evaluates $Q(p)$. Values below $v_1$ or above $v_m$ are clamped to $p_1$ or $p_m$; inverse probabilities are clamped symmetrically to $v_1$ or $v_m$. Because $0<p_1\le p_m<1$, fitted outputs remain finite and lie strictly inside the unit interval.
+#[allow(clippy::doc_markdown)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuantileUniform;
+
+impl TargetTransform for QuantileUniform {
+    type State = QuantileState;
+
+    fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
+        QuantileState::fit(y)
+    }
+
+    #[inline]
+    fn transform(state: &Self::State, y: f64) -> f64 {
+        state.probability_at(y)
+    }
+
+    #[inline]
+    fn inverse(state: &Self::State, value: f64) -> f64 {
+        state.value_at_probability(value)
+    }
+
+    #[inline]
+    fn validate_transform_value(state: &Self::State, y: f64) -> Result<(), TransformError> {
+        validate_finite_value(y)?;
+        state.validate()
+    }
+
+    #[inline]
+    fn validate_inverse_value(state: &Self::State, value: f64) -> Result<(), TransformError> {
+        validate_finite_value(value)?;
+        state.validate()
+    }
+
+    #[inline]
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, y, out, QuantileState::probability_at)
+    }
+
+    #[inline]
+    fn inverse_into(
+        state: &Self::State,
+        values: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, values, out, QuantileState::value_at_probability)
+    }
+}
+
+/// Empirical quantile transform to approximately standard-normal values.
+///
+/// This uses the same empirical state as [`QuantileUniform`] and maps probabilities through the standard-normal quantile:
+///
+/// $$
+/// T(y)=\Phi^{-1}(P(y)), \qquad
+/// T^{-1}(z)=Q(\Phi(z)),
+/// $$
+///
+/// Here $\Phi$ is the standard-normal CDF, $P,Q$ are the empirical maps documented on [`QuantileUniform`], and $z=T(y)$ is the normal-score value. The empirical endpoint clamping makes both directions finite for finite fitted states.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuantileNormal;
+
+impl TargetTransform for QuantileNormal {
+    type State = QuantileState;
+
+    fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
+        QuantileState::fit(y)
+    }
+
+    #[inline]
+    fn transform(state: &Self::State, y: f64) -> f64 {
+        unit_normal_quantile(state.probability_at(y))
+    }
+
+    #[inline]
+    fn inverse(state: &Self::State, value: f64) -> f64 {
+        state.value_at_probability(unit_normal_cdf(value))
+    }
+
+    #[inline]
+    fn validate_transform_value(state: &Self::State, y: f64) -> Result<(), TransformError> {
+        validate_finite_value(y)?;
+        state.validate()
+    }
+
+    #[inline]
+    fn validate_inverse_value(state: &Self::State, value: f64) -> Result<(), TransformError> {
+        validate_finite_value(value)?;
+        state.validate()
+    }
+
+    #[inline]
+    fn transform_into(
+        state: &Self::State,
+        y: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, y, out, |state, value| {
+            unit_normal_quantile(state.probability_at(value))
+        })
+    }
+
+    #[inline]
+    fn inverse_into(
+        state: &Self::State,
+        values: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), TransformError> {
+        map_quantile_slice_into(state, values, out, |state, value| {
+            state.value_at_probability(unit_normal_cdf(value))
+        })
+    }
+}
+
+/// State for empirical quantile transforms.
+///
+/// With the one-based mathematical indexing above, `values[j - 1]` and `probabilities[j - 1]` store $(v_j,p_j)$. Both vectors are strictly increasing, have the same non-zero length $m$, and probabilities lie strictly inside $(0,1)$.
+#[allow(clippy::doc_markdown)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuantileState {
+    /// Sorted unique original-scale values.
+    pub values: Vec<f64>,
+    /// Empirical probabilities associated with `values`.
+    pub probabilities: Vec<f64>,
+}
+
+impl QuantileState {
+    /// Creates a validated empirical quantile state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransformError::InvalidParameter`] if the vectors are empty,
+    /// have different lengths, contain non-finite values, or are not strictly
+    /// increasing.
+    pub fn try_new(values: Vec<f64>, probabilities: Vec<f64>) -> Result<Self, TransformError> {
+        let state = Self {
+            values,
+            probabilities,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+
+    fn fit(y: &[f64]) -> Result<Self, TransformError> {
+        validate_non_empty_finite(y)?;
+
+        let mut sorted = y.to_vec();
+        sorted.sort_by(f64::total_cmp);
+
+        let mut values = Vec::with_capacity(sorted.len());
+        let mut probabilities = Vec::with_capacity(sorted.len());
+        let mut start = 0;
+        while start < sorted.len() {
+            let value = sorted[start];
+            let mut end = start + 1;
+            while end < sorted.len() && sorted[end].total_cmp(&value).is_eq() {
+                end += 1;
+            }
+
+            #[allow(clippy::cast_precision_loss)]
+            let probability = 0.5f64.mul_add((start + end - 1) as f64, 0.5) / sorted.len() as f64;
+            values.push(value);
+            probabilities.push(probability);
+            start = end;
+        }
+
+        Self::try_new(values, probabilities)
+    }
+
+    fn validate(&self) -> Result<(), TransformError> {
+        if self.values.is_empty() || self.values.len() != self.probabilities.len() {
+            return Err(TransformError::InvalidParameter {
+                name: "quantile_state",
+            });
+        }
+        if !self.values.iter().copied().all(f64::is_finite)
+            || !self.probabilities.iter().copied().all(f64::is_finite)
+        {
+            return Err(TransformError::InvalidParameter {
+                name: "quantile_state",
+            });
+        }
+        if !self
+            .values
+            .windows(2)
+            .all(|window| window[0].total_cmp(&window[1]).is_lt())
+            || !self
+                .probabilities
+                .windows(2)
+                .all(|window| window[0].total_cmp(&window[1]).is_lt())
+        {
+            return Err(TransformError::InvalidParameter {
+                name: "quantile_state",
+            });
+        }
+        if self.lower_probability() <= 0.0 || self.upper_probability() >= 1.0 {
+            return Err(TransformError::InvalidParameter {
+                name: "quantile_state",
+            });
+        }
+        Ok(())
+    }
+
+    fn lower_probability(&self) -> f64 {
+        self.probabilities[0]
+    }
+
+    fn upper_probability(&self) -> f64 {
+        self.probabilities[self.probabilities.len() - 1]
+    }
+
+    fn probability_at(&self, value: f64) -> f64 {
+        if value <= self.values[0] {
+            return self.lower_probability();
+        }
+        let last = self.values.len() - 1;
+        if value >= self.values[last] {
+            return self.upper_probability();
+        }
+
+        match self
+            .values
+            .binary_search_by(|probe| probe.total_cmp(&value))
+        {
+            Ok(index) => self.probabilities[index],
+            Err(index) => interpolate(
+                value,
+                self.values[index - 1],
+                self.values[index],
+                self.probabilities[index - 1],
+                self.probabilities[index],
+            ),
+        }
+    }
+
+    fn value_at_probability(&self, probability: f64) -> f64 {
+        let probability = probability.clamp(self.lower_probability(), self.upper_probability());
+        if probability <= self.lower_probability() {
+            return self.values[0];
+        }
+        let last = self.probabilities.len() - 1;
+        if probability >= self.upper_probability() {
+            return self.values[last];
+        }
+
+        match self
+            .probabilities
+            .binary_search_by(|probe| probe.total_cmp(&probability))
+        {
+            Ok(index) => self.values[index],
+            Err(index) => interpolate(
+                probability,
+                self.probabilities[index - 1],
+                self.probabilities[index],
+                self.values[index - 1],
+                self.values[index],
+            ),
+        }
+    }
+}
+
+#[inline]
+fn interpolate(x: f64, left_x: f64, right_x: f64, left_y: f64, right_y: f64) -> f64 {
+    let weight = (x - left_x) / (right_x - left_x);
+    weight.mul_add(right_y - left_y, left_y)
+}
+
+fn map_quantile_slice_into(
+    state: &QuantileState,
+    values: &[f64],
+    out: &mut [f64],
+    map: impl Fn(&QuantileState, f64) -> f64,
+) -> Result<(), TransformError> {
+    validate_output_len(values.len(), out.len())?;
+    state.validate()?;
+    for (out, value) in out.iter_mut().zip(values.iter().copied()) {
+        validate_finite_value(value)?;
+        *out = map(state, value);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+
+    use crate::{QuantileNormal, QuantileUniform, TargetTransform, TransformError};
+
+    fn invalid_quantile_state() -> super::QuantileState {
+        super::QuantileState {
+            values: Vec::new(),
+            probabilities: Vec::new(),
+        }
+    }
+
+    fn invalid_quantile_state_error() -> TransformError {
+        TransformError::InvalidParameter {
+            name: "quantile_state",
+        }
+    }
+
+    #[test]
+    fn uniform_transform_is_monotone_and_round_trips_fitted_values() {
+        let y = [-2.0, -1.0, 0.0, 2.0, 8.0];
+        let (state, transformed) = QuantileUniform::fit_transform(&y).unwrap();
+        let restored = QuantileUniform::inverse_slice(&state, &transformed).unwrap();
+
+        assert!(transformed.windows(2).all(|window| window[0] < window[1]));
+        for (actual, expected) in restored.iter().zip(y) {
+            assert_relative_eq!(*actual, expected);
+        }
+    }
+
+    #[test]
+    fn uniform_transform_uses_average_probability_for_ties() {
+        let state = QuantileUniform::fit(&[1.0, 1.0, 3.0, 5.0]).unwrap();
+
+        assert_eq!(state.values, vec![1.0, 3.0, 5.0]);
+        assert_relative_eq!(QuantileUniform::transform(&state, 1.0), 0.25);
+    }
+
+    #[test]
+    fn uniform_inverse_clamps_outside_fitted_probability_range() {
+        let state = QuantileUniform::fit(&[-1.0, 1.0, 3.0]).unwrap();
+
+        assert_relative_eq!(QuantileUniform::inverse(&state, -1.0), -1.0);
+        assert_relative_eq!(QuantileUniform::inverse(&state, 2.0), 3.0);
+        assert_relative_eq!(QuantileUniform::transform(&state, -10.0), 1.0 / 6.0);
+    }
+
+    #[test]
+    fn normal_transform_is_finite_monotone_and_round_trips_fitted_values() {
+        let y = [-2.0, -1.0, 0.0, 2.0, 8.0];
+        let (state, transformed) = QuantileNormal::fit_transform(&y).unwrap();
+        let restored = QuantileNormal::inverse_slice(&state, &transformed).unwrap();
+
+        assert!(transformed.iter().all(|value| value.is_finite()));
+        assert!(transformed.windows(2).all(|window| window[0] < window[1]));
+        for (actual, expected) in restored.iter().zip(y) {
+            assert_relative_eq!(*actual, expected, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn rejects_empty_and_non_finite_values() {
+        assert_eq!(
+            QuantileUniform::fit(&[]).unwrap_err(),
+            TransformError::EmptyInput
+        );
+        assert_eq!(
+            QuantileNormal::fit(&[1.0, f64::INFINITY]).unwrap_err(),
+            TransformError::NonFiniteValue
+        );
+    }
+
+    #[test]
+    fn checked_api_rejects_invalid_manual_state() {
+        let state = invalid_quantile_state();
+
+        assert_eq!(
+            QuantileUniform::checked_transform(&state, 1.0).unwrap_err(),
+            invalid_quantile_state_error()
+        );
+    }
+
+    #[test]
+    fn slice_api_validates_manual_state_once_before_values() {
+        let state = invalid_quantile_state();
+        let mut out = [0.0];
+        let expected = invalid_quantile_state_error();
+
+        assert_eq!(
+            QuantileUniform::transform_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileUniform::inverse_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileNormal::transform_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            QuantileNormal::inverse_into(&state, &[f64::NAN], &mut out).unwrap_err(),
+            expected
+        );
+    }
+
+    #[test]
+    fn state_constructor_rejects_unsorted_or_boundary_probabilities() {
+        assert_eq!(
+            super::QuantileState::try_new(vec![1.0, 0.0], vec![0.25, 0.75]).unwrap_err(),
+            TransformError::InvalidParameter {
+                name: "quantile_state"
+            }
+        );
+        assert_eq!(
+            super::QuantileState::try_new(vec![0.0, 1.0], vec![0.0, 1.0]).unwrap_err(),
+            TransformError::InvalidParameter {
+                name: "quantile_state"
+            }
+        );
+    }
+}

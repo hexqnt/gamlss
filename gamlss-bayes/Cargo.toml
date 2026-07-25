@@ -1,0 +1,23 @@
+[package]
+name = "gamlss-bayes"
+version.workspace = true
+edition.workspace = true
+description = "Lightweight Bayesian potentials and coefficient priors for GAMLSS"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/gamlss-bayes"
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+include = ["src/**/*", "Cargo.toml", "README.md"]
+
+[dependencies]
+gamlss-core.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+gamlss-family.workspace = true
+
+[lints]
+workspace = true

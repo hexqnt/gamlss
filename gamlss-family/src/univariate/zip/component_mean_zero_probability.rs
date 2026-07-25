@@ -1,0 +1,227 @@
+use gamlss_core::{
+    ComponentMean, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
+    InitialEtaFromTheta, Log, Logit, ObservationView, ParameterParts, PositiveLink,
+    UnitIntervalLink, ZeroProbability,
+};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+
+use gamlss_special::is_nonnegative_integer;
+
+use crate::initial::{positive_floor, probability_floor, weighted_mean, weighted_values};
+
+use super::{
+    Zip, ZipComponentMeanZeroProbabilityEta, ZipComponentMeanZeroProbabilityTheta, ZipKernel,
+};
+
+/// ZIP distribution parameterized by Poisson component mean $\lambda$ and structural-zero probability $\pi$.
+///
+/// The default links give $\lambda=\exp(\eta_\lambda)$ and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+pub type ZipComponentMeanZeroProbability = Zip<ComponentMeanZeroProbability, Log, Logit>;
+
+/// ZIP component-mean/zero-probability parameterization marker.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ComponentMeanZeroProbability;
+
+impl<MeanLink, ZeroProbabilityLink> Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    #[inline]
+    fn theta_from_eta(
+        eta: ZipComponentMeanZeroProbabilityEta,
+    ) -> ZipComponentMeanZeroProbabilityTheta {
+        ZipComponentMeanZeroProbabilityTheta {
+            component_mean: MeanLink::inverse(eta.component_mean),
+            zero_probability: ZeroProbabilityLink::inverse(eta.zero_probability),
+        }
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(
+        y: f64,
+        eta: ZipComponentMeanZeroProbabilityEta,
+    ) -> (f64, ZipComponentMeanZeroProbabilityEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = ZipKernel::nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                ZipComponentMeanZeroProbabilityEta::from_array([f64::NAN; 2]),
+            );
+        }
+        let gradient = ZipKernel::gradient_component_theta(y, theta);
+        (
+            nll,
+            ZipComponentMeanZeroProbabilityEta {
+                component_mean: gradient.component_mean
+                    * MeanLink::derivative_inverse(eta.component_mean),
+                zero_probability: gradient.zero_probability
+                    * ZeroProbabilityLink::derivative_inverse(eta.zero_probability),
+            },
+        )
+    }
+}
+
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MeanLink, ZeroProbabilityLink> for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>;
+    parameters = (ComponentMean, ZeroProbability);
+    arity = 2;
+);
+
+impl<MeanLink, ZeroProbabilityLink> Family
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Eta = ZipComponentMeanZeroProbabilityEta;
+    type Theta = ZipComponentMeanZeroProbabilityTheta;
+    type GradientEta = ZipComponentMeanZeroProbabilityEta;
+    type Observation<'obs> = f64;
+    type Workspace = ();
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
+    }
+
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        ZipKernel::nll_theta(y, *theta)
+    }
+
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        ZipKernel::nll_theta(y, Self::theta_from_eta(*eta))
+    }
+
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
+    }
+}
+
+impl<MeanLink, ZeroProbabilityLink> InitialEtaFromObservations<2>
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ZeroProbabilityLink: InitialEtaFromTheta<f64> + UnitIntervalLink<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| is_nonnegative_integer(y).then_some(y));
+        let mean = weighted_mean(&values).unwrap_or(1.0);
+        let zero_weight = values
+            .iter()
+            .filter(|(y, _)| *y == 0.0)
+            .map(|(_, w)| *w)
+            .sum::<f64>();
+        let total_weight = values.iter().map(|(_, w)| *w).sum::<f64>();
+        let zero_rate = if total_weight > 0.0 {
+            zero_weight / total_weight
+        } else {
+            0.1
+        };
+
+        ZipComponentMeanZeroProbabilityEta {
+            component_mean: MeanLink::initial_eta_from_theta(positive_floor(mean)),
+            zero_probability: ZeroProbabilityLink::initial_eta_from_theta(probability_floor(
+                (zero_rate - (-mean).exp()).max(0.05),
+            )),
+        }
+    }
+}
+
+impl<MeanLink, ZeroProbabilityLink> HasCdf
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZipKernel::cdf_theta(y, *theta)
+    }
+}
+
+impl<MeanLink, ZeroProbabilityLink> HasQuantile
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        ZipKernel::quantile_theta(p, *theta)
+    }
+}
+
+impl<MeanLink, ZeroProbabilityLink> HasCrps
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        ZipKernel::crps_theta(y, *theta)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MeanLink, ZeroProbabilityLink> TrySimulate<Rng>
+    for Zip<ComponentMeanZeroProbability, MeanLink, ZeroProbabilityLink>
+where
+    Rng: rand::Rng,
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        ZipKernel::try_sample_component_theta(rng, *theta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "rand")]
+    use gamlss_core::TrySimulate;
+
+    #[cfg(feature = "rand")]
+    use super::{ZipComponentMeanZeroProbability, ZipComponentMeanZeroProbabilityTheta};
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn zip_sampling_returns_counts_and_errors_for_invalid_theta() {
+        use rand::SeedableRng;
+
+        let family = ZipComponentMeanZeroProbability::new();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let sample = family
+            .try_sample(
+                &mut rng,
+                &ZipComponentMeanZeroProbabilityTheta {
+                    component_mean: 2.0,
+                    zero_probability: 0.3,
+                },
+            )
+            .unwrap();
+        assert!(sample >= 0.0 && sample.fract() == 0.0);
+        assert!(
+            family
+                .try_sample(
+                    &mut rng,
+                    &ZipComponentMeanZeroProbabilityTheta {
+                        component_mean: 2.0,
+                        zero_probability: 1.0,
+                    }
+                )
+                .is_err()
+        );
+    }
+}

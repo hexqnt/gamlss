@@ -1,0 +1,210 @@
+use gamlss_core::{
+    Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log, Mu,
+    ObservationView, ParameterParts, PositiveLink, Shape,
+};
+#[cfg(feature = "rand")]
+use gamlss_core::{SimulationError, TrySimulate};
+
+use gamlss_special::{discrete_quantile, is_nonnegative_integer};
+
+use crate::initial::{LARGE_SHAPE, positive_floor, weighted_summary, weighted_values};
+
+use super::{MAX_CDF_TERMS, NegativeBinomial, NegativeBinomialKernel, NegativeBinomialTheta};
+
+/// Negative binomial distribution with log links for mean $\mu$ and size $r$.
+///
+/// Thus $\mu=\exp(\eta_\mu)$ and $r=\exp(\eta_r)$ in the parameterization documented by [`NegativeBinomial`].
+#[allow(clippy::doc_markdown)]
+pub type NegativeBinomialMeanSize = NegativeBinomial<Log, Log>;
+
+/// Predictors for the negative binomial family on the link scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NegativeBinomialEta {
+    /// Mean predictor.
+    pub mu: f64,
+    /// Shape predictor.
+    pub shape: f64,
+}
+
+impl ParameterParts<2> for NegativeBinomialEta {
+    #[inline]
+    fn from_array(values: [f64; 2]) -> Self {
+        Self {
+            mu: values[0],
+            shape: values[1],
+        }
+    }
+
+    #[inline]
+    fn part(&self, index: usize) -> f64 {
+        match index {
+            0 => self.mu,
+            1 => self.shape,
+            _ => unreachable!("negative binomial eta only has indices 0 and 1"),
+        }
+    }
+}
+
+impl<MuLink, ShapeLink> NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    #[inline]
+    fn theta_from_eta(eta: NegativeBinomialEta) -> NegativeBinomialTheta {
+        NegativeBinomialTheta {
+            mu: MuLink::inverse(eta.mu),
+            shape: ShapeLink::inverse(eta.shape),
+        }
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(y: f64, eta: NegativeBinomialEta) -> (f64, NegativeBinomialEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = NegativeBinomialKernel::nll_theta(y, theta);
+        if !nll.is_finite() {
+            return (
+                nll,
+                NegativeBinomialEta {
+                    mu: f64::NAN,
+                    shape: f64::NAN,
+                },
+            );
+        }
+
+        let gradient_theta = NegativeBinomialKernel::gradient_theta(y, theta);
+        let gradient_eta = NegativeBinomialEta {
+            mu: gradient_theta.mu * MuLink::derivative_inverse(eta.mu),
+            shape: gradient_theta.shape * ShapeLink::derivative_inverse(eta.shape),
+        };
+
+        (nll, gradient_eta)
+    }
+}
+
+gamlss_core::impl_scalar_compilable_family!(
+    impl<MuLink, ShapeLink> for NegativeBinomial<MuLink, ShapeLink>;
+    parameters = (Mu, Shape);
+    arity = 2;
+);
+
+impl<MuLink, ShapeLink> Family for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    type Eta = NegativeBinomialEta;
+    type Theta = NegativeBinomialTheta;
+    type GradientEta = NegativeBinomialEta;
+    type Observation<'obs> = f64;
+    type Workspace = ();
+
+    #[inline]
+    fn workspace(&self) -> Self::Workspace {}
+
+    fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
+        Self::theta_from_eta(*eta)
+    }
+
+    #[inline]
+    fn nll(&self, y: f64, theta: &Self::Theta, _workspace: &mut Self::Workspace) -> f64 {
+        NegativeBinomialKernel::nll_theta(y, *theta)
+    }
+
+    #[inline]
+    fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
+        NegativeBinomialKernel::nll_theta(y, Self::theta_from_eta(*eta))
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta(
+        &self,
+        y: f64,
+        eta: &Self::Eta,
+        _workspace: &mut Self::Workspace,
+    ) -> (f64, Self::GradientEta) {
+        Self::nll_and_gradient_eta_values(y, *eta)
+    }
+}
+
+impl<MuLink, ShapeLink> InitialEtaFromObservations<2> for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+    ShapeLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
+{
+    fn initial_eta_from_observations<'obs, Obs>(&self, obs: &'obs Obs) -> Self::Eta
+    where
+        Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
+    {
+        let values = weighted_values::<Self, _, _>(obs, |y| is_nonnegative_integer(y).then_some(y));
+        let Some(summary) = weighted_summary(&values) else {
+            return NegativeBinomialEta::from_array([0.0, 0.0]);
+        };
+
+        let mu = positive_floor(summary.mean);
+        let shape = if summary.variance <= mu {
+            LARGE_SHAPE
+        } else {
+            positive_floor(mu * mu / (summary.variance - mu))
+        };
+        NegativeBinomialEta {
+            mu: MuLink::initial_eta_from_theta(mu),
+            shape: ShapeLink::initial_eta_from_theta(shape),
+        }
+    }
+}
+
+impl<MuLink, ShapeLink> HasCdf for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn cdf(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        NegativeBinomialKernel::cdf_theta(y, *theta)
+    }
+}
+
+impl<MuLink, ShapeLink> HasQuantile for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn quantile(&self, p: f64, theta: &Self::Theta) -> f64 {
+        if theta.mu <= 0.0
+            || !theta.mu.is_finite()
+            || theta.shape <= 0.0
+            || !theta.shape.is_finite()
+        {
+            return f64::NAN;
+        }
+
+        #[allow(clippy::cast_precision_loss)]
+        discrete_quantile(p, MAX_CDF_TERMS, |count| {
+            NegativeBinomialKernel::cdf_theta(count as f64, *theta)
+        })
+    }
+}
+
+impl<MuLink, ShapeLink> HasCrps for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn crps(&self, y: Self::Observation<'_>, theta: &Self::Theta) -> f64 {
+        NegativeBinomialKernel::crps_theta(y, *theta)
+    }
+}
+
+#[cfg(feature = "rand")]
+impl<Rng, MuLink, ShapeLink> TrySimulate<Rng> for NegativeBinomial<MuLink, ShapeLink>
+where
+    Rng: rand::Rng,
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    type Sample = f64;
+
+    fn try_sample(&self, rng: &mut Rng, theta: &Self::Theta) -> Result<f64, SimulationError> {
+        NegativeBinomialKernel::try_sample(rng, *theta)
+    }
+}

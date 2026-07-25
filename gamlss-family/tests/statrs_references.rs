@@ -8,11 +8,12 @@
 use gamlss_core::{HasCdf, HasDensity, HasQuantile};
 use gamlss_family::*;
 use statrs::distribution::{
-    Bernoulli as StatrsBernoulli, Beta as StatrsBeta, ContinuousCDF, Discrete, DiscreteCDF,
-    Exp as StatrsExp, Gamma as StatrsGamma, Gumbel as StatrsGumbel, Laplace as StatrsLaplace,
-    LogNormal as StatrsLogNormal, NegativeBinomial as StatrsNegativeBinomial,
-    Normal as StatrsNormal, Poisson as StatrsPoisson, StudentsT as StatrsStudentsT,
-    Weibull as StatrsWeibull,
+    Bernoulli as StatrsBernoulli, Beta as StatrsBeta, Binomial as StatrsBinomial,
+    ChiSquared as StatrsChiSquared, ContinuousCDF, Discrete, DiscreteCDF, Exp as StatrsExp,
+    Gamma as StatrsGamma, Geometric as StatrsGeometric, Gumbel as StatrsGumbel,
+    Laplace as StatrsLaplace, LogNormal as StatrsLogNormal,
+    NegativeBinomial as StatrsNegativeBinomial, Normal as StatrsNormal, Poisson as StatrsPoisson,
+    StudentsT as StatrsStudentsT, Weibull as StatrsWeibull,
 };
 
 use common::{
@@ -31,7 +32,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     let statrs_bernoulli = StatrsBernoulli::new(bernoulli_theta.mu).unwrap();
     for y in [0.0, 1.0] {
         assert_close(
-            bernoulli.density(y, bernoulli_theta),
+            bernoulli.density(y, &bernoulli_theta),
             statrs_bernoulli.pmf(y as u64),
             0.0,
             1.0e-14,
@@ -43,7 +44,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
         } else {
             statrs_bernoulli.cdf(y.floor() as u64)
         };
-        assert_close(bernoulli.cdf(y, bernoulli_theta), expected, 0.0, 1.0e-14);
+        assert_close(bernoulli.cdf(y, &bernoulli_theta), expected, 0.0, 1.0e-14);
     }
 
     let beta = BetaMeanPrecision::new();
@@ -86,7 +87,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let gamma = GammaShapeRate::new();
-    let gamma_theta = GammaTheta {
+    let gamma_theta = GammaShapeRateTheta {
         shape: 2.3,
         rate: 1.4,
     };
@@ -143,7 +144,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let log_normal = LogNormalLogLocationLogSd::new();
-    let log_normal_theta = LogNormalTheta {
+    let log_normal_theta = LogNormalLogLocationLogSdTheta {
         log_location: 0.2,
         log_sd: 0.7,
     };
@@ -204,6 +205,70 @@ fn cdf_quantile_and_density_match_statrs_references() {
         1.0e-12,
     );
 
+    let binomial = BinomialFixedTrialsProbability::try_new(12).unwrap();
+    let binomial_theta = BinomialTheta { probability: 0.35 };
+    let statrs_binomial = StatrsBinomial::new(binomial_theta.probability, 12).unwrap();
+    assert_discrete_statrs_reference(
+        &binomial,
+        binomial_theta,
+        &statrs_binomial,
+        0_u64..=12,
+        2.0e-12,
+    );
+
+    let geometric = GeometricMean::new();
+    let geometric_theta = GeometricTheta { mean: 2.5 };
+    let statrs_geometric = StatrsGeometric::new(1.0 / (1.0 + geometric_theta.mean)).unwrap();
+    for failures in 0_u64..12 {
+        assert_close(
+            geometric.density(failures as f64, &geometric_theta),
+            statrs_geometric.pmf(failures + 1),
+            0.0,
+            1.0e-14,
+        );
+        assert_close(
+            geometric.cdf(failures as f64, &geometric_theta),
+            statrs_geometric.cdf(failures + 1),
+            0.0,
+            1.0e-14,
+        );
+    }
+
+    let rayleigh = RayleighScale::new();
+    let rayleigh_theta = RayleighTheta { scale: 1.3 };
+    let statrs_rayleigh =
+        StatrsWeibull::new(2.0, std::f64::consts::SQRT_2 * rayleigh_theta.scale).unwrap();
+    assert_continuous_statrs_reference(
+        &rayleigh,
+        rayleigh_theta,
+        &statrs_rayleigh,
+        &POSITIVE_REFERENCE_POINTS,
+        ContinuousReferenceTolerances {
+            cdf_abs: 1.0e-14,
+            density_rel: 1.0e-13,
+            density_abs: 1.0e-14,
+            quantile_abs: 1.0e-12,
+        },
+    );
+
+    let chi_squared = ChiSquaredDegreesOfFreedom::new();
+    let chi_squared_theta = ChiSquaredTheta {
+        degrees_of_freedom: 4.5,
+    };
+    let statrs_chi_squared = StatrsChiSquared::new(chi_squared_theta.degrees_of_freedom).unwrap();
+    assert_continuous_statrs_reference(
+        &chi_squared,
+        chi_squared_theta,
+        &statrs_chi_squared,
+        &POSITIVE_REFERENCE_POINTS,
+        ContinuousReferenceTolerances {
+            cdf_abs: 2.0e-10,
+            density_rel: 1.0e-12,
+            density_abs: 1.0e-13,
+            quantile_abs: 2.0e-8,
+        },
+    );
+
     let student_t = StudentTMuSigma::default();
     let student_t_theta = StudentTTheta {
         mu: 0.2,
@@ -225,7 +290,7 @@ fn cdf_quantile_and_density_match_statrs_references() {
     );
 
     let weibull = WeibullScaleShape::new();
-    let weibull_theta = WeibullTheta {
+    let weibull_theta = WeibullScaleShapeTheta {
         shape: 1.7,
         scale: 1.2,
     };
@@ -253,24 +318,24 @@ fn tail_cdf_and_quantile_match_statrs_references() {
     };
     let statrs_normal = StatrsNormal::new(normal_theta.mu, normal_theta.sigma).unwrap();
     for p in TAIL_PROBABILITIES {
-        let actual = normal.quantile(p, normal_theta);
+        let actual = normal.quantile(p, &normal_theta);
         let expected = statrs_normal.inverse_cdf(p);
         assert_close(actual, expected, 0.0, 2.0e-8);
-        assert_close(normal.cdf(actual, normal_theta), p, 0.0, 8.0e-8);
+        assert_close(normal.cdf(actual, &normal_theta), p, 0.0, 8.0e-8);
     }
 
     let log_normal = LogNormalLogLocationLogSd::new();
-    let log_normal_theta = LogNormalTheta {
+    let log_normal_theta = LogNormalLogLocationLogSdTheta {
         log_location: 0.2,
         log_sd: 0.7,
     };
     let statrs_log_normal =
         StatrsLogNormal::new(log_normal_theta.log_location, log_normal_theta.log_sd).unwrap();
     for p in TAIL_PROBABILITIES {
-        let actual = log_normal.quantile(p, log_normal_theta);
+        let actual = log_normal.quantile(p, &log_normal_theta);
         let expected = statrs_log_normal.inverse_cdf(p);
         assert_close(actual, expected, 2.0e-8, 1.0e-8);
-        assert_close(log_normal.cdf(actual, log_normal_theta), p, 0.0, 8.0e-8);
+        assert_close(log_normal.cdf(actual, &log_normal_theta), p, 0.0, 8.0e-8);
     }
 
     let student_t = StudentTMuSigma::try_new(5.0).unwrap();
@@ -281,10 +346,10 @@ fn tail_cdf_and_quantile_match_statrs_references() {
     let statrs_student_t =
         StatrsStudentsT::new(student_t_theta.mu, student_t_theta.sigma, 5.0).unwrap();
     for p in TAIL_PROBABILITIES {
-        let actual = student_t.quantile(p, student_t_theta);
+        let actual = student_t.quantile(p, &student_t_theta);
         let expected = statrs_student_t.inverse_cdf(p);
         assert_close(actual, expected, 3.0e-5, 2.0e-5);
-        assert_close(student_t.cdf(actual, student_t_theta), p, 0.0, 2.0e-7);
+        assert_close(student_t.cdf(actual, &student_t_theta), p, 0.0, 2.0e-7);
     }
 }
 
@@ -292,21 +357,21 @@ fn tail_cdf_and_quantile_match_statrs_references() {
 fn gamma_and_beta_extreme_shape_cases_match_statrs_references() {
     let gamma = GammaShapeRate::new();
     for theta in [
-        GammaTheta {
+        GammaShapeRateTheta {
             shape: 0.15,
             rate: 2.0,
         },
-        GammaTheta {
+        GammaShapeRateTheta {
             shape: 75.0,
             rate: 3.0,
         },
     ] {
         let reference = StatrsGamma::new(theta.shape, theta.rate).unwrap();
         for y in [0.01_f64, 0.1, 1.0, 10.0, 40.0] {
-            assert_close(gamma.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-9);
+            assert_close(gamma.cdf(y, &theta), reference.cdf(y), 0.0, 2.0e-9);
         }
         for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
-            let actual = gamma.quantile(p, theta);
+            let actual = gamma.quantile(p, &theta);
             let expected = reference.inverse_cdf(p);
             if expected.is_finite() {
                 assert_close(actual, expected, 2.0e-8, 2.0e-8);
@@ -315,7 +380,7 @@ fn gamma_and_beta_extreme_shape_cases_match_statrs_references() {
                     actual.is_finite(),
                     "gamma quantile({p}) returned {actual:?}"
                 );
-                assert_close(gamma.cdf(actual, theta), p, 0.0, 2.0e-8);
+                assert_close(gamma.cdf(actual, &theta), p, 0.0, 2.0e-8);
             }
         }
     }
@@ -337,16 +402,16 @@ fn gamma_and_beta_extreme_shape_cases_match_statrs_references() {
         )
         .unwrap();
         for y in [1.0e-8_f64, 0.01, 0.1, 0.5, 0.9, 1.0 - 1.0e-8] {
-            assert_close(beta.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-9);
+            assert_close(beta.cdf(y, &theta), reference.cdf(y), 0.0, 2.0e-9);
         }
         for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
-            let actual = beta.quantile(p, theta);
+            let actual = beta.quantile(p, &theta);
             let expected = reference.inverse_cdf(p);
             if expected.is_finite() {
                 assert_close(actual, expected, 2.0e-8, 2.0e-8);
             } else {
                 assert!(actual.is_finite(), "beta quantile({p}) returned {actual:?}");
-                assert_close(beta.cdf(actual, theta), p, 0.0, 2.0e-8);
+                assert_close(beta.cdf(actual, &theta), p, 0.0, 2.0e-8);
             }
         }
     }
@@ -363,7 +428,7 @@ fn large_discrete_cdf_and_quantile_cases_match_statrs_references() {
             (theta.mu + 3.0 * theta.mu.sqrt()).ceil() as u64,
         ] {
             assert_close(
-                poisson.cdf(count as f64, theta),
+                poisson.cdf(count as f64, &theta),
                 reference.cdf(count),
                 0.0,
                 2.0e-11,
@@ -371,7 +436,7 @@ fn large_discrete_cdf_and_quantile_cases_match_statrs_references() {
         }
         for p in [0.001_f64, 0.01, 0.5, 0.99, 0.999] {
             assert_eq!(
-                poisson.quantile(p, theta),
+                poisson.quantile(p, &theta),
                 statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
             );
         }
@@ -396,7 +461,7 @@ fn large_discrete_cdf_and_quantile_cases_match_statrs_references() {
             (1.5 * theta.mu).ceil() as u64,
         ] {
             assert_close(
-                negative_binomial.cdf(count as f64, theta),
+                negative_binomial.cdf(count as f64, &theta),
                 reference.cdf(count),
                 0.0,
                 3.0e-11,
@@ -404,7 +469,7 @@ fn large_discrete_cdf_and_quantile_cases_match_statrs_references() {
         }
         for p in [0.001_f64, 0.01, 0.5, 0.99, 0.999] {
             assert_eq!(
-                negative_binomial.quantile(p, theta),
+                negative_binomial.quantile(p, &theta),
                 statrs_discrete_quantile(p, |count| reference.cdf(count)) as f64
             );
         }
@@ -423,11 +488,11 @@ fn skew_student_t_symmetric_case_matches_student_t_reference() {
     let reference = StatrsStudentsT::new(theta.mu, theta.sigma, theta.tau).unwrap();
 
     for y in [-4.0_f64, -1.0, 0.3, 1.0, 5.0] {
-        assert_close(skew_t.cdf(y, theta), reference.cdf(y), 0.0, 2.0e-6);
+        assert_close(skew_t.cdf(y, &theta), reference.cdf(y), 0.0, 2.0e-6);
     }
     for p in [0.01_f64, 0.1, 0.5, 0.9, 0.99] {
         assert_close(
-            skew_t.quantile(p, theta),
+            skew_t.quantile(p, &theta),
             reference.inverse_cdf(p),
             0.0,
             2.0e-5,
