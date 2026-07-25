@@ -16,32 +16,6 @@ use crate::constants::LOG_2;
 use crate::initial::{robust_location_scale, weighted_values};
 use crate::link::positive_inverse_and_log;
 
-#[inline]
-pub(super) fn log_standardized_scale(power: f64) -> f64 {
-    -0.5 * ln_gamma_delta(1.0 / power, 2.0 / power)
-}
-
-#[inline]
-pub(super) fn standardized_scale(power: f64) -> f64 {
-    log_standardized_scale(power).exp()
-}
-
-#[inline]
-pub(super) fn d_log_standardized_scale_d_power(power: f64) -> f64 {
-    3.0_f64.mul_add(digamma(3.0 / power), -digamma(1.0 / power)) / (2.0 * power * power)
-}
-
-#[inline]
-pub(super) fn standardized_cdf(value: f64, power: f64) -> f64 {
-    let scaled = value / standardized_scale(power);
-    if scaled < 0.0 {
-        0.5 * regularized_gamma_upper(1.0 / power, scaled.abs().powf(power))
-    } else {
-        let probability = regularized_gamma_lower(1.0 / power, scaled.powf(power));
-        f64::midpoint(1.0, probability)
-    }
-}
-
 /// Power exponential distribution with identity/log/log links.
 pub type PowerExponentialMuSigmaNu = PowerExponential<Identity, Log, Log>;
 /// Alias commonly used for the generalized error distribution.
@@ -199,6 +173,32 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[inline]
+pub(super) fn log_standardized_scale(power: f64) -> f64 {
+    -0.5 * ln_gamma_delta(1.0 / power, 2.0 / power)
+}
+
+#[inline]
+pub(super) fn standardized_scale(power: f64) -> f64 {
+    log_standardized_scale(power).exp()
+}
+
+#[inline]
+pub(super) fn d_log_standardized_scale_d_power(power: f64) -> f64 {
+    3.0_f64.mul_add(digamma(3.0 / power), -digamma(1.0 / power)) / (2.0 * power * power)
+}
+
+#[inline]
+pub(super) fn standardized_cdf(value: f64, power: f64) -> f64 {
+    let scaled = value / standardized_scale(power);
+    if scaled < 0.0 {
+        0.5 * regularized_gamma_upper(1.0 / power, scaled.abs().powf(power))
+    } else {
+        let probability = regularized_gamma_lower(1.0 / power, scaled.powf(power));
+        f64::midpoint(1.0, probability)
     }
 }
 

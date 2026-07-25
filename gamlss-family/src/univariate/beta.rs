@@ -72,13 +72,6 @@ pub struct Beta<MuLink = Logit, PrecisionLink = Log> {
     marker: PhantomData<(MuLink, PrecisionLink)>,
 }
 
-impl<MuLink, PrecisionLink> ScalarObservationDomain for Beta<MuLink, PrecisionLink> {
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_strict_probability(observation)
-    }
-}
-
 impl<MuLink, PrecisionLink> Beta<MuLink, PrecisionLink>
 where
     MuLink: UnitIntervalLink<f64>,
@@ -178,6 +171,13 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<MuLink, PrecisionLink> ScalarObservationDomain for Beta<MuLink, PrecisionLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_strict_probability(observation)
     }
 }
 

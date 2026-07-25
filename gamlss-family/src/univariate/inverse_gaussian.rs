@@ -43,20 +43,6 @@ pub struct InverseGaussian<MuLink = Log, ShapeLink = Log> {
     marker: PhantomData<(MuLink, ShapeLink)>,
 }
 
-impl<MuLink, ShapeLink> ScalarObservationDomain for InverseGaussian<MuLink, ShapeLink> {
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_positive_finite(observation)
-    }
-}
-
-impl<MeanLink, CvLink> ScalarObservationDomain for InverseGaussianCv<MeanLink, CvLink> {
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_positive_finite(observation)
-    }
-}
-
 impl<MuLink, ShapeLink> InverseGaussian<MuLink, ShapeLink>
 where
     MuLink: PositiveLink<f64>,
@@ -69,6 +55,23 @@ where
         Self {
             marker: PhantomData,
         }
+    }
+}
+
+impl<MuLink, ShapeLink> Default for InverseGaussian<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<MuLink, ShapeLink> ScalarObservationDomain for InverseGaussian<MuLink, ShapeLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
     }
 }
 
@@ -174,13 +177,10 @@ impl InverseGaussianKernel {
     }
 }
 
-impl<MuLink, ShapeLink> Default for InverseGaussian<MuLink, ShapeLink>
-where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
+impl<MeanLink, CvLink> ScalarObservationDomain for InverseGaussianCv<MeanLink, CvLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
     }
 }
 

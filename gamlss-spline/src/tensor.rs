@@ -1,8 +1,12 @@
 use std::ops::Range;
 
-use gamlss_core::{PredictorBlock, RowMultiplier};
+use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
 use crate::SplineError;
+use crate::geometry::{
+    add_row_basis_t_mul_vec, add_row_basis_t_mul_vec_by, add_row_basis_weighted_gram,
+    add_row_basis_weighted_gram_by,
+};
 use crate::row_basis::SplineRowBasis;
 
 /// Structured tensor-product spline predictor.
@@ -27,6 +31,7 @@ pub struct TensorSplineDesign<A, B> {
     left: A,
     right: B,
     nrows: usize,
+    left_nparams: usize,
     nparams: usize,
     right_nparams: usize,
 }
@@ -47,9 +52,9 @@ where
             });
         }
 
+        let left_nparams = left.nparams();
         let right_nparams = right.nparams();
-        let nparams = left
-            .nparams()
+        let nparams = left_nparams
             .checked_mul(right_nparams)
             .ok_or(SplineError::ParameterOverflow)?;
 
@@ -57,6 +62,7 @@ where
             left,
             right,
             nrows,
+            left_nparams,
             nparams,
             right_nparams,
         })
@@ -80,7 +86,7 @@ where
     #[must_use]
     #[inline]
     pub const fn left_nparams(&self) -> usize {
-        self.nparams / self.right_nparams
+        self.left_nparams
     }
 
     /// Number of parameters in the right basis.
@@ -88,6 +94,13 @@ where
     #[inline]
     pub const fn right_nparams(&self) -> usize {
         self.right_nparams
+    }
+
+    /// Number of tensor-product coefficients.
+    #[must_use]
+    #[inline]
+    pub const fn n_basis(&self) -> usize {
+        self.nparams
     }
 }
 
@@ -113,11 +126,15 @@ where
                 self.right
                     .for_each_row_basis(row, |right_index, right_weight| {
                         let index = left_index * self.right_nparams + right_index;
-                        f(index, left_weight * right_weight);
+                        let weight = left_weight * right_weight;
+                        if weight != 0.0 {
+                            f(index, weight);
+                        }
                     });
             });
     }
 }
+
 impl<A, B> PredictorBlock for TensorSplineDesign<A, B>
 where
     A: SplineRowBasis,
@@ -143,6 +160,11 @@ where
             value = beta[index].mul_add(weight, value);
         });
         value
+    }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
     }
 
     #[inline]
@@ -190,5 +212,47 @@ where
                 grad[index] = scaled_score.mul_add(weight, grad[index]);
             });
         }
+    }
+}
+
+impl<A, B> LinearPredictorGeometry for TensorSplineDesign<A, B>
+where
+    A: SplineRowBasis,
+    B: SplineRowBasis,
+{
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        add_row_basis_weighted_gram(self, row_weights, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        add_row_basis_weighted_gram_by(self, row_weights, multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        add_row_basis_t_mul_vec(self, row_scores, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        add_row_basis_t_mul_vec_by(self, row_scores, multiplier, out)
     }
 }

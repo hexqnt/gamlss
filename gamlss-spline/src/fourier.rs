@@ -1,50 +1,43 @@
 use std::ops::Range;
 
-use gamlss_core::{PredictorBlock, RowMultiplier};
+use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
-use crate::{FourierError, SplineRowBasis};
+use crate::{FourierError, OnDemandSplineDesign, SplineError, SplineRowBasis};
 
-/// Fourier predictor for seasonal/periodic covariates.
+/// Reusable Fourier basis metadata for seasonal or periodic covariates.
 ///
-/// Let $K$ be `order`, $P>0$ be `period`, and let $c$ equal one when `include_intercept` is true and zero otherwise. The implementation uses
+/// Let $K$ be `order`, $P>0$ be `period`, and let $c$ equal one when
+/// `include_intercept` is true and zero otherwise. The basis represents
 ///
 /// $$
-/// \begin{aligned}
-/// c&=\begin{cases}1,&\text{with intercept},\\\\0,&\text{without intercept},\end{cases} \\\\
-/// \eta(x)&=c\beta_0+\sum_{k=1}^{K}\left\lbrack
+/// \eta(x)=c\beta_0+\sum_{k=1}^{K}\left\lbrack
 /// \beta_{c+2k-2}\sin\left(\frac{2\pi kx}{P}\right)
 /// \mathbin{+}\beta_{c+2k-1}\cos\left(\frac{2\pi kx}{P}\right)
 /// \right\rbrack.
-/// \end{aligned}
 /// $$
 ///
-/// Thus the local coefficient vector has $c+2K$ entries ordered as `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`. When $c=0$, the product $c\beta_0$ contributes zero and index zero belongs to the first sine coefficient.
-///
-/// Unlike a dense design matrix, this predictor does not materialize the basis: values are computed directly in [`PredictorBlock::eta_row`] and [`PredictorBlock::add_gradient`].
+/// Coefficients are ordered as
+/// `[intercept?, sin(k=1), cos(k=1), ..., sin(k=K), cos(k=K)]`.
 #[allow(clippy::doc_markdown)]
-#[derive(Debug, Clone, PartialEq)]
-pub struct FourierDesign {
-    x: Vec<f64>,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FourierBasis {
+    period: f64,
     omega: f64,
     order: usize,
-    nparams: usize,
+    n_basis: usize,
     include_intercept: bool,
 }
 
-impl FourierDesign {
-    /// Builds a Fourier predictor.
+impl FourierBasis {
+    /// Creates reusable Fourier basis metadata.
     ///
-    /// `period` must be finite and positive, `order` must be positive.
-    /// All `x` values must be finite.
-    pub fn new(
-        x: &[f64],
-        period: f64,
-        order: usize,
-        include_intercept: bool,
-    ) -> Result<Self, FourierError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(FourierError::NonFiniteValue);
-        }
+    /// # Errors
+    ///
+    /// Returns [`FourierError::InvalidPeriod`] unless `period` and its angular
+    /// frequency are finite and positive, [`FourierError::InvalidOrder`] when
+    /// `order` is zero, or [`FourierError::CoefficientOverflow`] when the basis
+    /// size overflows `usize`.
+    pub fn new(period: f64, order: usize, include_intercept: bool) -> Result<Self, FourierError> {
         if !period.is_finite() || period <= 0.0 {
             return Err(FourierError::InvalidPeriod);
         }
@@ -52,15 +45,57 @@ impl FourierDesign {
             return Err(FourierError::InvalidOrder);
         }
 
-        let nparams = coefficient_count(order, include_intercept)?;
+        let n_basis = coefficient_count(order, include_intercept)?;
+        let omega = std::f64::consts::TAU / period;
+        if !omega.is_finite() {
+            return Err(FourierError::InvalidPeriod);
+        }
 
         Ok(Self {
-            x: x.to_vec(),
-            omega: std::f64::consts::TAU / period,
+            period,
+            omega,
             order,
-            nparams,
+            n_basis,
             include_intercept,
         })
+    }
+
+    /// Builds the named Fourier predictor for concrete coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FourierError::NonFiniteValue`] if a coordinate or its scaled
+    /// phase is not finite.
+    pub fn design(&self, x: &[f64]) -> Result<FourierDesign, FourierError> {
+        Ok(FourierDesign {
+            inner: self.on_demand_design(x)?,
+        })
+    }
+
+    /// Builds the generic on-demand spline representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FourierError::NonFiniteValue`] if a coordinate or its scaled
+    /// phase is not finite.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, FourierError> {
+        OnDemandSplineDesign::new(x, *self).map_err(|error| map_spline_error(&error))
+    }
+
+    /// Visits non-zero basis values for one coordinate without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FourierError::NonFiniteValue`] if the coordinate or its
+    /// scaled phase is not finite.
+    pub fn for_each_value_basis(
+        &self,
+        x: f64,
+        f: impl FnMut(usize, f64),
+    ) -> Result<(), FourierError> {
+        let phase = self.phase(x)?;
+        self.for_each_basis_at_phase(phase, f);
+        Ok(())
     }
 
     /// Number of harmonics.
@@ -73,28 +108,40 @@ impl FourierDesign {
     /// Period of the Fourier basis.
     #[inline]
     #[must_use]
-    pub fn period(&self) -> f64 {
-        std::f64::consts::TAU / self.omega
+    pub const fn period(&self) -> f64 {
+        self.period
     }
 
-    /// Returns `true` if the predictor contains an intercept.
+    /// Returns `true` if the basis contains an intercept.
     #[inline]
     #[must_use]
     pub const fn include_intercept(&self) -> bool {
         self.include_intercept
     }
 
-    /// Returns the original coordinates.
+    /// Number of basis functions.
     #[inline]
     #[must_use]
-    pub fn x(&self) -> &[f64] {
-        &self.x
+    pub const fn n_basis(&self) -> usize {
+        self.n_basis
+    }
+
+    #[inline]
+    pub(crate) fn phase(&self, x: f64) -> Result<f64, FourierError> {
+        if !x.is_finite() {
+            return Err(FourierError::NonFiniteValue);
+        }
+        let phase = self.omega * x;
+        if !phase.is_finite() {
+            return Err(FourierError::NonFiniteValue);
+        }
+        Ok(phase)
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops, clippy::useless_let_if_seq)]
-    fn for_each_basis_at(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        let (base_sin, base_cos) = (self.omega * self.x[row]).sin_cos();
+    fn for_each_basis_at_phase(&self, phase: f64, mut f: impl FnMut(usize, f64)) {
+        let (base_sin, base_cos) = phase.sin_cos();
         let mut harmonic_sin = base_sin;
         let mut harmonic_cos = base_cos;
 
@@ -105,8 +152,12 @@ impl FourierDesign {
         }
 
         for harmonic in 1..=self.order {
-            f(offset, harmonic_sin);
-            f(offset + 1, harmonic_cos);
+            if harmonic_sin != 0.0 {
+                f(offset, harmonic_sin);
+            }
+            if harmonic_cos != 0.0 {
+                f(offset + 1, harmonic_cos);
+            }
             offset += 2;
 
             if harmonic != self.order {
@@ -117,69 +168,116 @@ impl FourierDesign {
             }
         }
     }
+}
 
+/// Fourier predictor with allocation-free on-demand row evaluation.
+///
+/// The design retains coordinates and reusable [`FourierBasis`] metadata but
+/// does not materialize a dense matrix. Use [`FourierDesign::basis`] to apply
+/// the same fitted basis to new coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FourierDesign {
+    inner: OnDemandSplineDesign<FourierBasis>,
+}
+
+impl FourierDesign {
+    /// Builds a Fourier predictor.
+    ///
+    /// `period` must be finite and positive, `order` must be positive, and all
+    /// coordinates and scaled phases must be finite.
+    pub fn new(
+        x: &[f64],
+        period: f64,
+        order: usize,
+        include_intercept: bool,
+    ) -> Result<Self, FourierError> {
+        FourierBasis::new(period, order, include_intercept)?.design(x)
+    }
+
+    /// Reusable basis metadata.
     #[inline]
-    fn add_row_gradient(&self, row: usize, score: f64, grad: &mut [f64]) {
-        self.for_each_basis_at(row, |index, basis| {
-            grad[index] = score.mul_add(basis, grad[index]);
-        });
+    #[must_use]
+    pub const fn basis(&self) -> &FourierBasis {
+        self.inner.basis()
+    }
+
+    /// Number of harmonics.
+    #[inline]
+    #[must_use]
+    pub const fn order(&self) -> usize {
+        self.basis().order()
+    }
+
+    /// Period of the Fourier basis.
+    #[inline]
+    #[must_use]
+    pub const fn period(&self) -> f64 {
+        self.basis().period()
+    }
+
+    /// Returns `true` if the predictor contains an intercept.
+    #[inline]
+    #[must_use]
+    pub const fn include_intercept(&self) -> bool {
+        self.basis().include_intercept()
+    }
+
+    /// Number of Fourier coefficients.
+    #[inline]
+    #[must_use]
+    pub const fn n_basis(&self) -> usize {
+        self.basis().n_basis()
+    }
+
+    /// Returns the original coordinates.
+    #[inline]
+    #[must_use]
+    pub fn x(&self) -> &[f64] {
+        self.inner.x()
     }
 }
 
 impl SplineRowBasis for FourierDesign {
     #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.inner.nrows()
     }
 
     #[inline]
     fn nparams(&self) -> usize {
-        self.nparams
+        self.inner.n_basis()
     }
 
     #[inline]
     fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        debug_assert!(row < self.x.len());
-        self.for_each_basis_at(row, f);
+        self.inner.for_each_row_basis(row, f);
     }
 }
 
 impl PredictorBlock for FourierDesign {
     #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.inner.nrows()
     }
 
     #[inline]
     fn nparams(&self) -> usize {
-        self.nparams
+        self.inner.n_basis()
     }
 
     #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
-        debug_assert_eq!(beta.len(), self.nparams);
+        self.inner.eta_row(row, beta)
+    }
 
-        let mut value = 0.0;
-        self.for_each_basis_at(row, |index, basis| {
-            value = beta[index].mul_add(basis, value);
-        });
-        value
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        self.inner.zero_beta_constant_contribution()
     }
 
     #[inline]
     fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        debug_assert!(rows.end <= self.x.len());
-        debug_assert_eq!(scores.len(), rows.len());
-        debug_assert_eq!(grad.len(), self.nparams);
-
-        for (offset, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            let row = rows.start + offset;
-            self.add_row_gradient(row, score, grad);
-        }
+        self.inner.add_gradient_range(rows, scores, &[], grad);
     }
 
     #[inline]
@@ -193,21 +291,47 @@ impl PredictorBlock for FourierDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert!(rows.end <= self.x.len());
-        debug_assert_eq!(scores.len(), rows.len());
-        debug_assert_eq!(grad.len(), self.nparams);
+        self.inner
+            .add_weighted_gradient_by_range(rows, scores, multiplier, &[], grad);
+    }
+}
 
-        for (offset, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            let row = rows.start + offset;
-            let scaled_score = score * multiplier.multiplier_at(row);
-            if scaled_score == 0.0 {
-                continue;
-            }
-            self.add_row_gradient(row, scaled_score, grad);
-        }
+impl LinearPredictorGeometry for FourierDesign {
+    #[inline]
+    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.inner.add_weighted_gram(row_weights, out)
+    }
+
+    #[inline]
+    fn add_weighted_gram_by<M>(
+        &self,
+        row_weights: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.inner
+            .add_weighted_gram_by(row_weights, multiplier, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
+        self.inner.add_t_mul_vec(row_scores, out)
+    }
+
+    #[inline]
+    fn add_t_mul_vec_by<M>(
+        &self,
+        row_scores: &[f64],
+        multiplier: &M,
+        out: &mut [f64],
+    ) -> Result<(), ModelError>
+    where
+        M: RowMultiplier + ?Sized,
+    {
+        self.inner.add_t_mul_vec_by(row_scores, multiplier, out)
     }
 }
 
@@ -216,4 +340,12 @@ fn coefficient_count(order: usize, include_intercept: bool) -> Result<usize, Fou
         .checked_mul(2)
         .and_then(|count| count.checked_add(usize::from(include_intercept)))
         .ok_or(FourierError::CoefficientOverflow)
+}
+
+#[inline]
+fn map_spline_error(error: &SplineError) -> FourierError {
+    if *error != SplineError::NonFiniteValue {
+        debug_assert!(false, "unexpected Fourier coordinate error");
+    }
+    FourierError::NonFiniteValue
 }

@@ -4,6 +4,8 @@ use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
 use crate::domain::{is_positive_finite, is_strict_probability};
 
+use super::gamma::{GammaKernel, GammaShapeRateTheta};
+
 pub use component_mean_cv_zero_probability::{
     ZagaComponentMeanCvZeroProbability, ZagaComponentMeanCvZeroProbabilityEta,
 };
@@ -14,8 +16,6 @@ pub use total_mean_cv::{
 
 mod component_mean_cv_zero_probability;
 mod total_mean_cv;
-
-use super::gamma::{GammaKernel, GammaShapeRateTheta};
 
 /// Zero-adjusted gamma family.
 ///
@@ -63,6 +63,18 @@ where
         Self {
             marker: PhantomData,
         }
+    }
+}
+
+impl<ComponentMeanLink, CvLink, ZeroProbabilityLink> Default
+    for Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
+where
+    ComponentMeanLink: PositiveLink<f64>,
+    CvLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -185,18 +197,6 @@ impl ZagaKernel {
         let distribution = rand_distr::Gamma::new(shape_rate.shape, 1.0 / shape_rate.rate)
             .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZAGA gamma"))?;
         Ok(rand_distr::Distribution::sample(&distribution, rng))
-    }
-}
-
-impl<ComponentMeanLink, CvLink, ZeroProbabilityLink> Default
-    for Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>
-where
-    ComponentMeanLink: PositiveLink<f64>,
-    CvLink: PositiveLink<f64>,
-    ZeroProbabilityLink: UnitIntervalLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

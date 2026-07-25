@@ -11,6 +11,9 @@ keywords.workspace = true
 categories.workspace = true
 build = "build.rs"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 rand = ["dep:rand", "dep:rand_distr"]

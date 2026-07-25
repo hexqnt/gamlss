@@ -46,15 +46,6 @@ pub struct Weibull<Param = ScaleShape, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
-impl<Param, FirstLink, SecondLink> ScalarObservationDomain
-    for Weibull<Param, FirstLink, SecondLink>
-{
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_positive_finite(observation)
-    }
-}
-
 impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
     /// Creates a stateless Weibull family.
     #[inline]
@@ -167,6 +158,15 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
 impl<Param, FirstLink, SecondLink> Default for Weibull<Param, FirstLink, SecondLink> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain
+    for Weibull<Param, FirstLink, SecondLink>
+{
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
     }
 }
 

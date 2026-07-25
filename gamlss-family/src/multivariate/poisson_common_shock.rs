@@ -555,6 +555,7 @@ mod tests {
         LinearPredictorBlock, NoPenalty, ParameterBlock, ParameterBlocks, SharedRate,
         VectorParameterBlock,
     };
+    #[cfg(feature = "rand")]
     use gamlss_special::is_nonnegative_integer;
 
     use super::{MvPoissonCommonShockDefault, MvPoissonCommonShockEta, MvPoissonCommonShockTheta};

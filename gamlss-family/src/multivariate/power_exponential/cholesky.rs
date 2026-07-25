@@ -17,8 +17,9 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use super::{direct_power_score, radial_nll_constant};
 use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
+
+use super::{direct_power_score, radial_nll_constant};
 
 /// Default-link multivariate power-exponential with Cholesky scale.
 pub type MvPowerExponentialCholeskyDefault<const D: usize> =

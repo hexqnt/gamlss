@@ -15,7 +15,7 @@ pub struct LocalBasis {
 
 impl LocalBasis {
     #[inline]
-    fn push_nonzero(&mut self, index: usize, weight: f64) {
+    pub(crate) fn push_nonzero(&mut self, index: usize, weight: f64) {
         if weight != 0.0 {
             debug_assert!(self.len < self.indices.len());
             self.indices[self.len] = index;
@@ -72,6 +72,19 @@ impl LocalBasis {
             }
             _ => unreachable!("local spline basis stores at most four entries"),
         }
+    }
+
+    #[inline]
+    pub(crate) fn add_scaled_outer(self, scale: f64, nparams: usize, out: &mut [f64]) {
+        debug_assert_eq!(out.len(), nparams * nparams);
+
+        self.for_each(|left_index, left_weight| {
+            let scaled_left = scale * left_weight;
+            self.for_each(|right_index, right_weight| {
+                let index = left_index * nparams + right_index;
+                out[index] = scaled_left.mul_add(right_weight, out[index]);
+            });
+        });
     }
 }
 
@@ -415,6 +428,150 @@ impl PreparedLocalBasis {
             }
         }
     }
+}
+
+/// Returns the degree-`degree` B-spline functions that can be non-zero at `x`.
+///
+/// This preserves the crate's existing edge semantics for arbitrary knot
+/// vectors, including the partially supported rows outside the conventional
+/// `[t_p, t_n]` parameter interval and the closed final degree-zero interval.
+#[inline]
+#[allow(clippy::float_cmp)]
+pub fn bspline_active_range(
+    knots: &[f64],
+    n_basis: usize,
+    degree: usize,
+    x: f64,
+) -> Option<std::ops::RangeInclusive<usize>> {
+    let mut first = n_basis;
+    let mut last = 0;
+    let mut found = false;
+
+    let upper = knots.partition_point(|knot| *knot <= x);
+    if upper > 0 && upper < knots.len() {
+        let interval = upper - 1;
+        first = interval.saturating_sub(degree).min(n_basis);
+        last = interval.min(n_basis - 1);
+        found = first <= last;
+    }
+
+    let closed_interval = n_basis - 1;
+    if x == knots[n_basis] {
+        let closed_first = closed_interval.saturating_sub(degree);
+        first = if found {
+            first.min(closed_first)
+        } else {
+            closed_first
+        };
+        last = if found {
+            last.max(closed_interval)
+        } else {
+            closed_interval
+        };
+        found = true;
+    }
+
+    found.then_some(first..=last)
+}
+
+/// Evaluates one B-spline basis function with Cox--de Boor recursion.
+///
+/// This remains the general fallback for degrees above three and the reference
+/// implementation used by the fixed-width local evaluator at unusual edges.
+#[allow(clippy::float_cmp, clippy::suboptimal_flops)]
+pub fn bspline_value(knots: &[f64], n_basis: usize, index: usize, degree: usize, x: f64) -> f64 {
+    if degree == 0 {
+        let left = knots[index];
+        let right = knots[index + 1];
+        let is_last_basis = index + 1 == n_basis;
+        if (left <= x && x < right) || (is_last_basis && x == right) {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        let mut value = 0.0;
+        let left_denom = knots[index + degree] - knots[index];
+        if left_denom > 0.0 {
+            value = ((x - knots[index]) / left_denom)
+                .mul_add(bspline_value(knots, n_basis, index, degree - 1, x), value);
+        }
+
+        let right_denom = knots[index + degree + 1] - knots[index + 1];
+        if right_denom > 0.0 {
+            value = ((knots[index + degree + 1] - x) / right_denom).mul_add(
+                bspline_value(knots, n_basis, index + 1, degree - 1, x),
+                value,
+            );
+        }
+        value
+    }
+}
+
+/// Evaluates all non-zero degree-zero through cubic B-spline weights together.
+///
+/// Interior rows use the standard allocation-free `BasisFuns` recurrence in
+/// `O(p^2)`. The uncommon partial-support edge rows use the recursive reference
+/// kernel so arbitrary, non-clamped knot vectors retain their historical
+/// semantics.
+#[inline]
+pub fn bspline_local_basis(knots: &[f64], n_basis: usize, degree: usize, x: f64) -> LocalBasis {
+    debug_assert!(degree <= 3);
+
+    let Some(active) = bspline_active_range(knots, n_basis, degree, x) else {
+        return LocalBasis::default();
+    };
+    let first = *active.start();
+    let last = *active.end();
+
+    let upper = knots.partition_point(|knot| *knot <= x);
+    let conventional_interior = upper > 0
+        && upper < knots.len()
+        && upper > degree
+        && upper - 1 < n_basis
+        && first == upper - 1 - degree
+        && last == upper - 1;
+
+    if conventional_interior {
+        let span = upper - 1;
+        let weights = arbitrary_bspline_basis_funs(knots, span, degree, x);
+        let mut basis = LocalBasis::default();
+        for (offset, weight) in weights.iter().copied().enumerate().take(degree + 1) {
+            basis.push_nonzero(first + offset, weight);
+        }
+        return basis;
+    }
+
+    let mut basis = LocalBasis::default();
+    for index in active {
+        basis.push_nonzero(index, bspline_value(knots, n_basis, index, degree, x));
+    }
+    basis
+}
+
+#[inline]
+fn arbitrary_bspline_basis_funs(knots: &[f64], span: usize, degree: usize, x: f64) -> [f64; 4] {
+    let mut weights = [0.0; 4];
+    let mut left = [0.0; 4];
+    let mut right = [0.0; 4];
+    weights[0] = 1.0;
+    for j in 1..=degree {
+        left[j] = x - knots[span + 1 - j];
+        right[j] = knots[span + j] - x;
+        let mut saved = 0.0;
+        for r in 0..j {
+            let denominator = right[r + 1] + left[j - r];
+            let temp = if denominator == 0.0 {
+                0.0
+            } else {
+                weights[r] / denominator
+            };
+            weights[r] = right[r + 1].mul_add(temp, saved);
+            saved = left[j - r] * temp;
+        }
+        weights[j] = saved;
+    }
+    weights
 }
 
 /// Computes the local basis of an open-uniform spline for the normalized
@@ -825,9 +982,10 @@ mod tests {
     use std::mem::size_of;
 
     use super::{
-        LocalBasis, PreparedLocalBasis, open_uniform_active_weights, open_uniform_knot,
-        open_uniform_local_basis, open_uniform_span, prepare_cyclic_local_basis,
-        prepare_open_uniform_local_basis, spline_weights, wrapped_index,
+        LocalBasis, PreparedLocalBasis, bspline_local_basis, bspline_value,
+        open_uniform_active_weights, open_uniform_knot, open_uniform_local_basis,
+        open_uniform_span, prepare_cyclic_local_basis, prepare_open_uniform_local_basis,
+        spline_weights, wrapped_index,
     };
     use crate::SplineOrder;
 
@@ -835,6 +993,41 @@ mod tests {
         let mut values = Vec::new();
         local.for_each(|index, weight| values.push((index, weight)));
         values
+    }
+
+    #[test]
+    fn arbitrary_local_bspline_matches_recursive_reference() {
+        let cases: [(usize, Vec<f64>); 5] = [
+            (0, vec![-1.0, 0.0, 0.5, 2.0]),
+            (1, vec![0.0, 0.0, 0.3, 0.7, 1.0, 1.0]),
+            (2, vec![0.0, 0.0, 0.0, 0.4, 1.0, 1.0, 1.0]),
+            (2, vec![-1.0, 0.0, 0.5, 1.5, 2.0, 3.0]),
+            (3, vec![0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0]),
+        ];
+
+        for (degree, knots) in cases {
+            let n_basis = knots.len() - degree - 1;
+            let mut points = vec![-2.0, 4.0];
+            for knot in knots.iter().copied() {
+                points.extend([knot.next_down(), knot, knot.next_up()]);
+            }
+
+            for x in points {
+                let mut actual = vec![0.0; n_basis];
+                bspline_local_basis(&knots, n_basis, degree, x)
+                    .for_each(|index, weight| actual[index] = weight);
+                let expected = (0..n_basis)
+                    .map(|index| bspline_value(&knots, n_basis, index, degree, x))
+                    .collect::<Vec<_>>();
+                assert!(
+                    actual
+                        .iter()
+                        .zip(&expected)
+                        .all(|(actual, expected)| (actual - expected).abs() <= 1.0e-14),
+                    "degree={degree}, knots={knots:?}, x={x:?}, actual={actual:?}, expected={expected:?}"
+                );
+            }
+        }
     }
 
     fn assert_matches_binary_search(u: f64, n_basis: usize, degree: usize) {

@@ -43,7 +43,8 @@ where
     /// Returns the first coordinate-validation error, including
     /// [`SplineError::NonFiniteValue`] for a non-finite coordinate.
     pub fn new(x: &[f64], basis: B) -> Result<Self, SplineError> {
-        Self::from_boxed(x.into(), basis)
+        validate_coordinates(x, &basis)?;
+        Ok(Self { x: x.into(), basis })
     }
 
     /// Builds an on-demand design while taking ownership of `x`.
@@ -56,9 +57,7 @@ where
     ///
     /// Returns the first coordinate-validation error.
     pub fn from_boxed(x: Box<[f64]>, basis: B) -> Result<Self, SplineError> {
-        for value in x.iter().copied() {
-            basis.validate_coordinate(value)?;
-        }
+        validate_coordinates(&x, &basis)?;
         Ok(Self { x, basis })
     }
 
@@ -112,14 +111,9 @@ where
 
     #[inline]
     fn add_scaled_outer_row(&self, row: usize, scale: f64, out: &mut [f64]) {
-        let n_basis = self.basis.n_basis();
-        self.visit_row(row, |left_index, left_weight| {
-            let scaled_left = scale * left_weight;
-            self.visit_row(row, |right_index, right_weight| {
-                let index = left_index * n_basis + right_index;
-                out[index] = scaled_left.mul_add(right_weight, out[index]);
-            });
-        });
+        self.basis.add_scaled_outer(self.x[row], scale, out).expect(
+            "a basis evaluation failed after OnDemandSplineDesign validated the coordinate",
+        );
     }
 }
 
@@ -282,6 +276,17 @@ where
         self.add_weighted_gradient_by(row_scores, multiplier, &[], out);
         Ok(())
     }
+}
+
+#[inline]
+fn validate_coordinates<B>(x: &[f64], basis: &B) -> Result<(), SplineError>
+where
+    B: SplineBasis1d + ?Sized,
+{
+    for value in x.iter().copied() {
+        basis.validate_coordinate(value)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

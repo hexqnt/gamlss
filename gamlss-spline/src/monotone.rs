@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use gamlss_core::{Link, PredictorBlock, RowMultiplier, Softplus};
 
-use crate::SplineError;
-use crate::ispline::ISplineBasis;
+use crate::ispline::{ISplineBasis, ISplineDesign};
+use crate::{SplineError, SplineRowBasis};
 
 /// Direction of a hard-monotone I-spline predictor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,13 +38,11 @@ impl MonotoneDirection {
 ///
 /// Thus `beta[0]` is an unconstrained intercept and `beta[i + 1]` controls basis index $i$. Because $I_i^{\prime}(x)\ge0$, this construction enforces $s\\,\eta^{\prime}(x)=\sum_i a_i I_i^{\prime}(x)\ge0$ for every coefficient vector; no penalty or post-fit projection is needed.
 ///
-/// Basis rows are evaluated on demand; the design retains coordinates and
-/// [`ISplineBasis`] metadata but no row cache.
+/// Basis rows use the compact prepared representation from [`ISplineDesign`].
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonotoneISplineDesign {
-    x: Vec<f64>,
-    basis: ISplineBasis,
+    design: ISplineDesign,
     direction: MonotoneDirection,
 }
 
@@ -55,12 +53,8 @@ impl MonotoneISplineDesign {
         basis: ISplineBasis,
         direction: MonotoneDirection,
     ) -> Result<Self, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
         Ok(Self {
-            x: x.to_vec(),
-            basis,
+            design: ISplineDesign::from_owned_basis(x, basis)?,
             direction,
         })
     }
@@ -68,19 +62,19 @@ impl MonotoneISplineDesign {
     /// Returns the basis metadata.
     #[must_use]
     pub const fn basis(&self) -> &ISplineBasis {
-        &self.basis
+        self.design.basis()
     }
 
     /// Input coordinates.
     #[must_use]
     pub fn x(&self) -> &[f64] {
-        &self.x
+        self.design.x()
     }
 
     /// Number of positive increments.
     #[must_use]
     pub const fn n_increments(&self) -> usize {
-        self.basis.n_basis()
+        self.design.n_basis()
     }
 
     /// Monotonicity direction.
@@ -93,14 +87,15 @@ impl MonotoneISplineDesign {
     #[must_use]
     #[inline]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
+        debug_assert!(row < self.design.x().len());
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
         let beta_tail = &beta[1..];
         let mut value = 0.0;
-        self.basis
-            .for_each_derivative_basis(self.x[row], |index, basis| {
+        self.design
+            .basis()
+            .for_each_derivative_basis(self.design.x()[row], |index, basis| {
                 value = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, value);
             });
         value
@@ -111,7 +106,7 @@ impl MonotoneISplineDesign {
     fn add_row_gradient(&self, row: usize, score: f64, beta: &[f64], grad: &mut [f64]) {
         let sign = self.direction.sign();
         grad[0] += score;
-        self.basis.for_each_basis(self.x[row], |index, basis| {
+        self.design.for_each_row_basis(row, |index, basis| {
             let scale = score * sign * Softplus::derivative_inverse(beta[index + 1]);
             grad[index + 1] = scale.mul_add(basis, grad[index + 1]);
         });
@@ -121,23 +116,23 @@ impl MonotoneISplineDesign {
 impl PredictorBlock for MonotoneISplineDesign {
     #[inline]
     fn nrows(&self) -> usize {
-        self.x.len()
+        self.design.x().len()
     }
 
     #[inline]
     fn nparams(&self) -> usize {
-        1 + self.basis.n_basis()
+        1 + self.design.n_basis()
     }
 
     #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
+        debug_assert!(row < self.design.x().len());
         debug_assert_eq!(beta.len(), self.nparams());
 
         let sign = self.direction.sign();
         let beta_tail = &beta[1..];
         let mut eta = beta[0];
-        self.basis.for_each_basis(self.x[row], |index, basis| {
+        self.design.for_each_row_basis(row, |index, basis| {
             eta = (sign * Softplus::inverse(beta_tail[index])).mul_add(basis, eta);
         });
         eta
@@ -151,7 +146,7 @@ impl PredictorBlock for MonotoneISplineDesign {
         beta: &[f64],
         grad: &mut [f64],
     ) {
-        debug_assert!(rows.end <= self.x.len());
+        debug_assert!(rows.end <= self.design.x().len());
         debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());
@@ -176,7 +171,7 @@ impl PredictorBlock for MonotoneISplineDesign {
     ) where
         M: RowMultiplier + ?Sized,
     {
-        debug_assert!(rows.end <= self.x.len());
+        debug_assert!(rows.end <= self.design.x().len());
         debug_assert_eq!(scores.len(), rows.len());
         debug_assert_eq!(beta.len(), self.nparams());
         debug_assert_eq!(grad.len(), self.nparams());

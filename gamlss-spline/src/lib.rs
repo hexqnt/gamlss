@@ -1,11 +1,18 @@
 #![forbid(unsafe_code)]
-//! Spline bases, spline design matrices and penalties.
+//! Spline bases, prepared and on-demand predictor designs, and penalties.
+//!
+//! Reusable `*Basis` and `*Spec` metadata can be applied to new coordinates.
+//! Named prepared designs cache compact row geometry where that improves
+//! repeated model passes; [`OnDemandSplineDesign`] retains only coordinates
+//! and metadata. Linear designs share [`SplineRowBasis`],
+//! [`gamlss_core::PredictorBlock`], and
+//! [`gamlss_core::LinearPredictorGeometry`] contracts.
 
 pub use basis::SplineBasis1d;
-pub use bspline::{BSplineBasis, pspline_design};
+pub use bspline::{BSplineBasis, BSplineDesign, pspline_design};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
 pub use error::{FourierError, SplineError};
-pub use fourier::FourierDesign;
+pub use fourier::{FourierBasis, FourierDesign};
 pub use ispline::{ISplineBasis, ISplineDesign};
 pub use monotone::{MonotoneDirection, MonotoneISplineDesign};
 pub use mspline::{MSplineBasis, MSplineDesign};
@@ -38,22 +45,24 @@ pub mod open_uniform;
 pub mod order;
 pub mod penalty;
 pub mod periodic;
+mod prepared;
 pub mod row_basis;
 pub mod tensor;
 pub mod truncated_power;
+mod validation;
 
 /// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
-        BSplineBasis, CsrParts, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
-        DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
-        ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection, MonotoneISplineDesign,
-        NaturalCubicSplineBasis, NaturalCubicSplineDesign, OnDemandSplineDesign,
-        OpenUniformSplineBasis, OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
-        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
-        SplineBasis1d, SplineError, SplineOrder, SplineRowBasis, SplineRowBasisExt,
-        TensorSplineDesign, TripletParts, TruncatedPowerBasis, TruncatedPowerDesign,
-        pspline_design,
+        BSplineBasis, BSplineDesign, CsrParts, CyclicDifferencePenalty, CyclicSplineDesign,
+        CyclicSplineSpec, DifferencePenalty, EdgeMonotonicPenalty, FourierBasis, FourierDesign,
+        FourierError, ISplineBasis, ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection,
+        MonotoneISplineDesign, NaturalCubicSplineBasis, NaturalCubicSplineDesign,
+        OnDemandSplineDesign, OpenUniformSplineBasis, OpenUniformSplineDesign,
+        PeriodicSplineDesign, PeriodicSplineSpec, PreparedCyclicDifferencePenalty,
+        PreparedDifferencePenalty, SlopeLimitPenalty, SplineBasis1d, SplineError, SplineOrder,
+        SplineRowBasis, SplineRowBasisExt, TensorSplineDesign, TripletParts, TruncatedPowerBasis,
+        TruncatedPowerDesign, pspline_design,
     };
 }
 
@@ -67,12 +76,13 @@ mod tests {
 
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
-        DifferencePenalty, EdgeMonotonicPenalty, FourierDesign, FourierError, ISplineBasis,
-        MSplineBasis, MonotoneDirection, MonotoneISplineDesign, NaturalCubicSplineBasis,
-        OnDemandSplineDesign, OpenUniformSplineBasis, OpenUniformSplineDesign,
-        PeriodicSplineDesign, PeriodicSplineSpec, PreparedCyclicDifferencePenalty,
-        PreparedDifferencePenalty, SlopeLimitPenalty, SplineBasis1d, SplineError, SplineOrder,
-        SplineRowBasisExt, TensorSplineDesign, TruncatedPowerBasis,
+        DifferencePenalty, EdgeMonotonicPenalty, FourierBasis, FourierDesign, FourierError,
+        ISplineBasis, MSplineBasis, MonotoneDirection, MonotoneISplineDesign,
+        NaturalCubicSplineBasis, OnDemandSplineDesign, OpenUniformSplineBasis,
+        OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
+        PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
+        SplineBasis1d, SplineError, SplineOrder, SplineRowBasisExt, TensorSplineDesign,
+        TruncatedPowerBasis,
     };
 
     #[test]
@@ -336,13 +346,16 @@ mod tests {
         let basis = BSplineBasis::open_uniform_from_data(&x, 7, 3).unwrap();
         let dense = basis.design_matrix(&x).unwrap();
         let dense_predictor = LinearPredictorBlock::new(&dense);
+        let prepared = basis.design(&x).unwrap();
         let on_demand = basis.on_demand_design(&x).unwrap();
         let borrowed = OnDemandSplineDesign::new(&x, &basis).unwrap();
         let beta = [0.2, -0.3, 0.7, 0.1, -0.5, 0.8, 0.4];
         let scores = [0.5, -0.2, 0.0, 0.9, -0.4];
 
         assert_eq!(on_demand.to_row_major_values().unwrap(), dense.values());
+        assert_eq!(prepared.to_row_major_values().unwrap(), dense.values());
         assert_eq!(borrowed.to_row_major_values().unwrap(), dense.values());
+        assert_spline_predictors_match(&prepared, &on_demand, &beta, &scores);
         assert_spline_predictors_match(&dense_predictor, &on_demand, &beta, &scores);
 
         let weights = [0.2, -0.5, 0.0, 0.7, 1.1];
@@ -357,6 +370,99 @@ mod tests {
         for (dense, on_demand) in dense_gram.iter().zip(on_demand_gram) {
             assert_relative_eq!(*dense, on_demand, epsilon = 1.0e-12);
         }
+        assert_linear_geometry_matches(&prepared, &on_demand, &weights, &scores);
+    }
+
+    #[test]
+    fn prepared_m_and_i_splines_match_on_demand_designs() {
+        let training = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let x = [-0.1, 0.0, 0.2, 0.55, 1.0, 1.1];
+        let beta = [0.2, -0.3, 0.7, 0.1, -0.5, 0.8, 0.4];
+        let scores = [0.5, -0.2, 0.0, 0.9, -0.4, 0.3];
+        let weights = [0.2, -0.5, 0.0, 0.7, 1.1, -0.3];
+
+        let m_basis = MSplineBasis::open_uniform_from_data(&training, beta.len(), 3).unwrap();
+        let m_prepared = m_basis.design(&x).unwrap();
+        let m_on_demand = m_basis.on_demand_design(&x).unwrap();
+        assert_spline_predictors_match(&m_prepared, &m_on_demand, &beta, &scores);
+        assert_linear_geometry_matches(&m_prepared, &m_on_demand, &weights, &scores);
+        for (row, value) in x.iter().copied().enumerate() {
+            let mut expected = 0.0;
+            m_basis.for_each_derivative_basis(value, |index, weight| {
+                expected = beta[index].mul_add(weight, expected);
+            });
+            assert_relative_eq!(
+                m_prepared.eta_derivative_row(row, &beta),
+                expected,
+                epsilon = 1.0e-12
+            );
+        }
+
+        let i_basis = ISplineBasis::open_uniform_from_data(&training, beta.len(), 3).unwrap();
+        let i_prepared = i_basis.design(&x).unwrap();
+        let i_on_demand = i_basis.on_demand_design(&x).unwrap();
+        assert_spline_predictors_match(&i_prepared, &i_on_demand, &beta, &scores);
+        assert_linear_geometry_matches(&i_prepared, &i_on_demand, &weights, &scores);
+    }
+
+    #[test]
+    fn prepared_i_spline_handles_degenerate_supports() {
+        let basis =
+            ISplineBasis::new(vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], 3).unwrap();
+        let x = [-0.1, 0.0, 0.2, 0.7, 1.0, 1.1];
+        let beta = [0.2, -0.3, 0.7, 0.1, -0.5, 0.8];
+        let scores = [0.5, -0.2, 0.0, 0.9, -0.4, 0.3];
+        let weights = [0.2, -0.5, 0.0, 0.7, 1.1, -0.3];
+        let prepared = basis.design(&x).unwrap();
+        let on_demand = basis.on_demand_design(&x).unwrap();
+
+        assert_relative_eq!(basis.evaluate_one(0, 0.5), 0.0, epsilon = f64::EPSILON);
+        assert_spline_predictors_match(&prepared, &on_demand, &beta, &scores);
+        assert_linear_geometry_matches(&prepared, &on_demand, &weights, &scores);
+        assert_predictor_gradient_matches_finite_difference(&prepared, &beta, &scores);
+    }
+
+    #[test]
+    fn prepared_natural_spline_matches_on_demand_design() {
+        let x = [-0.2, 0.0, 0.2, 0.55, 1.0, 1.2];
+        let basis = NaturalCubicSplineBasis::new(vec![0.0, 0.25, 0.5, 0.75, 1.0]).unwrap();
+        let prepared = basis.design(&x).unwrap();
+        let on_demand = basis.on_demand_design(&x).unwrap();
+        let beta = [0.2, -0.3, 0.7, 0.1, -0.5];
+        let scores = [0.5, -0.2, 0.0, 0.9, -0.4, 0.3];
+        let weights = [0.2, -0.5, 0.0, 0.7, 1.1, -0.3];
+
+        assert_spline_predictors_match(&prepared, &on_demand, &beta, &scores);
+        assert_linear_geometry_matches(&prepared, &on_demand, &weights, &scores);
+        for (row, value) in x.iter().copied().enumerate() {
+            let mut expected = 0.0;
+            basis.for_each_derivative_basis(value, |index, weight| {
+                expected = beta[index].mul_add(weight, expected);
+            });
+            assert_relative_eq!(
+                prepared.eta_derivative_row(row, &beta),
+                expected,
+                epsilon = 1.0e-12
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn prepared_natural_spline_large_basis_uses_correct_geometry_fallback() {
+        let training = [0.0, 1.0];
+        let x = [-0.2, 0.0, 0.2, 0.55, 1.0, 1.2];
+        let basis = NaturalCubicSplineBasis::uniform_from_data(&training, 65).unwrap();
+        let prepared = basis.design(&x).unwrap();
+        let on_demand = basis.on_demand_design(&x).unwrap();
+        let beta = (0..basis.n_basis())
+            .map(|index| (index % 11) as f64 / 10.0 - 0.5)
+            .collect::<Vec<_>>();
+        let scores = [0.5, -0.2, 0.0, 0.9, -0.4, 0.3];
+        let weights = [0.2, -0.5, 0.0, 0.7, 1.1, -0.3];
+
+        assert_spline_predictors_match(&prepared, &on_demand, &beta, &scores);
+        assert_linear_geometry_matches(&prepared, &on_demand, &weights, &scores);
     }
 
     #[test]
@@ -482,6 +588,7 @@ mod tests {
         let bspline = BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
         let open = OpenUniformSplineBasis::from_data(&x, 6, SplineOrder::Cubic).unwrap();
         let cyclic = CyclicSplineSpec::new(6, SplineOrder::Cubic).unwrap();
+        let fourier = FourierBasis::new(1.0, 3, true).unwrap();
         let mspline = MSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
         let ispline = ISplineBasis::open_uniform_from_data(&x, 6, 3).unwrap();
         let natural = NaturalCubicSplineBasis::new(vec![0.0, 0.5, 1.0]).unwrap();
@@ -509,6 +616,15 @@ mod tests {
             })
             .unwrap();
         assert_eq!(cyclic_values, cyclic_visitor_values);
+
+        let fourier_values = SplineBasis1d::evaluate(&fourier, 0.4).unwrap();
+        let mut fourier_visitor_values = vec![0.0; fourier.n_basis()];
+        fourier
+            .for_each_value_basis(0.4, |index, weight| {
+                fourier_visitor_values[index] = weight;
+            })
+            .unwrap();
+        assert_eq!(fourier_values, fourier_visitor_values);
 
         assert_eq!(
             SplineBasis1d::evaluate(&mspline, 0.4).unwrap(),
@@ -542,6 +658,46 @@ mod tests {
                 expected_values: 4,
                 actual_values: 3,
             })
+        );
+    }
+
+    #[test]
+    fn data_derived_bases_reject_overflowing_finite_ranges() {
+        let x = [f64::MIN, f64::MAX];
+
+        assert_eq!(
+            BSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap_err(),
+            SplineError::InvalidRange
+        );
+        assert_eq!(
+            MSplineBasis::open_uniform_from_data(&x, 6, 3).unwrap_err(),
+            SplineError::InvalidRange
+        );
+        assert_eq!(
+            OpenUniformSplineBasis::from_data(&x, 6, SplineOrder::Cubic).unwrap_err(),
+            SplineError::InvalidRange
+        );
+        assert_eq!(
+            NaturalCubicSplineBasis::uniform_from_data(&x, 4).unwrap_err(),
+            SplineError::InvalidRange
+        );
+        assert_eq!(
+            TruncatedPowerBasis::uniform_from_data(&x, 2, SplineOrder::Cubic, true).unwrap_err(),
+            SplineError::InvalidRange
+        );
+    }
+
+    #[test]
+    fn transformed_coordinate_overflow_is_rejected_by_both_design_modes() {
+        let basis = OpenUniformSplineBasis::new(f64::MIN, 0.0, 6, SplineOrder::Cubic).unwrap();
+
+        assert_eq!(
+            basis.design(&[f64::MAX]).unwrap_err(),
+            SplineError::NonFiniteValue
+        );
+        assert_eq!(
+            basis.on_demand_design(&[f64::MAX]).unwrap_err(),
+            SplineError::NonFiniteValue
         );
     }
 
@@ -651,6 +807,33 @@ mod tests {
     }
 
     #[test]
+    fn fourier_basis_reuses_metadata_and_matches_shared_geometry_contract() {
+        let x = [0.0, 0.2, 0.7, 1.4];
+        let basis = FourierBasis::new(1.0, 3, true).unwrap();
+        let design = basis.design(&x).unwrap();
+        let generic = basis.on_demand_design(&x).unwrap();
+        let beta = [0.3, -0.5, 1.2, 0.4, -0.8, 0.9, 0.1];
+        let scores = [0.7, -1.1, 0.0, 1.4];
+        let weights = [0.2, 0.0, -0.5, 0.9];
+
+        assert_eq!(*design.basis(), basis);
+        assert_eq!(design.n_basis(), beta.len());
+        assert_spline_predictors_match(&design, &generic, &beta, &scores);
+
+        let dense = design.to_dense_design().unwrap();
+        let dense_predictor = LinearPredictorBlock::new(&dense);
+        assert_linear_geometry_matches(&design, &dense_predictor, &weights, &scores);
+
+        let prediction = design.basis().design(&[2.0, 2.25]).unwrap();
+        assert_eq!(*prediction.basis(), basis);
+        assert_relative_eq!(
+            prediction.eta_row(0, &beta),
+            design.eta_row(0, &beta),
+            epsilon = 1.0e-12
+        );
+    }
+
+    #[test]
     fn fourier_design_rejects_invalid_inputs() {
         assert_eq!(
             FourierDesign::new(&[f64::NAN], 1.0, 1, true).unwrap_err(),
@@ -667,6 +850,17 @@ mod tests {
         assert_eq!(
             FourierDesign::new(&[0.0], 1.0, usize::MAX, true).unwrap_err(),
             FourierError::CoefficientOverflow
+        );
+        assert_eq!(
+            FourierBasis::new(f64::MIN_POSITIVE, 1, true).unwrap_err(),
+            FourierError::InvalidPeriod
+        );
+        assert_eq!(
+            FourierBasis::new(1.0, 1, true)
+                .unwrap()
+                .design(&[f64::MAX])
+                .unwrap_err(),
+            FourierError::NonFiniteValue
         );
     }
 
@@ -1128,6 +1322,12 @@ mod tests {
             &[0.2, -0.4, 0.7, 0.1, -0.3, 0.9],
             &[0.3, -0.8, 0.5, 1.0],
         );
+        let generic = design.basis().on_demand_design(design.x()).unwrap();
+        let scores = [0.3, -0.8, 0.5, 1.0];
+        assert_eq!(design, generic);
+        let dense = design.to_dense_design().unwrap();
+        let dense_predictor = LinearPredictorBlock::new(&dense);
+        assert_linear_geometry_matches(&design, &dense_predictor, &[0.2, 0.0, -0.4, 0.7], &scores);
         assert_row_basis_matches_evaluate(&design, |row| design.basis().evaluate(design.x()[row]));
 
         let mut visited = Vec::new();
@@ -1267,6 +1467,16 @@ mod tests {
 
         assert_relative_eq!(tensor.eta_row(row, &beta), expected, epsilon = 1.0e-12);
         assert_predictor_gradient_matches_finite_difference(&tensor, &beta, &[0.5, -0.2, 0.9]);
+        assert_eq!(tensor.n_basis(), beta.len());
+
+        let dense = tensor.to_dense_design().unwrap();
+        let dense_predictor = LinearPredictorBlock::new(&dense);
+        assert_linear_geometry_matches(
+            &tensor,
+            &dense_predictor,
+            &[0.2, 0.0, -0.4],
+            &[0.5, -0.2, 0.9],
+        );
 
         let short = CyclicSplineDesign::new(&[0.0], 5, SplineOrder::Cubic).unwrap();
         assert_eq!(

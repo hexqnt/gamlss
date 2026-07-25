@@ -110,6 +110,13 @@ impl PeriodicSplineSpec {
         self.cyclic.n_basis()
     }
 
+    /// Spline order.
+    #[must_use]
+    #[inline]
+    pub const fn order(&self) -> SplineOrder {
+        self.cyclic.order()
+    }
+
     /// Period.
     #[must_use]
     #[inline]
@@ -139,6 +146,23 @@ impl PeriodicSplineSpec {
     #[inline]
     fn phase_unchecked(&self, x: f64) -> f64 {
         (x - self.origin) / self.period
+    }
+
+    #[inline]
+    pub(crate) fn add_scaled_outer_at(
+        &self,
+        x: f64,
+        scale: f64,
+        out: &mut [f64],
+    ) -> Result<(), SplineError> {
+        prepare_cyclic_local_basis(self.phase(x)?, self.cyclic.order(), self.cyclic.n_basis())
+            .add_scaled_outer_wrapped(
+                self.cyclic.order().degree() + 1,
+                self.cyclic.n_basis(),
+                scale,
+                out,
+            );
+        Ok(())
     }
 }
 
@@ -208,21 +232,6 @@ impl PeriodicSplineDesign {
     }
 }
 
-impl OnDemandSplineDesign<PeriodicSplineSpec> {
-    /// Derivative of the predictor contribution with respect to the original
-    /// physical coordinate.
-    #[must_use]
-    #[inline]
-    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x().len());
-        debug_assert_eq!(beta.len(), self.n_basis());
-
-        let spec = self.basis();
-        let phase = spec.phase_unchecked(self.x()[row]);
-        spec.cyclic.eta_derivative_at(phase, beta) / spec.period
-    }
-}
-
 impl SplineRowBasis for PeriodicSplineDesign {
     #[inline]
     fn nrows(&self) -> usize {
@@ -254,6 +263,11 @@ impl PredictorBlock for PeriodicSplineDesign {
     #[inline]
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
         self.prepared.eta_row(self.spec.cyclic, row, beta)
+    }
+
+    #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
     }
 
     #[inline]
@@ -324,3 +338,18 @@ impl LinearPredictorGeometry for PeriodicSplineDesign {
             .add_t_mul_vec_by(self.spec.cyclic, row_scores, multiplier, out)
     }
 }
+impl OnDemandSplineDesign<PeriodicSplineSpec> {
+    /// Derivative of the predictor contribution with respect to the original
+    /// physical coordinate.
+    #[must_use]
+    #[inline]
+    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert!(row < self.x().len());
+        debug_assert_eq!(beta.len(), self.n_basis());
+
+        let spec = self.basis();
+        let phase = spec.phase_unchecked(self.x()[row]);
+        spec.cyclic.eta_derivative_at(phase, beta) / spec.period
+    }
+}
+

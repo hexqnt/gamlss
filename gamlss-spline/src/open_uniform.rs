@@ -8,6 +8,7 @@ use crate::local::{
     prepare_open_uniform_local_basis,
 };
 use crate::row_basis::SplineRowBasis;
+use crate::validation::{finite_data_range, validate_finite_range};
 use crate::{OnDemandSplineDesign, SplineError, SplineOrder};
 
 /// Metadata for an open-uniform spline predictor.
@@ -62,15 +63,7 @@ impl OpenUniformSplineBasis {
             });
         }
 
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for value in x.iter().copied() {
-            if !value.is_finite() {
-                return Err(SplineError::NonFiniteValue);
-            }
-            min = min.min(value);
-            max = max.max(value);
-        }
+        let (min, max) = finite_data_range(x)?;
         Self::new(min, max, n_basis, order)
     }
 
@@ -78,8 +71,8 @@ impl OpenUniformSplineBasis {
     ///
     /// # Errors
     ///
-    /// Returns an error if the boundaries are not finite, `min >= max`, or
-    /// `n_basis` is insufficient for `order`.
+    /// Returns an error if the boundaries or their span are not finite,
+    /// `min >= max`, or `n_basis` is insufficient for `order`.
     #[allow(clippy::cast_precision_loss)]
     pub fn new(
         min: f64,
@@ -87,9 +80,7 @@ impl OpenUniformSplineBasis {
         n_basis: usize,
         order: SplineOrder,
     ) -> Result<Self, SplineError> {
-        if !min.is_finite() || !max.is_finite() || min >= max {
-            return Err(SplineError::InvalidRange);
-        }
+        validate_finite_range(min, max)?;
         if n_basis < order.min_basis() {
             return Err(SplineError::NotEnoughBasis {
                 n_basis,
@@ -116,11 +107,8 @@ impl OpenUniformSplineBasis {
             .iter()
             .copied()
             .map(|value| {
-                if !value.is_finite() {
-                    return Err(SplineError::NonFiniteValue);
-                }
-                let u = (value - self.min) / self.span();
-                Ok(prepare_open_uniform_local_basis(
+                let u = self.unit_coordinate(value)?;
+                Ok::<_, SplineError>(prepare_open_uniform_local_basis(
                     u,
                     self.order,
                     self.n_basis,
@@ -163,11 +151,8 @@ impl OpenUniformSplineBasis {
         x: f64,
         f: impl FnMut(usize, f64),
     ) -> Result<(), SplineError> {
-        if !x.is_finite() {
-            return Err(SplineError::NonFiniteValue);
-        }
-
-        self.local_basis(x).for_each(f);
+        self.local_basis_for_unit(self.unit_coordinate(x)?)
+            .for_each(f);
         Ok(())
     }
 
@@ -205,32 +190,20 @@ impl OpenUniformSplineBasis {
     }
 
     #[inline]
-    fn local_basis(&self, x: f64) -> LocalBasis {
+    pub(crate) fn unit_coordinate(&self, x: f64) -> Result<f64, SplineError> {
+        if !x.is_finite() {
+            return Err(SplineError::NonFiniteValue);
+        }
         let u = (x - self.min) / self.span();
-        self.local_basis_for_unit(u)
+        if !u.is_finite() {
+            return Err(SplineError::NonFiniteValue);
+        }
+        Ok(u)
     }
 
     #[inline]
-    fn local_basis_for_unit(&self, u: f64) -> LocalBasis {
+    pub(crate) fn local_basis_for_unit(&self, u: f64) -> LocalBasis {
         open_uniform_local_basis(u, self.order, self.n_basis, self.n_intervals)
-    }
-}
-
-impl OnDemandSplineDesign<OpenUniformSplineBasis> {
-    /// Derivative of the predictor contribution with respect to the original
-    /// coordinate `x`.
-    #[must_use]
-    #[inline]
-    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x().len());
-        debug_assert_eq!(beta.len(), self.n_basis());
-
-        let basis = self.basis();
-        let span = basis.span();
-        let u = (self.x()[row] - basis.min) / span;
-        open_uniform_local_basis_derivative(u, basis.order, basis.n_basis, basis.n_intervals)
-            .dot(beta)
-            / span
     }
 }
 
@@ -373,6 +346,11 @@ impl PredictorBlock for OpenUniformSplineDesign {
     }
 
     #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
+    }
+
+    #[inline]
     fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         debug_assert!(rows.end <= self.x.len());
         debug_assert_eq!(scores.len(), rows.len());
@@ -487,3 +465,21 @@ impl LinearPredictorGeometry for OpenUniformSplineDesign {
         Ok(())
     }
 }
+impl OnDemandSplineDesign<OpenUniformSplineBasis> {
+    /// Derivative of the predictor contribution with respect to the original
+    /// coordinate `x`.
+    #[must_use]
+    #[inline]
+    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert!(row < self.x().len());
+        debug_assert_eq!(beta.len(), self.n_basis());
+
+        let basis = self.basis();
+        let span = basis.span();
+        let u = (self.x()[row] - basis.min) / span;
+        open_uniform_local_basis_derivative(u, basis.order, basis.n_basis, basis.n_intervals)
+            .dot(beta)
+            / span
+    }
+}
+

@@ -69,6 +69,16 @@ where
     }
 }
 
+impl<MuLink, ShapeLink> Default for NegativeBinomial<MuLink, ShapeLink>
+where
+    MuLink: PositiveLink<f64>,
+    ShapeLink: PositiveLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Link-independent mean/size kernel shared by negative-binomial parameterizations.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct NegativeBinomialKernel;
@@ -312,16 +322,6 @@ impl NegativeBinomialKernel {
             gamlss_core::SimulationError::BackendRejected("Negative binomial Poisson mean")
         })?;
         Ok(rand_distr::Distribution::sample(&count, rng))
-    }
-}
-
-impl<MuLink, ShapeLink> Default for NegativeBinomial<MuLink, ShapeLink>
-where
-    MuLink: PositiveLink<f64>,
-    ShapeLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

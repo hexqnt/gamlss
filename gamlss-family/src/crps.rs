@@ -2,6 +2,12 @@
 
 use gamlss_special::integrate_finite;
 
+#[derive(Debug, Clone, Copy)]
+enum Tail {
+    Left,
+    Right,
+}
+
 /// Integrates the CRPS definition on the real line after mapping both tails to
 /// the unit interval around the observation.
 ///
@@ -31,12 +37,6 @@ where
     }
 
     mapping_scale * transformed_integral.max(0.0)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Tail {
-    Left,
-    Right,
 }
 
 fn transformed_tail_integrand<F>(unit: f64, y: f64, mapping_scale: f64, tail: Tail, cdf: &F) -> f64

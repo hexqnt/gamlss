@@ -64,6 +64,16 @@ where
     }
 }
 
+impl<Param, MeanLink, ZeroProbabilityLink> Default for Zip<Param, MeanLink, ZeroProbabilityLink>
+where
+    MeanLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Link-independent zero-inflated Poisson kernel.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ZipKernel;
@@ -164,16 +174,6 @@ impl ZipKernel {
         let distribution = rand_distr::Poisson::new(theta.component_mean)
             .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZIP Poisson mean"))?;
         Ok(rand_distr::Distribution::sample(&distribution, rng))
-    }
-}
-
-impl<Param, MeanLink, ZeroProbabilityLink> Default for Zip<Param, MeanLink, ZeroProbabilityLink>
-where
-    MeanLink: PositiveLink<f64>,
-    ZeroProbabilityLink: UnitIntervalLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

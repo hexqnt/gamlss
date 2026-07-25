@@ -64,13 +64,6 @@ pub struct Normal<MuLink = Identity, SigmaLink = Log> {
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
 
-impl<MuLink, SigmaLink> ScalarObservationDomain for Normal<MuLink, SigmaLink> {
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        observation.is_finite()
-    }
-}
-
 impl<MuLink, SigmaLink> Normal<MuLink, SigmaLink>
 where
     MuLink: Link<f64>,
@@ -155,6 +148,13 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<MuLink, SigmaLink> ScalarObservationDomain for Normal<MuLink, SigmaLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        observation.is_finite()
     }
 }
 

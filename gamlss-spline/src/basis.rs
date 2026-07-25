@@ -1,8 +1,10 @@
 use gamlss_core::ModelError;
 
+use crate::local::{bspline_local_basis, prepare_cyclic_local_basis};
 use crate::{
-    BSplineBasis, CyclicSplineSpec, ISplineBasis, MSplineBasis, NaturalCubicSplineBasis,
-    OpenUniformSplineBasis, PeriodicSplineSpec, SplineError, TruncatedPowerBasis,
+    BSplineBasis, CyclicSplineSpec, FourierBasis, ISplineBasis, MSplineBasis,
+    NaturalCubicSplineBasis, OpenUniformSplineBasis, PeriodicSplineSpec, SplineError,
+    TruncatedPowerBasis,
 };
 
 /// Common one-dimensional spline basis evaluation API.
@@ -43,6 +45,21 @@ pub trait SplineBasis1d {
     ///
     /// Returns [`SplineError::NonFiniteValue`] when `x` is not finite.
     fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError>;
+
+    /// Adds `scale * b(x) * b(x)^T` to a row-major square buffer.
+    ///
+    /// The default is allocation-free but may evaluate the row repeatedly.
+    /// Local basis implementations override it so on-demand Gram products
+    /// evaluate the row only once.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same coordinate error as [`Self::for_each_basis`]. The
+    /// caller must provide `self.n_basis().pow(2)` output values.
+    #[doc(hidden)]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        add_scaled_outer_default(self, x, scale, out)
+    }
 
     /// Writes all basis-function values at `x` into `out`.
     ///
@@ -98,6 +115,11 @@ where
     fn evaluate_into(&self, x: f64, out: &mut [f64]) -> Result<(), SplineError> {
         T::evaluate_into(*self, x, out)
     }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        T::add_scaled_outer(*self, x, scale, out)
+    }
 }
 
 impl SplineBasis1d for BSplineBasis {
@@ -120,6 +142,21 @@ impl SplineBasis1d for BSplineBasis {
         Self::evaluate_into(self, x, out);
         Ok(())
     }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        reject_non_finite(x)?;
+        if self.degree() <= 3 {
+            bspline_local_basis(self.knots(), self.n_basis(), self.degree(), x).add_scaled_outer(
+                scale,
+                self.n_basis(),
+                out,
+            );
+            Ok(())
+        } else {
+            add_scaled_outer_default(self, x, scale, out)
+        }
+    }
 }
 
 impl SplineBasis1d for OpenUniformSplineBasis {
@@ -129,8 +166,20 @@ impl SplineBasis1d for OpenUniformSplineBasis {
     }
 
     #[inline]
+    fn validate_coordinate(&self, x: f64) -> Result<(), SplineError> {
+        self.unit_coordinate(x).map(|_| ())
+    }
+
+    #[inline]
     fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
         self.for_each_value_basis(x, f)
+    }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        self.local_basis_for_unit(self.unit_coordinate(x)?)
+            .add_scaled_outer(scale, self.n_basis(), out);
+        Ok(())
     }
 }
 
@@ -143,6 +192,18 @@ impl SplineBasis1d for CyclicSplineSpec {
     #[inline]
     fn for_each_basis(&self, phi: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
         self.for_each_value_basis(phi, f)
+    }
+
+    #[inline]
+    fn add_scaled_outer(&self, phi: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        reject_non_finite(phi)?;
+        prepare_cyclic_local_basis(phi, self.order(), self.n_basis()).add_scaled_outer_wrapped(
+            self.order().degree() + 1,
+            self.n_basis(),
+            scale,
+            out,
+        );
+        Ok(())
     }
 }
 
@@ -160,6 +221,31 @@ impl SplineBasis1d for PeriodicSplineSpec {
     #[inline]
     fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
         self.for_each_value_basis(x, f)
+    }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        self.add_scaled_outer_at(x, scale, out)
+    }
+}
+
+impl SplineBasis1d for FourierBasis {
+    #[inline]
+    fn n_basis(&self) -> usize {
+        self.n_basis()
+    }
+
+    #[inline]
+    fn validate_coordinate(&self, x: f64) -> Result<(), SplineError> {
+        self.phase(x)
+            .map(|_| ())
+            .map_err(|_| SplineError::NonFiniteValue)
+    }
+
+    #[inline]
+    fn for_each_basis(&self, x: f64, f: impl FnMut(usize, f64)) -> Result<(), SplineError> {
+        self.for_each_value_basis(x, f)
+            .map_err(|_| SplineError::NonFiniteValue)
     }
 }
 
@@ -181,6 +267,14 @@ impl SplineBasis1d for MSplineBasis {
         reject_non_finite(x)?;
         validate_output_len(self.n_basis(), out.len())?;
         Self::evaluate_into(self, x, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        reject_non_finite(x)?;
+        self.local_basis(x)
+            .add_scaled_outer(scale, self.n_basis(), out);
         Ok(())
     }
 }
@@ -205,6 +299,13 @@ impl SplineBasis1d for ISplineBasis {
         Self::evaluate_into(self, x, out);
         Ok(())
     }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        reject_non_finite(x)?;
+        self.add_scaled_outer_at(x, scale, out);
+        Ok(())
+    }
 }
 
 impl SplineBasis1d for NaturalCubicSplineBasis {
@@ -225,6 +326,13 @@ impl SplineBasis1d for NaturalCubicSplineBasis {
         reject_non_finite(x)?;
         validate_output_len(self.n_basis(), out.len())?;
         Self::evaluate_into(self, x, out);
+        Ok(())
+    }
+
+    #[inline]
+    fn add_scaled_outer(&self, x: f64, scale: f64, out: &mut [f64]) -> Result<(), SplineError> {
+        reject_non_finite(x)?;
+        self.add_scaled_outer_at(x, scale, out);
         Ok(())
     }
 }
@@ -271,4 +379,31 @@ fn validate_output_len(expected: usize, actual: usize) -> Result<(), SplineError
         }
         .into())
     }
+}
+
+fn add_scaled_outer_default<B>(
+    basis: &B,
+    x: f64,
+    scale: f64,
+    out: &mut [f64],
+) -> Result<(), SplineError>
+where
+    B: SplineBasis1d + ?Sized,
+{
+    debug_assert_eq!(out.len(), basis.n_basis() * basis.n_basis());
+    let n_basis = basis.n_basis();
+    let mut inner_error = None;
+    basis.for_each_basis(x, |left_index, left_weight| {
+        if inner_error.is_some() {
+            return;
+        }
+        let scaled_left = scale * left_weight;
+        if let Err(error) = basis.for_each_basis(x, |right_index, right_weight| {
+            let index = left_index * n_basis + right_index;
+            out[index] = scaled_left.mul_add(right_weight, out[index]);
+        }) {
+            inner_error = Some(error);
+        }
+    })?;
+    inner_error.map_or(Ok(()), Err)
 }

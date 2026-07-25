@@ -48,13 +48,6 @@ pub struct Gamma<Param = ShapeRate, FirstLink = Log, SecondLink = Log> {
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
-impl<Param, FirstLink, SecondLink> ScalarObservationDomain for Gamma<Param, FirstLink, SecondLink> {
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_positive_finite(observation)
-    }
-}
-
 impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
     /// Creates a stateless gamma family.
     #[inline]
@@ -63,6 +56,19 @@ impl<Param, FirstLink, SecondLink> Gamma<Param, FirstLink, SecondLink> {
         Self {
             marker: PhantomData,
         }
+    }
+}
+
+impl<Param, FirstLink, SecondLink> Default for Gamma<Param, FirstLink, SecondLink> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain for Gamma<Param, FirstLink, SecondLink> {
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
     }
 }
 
@@ -190,12 +196,6 @@ impl GammaKernel {
             positive_floor(mean * mean / summary.variance)
         };
         Some((mean, shape))
-    }
-}
-
-impl<Param, FirstLink, SecondLink> Default for Gamma<Param, FirstLink, SecondLink> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

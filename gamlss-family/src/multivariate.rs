@@ -54,6 +54,9 @@ pub use skew_student_t::{
     MvSkewStudentTFixedTauCholeskyEta, MvSkewStudentTFixedTauCholeskyTheta,
 };
 
+/// Full-name module alias for the multivariate sinh-arcsinh / SHASH distribution.
+pub use shash as sinh_arcsinh;
+
 /// Cholesky helpers.
 pub mod cholesky;
 mod correlation;
@@ -80,8 +83,6 @@ pub mod poisson_common_shock;
 pub mod power_exponential;
 /// Multivariate sinh-arcsinh-normal / SHASH distribution.
 pub mod shash;
-/// Full-name module alias for the multivariate sinh-arcsinh / SHASH distribution.
-pub use shash as sinh_arcsinh;
 /// Simplex and compositional distributions.
 pub mod simplex;
 /// Multivariate skew-normal distributions.

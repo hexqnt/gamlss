@@ -21,6 +21,7 @@ include = [
 ]
 
 [package.metadata.docs.rs]
+all-features = true
 rustdoc-args = ["--html-in-header", "doc-assets/katex-header.html"]
 
 [features]

@@ -305,18 +305,6 @@ impl PreparedCyclicGeometry {
     }
 }
 
-impl OnDemandSplineDesign<CyclicSplineSpec> {
-    /// Derivative of the predictor contribution with respect to phase `phi`.
-    #[must_use]
-    #[inline]
-    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x().len());
-        debug_assert_eq!(beta.len(), self.n_basis());
-
-        self.basis().eta_derivative_at(self.x()[row], beta)
-    }
-}
-
 /// Cyclic spline predictor for periodic covariates on $\lbrack0,1\rparen$.
 ///
 /// Construction evaluates every local basis once. Each retained row stores its original `f64` phase plus compact geometry containing one `usize` start index and four `f64` weights; it never materializes an `nrows × n_basis` matrix. For repeated model passes without this row cache, use [`CyclicSplineSpec::on_demand_design`]. For one-shot evaluation, use [`CyclicSplineSpec::for_each_value_basis`].
@@ -407,6 +395,11 @@ impl PredictorBlock for CyclicSplineDesign {
     }
 
     #[inline]
+    fn zero_beta_constant_contribution(&self) -> Option<f64> {
+        Some(0.0)
+    }
+
+    #[inline]
     fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         self.prepared
             .add_gradient_range(self.spec, rows, scores, grad);
@@ -467,3 +460,15 @@ impl LinearPredictorGeometry for CyclicSplineDesign {
             .add_t_mul_vec_by(self.spec, row_scores, multiplier, out)
     }
 }
+impl OnDemandSplineDesign<CyclicSplineSpec> {
+    /// Derivative of the predictor contribution with respect to phase `phi`.
+    #[must_use]
+    #[inline]
+    pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
+        debug_assert!(row < self.x().len());
+        debug_assert_eq!(beta.len(), self.n_basis());
+
+        self.basis().eta_derivative_at(self.x()[row], beta)
+    }
+}
+

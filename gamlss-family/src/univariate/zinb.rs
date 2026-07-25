@@ -67,6 +67,18 @@ where
     }
 }
 
+impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> Default
+    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
+where
+    ComponentMeanLink: PositiveLink<f64>,
+    SizeLink: PositiveLink<f64>,
+    ZeroProbabilityLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Link-independent zero-inflated negative-binomial kernel.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ZinbKernel;
@@ -209,18 +221,6 @@ impl ZinbKernel {
         let count = rand_distr::Poisson::new(lambda)
             .map_err(|_| gamlss_core::SimulationError::BackendRejected("ZINB Poisson mean"))?;
         Ok(rand_distr::Distribution::sample(&count, rng))
-    }
-}
-
-impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink> Default
-    for Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
-where
-    ComponentMeanLink: PositiveLink<f64>,
-    SizeLink: PositiveLink<f64>,
-    ZeroProbabilityLink: UnitIntervalLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

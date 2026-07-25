@@ -383,28 +383,6 @@ where
     }
 }
 
-#[allow(clippy::cast_precision_loss, clippy::suboptimal_flops)]
-fn binomial_crps(successes: f64, trials: f64, probability: f64) -> f64 {
-    if !BinomialKernel::valid_observation(successes, trials) || !is_strict_probability(probability)
-    {
-        return f64::NAN;
-    }
-    let Some(successes) = gamlss_special::included_count(successes, MAX_CRPS_TERMS) else {
-        return f64::NAN;
-    };
-    let Some(trials) = gamlss_special::included_count(trials, MAX_CRPS_TERMS) else {
-        return f64::NAN;
-    };
-    let log_probability = probability.ln();
-    let log_failure = (-probability).ln_1p();
-    finite_discrete_crps_from_log_pmf(successes, trials, |value| {
-        let value = value as f64;
-        BinomialKernel::log_choose(trials as f64, value)
-            + value * log_probability
-            + (trials as f64 - value) * log_failure
-    })
-}
-
 /// Link-scale probability predictor shared by binomial families.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BinomialEta {
@@ -431,6 +409,28 @@ impl ParameterParts<1> for BinomialEta {
 pub struct BinomialTheta {
     /// Success probability in `(0, 1)`.
     pub probability: f64,
+}
+
+#[allow(clippy::cast_precision_loss, clippy::suboptimal_flops)]
+fn binomial_crps(successes: f64, trials: f64, probability: f64) -> f64 {
+    if !BinomialKernel::valid_observation(successes, trials) || !is_strict_probability(probability)
+    {
+        return f64::NAN;
+    }
+    let Some(successes) = gamlss_special::included_count(successes, MAX_CRPS_TERMS) else {
+        return f64::NAN;
+    };
+    let Some(trials) = gamlss_special::included_count(trials, MAX_CRPS_TERMS) else {
+        return f64::NAN;
+    };
+    let log_probability = probability.ln();
+    let log_failure = (-probability).ln_1p();
+    finite_discrete_crps_from_log_pmf(successes, trials, |value| {
+        let value = value as f64;
+        BinomialKernel::log_choose(trials as f64, value)
+            + value * log_probability
+            + (trials as f64 - value) * log_failure
+    })
 }
 
 fn initial_eta<ProbabilityLink>(successes: f64, trials: f64) -> BinomialEta

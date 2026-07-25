@@ -8,6 +8,7 @@ pub struct Transform {
 }
 
 #[inline]
+#[cfg(feature = "multivariate")]
 pub fn transform_standardized(x: f64, nu: f64, tau: f64) -> Transform {
     transform_standardized_with_log_nu(x, nu.ln(), tau)
 }

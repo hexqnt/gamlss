@@ -1,8 +1,8 @@
-use std::ops::Range;
+use crate::validation::finite_data_range;
+use crate::{OnDemandSplineDesign, SplineError, SplineOrder};
 
-use gamlss_core::{PredictorBlock, RowMultiplier};
-
-use crate::{SplineError, SplineOrder, SplineRowBasis};
+/// Truncated-power predictor using the shared allocation-free on-demand engine.
+pub type TruncatedPowerDesign = OnDemandSplineDesign<TruncatedPowerBasis>;
 
 /// Truncated power regression spline basis.
 ///
@@ -74,18 +74,7 @@ impl TruncatedPowerBasis {
             return Err(SplineError::EmptyInput);
         }
 
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for value in x.iter().copied() {
-            if !value.is_finite() {
-                return Err(SplineError::NonFiniteValue);
-            }
-            min = min.min(value);
-            max = max.max(value);
-        }
-        if min >= max {
-            return Err(SplineError::InvalidRange);
-        }
+        let (min, max) = finite_data_range(x)?;
 
         let denominator = n_knots
             .checked_add(1)
@@ -104,14 +93,20 @@ impl TruncatedPowerBasis {
     /// Returns [`SplineError::NonFiniteValue`] if any input coordinate is not
     /// finite.
     pub fn design(&self, x: &[f64]) -> Result<TruncatedPowerDesign, SplineError> {
-        if x.iter().any(|value| !value.is_finite()) {
-            return Err(SplineError::NonFiniteValue);
-        }
+        self.on_demand_design(x)
+    }
 
-        Ok(TruncatedPowerDesign {
-            x: x.to_vec(),
-            basis: self.clone(),
-        })
+    /// Builds the generic low-memory spline design for concrete coordinates.
+    ///
+    /// This is equivalent to [`Self::design`] but exposes the shared
+    /// [`OnDemandSplineDesign`] representation directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SplineError::NonFiniteValue`] if any input coordinate is not
+    /// finite.
+    pub fn on_demand_design(&self, x: &[f64]) -> Result<OnDemandSplineDesign<Self>, SplineError> {
+        OnDemandSplineDesign::new(x, self.clone())
     }
 
     /// Truncated-power knots.
@@ -173,18 +168,19 @@ impl TruncatedPowerBasis {
             offset = 1;
         }
 
+        let mut polynomial = x;
         for power in 1..=degree {
-            let weight = pow_usize(x, power);
+            let weight = polynomial;
             if weight != 0.0 {
                 f(offset + power - 1, weight);
             }
+            polynomial *= x;
         }
         offset += degree;
 
-        for (knot_offset, knot) in self.knots.iter().copied().enumerate() {
-            if x > knot {
-                f(offset + knot_offset, pow_usize(x - knot, degree));
-            }
+        let active_knots = self.knots.partition_point(|knot| *knot < x);
+        for (knot_offset, knot) in self.knots[..active_knots].iter().copied().enumerate() {
+            f(offset + knot_offset, pow_usize(x - knot, degree));
         }
     }
 
@@ -231,28 +227,17 @@ impl TruncatedPowerBasis {
         }
         offset += degree;
 
-        for (knot_offset, knot) in self.knots.iter().copied().enumerate() {
-            if x > knot {
-                f(
-                    offset + knot_offset,
-                    degree as f64 * pow_usize(x - knot, degree - 1),
-                );
-            }
+        let active_knots = self.knots.partition_point(|knot| *knot < x);
+        for (knot_offset, knot) in self.knots[..active_knots].iter().copied().enumerate() {
+            f(
+                offset + knot_offset,
+                degree as f64 * pow_usize(x - knot, degree - 1),
+            );
         }
     }
 }
 
-/// Truncated power spline predictor with on-demand row evaluation.
-///
-/// The design retains coordinates and basis metadata but does not materialize
-/// or cache observation rows.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TruncatedPowerDesign {
-    x: Vec<f64>,
-    basis: TruncatedPowerBasis,
-}
-
-impl TruncatedPowerDesign {
+impl OnDemandSplineDesign<TruncatedPowerBasis> {
     /// Builds a design from data-derived uniform truncated-power knots.
     pub fn uniform_from_data(
         x: &[f64],
@@ -263,130 +248,20 @@ impl TruncatedPowerDesign {
         TruncatedPowerBasis::uniform_from_data(x, n_knots, order, include_intercept)?.design(x)
     }
 
-    /// Returns the basis metadata.
-    #[must_use]
-    #[inline]
-    pub const fn basis(&self) -> &TruncatedPowerBasis {
-        &self.basis
-    }
-
-    /// Input coordinates.
-    #[must_use]
-    #[inline]
-    pub fn x(&self) -> &[f64] {
-        &self.x
-    }
-
-    /// Number of spline coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn n_basis(&self) -> usize {
-        self.basis.n_basis()
-    }
-
     /// Predictor derivative with respect to `x`.
     #[must_use]
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     pub fn eta_derivative_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
-        debug_assert_eq!(beta.len(), self.basis.n_basis());
+        debug_assert!(row < self.nrows());
+        debug_assert_eq!(beta.len(), self.n_basis());
 
         let mut value = 0.0;
-        self.basis
-            .for_each_derivative_basis(self.x[row], |index, weight| {
+        self.basis()
+            .for_each_derivative_basis(self.x()[row], |index, weight| {
                 value = beta[index].mul_add(weight, value);
             });
         value
-    }
-}
-
-impl SplineRowBasis for TruncatedPowerDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        debug_assert!(row < self.x.len());
-        self.basis.for_each_basis(self.x[row], f);
-    }
-}
-
-impl PredictorBlock for TruncatedPowerDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.x.len()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
-        debug_assert_eq!(beta.len(), self.basis.n_basis());
-
-        let mut value = 0.0;
-        self.basis.for_each_basis(self.x[row], |index, weight| {
-            value = beta[index].mul_add(weight, value);
-        });
-        value
-    }
-
-    #[inline]
-    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        debug_assert!(rows.end <= self.x.len());
-        debug_assert_eq!(scores.len(), rows.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (offset, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            let row = rows.start + offset;
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] = score.mul_add(weight, grad[index]);
-            });
-        }
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by_range<M>(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        multiplier: &M,
-        _: &[f64],
-        grad: &mut [f64],
-    ) where
-        M: RowMultiplier + ?Sized,
-    {
-        debug_assert!(rows.end <= self.x.len());
-        debug_assert_eq!(scores.len(), rows.len());
-        debug_assert_eq!(grad.len(), self.basis.n_basis());
-
-        for (offset, score) in scores.iter().copied().enumerate() {
-            if score == 0.0 {
-                continue;
-            }
-            let row = rows.start + offset;
-            let scaled_score = score * multiplier.multiplier_at(row);
-            if scaled_score == 0.0 {
-                continue;
-            }
-            self.for_each_row_basis(row, |index, weight| {
-                grad[index] = scaled_score.mul_add(weight, grad[index]);
-            });
-        }
     }
 }
 

@@ -26,6 +26,88 @@ const NU_STARTS: [f64; 2] = [-5.0, 5.0];
 const LBFGS_MEMORY: usize = 10;
 const MAX_ITERATIONS: u64 = 750;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputMode {
+    Summary,
+    Csv,
+}
+
+impl OutputMode {
+    fn from_args() -> Result<Self, io::Error> {
+        let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        match arguments.as_slice() {
+            [] => Ok(Self::Summary),
+            [argument] if argument == "--csv" => Ok(Self::Csv),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "usage: cargo run --example a1_skew_normal [-- --csv]",
+            )),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Fit {
+    parameters: Vec<f64>,
+    objective: f64,
+    iterations: u64,
+    termination: String,
+    nu_start: f64,
+}
+
+// ANCHOR: adapter
+/// Single-threaded adapter from the mutable, buffer-reusing GAMLSS objective to
+/// the shared-reference callbacks expected by argmin.
+#[derive(Debug)]
+struct ArgminObjective<O> {
+    objective: RefCell<O>,
+}
+
+impl<O> ArgminObjective<O> {
+    const fn new(objective: O) -> Self {
+        Self {
+            objective: RefCell::new(objective),
+        }
+    }
+
+    fn dim(&self) -> usize
+    where
+        O: Objective,
+    {
+        self.objective.borrow().dim()
+    }
+}
+
+impl<O> CostFunction for ArgminObjective<O>
+where
+    O: Objective,
+    O::Error: std::error::Error + Send + Sync + 'static,
+{
+    type Param = Vec<f64>;
+    type Output = f64;
+
+    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
+        self.objective.borrow_mut().value(param).map_err(Error::new)
+    }
+}
+
+impl<O> Gradient for ArgminObjective<O>
+where
+    O: Objective,
+    O::Error: std::error::Error + Send + Sync + 'static,
+{
+    type Param = Vec<f64>;
+    type Gradient = Vec<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, Error> {
+        let mut gradient = vec![0.0; self.dim()];
+        self.objective
+            .borrow_mut()
+            .gradient(param, &mut gradient)
+            .map_err(Error::new)?;
+        Ok(gradient)
+    }
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use gamlss::core::{
         ClampedLog, Gamlss, HasQuantile, Identity, Mean, Nu, ObjectiveScale, ParameterBlock,
@@ -170,26 +252,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputMode {
-    Summary,
-    Csv,
-}
-
-impl OutputMode {
-    fn from_args() -> Result<Self, io::Error> {
-        let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-        match arguments.as_slice() {
-            [] => Ok(Self::Summary),
-            [argument] if argument == "--csv" => Ok(Self::Csv),
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "usage: cargo run --example a1_skew_normal [-- --csv]",
-            )),
-        }
-    }
-}
-
 fn mean_sd(values: &[f64]) -> (f64, f64) {
     debug_assert!(!values.is_empty());
     let count = values.len() as f64;
@@ -210,15 +272,6 @@ fn range(mut values: impl Iterator<Item = f64>) -> (f64, f64) {
     values.fold((first, first), |(min, max), value| {
         (min.min(value), max.max(value))
     })
-}
-
-#[derive(Debug)]
-struct Fit {
-    parameters: Vec<f64>,
-    objective: f64,
-    iterations: u64,
-    termination: String,
-    nu_start: f64,
 }
 
 // ANCHOR: optimizer
@@ -282,57 +335,4 @@ fn print_prediction_csv(
     }
 }
 
-// ANCHOR: adapter
-/// Single-threaded adapter from the mutable, buffer-reusing GAMLSS objective to
-/// the shared-reference callbacks expected by argmin.
-#[derive(Debug)]
-struct ArgminObjective<O> {
-    objective: RefCell<O>,
-}
-
-impl<O> ArgminObjective<O> {
-    const fn new(objective: O) -> Self {
-        Self {
-            objective: RefCell::new(objective),
-        }
-    }
-
-    fn dim(&self) -> usize
-    where
-        O: Objective,
-    {
-        self.objective.borrow().dim()
-    }
-}
-
-impl<O> CostFunction for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: std::error::Error + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Output = f64;
-
-    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
-        self.objective.borrow_mut().value(param).map_err(Error::new)
-    }
-}
-
-impl<O> Gradient for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: std::error::Error + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, Error> {
-        let mut gradient = vec![0.0; self.dim()];
-        self.objective
-            .borrow_mut()
-            .gradient(param, &mut gradient)
-            .map_err(Error::new)?;
-        Ok(gradient)
-    }
-}
 // ANCHOR_END: adapter

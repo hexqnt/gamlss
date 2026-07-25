@@ -68,13 +68,6 @@ pub struct MvShashMuSigmaNuTauPartialCorr<
     marker: PhantomData<(MuLink, SigmaLink, NuLink, TauLink)>,
 }
 
-struct TransformedObservation<const D: usize> {
-    standardized: [f64; D],
-    asinh_standardized: [f64; D],
-    latent: [f64; D],
-    negative_log_jacobian: f64,
-}
-
 impl<const D: usize, MuLink, SigmaLink, NuLink, TauLink>
     MvShashMuSigmaNuTauPartialCorr<D, MuLink, SigmaLink, NuLink, TauLink>
 where
@@ -571,6 +564,13 @@ where
     fn validate_compiled(&self) -> Result<(), ModelError> {
         Self::try_new().map(|_| ())
     }
+}
+
+struct TransformedObservation<const D: usize> {
+    standardized: [f64; D],
+    asinh_standardized: [f64; D],
+    latent: [f64; D],
+    negative_log_jacobian: f64,
 }
 
 /// Link-scale predictors for multivariate SHASH.

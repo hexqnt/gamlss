@@ -44,6 +44,52 @@ pub struct Poisson<MuLink = Log> {
     marker: PhantomData<MuLink>,
 }
 
+impl<MuLink> Poisson<MuLink>
+where
+    MuLink: PositiveLink<f64>,
+{
+    /// Creates a stateless Poisson family.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn theta_from_eta(eta: PoissonEta) -> PoissonTheta {
+        PoissonTheta {
+            mu: MuLink::inverse(eta.mu),
+        }
+    }
+
+    #[inline]
+    fn nll_and_gradient_eta_values(y: f64, eta: PoissonEta) -> (f64, PoissonEta) {
+        let theta = Self::theta_from_eta(eta);
+        let nll = PoissonKernel::nll(y, theta);
+        if !nll.is_finite() {
+            return (nll, PoissonEta { mu: f64::NAN });
+        }
+
+        let d_mu = 1.0 - y / theta.mu;
+        let gradient_eta = PoissonEta {
+            mu: d_mu * MuLink::derivative_inverse(eta.mu),
+        };
+
+        (nll, gradient_eta)
+    }
+}
+
+impl<MuLink> Default for Poisson<MuLink>
+where
+    MuLink: PositiveLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Link-independent Poisson likelihood kernel shared by Poisson-based families.
 ///
 /// Keeping the distribution mathematics outside [`Poisson`] prevents
@@ -197,52 +243,6 @@ impl PoissonKernel {
         let i1 = 1.0 - 3.0 * inv - 15.0 * inv2 / 2.0 - 315.0 * inv3 / 6.0 - 14_175.0 * inv4 / 24.0;
 
         (i0 + i1) / (2.0 * std::f64::consts::PI * x).sqrt()
-    }
-}
-
-impl<MuLink> Poisson<MuLink>
-where
-    MuLink: PositiveLink<f64>,
-{
-    /// Creates a stateless Poisson family.
-    #[inline]
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn theta_from_eta(eta: PoissonEta) -> PoissonTheta {
-        PoissonTheta {
-            mu: MuLink::inverse(eta.mu),
-        }
-    }
-
-    #[inline]
-    fn nll_and_gradient_eta_values(y: f64, eta: PoissonEta) -> (f64, PoissonEta) {
-        let theta = Self::theta_from_eta(eta);
-        let nll = PoissonKernel::nll(y, theta);
-        if !nll.is_finite() {
-            return (nll, PoissonEta { mu: f64::NAN });
-        }
-
-        let d_mu = 1.0 - y / theta.mu;
-        let gradient_eta = PoissonEta {
-            mu: d_mu * MuLink::derivative_inverse(eta.mu),
-        };
-
-        (nll, gradient_eta)
-    }
-}
-
-impl<MuLink> Default for Poisson<MuLink>
-where
-    MuLink: PositiveLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

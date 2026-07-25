@@ -28,8 +28,14 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy
+      - name: Clippy with all features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Clippy with default features
+        run: cargo clippy -p gamlss --lib --locked -- -D warnings
+
+      - name: Clippy without default features
+        run: cargo clippy --workspace --all-targets --no-default-features --locked -- -D warnings
 
       - name: Tests
         run: cargo test --workspace --all-features --locked

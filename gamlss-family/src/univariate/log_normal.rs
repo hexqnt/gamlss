@@ -41,15 +41,6 @@ pub struct LogNormal<Param = LogLocationLogSd, FirstLink = Identity, SecondLink 
     marker: PhantomData<(Param, FirstLink, SecondLink)>,
 }
 
-impl<Param, FirstLink, SecondLink> ScalarObservationDomain
-    for LogNormal<Param, FirstLink, SecondLink>
-{
-    #[inline]
-    fn observation_in_domain(&self, observation: f64) -> bool {
-        is_positive_finite(observation)
-    }
-}
-
 impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
     /// Creates a stateless log-normal family.
     #[inline]
@@ -144,6 +135,15 @@ impl<Param, FirstLink, SecondLink> LogNormal<Param, FirstLink, SecondLink> {
 impl<Param, FirstLink, SecondLink> Default for LogNormal<Param, FirstLink, SecondLink> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<Param, FirstLink, SecondLink> ScalarObservationDomain
+    for LogNormal<Param, FirstLink, SecondLink>
+{
+    #[inline]
+    fn observation_in_domain(&self, observation: f64) -> bool {
+        is_positive_finite(observation)
     }
 }
 

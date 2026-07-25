@@ -64,6 +64,42 @@ where
     }
 }
 
+impl<MeanLink, DispersionLink, PowerLink> Tweedie<MeanLink, DispersionLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    #[inline]
+    fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
+        let (nll, gradient) = TweedieKernel::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
+        if !nll.is_finite() {
+            return (nll, TweedieEta::from_array([f64::NAN; 3]));
+        }
+
+        (
+            nll,
+            TweedieEta {
+                mean: gradient.mean * MeanLink::derivative_inverse(eta.mean),
+                dispersion: gradient.dispersion
+                    * DispersionLink::derivative_inverse(eta.dispersion),
+                power: gradient.power * PowerLink::derivative_inverse(eta.power),
+            },
+        )
+    }
+}
+
+impl<MeanLink, DispersionLink, PowerLink> Default for Tweedie<MeanLink, DispersionLink, PowerLink>
+where
+    MeanLink: PositiveLink<f64>,
+    DispersionLink: PositiveLink<f64>,
+    PowerLink: UnitIntervalLink<f64>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Link- and parameterization-independent Tweedie kernel.
 #[derive(Debug, Clone, Copy)]
 struct TweedieKernel;
@@ -356,42 +392,6 @@ impl TweedieKernel {
         } else {
             Err(SimulationError::NumericalFailure("Tweedie gamma sample"))
         }
-    }
-}
-
-impl<MeanLink, DispersionLink, PowerLink> Tweedie<MeanLink, DispersionLink, PowerLink>
-where
-    MeanLink: PositiveLink<f64>,
-    DispersionLink: PositiveLink<f64>,
-    PowerLink: UnitIntervalLink<f64>,
-{
-    #[inline]
-    fn nll_and_gradient_eta_values(y: f64, eta: TweedieEta) -> (f64, TweedieEta) {
-        let (nll, gradient) = TweedieKernel::nll_and_gradient_theta(y, Self::theta_from_eta(eta));
-        if !nll.is_finite() {
-            return (nll, TweedieEta::from_array([f64::NAN; 3]));
-        }
-
-        (
-            nll,
-            TweedieEta {
-                mean: gradient.mean * MeanLink::derivative_inverse(eta.mean),
-                dispersion: gradient.dispersion
-                    * DispersionLink::derivative_inverse(eta.dispersion),
-                power: gradient.power * PowerLink::derivative_inverse(eta.power),
-            },
-        )
-    }
-}
-
-impl<MeanLink, DispersionLink, PowerLink> Default for Tweedie<MeanLink, DispersionLink, PowerLink>
-where
-    MeanLink: PositiveLink<f64>,
-    DispersionLink: PositiveLink<f64>,
-    PowerLink: UnitIntervalLink<f64>,
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

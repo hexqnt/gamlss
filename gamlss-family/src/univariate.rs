@@ -108,6 +108,9 @@ pub use zip::{
     ZipTotalMeanZeroProbabilityEta, ZipTotalMeanZeroProbabilityTheta,
 };
 
+/// Full-name module alias for the sinh-arcsinh / SHASH distribution.
+pub use shash as sinh_arcsinh;
+
 /// Beta inflated at zero and one distribution.
 pub mod beinf;
 /// Bernoulli distribution.
@@ -164,8 +167,6 @@ pub mod power_exponential;
 pub mod rayleigh;
 /// Sinh-arcsinh distribution.
 pub mod shash;
-/// Full-name module alias for the sinh-arcsinh / SHASH distribution.
-pub use shash as sinh_arcsinh;
 /// Skew-normal distribution.
 pub mod skew_normal;
 /// Fernández--Steel two-piece skew power-exponential / generalized-error distribution.
