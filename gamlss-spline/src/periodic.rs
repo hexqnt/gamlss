@@ -132,6 +132,11 @@ impl PeriodicSplineSpec {
     }
 
     #[inline]
+    pub(crate) const fn cyclic_spec(&self) -> CyclicSplineSpec {
+        self.cyclic
+    }
+
+    #[inline]
     pub(crate) fn phase(&self, x: f64) -> Result<f64, SplineError> {
         if !x.is_finite() {
             return Err(SplineError::NonFiniteValue);

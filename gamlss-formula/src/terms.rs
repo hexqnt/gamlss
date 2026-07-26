@@ -192,7 +192,45 @@ pub const fn tensor_pspline(left: Col<f64>, right: Col<f64>) -> TensorPSplineTer
         right_k: 10,
         left_order: SplineOrder::Cubic,
         right_order: SplineOrder::Cubic,
+        left_lambda: 1.0,
+        right_lambda: 1.0,
+        left_penalty_order: 2,
+        right_penalty_order: 2,
+        kind: TensorSmoothKind::Full,
     }
+}
+
+/// Creates a pure tensor-product P-spline interaction with default options.
+///
+/// Each marginal constant direction is removed before forming the tensor, so
+/// the result cannot reproduce either one-dimensional main effect.
+#[must_use]
+pub const fn tensor_pspline_interaction(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
+    TensorPSplineTerm {
+        left,
+        right,
+        left_k: 10,
+        right_k: 10,
+        left_order: SplineOrder::Cubic,
+        right_order: SplineOrder::Cubic,
+        left_lambda: 1.0,
+        right_lambda: 1.0,
+        left_penalty_order: 2,
+        right_penalty_order: 2,
+        kind: TensorSmoothKind::Interaction,
+    }
+}
+
+/// Short alias for a full tensor-product smooth, analogous to `te` notation.
+#[must_use]
+pub const fn te(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
+    tensor_pspline(left, right)
+}
+
+/// Short alias for a pure tensor-product interaction, analogous to `ti` notation.
+#[must_use]
+pub const fn ti(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
+    tensor_pspline_interaction(left, right)
 }
 
 /// Creates a hard-monotone I-spline term expression with default options.
@@ -233,6 +271,15 @@ macro_rules! impl_term_expr {
             }
         }
     };
+}
+
+/// Tensor-product smooth parameterization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorSmoothKind {
+    /// Full tensor space, including both marginal main-effect spaces.
+    Full,
+    /// Pure interaction after removing each marginal constant direction.
+    Interaction,
 }
 
 /// Open-uniform P-spline term options.
@@ -386,9 +433,56 @@ pub struct TensorPSplineTerm {
     pub(crate) right_k: usize,
     pub(crate) left_order: SplineOrder,
     pub(crate) right_order: SplineOrder,
+    pub(crate) left_lambda: f64,
+    pub(crate) right_lambda: f64,
+    pub(crate) left_penalty_order: usize,
+    pub(crate) right_penalty_order: usize,
+    pub(crate) kind: TensorSmoothKind,
 }
 
 impl TensorPSplineTerm {
+    /// Returns the left source column.
+    #[must_use]
+    pub const fn left(&self) -> &Col<f64> {
+        &self.left
+    }
+
+    /// Returns the right source column.
+    #[must_use]
+    pub const fn right(&self) -> &Col<f64> {
+        &self.right
+    }
+
+    /// Returns the two marginal basis counts.
+    #[must_use]
+    pub const fn basis_counts(&self) -> (usize, usize) {
+        (self.left_k, self.right_k)
+    }
+
+    /// Returns the two marginal spline orders.
+    #[must_use]
+    pub const fn spline_orders(&self) -> (SplineOrder, SplineOrder) {
+        (self.left_order, self.right_order)
+    }
+
+    /// Returns the two independent marginal smoothing weights.
+    #[must_use]
+    pub const fn penalty_lambdas(&self) -> (f64, f64) {
+        (self.left_lambda, self.right_lambda)
+    }
+
+    /// Returns the two marginal finite-difference orders.
+    #[must_use]
+    pub const fn difference_orders(&self) -> (usize, usize) {
+        (self.left_penalty_order, self.right_penalty_order)
+    }
+
+    /// Returns whether this is a full tensor smooth or a pure interaction.
+    #[must_use]
+    pub const fn kind(&self) -> TensorSmoothKind {
+        self.kind
+    }
+
     /// Sets basis counts for the left and right axes.
     #[must_use]
     pub const fn k(mut self, left: usize, right: usize) -> Self {
@@ -402,6 +496,22 @@ impl TensorPSplineTerm {
     pub const fn order(mut self, left: SplineOrder, right: SplineOrder) -> Self {
         self.left_order = left;
         self.right_order = right;
+        self
+    }
+
+    /// Sets independent difference-penalty weights for the two axes.
+    #[must_use]
+    pub const fn lambda(mut self, left: f64, right: f64) -> Self {
+        self.left_lambda = left;
+        self.right_lambda = right;
+        self
+    }
+
+    /// Sets independent finite-difference orders for the two axes.
+    #[must_use]
+    pub const fn penalty_order(mut self, left: usize, right: usize) -> Self {
+        self.left_penalty_order = left;
+        self.right_penalty_order = right;
         self
     }
 }
@@ -558,6 +668,16 @@ pub enum FittedTerm {
         left_basis: OpenUniformSplineBasis,
         /// Right fitted basis metadata.
         right_basis: OpenUniformSplineBasis,
+        /// Full tensor or pure-interaction parameterization.
+        kind: TensorSmoothKind,
+        /// Left marginal penalty weight.
+        left_lambda: f64,
+        /// Right marginal penalty weight.
+        right_lambda: f64,
+        /// Left marginal difference order.
+        left_penalty_order: usize,
+        /// Right marginal difference order.
+        right_penalty_order: usize,
         /// Coefficient names for this term.
         coefficients: Vec<String>,
     },

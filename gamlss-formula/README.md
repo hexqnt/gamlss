@@ -8,6 +8,7 @@ This crate currently provides:
 
 - typed `DataView`/`Col<T>` inputs;
 - curated term builders such as linear terms, factors, interactions and splines;
+- anisotropic tensor P-splines through `tensor_pspline`/`te`, and constant-free pure interactions through `tensor_pspline_interaction`/`ti`, with independent marginal penalty weights and orders;
 - selected default family specs: normal, gamma, log-normal, Weibull, inverse Gaussian and beta.
 
 It intentionally does not provide string formula parsing, fit loops, optimizer integration, diagnostics or dataframe adapters, and it is not expected to mirror every low-level distribution, link or parameterization.

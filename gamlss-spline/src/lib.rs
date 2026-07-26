@@ -1,19 +1,35 @@
 #![forbid(unsafe_code)]
-//! Spline bases, prepared and on-demand predictor designs, and penalties.
+//! Spline bases, constrained and unconstrained predictor designs, and penalties.
 //!
 //! Reusable `*Basis` and `*Spec` metadata can be applied to new coordinates.
 //! Named prepared designs cache compact row geometry where that improves
 //! repeated model passes; [`OnDemandSplineDesign`] retains only coordinates
 //! and metadata. Linear designs share [`SplineRowBasis`],
 //! [`gamlss_core::PredictorBlock`], and
-//! [`gamlss_core::LinearPredictorGeometry`] contracts.
+//! [`gamlss_core::LinearPredictorGeometry`] contracts. Univariate derivative
+//! rows share [`DifferentiableSplineBasis1d`]; fixed-dimensional isotropic
+//! bases use [`SplineBasisNd`]. Penalty geometry can be retained independently
+//! from smoothing scales through [`PenaltyKernel`] and [`ScaledPenalty`].
 
+pub use adaptive::{
+    AdaptiveDifferencePenalty, WeightedDifferenceKernel, WeightedDifferencePenalty,
+};
 pub use basis::SplineBasis1d;
+pub use basis_nd::SplineBasisNd;
 pub use bspline::{BSplineBasis, BSplineDesign, pspline_design};
+pub use constraint::{CenteredSplineDesign, HelmertContrastDesign};
+pub use cspline::{CSplineBasis, ConvexCSplineDesign, CurvatureDirection};
 pub use cyclic::{CyclicSplineDesign, CyclicSplineSpec};
+pub use derivative::{DifferentiableSplineBasis1d, DifferentiableSplineRowBasis};
+pub use duchon::{DuchonSmoothness, DuchonSplineBasis, DuchonSplineDesign};
 pub use error::{FourierError, SplineError};
 pub use fourier::{FourierBasis, FourierDesign};
 pub use ispline::{ISplineBasis, ISplineDesign};
+pub use kernel::{
+    DensePenaltyKernel, DiagonalPenaltyKernel, DifferencePenaltyKernel, PenaltyKernel,
+    ScaledPenalty,
+};
+pub use knots::{KnotPlacement, OpenKnotVector};
 pub use monotone::{MonotoneDirection, MonotoneISplineDesign};
 pub use mspline::{MSplineBasis, MSplineDesign};
 pub use natural::{NaturalCubicSplineBasis, NaturalCubicSplineDesign};
@@ -25,17 +41,30 @@ pub use penalty::{
     PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
 };
 pub use periodic::{PeriodicSplineDesign, PeriodicSplineSpec};
+pub use roughness::{
+    BSplineDerivativePenalty, FourierRoughnessPenalty, NaturalCubicRoughnessPenalty,
+    NullSpacePenalty,
+};
 pub use row_basis::{CsrParts, SplineRowBasis, SplineRowBasisExt, TripletParts};
-pub use tensor::TensorSplineDesign;
+pub use tensor::{TensorInteractionDesign, TensorSplineDesign};
+pub use tensor_penalty::{HelmertContrast, HelmertContrastPenalty, TensorProductPenalty};
 pub use truncated_power::{TruncatedPowerBasis, TruncatedPowerDesign};
 
+pub mod adaptive;
 pub mod basis;
+pub mod basis_nd;
 pub mod bspline;
+pub mod constraint;
+pub mod cspline;
 pub mod cyclic;
+pub mod derivative;
+pub mod duchon;
 pub mod error;
 pub mod fourier;
 mod geometry;
 pub mod ispline;
+pub mod kernel;
+pub mod knots;
 mod local;
 pub mod monotone;
 pub mod mspline;
@@ -46,23 +75,32 @@ pub mod order;
 pub mod penalty;
 pub mod periodic;
 mod prepared;
+pub mod roughness;
 pub mod row_basis;
 pub mod tensor;
+pub mod tensor_penalty;
 pub mod truncated_power;
 mod validation;
 
 /// Most commonly used imports from `gamlss-spline`.
 pub mod prelude {
     pub use crate::{
-        BSplineBasis, BSplineDesign, CsrParts, CyclicDifferencePenalty, CyclicSplineDesign,
-        CyclicSplineSpec, DifferencePenalty, EdgeMonotonicPenalty, FourierBasis, FourierDesign,
-        FourierError, ISplineBasis, ISplineDesign, MSplineBasis, MSplineDesign, MonotoneDirection,
-        MonotoneISplineDesign, NaturalCubicSplineBasis, NaturalCubicSplineDesign,
-        OnDemandSplineDesign, OpenUniformSplineBasis, OpenUniformSplineDesign,
+        AdaptiveDifferencePenalty, BSplineBasis, BSplineDerivativePenalty, BSplineDesign,
+        CSplineBasis, CenteredSplineDesign, ConvexCSplineDesign, CsrParts, CurvatureDirection,
+        CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec, DensePenaltyKernel,
+        DiagonalPenaltyKernel, DifferencePenalty, DifferencePenaltyKernel,
+        DifferentiableSplineBasis1d, DifferentiableSplineRowBasis, DuchonSmoothness,
+        DuchonSplineBasis, DuchonSplineDesign, EdgeMonotonicPenalty, FourierBasis, FourierDesign,
+        FourierError, FourierRoughnessPenalty, HelmertContrast, HelmertContrastDesign,
+        HelmertContrastPenalty, ISplineBasis, ISplineDesign, KnotPlacement, MSplineBasis,
+        MSplineDesign, MonotoneDirection, MonotoneISplineDesign, NaturalCubicRoughnessPenalty,
+        NaturalCubicSplineBasis, NaturalCubicSplineDesign, NullSpacePenalty, OnDemandSplineDesign,
+        OpenKnotVector, OpenUniformSplineBasis, OpenUniformSplineDesign, PenaltyKernel,
         PeriodicSplineDesign, PeriodicSplineSpec, PreparedCyclicDifferencePenalty,
-        PreparedDifferencePenalty, SlopeLimitPenalty, SplineBasis1d, SplineError, SplineOrder,
-        SplineRowBasis, SplineRowBasisExt, TensorSplineDesign, TripletParts, TruncatedPowerBasis,
-        TruncatedPowerDesign, pspline_design,
+        PreparedDifferencePenalty, ScaledPenalty, SlopeLimitPenalty, SplineBasis1d, SplineBasisNd,
+        SplineError, SplineOrder, SplineRowBasis, SplineRowBasisExt, TensorInteractionDesign,
+        TensorProductPenalty, TensorSplineDesign, TripletParts, TruncatedPowerBasis,
+        TruncatedPowerDesign, WeightedDifferenceKernel, WeightedDifferencePenalty, pspline_design,
     };
 }
 
@@ -77,8 +115,8 @@ mod tests {
     use super::{
         BSplineBasis, CyclicDifferencePenalty, CyclicSplineDesign, CyclicSplineSpec,
         DifferencePenalty, EdgeMonotonicPenalty, FourierBasis, FourierDesign, FourierError,
-        ISplineBasis, MSplineBasis, MonotoneDirection, MonotoneISplineDesign,
-        NaturalCubicSplineBasis, OnDemandSplineDesign, OpenUniformSplineBasis,
+        ISplineBasis, KnotPlacement, MSplineBasis, MonotoneDirection, MonotoneISplineDesign,
+        NaturalCubicSplineBasis, OnDemandSplineDesign, OpenKnotVector, OpenUniformSplineBasis,
         OpenUniformSplineDesign, PeriodicSplineDesign, PeriodicSplineSpec,
         PreparedCyclicDifferencePenalty, PreparedDifferencePenalty, SlopeLimitPenalty,
         SplineBasis1d, SplineError, SplineOrder, SplineRowBasisExt, TensorSplineDesign,
@@ -1296,6 +1334,30 @@ mod tests {
         assert_relative_eq!(basis.knots()[0], 1.0 / 3.0, epsilon = 1.0e-12);
         assert_relative_eq!(basis.knots()[1], 2.0 / 3.0, epsilon = 1.0e-12);
         assert_eq!(basis.n_basis(), 3);
+
+        let knots =
+            OpenKnotVector::from_data(&[0.0, 0.01, 0.1, 0.8, 1.0], 6, 3, KnotPlacement::Quantile)
+                .unwrap();
+        let expected = knots.interior().to_vec();
+        let persisted = TruncatedPowerBasis::from_open_knots(&knots, true).unwrap();
+        for (actual, expected) in persisted.knots().iter().zip(expected) {
+            assert_relative_eq!(*actual, expected, epsilon = f64::EPSILON);
+        }
+
+        let weighted = TruncatedPowerBasis::from_weighted_data(
+            &[-100.0, 0.0, 1.0, 2.0, 100.0],
+            &[0.0, 1.0, 2.0, 1.0, 0.0],
+            2,
+            SplineOrder::Cubic,
+            true,
+        )
+        .unwrap();
+        assert!(
+            weighted
+                .knots()
+                .iter()
+                .all(|knot| (0.0..=2.0).contains(knot))
+        );
     }
 
     #[test]
@@ -1466,6 +1528,33 @@ mod tests {
         }
 
         assert_relative_eq!(tensor.eta_row(row, &beta), expected, epsilon = 1.0e-12);
+        assert!(
+            tensor
+                .eta_left_derivative_row(row, 1, &beta)
+                .unwrap()
+                .is_finite()
+        );
+        assert!(
+            tensor
+                .eta_right_derivative_row(row, 1, &beta)
+                .unwrap()
+                .is_finite()
+        );
+        assert!(
+            tensor
+                .eta_mixed_derivative_row(row, 1, 1, &beta)
+                .unwrap()
+                .is_finite()
+        );
+        assert_eq!(
+            tensor
+                .eta_mixed_derivative_row(row, 4, 1, &beta)
+                .unwrap_err(),
+            SplineError::UnsupportedDerivativeOrder {
+                requested: 4,
+                max: 3
+            }
+        );
         assert_predictor_gradient_matches_finite_difference(&tensor, &beta, &[0.5, -0.2, 0.9]);
         assert_eq!(tensor.n_basis(), beta.len());
 

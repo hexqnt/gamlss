@@ -5,9 +5,10 @@ use std::{hint::black_box, time::Duration};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use gamlss_core::{LinearPredictorBlock, LinearPredictorGeometry, Penalty, PredictorBlock};
 use gamlss_spline::{
-    BSplineBasis, CyclicSplineDesign, DifferencePenalty, ISplineBasis, MSplineBasis,
-    NaturalCubicSplineBasis, OpenUniformSplineDesign, PreparedDifferencePenalty, SplineOrder,
-    SplineRowBasis, SplineRowBasisExt,
+    BSplineBasis, CyclicSplineDesign, DifferencePenalty, DifferencePenaltyKernel, DuchonSmoothness,
+    DuchonSplineBasis, ISplineBasis, MSplineBasis, NaturalCubicSplineBasis,
+    OpenUniformSplineDesign, PreparedDifferencePenalty, ScaledPenalty, SplineOrder, SplineRowBasis,
+    SplineRowBasisExt,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -430,6 +431,8 @@ fn benchmark_penalty_case(criterion: &mut Criterion, n_basis: usize) {
     let beta = coefficients(n_basis);
     let unprepared = DifferencePenalty::new_unchecked(0.7, 2);
     let prepared = PreparedDifferencePenalty::new_unchecked(0.7, 2);
+    let separated =
+        ScaledPenalty::try_new(0.7, DifferencePenaltyKernel::try_new(n_basis, 2).unwrap()).unwrap();
     let mut group = criterion.benchmark_group(format!("difference_penalty/k{n_basis}/order2"));
     group.throughput(Throughput::Elements(n_basis as u64));
 
@@ -438,6 +441,9 @@ fn benchmark_penalty_case(criterion: &mut Criterion, n_basis: usize) {
     });
     group.bench_function("value_prepared", |bencher| {
         bencher.iter(|| black_box(prepared.value(black_box(&beta))));
+    });
+    group.bench_function("value_separated_kernel", |bencher| {
+        bencher.iter(|| black_box(separated.value(black_box(&beta))));
     });
 
     let mut unprepared_gradient = vec![0.0; n_basis];
@@ -455,6 +461,89 @@ fn benchmark_penalty_case(criterion: &mut Criterion, n_basis: usize) {
             prepared_gradient.fill(0.0);
             prepared.add_gradient(black_box(&beta), black_box(&mut prepared_gradient));
             black_box(&prepared_gradient);
+        });
+    });
+
+    let mut separated_gradient = vec![0.0; n_basis];
+    group.bench_function("gradient_separated_kernel", |bencher| {
+        bencher.iter(|| {
+            separated_gradient.fill(0.0);
+            separated.add_gradient(black_box(&beta), black_box(&mut separated_gradient));
+            black_box(&separated_gradient);
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_duchon_case(criterion: &mut Criterion) {
+    let centers = (0..7)
+        .flat_map(|row| {
+            (0..7).map(move |column| {
+                [
+                    f64::from(column) / 6.0,
+                    f64::from(row) / 6.0 + 0.015 * f64::from(column % 2),
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+    let points = (0..1_000)
+        .map(|index| {
+            [
+                f64::from(index * 37 % 997) / 996.0,
+                f64::from(index * 61 % 991) / 990.0,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let basis =
+        DuchonSplineBasis::try_new(&centers, 20, DuchonSmoothness::thin_plate(2).unwrap()).unwrap();
+    let design = basis.design(&points).unwrap();
+    let beta = coefficients(basis.n_basis());
+    let scores = row_scores(points.len());
+    let penalty = basis.penalty(0.7).unwrap();
+    let mut group = criterion.benchmark_group("duchon_thin_plate/d2/n1000/centers49/k20");
+    group.throughput(Throughput::Elements(points.len() as u64));
+
+    let mut basis_row = vec![0.0; basis.n_basis()];
+    group.bench_function("basis_rows", |bencher| {
+        bencher.iter(|| {
+            let mut checksum = 0.0;
+            for point in black_box(&points) {
+                basis.evaluate_into(point, &mut basis_row).unwrap();
+                checksum += basis_row.iter().sum::<f64>();
+            }
+            black_box((checksum, &basis_row));
+        });
+    });
+
+    group.bench_function("eta_rows_prepared", |bencher| {
+        bencher.iter(|| {
+            let mut checksum = 0.0;
+            for row in 0..points.len() {
+                checksum += design.eta_row(row, black_box(&beta));
+            }
+            black_box(checksum);
+        });
+    });
+
+    let mut gradient = vec![0.0; basis.n_basis()];
+    group.bench_function("vjp_prepared", |bencher| {
+        bencher.iter(|| {
+            gradient.fill(0.0);
+            design.add_gradient(black_box(&scores), black_box(&beta), &mut gradient);
+            black_box(&gradient);
+        });
+    });
+
+    group.bench_function("diagonal_penalty_value", |bencher| {
+        bencher.iter(|| black_box(penalty.value(black_box(&beta))));
+    });
+    let mut penalty_gradient = vec![0.0; basis.n_basis()];
+    group.bench_function("diagonal_penalty_gradient", |bencher| {
+        bencher.iter(|| {
+            penalty_gradient.fill(0.0);
+            penalty.add_gradient(black_box(&beta), &mut penalty_gradient);
+            black_box(&penalty_gradient);
         });
     });
 
@@ -521,6 +610,7 @@ fn spline_hot_paths(criterion: &mut Criterion) {
     benchmark_penalty_case(criterion, 16);
     benchmark_penalty_case(criterion, 64);
     benchmark_penalty_case(criterion, 256);
+    benchmark_duchon_case(criterion);
 }
 
 criterion_group! {

@@ -60,6 +60,50 @@ pub enum SplineError {
         degree: usize,
     },
 
+    /// Requested derivative order is not supported by the basis.
+    #[error("spline derivative order {requested} exceeds supported order {max}")]
+    UnsupportedDerivativeOrder {
+        /// Requested derivative order.
+        requested: usize,
+        /// Largest supported derivative order.
+        max: usize,
+    },
+
+    /// Duchon smoothness parameters do not define a continuous spline in the requested dimension.
+    #[error(
+        "invalid Duchon smoothness for dimension {dimension}: m={derivative_order}, 2s={twice_s}; require m > 0, -d < 2s < d, and 2m + 2s > d"
+    )]
+    InvalidDuchonSmoothness {
+        /// Coordinate-space dimension.
+        dimension: usize,
+        /// Integer derivative order `m`.
+        derivative_order: usize,
+        /// Exact half-step representation of `s`.
+        twice_s: i32,
+    },
+
+    /// Requested Duchon regression rank cannot represent its polynomial null space.
+    #[error("Duchon basis rank {rank} must be in {min}..={max}")]
+    InvalidDuchonRank {
+        /// Requested total basis rank.
+        rank: usize,
+        /// Minimum usable rank.
+        min: usize,
+        /// Number of supplied centers and maximum usable rank.
+        max: usize,
+    },
+
+    /// Duchon centers do not identify the required polynomial null space.
+    #[error("Duchon centers are duplicated or polynomially rank deficient")]
+    DegenerateDuchonCenters,
+
+    /// A numerical spline operation overflowed or failed to reach its required invariant.
+    #[error("numerical spline operation failed while computing {context}")]
+    NumericalFailure {
+        /// Operation that failed.
+        context: &'static str,
+    },
+
     /// Core design matrix error.
     #[error(transparent)]
     Model(#[from] ModelError),

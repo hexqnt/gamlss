@@ -284,7 +284,7 @@ impl NaturalCubicSplineBasis {
     }
 
     #[inline]
-    fn second_derivative_column(&self, knot: usize) -> &[f64] {
+    pub(crate) fn second_derivative_column(&self, knot: usize) -> &[f64] {
         let n = self.knots.len();
         &self.second_derivatives[knot * n..(knot + 1) * n]
     }

@@ -2,11 +2,11 @@ use std::ops::Range;
 
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
+use crate::derivative::bspline_derivative_value;
 use crate::local::{LocalBasis, bspline_active_range, bspline_local_basis, bspline_value};
 use crate::prepared::PreparedContiguousGeometry;
 use crate::row_basis::SplineRowBasis;
-use crate::validation::finite_data_range;
-use crate::{OnDemandSplineDesign, SplineError};
+use crate::{BSplineBasis, KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError};
 
 /// M-spline basis with normalized non-negative basis functions.
 ///
@@ -21,32 +21,16 @@ use crate::{OnDemandSplineDesign, SplineError};
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MSplineBasis {
-    knots: Vec<f64>,
-    degree: usize,
-    n_basis: usize,
+    bspline: BSplineBasis,
 }
 
 impl MSplineBasis {
     /// Creates an M-spline basis from a finite nondecreasing knot vector.
     pub fn new(knots: Vec<f64>, degree: usize) -> Result<Self, SplineError> {
-        if degree > 3 {
-            return Err(SplineError::UnsupportedDegree { degree });
-        }
         if knots.len() <= degree + 1 {
             return Err(SplineError::NotEnoughKnots { min: degree + 2 });
         }
-        if knots
-            .windows(2)
-            .any(|window| !window[0].is_finite() || !window[1].is_finite() || window[0] > window[1])
-        {
-            return Err(SplineError::InvalidKnots);
-        }
-        let n_basis = knots.len() - degree - 1;
-        Ok(Self {
-            knots,
-            degree,
-            n_basis,
-        })
+        Self::try_from(BSplineBasis::new(degree, knots)?)
     }
 
     /// Builds an open-uniform knot vector from data.
@@ -56,29 +40,45 @@ impl MSplineBasis {
         n_basis: usize,
         degree: usize,
     ) -> Result<Self, SplineError> {
-        if x.is_empty() {
-            return Err(SplineError::EmptyInput);
-        }
-        if n_basis <= degree {
-            return Err(SplineError::NotEnoughBasis { n_basis, degree });
-        }
+        Self::open_from_data(x, n_basis, degree, KnotPlacement::Uniform)
+    }
 
-        let (min, max) = finite_data_range(x)?;
+    /// Builds an open M-spline basis with a persisted knot-placement policy.
+    pub fn open_from_data(
+        x: &[f64],
+        n_basis: usize,
+        degree: usize,
+        placement: KnotPlacement,
+    ) -> Result<Self, SplineError> {
+        Self::try_from(BSplineBasis::open_from_data(x, n_basis, degree, placement)?)
+    }
 
-        let interior = n_basis.saturating_sub(degree + 1);
-        let mut knots = Vec::with_capacity(n_basis + degree + 1);
-        knots.extend(std::iter::repeat_n(min, degree + 1));
-        for index in 1..=interior {
-            let fraction = index as f64 / (interior + 1) as f64;
-            knots.push(min + fraction * (max - min));
-        }
-        knots.extend(std::iter::repeat_n(max, degree + 1));
-        Self::new(knots, degree)
+    /// Builds an open M-spline basis using weighted empirical quantiles.
+    pub fn open_from_weighted_data(
+        x: &[f64],
+        weights: &[f64],
+        n_basis: usize,
+        degree: usize,
+    ) -> Result<Self, SplineError> {
+        Self::try_from(BSplineBasis::open_from_weighted_data(
+            x, weights, n_basis, degree,
+        )?)
+    }
+
+    /// Builds an M-spline basis from persisted open-knot metadata.
+    pub fn from_open_knots(knots: OpenKnotVector) -> Result<Self, SplineError> {
+        Self::try_from(BSplineBasis::from_open_knots(knots)?)
+    }
+
+    /// Underlying B-spline metadata before M-spline normalization.
+    #[must_use]
+    pub const fn bspline(&self) -> &BSplineBasis {
+        &self.bspline
     }
 
     /// Builds a predictor design.
     pub fn design(&self, x: &[f64]) -> Result<MSplineDesign, SplineError> {
-        let prepared = PreparedContiguousGeometry::try_from_basis(x, self, self.degree + 1)?;
+        let prepared = PreparedContiguousGeometry::try_from_basis(x, self, self.degree() + 1)?;
         Ok(MSplineDesign {
             x: x.into(),
             prepared,
@@ -95,27 +95,27 @@ impl MSplineBasis {
     #[must_use]
     #[inline]
     pub fn knots(&self) -> &[f64] {
-        &self.knots
+        self.bspline.knots()
     }
 
     /// Degree.
     #[must_use]
     #[inline]
     pub const fn degree(&self) -> usize {
-        self.degree
+        self.bspline.degree()
     }
 
     /// Number of basis functions.
     #[must_use]
     #[inline]
     pub const fn n_basis(&self) -> usize {
-        self.n_basis
+        self.bspline.n_basis()
     }
 
     /// Evaluates all basis functions at `x`.
     #[must_use]
     pub fn evaluate(&self, x: f64) -> Vec<f64> {
-        let mut values = vec![0.0; self.n_basis];
+        let mut values = vec![0.0; self.n_basis()];
         self.evaluate_into(x, &mut values);
         values
     }
@@ -125,7 +125,7 @@ impl MSplineBasis {
     /// `out.len()` must equal [`Self::n_basis`].
     #[inline]
     pub fn evaluate_into(&self, x: f64, out: &mut [f64]) {
-        debug_assert_eq!(out.len(), self.n_basis);
+        debug_assert_eq!(out.len(), self.n_basis());
         out.fill(0.0);
         self.for_each_basis(x, |index, weight| out[index] = weight);
     }
@@ -133,7 +133,7 @@ impl MSplineBasis {
     /// Evaluates first derivatives of all basis functions at `x`.
     #[must_use]
     pub fn evaluate_derivative(&self, x: f64) -> Vec<f64> {
-        let mut values = vec![0.0; self.n_basis];
+        let mut values = vec![0.0; self.n_basis()];
         self.evaluate_derivative_into(x, &mut values);
         values
     }
@@ -143,7 +143,7 @@ impl MSplineBasis {
     /// `out.len()` must equal [`Self::n_basis`].
     #[inline]
     pub fn evaluate_derivative_into(&self, x: f64, out: &mut [f64]) {
-        debug_assert_eq!(out.len(), self.n_basis);
+        debug_assert_eq!(out.len(), self.n_basis());
         out.fill(0.0);
         self.for_each_derivative_basis(x, |index, weight| out[index] = weight);
     }
@@ -157,7 +157,7 @@ impl MSplineBasis {
     /// Visits non-zero first derivatives at `x` without allocating.
     #[inline]
     pub fn for_each_derivative_basis(&self, x: f64, mut f: impl FnMut(usize, f64)) {
-        if let Some(active) = bspline_active_range(&self.knots, self.n_basis, self.degree, x) {
+        if let Some(active) = bspline_active_range(self.knots(), self.n_basis(), self.degree(), x) {
             for index in active {
                 let weight = self.evaluate_derivative_one(index, x);
                 if weight != 0.0 {
@@ -172,11 +172,12 @@ impl MSplineBasis {
     #[inline]
     #[allow(clippy::cast_precision_loss)]
     pub fn evaluate_one(&self, index: usize, x: f64) -> f64 {
-        let denom = self.knots[index + self.degree + 1] - self.knots[index];
+        let denom = self.knots()[index + self.degree() + 1] - self.knots()[index];
         if denom <= 0.0 {
             return 0.0;
         }
-        (self.degree + 1) as f64 * bspline_value(&self.knots, self.n_basis, index, self.degree, x)
+        (self.degree() + 1) as f64
+            * bspline_value(self.knots(), self.n_basis(), index, self.degree(), x)
             / denom
     }
 
@@ -185,30 +186,45 @@ impl MSplineBasis {
     #[inline]
     #[allow(clippy::cast_precision_loss)]
     pub fn evaluate_derivative_one(&self, index: usize, x: f64) -> f64 {
-        if self.degree == 0 {
+        if self.degree() == 0 {
             return 0.0;
         }
 
-        let denom = self.knots[index + self.degree + 1] - self.knots[index];
+        let denom = self.knots()[index + self.degree() + 1] - self.knots()[index];
         if denom <= 0.0 {
             return 0.0;
         }
 
-        let scale = (self.degree + 1) as f64 / denom;
-        scale * bspline_derivative_value(&self.knots, self.n_basis, index, self.degree, x)
+        let scale = (self.degree() + 1) as f64 / denom;
+        scale * bspline_derivative_value(self.knots(), self.n_basis(), index, self.degree(), 1, x)
     }
 
     #[inline]
     #[allow(clippy::cast_precision_loss)]
     pub(crate) fn local_basis(&self, x: f64) -> LocalBasis {
         let mut local = LocalBasis::default();
-        bspline_local_basis(&self.knots, self.n_basis, self.degree, x).for_each(|index, weight| {
-            let denom = self.knots[index + self.degree + 1] - self.knots[index];
-            if denom > 0.0 {
-                local.push_nonzero(index, (self.degree + 1) as f64 * weight / denom);
-            }
-        });
+        bspline_local_basis(self.knots(), self.n_basis(), self.degree(), x).for_each(
+            |index, weight| {
+                let denom = self.knots()[index + self.degree() + 1] - self.knots()[index];
+                if denom > 0.0 {
+                    local.push_nonzero(index, (self.degree() + 1) as f64 * weight / denom);
+                }
+            },
+        );
         local
+    }
+}
+
+impl TryFrom<BSplineBasis> for MSplineBasis {
+    type Error = SplineError;
+
+    fn try_from(bspline: BSplineBasis) -> Result<Self, Self::Error> {
+        let degree = bspline.degree();
+        if degree > 3 {
+            Err(SplineError::UnsupportedDegree { degree })
+        } else {
+            Ok(Self { bspline })
+        }
     }
 }
 
@@ -369,33 +385,4 @@ impl LinearPredictorGeometry for MSplineDesign {
         self.prepared
             .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
     }
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn bspline_derivative_value(
-    knots: &[f64],
-    n_basis: usize,
-    index: usize,
-    degree: usize,
-    x: f64,
-) -> f64 {
-    debug_assert!(degree > 0);
-
-    let degree_f64 = degree as f64;
-    let mut value = 0.0;
-    let left_denom = knots[index + degree] - knots[index];
-    if left_denom > 0.0 {
-        value = (degree_f64 / left_denom)
-            .mul_add(bspline_value(knots, n_basis, index, degree - 1, x), value);
-    }
-
-    let right_denom = knots[index + degree + 1] - knots[index + 1];
-    if right_denom > 0.0 {
-        value = (-degree_f64 / right_denom).mul_add(
-            bspline_value(knots, n_basis, index + 1, degree - 1, x),
-            value,
-        );
-    }
-
-    value
 }

@@ -4,14 +4,14 @@ use std::ops::Range;
 use gamlss_core::{DenseDesign, ModelError};
 use gamlss_family::ScalarObservationDomain;
 use gamlss_spline::{
-    CyclicSplineSpec, FourierDesign, ISplineBasis, MonotoneISplineDesign, OpenUniformSplineBasis,
-    SplineRowBasis, TensorSplineDesign,
+    CyclicSplineSpec, FourierDesign, HelmertContrast, ISplineBasis, MonotoneISplineDesign,
+    OpenUniformSplineBasis, SplineRowBasis,
 };
 
 use crate::predictor::{FormulaPredictorBlock, MonotoneSegment};
 use crate::{
     BoolCol, CatCol, Col, DataView, FittedTerm, FormulaError, FormulaPenalty, NumericCol,
-    NumericResponse, ParameterTerms, TermExpr, TermSpec,
+    NumericResponse, ParameterTerms, TensorSmoothKind, TermExpr, TermSpec,
 };
 
 #[derive(Debug)]
@@ -46,6 +46,7 @@ enum PreparedDenseTerm<'a> {
         right: NumericCol<'a>,
         left_basis: OpenUniformSplineBasis,
         right_basis: OpenUniformSplineBasis,
+        kind: TensorSmoothKind,
         range: Range<usize>,
     },
 }
@@ -140,6 +141,62 @@ impl RowMajorDesignBuilder {
                 basis_values[local_col] = weight;
             });
         }
+    }
+
+    fn fill_tensor_pspline(
+        &mut self,
+        range: &Range<usize>,
+        left_basis: &OpenUniformSplineBasis,
+        right_basis: &OpenUniformSplineBasis,
+        kind: TensorSmoothKind,
+        left: &[f64],
+        right: &[f64],
+    ) -> Result<(), FormulaError> {
+        debug_assert_eq!(left.len(), self.nrows);
+        debug_assert_eq!(right.len(), self.nrows);
+        debug_assert!(range.end <= self.ncols);
+        let left_dim = tensor_margin_dim(left_basis.n_basis(), kind)?;
+        let right_dim = tensor_margin_dim(right_basis.n_basis(), kind)?;
+        debug_assert_eq!(range.len(), left_dim * right_dim);
+
+        let mut left_values = vec![0.0; left_basis.n_basis()];
+        let mut right_values = vec![0.0; right_basis.n_basis()];
+        let mut left_contrasts = vec![0.0; left_dim];
+        let mut right_contrasts = vec![0.0; right_dim];
+        let contrasts = match kind {
+            TensorSmoothKind::Full => None,
+            TensorSmoothKind::Interaction => Some((
+                HelmertContrast::try_new(left_basis.n_basis())?,
+                HelmertContrast::try_new(right_basis.n_basis())?,
+            )),
+        };
+        for ((row_values, left_x), right_x) in self
+            .values
+            .chunks_exact_mut(self.ncols)
+            .zip(left.iter().copied())
+            .zip(right.iter().copied())
+        {
+            left_values.fill(0.0);
+            right_values.fill(0.0);
+            left_basis.for_each_value_basis(left_x, |index, value| left_values[index] = value)?;
+            right_basis
+                .for_each_value_basis(right_x, |index, value| right_values[index] = value)?;
+            let (left_margin, right_margin) = match contrasts {
+                None => (left_values.as_slice(), right_values.as_slice()),
+                Some((left_contrast, right_contrast)) => {
+                    left_contrast.transform_into(&left_values, &mut left_contrasts)?;
+                    right_contrast.transform_into(&right_values, &mut right_contrasts)?;
+                    (left_contrasts.as_slice(), right_contrasts.as_slice())
+                }
+            };
+            let output = &mut row_values[range.clone()];
+            for (left_index, left_value) in left_margin.iter().copied().enumerate() {
+                for (right_index, right_value) in right_margin.iter().copied().enumerate() {
+                    output[left_index * right_dim + right_index] = left_value * right_value;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn finish(self) -> Result<DenseDesign, FormulaError> {
@@ -466,22 +523,38 @@ where
                     term.right_k,
                     term.right_order,
                 )?;
-                let width = left_basis
-                    .n_basis()
-                    .checked_mul(right_basis.n_basis())
-                    .ok_or(ModelError::ArithmeticOverflow {
-                        context: "formula tensor coefficient count",
-                    })?;
+                let left_dim = tensor_margin_dim(left_basis.n_basis(), term.kind)?;
+                let right_dim = tensor_margin_dim(right_basis.n_basis(), term.kind)?;
+                let width =
+                    left_dim
+                        .checked_mul(right_dim)
+                        .ok_or(ModelError::ArithmeticOverflow {
+                            context: "formula tensor coefficient count",
+                        })?;
                 let range = checked_range(offset, width)?;
+                penalty.add_tensor_spline(
+                    range.clone(),
+                    left_basis.n_basis(),
+                    right_basis.n_basis(),
+                    term.kind,
+                    term.left_lambda,
+                    term.right_lambda,
+                    term.left_penalty_order,
+                    term.right_penalty_order,
+                )?;
                 let left_name = term.left.name().to_owned();
                 let right_name = term.right.name().to_owned();
-                let coefficients = (0..left_basis.n_basis())
+                let term_name = match term.kind {
+                    TensorSmoothKind::Full => "tensor",
+                    TensorSmoothKind::Interaction => "tensor_interaction",
+                };
+                let coefficients = (0..left_dim)
                     .flat_map(|left_index| {
                         let left_name = left_name.clone();
                         let right_name = right_name.clone();
-                        (0..right_basis.n_basis()).map(move |right_index| {
+                        (0..right_dim).map(move |right_index| {
                             format!(
-                                "{parameter}.{left_name}:{right_name}:tensor[{left_index},{right_index}]"
+                                "{parameter}.{left_name}:{right_name}:{term_name}[{left_index},{right_index}]"
                             )
                         })
                     })
@@ -491,6 +564,7 @@ where
                     right,
                     left_basis,
                     right_basis,
+                    kind: term.kind,
                     range: range.clone(),
                 });
                 fitted.push(FittedTerm::TensorPSpline {
@@ -499,6 +573,11 @@ where
                     range: range.clone(),
                     left_basis,
                     right_basis,
+                    kind: term.kind,
+                    left_lambda: term.left_lambda,
+                    right_lambda: term.right_lambda,
+                    left_penalty_order: term.left_penalty_order,
+                    right_penalty_order: term.right_penalty_order,
                     coefficients,
                 });
                 offset = range.end;
@@ -670,6 +749,7 @@ where
                 range,
                 left_basis,
                 right_basis,
+                kind,
                 ..
             } => {
                 let left = numeric_col(data, left)?;
@@ -680,6 +760,7 @@ where
                     right,
                     left_basis: *left_basis,
                     right_basis: *right_basis,
+                    kind: *kind,
                     range: range.clone(),
                 });
             }
@@ -824,17 +905,29 @@ fn dense_from_prepared_terms(
                 right,
                 left_basis,
                 right_basis,
+                kind,
                 range,
             } => {
-                let left_design = left_basis.design(left.as_slice())?;
-                let right_design = right_basis.design(right.as_slice())?;
-                let design = TensorSplineDesign::new(left_design, right_design)?;
-                builder.fill_row_basis(range, &design);
+                builder.fill_tensor_pspline(
+                    range,
+                    left_basis,
+                    right_basis,
+                    *kind,
+                    left.as_slice(),
+                    right.as_slice(),
+                )?;
             }
         }
     }
 
     builder.finish()
+}
+
+fn tensor_margin_dim(source_dim: usize, kind: TensorSmoothKind) -> Result<usize, ModelError> {
+    match kind {
+        TensorSmoothKind::Full => Ok(source_dim),
+        TensorSmoothKind::Interaction => Ok(HelmertContrast::try_new(source_dim)?.target_dim()),
+    }
 }
 
 fn fill_flat_columns(builder: &mut RowMajorDesignBuilder, range: &Range<usize>, values: &[f64]) {

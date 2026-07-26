@@ -3,7 +3,7 @@ use std::ops::Range;
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
 use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
-use crate::{SplineBasis1d, SplineError, SplineRowBasis};
+use crate::{DifferentiableSplineBasis1d, SplineBasis1d, SplineError, SplineRowBasis};
 
 /// A spline predictor that retains coordinates but evaluates row geometry on demand.
 ///
@@ -114,6 +114,33 @@ where
         self.basis.add_scaled_outer(self.x[row], scale, out).expect(
             "a basis evaluation failed after OnDemandSplineDesign validated the coordinate",
         );
+    }
+}
+
+impl<B> OnDemandSplineDesign<B>
+where
+    B: DifferentiableSplineBasis1d,
+{
+    /// Evaluates an arbitrary supported coordinate derivative of the predictor.
+    ///
+    /// # Errors
+    ///
+    /// Returns the basis derivative error when `derivative_order` is not
+    /// supported. Coordinates were validated during construction.
+    pub fn eta_derivative_order_row(
+        &self,
+        row: usize,
+        derivative_order: usize,
+        beta: &[f64],
+    ) -> Result<f64, SplineError> {
+        debug_assert!(row < self.x.len());
+        debug_assert_eq!(beta.len(), self.basis.n_basis());
+        let mut value = 0.0;
+        self.basis
+            .for_each_basis_derivative(self.x[row], derivative_order, |index, weight| {
+                value = beta[index].mul_add(weight, value);
+            })?;
+        Ok(value)
     }
 }
 

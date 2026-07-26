@@ -6,8 +6,8 @@ use gamlss_core::{
 
 use crate::local::{bspline_active_range, bspline_local_basis, bspline_value};
 use crate::prepared::PreparedContiguousGeometry;
-use crate::validation::{finite_data_range, validate_coordinates};
-use crate::{OnDemandSplineDesign, SplineError, SplineRowBasis};
+use crate::validation::validate_coordinates;
+use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError, SplineRowBasis};
 
 /// B-spline basis with degree $p$ and non-decreasing knot vector $\boldsymbol{t}=(t_0,\ldots,t_{M-1})$.
 ///
@@ -54,26 +54,34 @@ impl BSplineBasis {
         n_basis: usize,
         degree: usize,
     ) -> Result<Self, SplineError> {
-        if x.is_empty() {
-            return Err(SplineError::EmptyInput);
-        }
-        if n_basis <= degree {
-            return Err(SplineError::NotEnoughBasis { n_basis, degree });
-        }
+        Self::open_from_data(x, n_basis, degree, KnotPlacement::Uniform)
+    }
 
-        let (min, max) = finite_data_range(x)?;
+    /// Builds an open B-spline basis with a persisted knot-placement policy.
+    pub fn open_from_data(
+        x: &[f64],
+        n_basis: usize,
+        degree: usize,
+        placement: KnotPlacement,
+    ) -> Result<Self, SplineError> {
+        Self::from_open_knots(OpenKnotVector::from_data(x, n_basis, degree, placement)?)
+    }
 
-        let interior = n_basis.saturating_sub(degree + 1);
-        let mut knots = Vec::with_capacity(n_basis + degree + 1);
-        knots.extend(std::iter::repeat_n(min, degree + 1));
+    /// Builds an open B-spline basis using weighted empirical quantiles.
+    pub fn open_from_weighted_data(
+        x: &[f64],
+        weights: &[f64],
+        n_basis: usize,
+        degree: usize,
+    ) -> Result<Self, SplineError> {
+        Self::from_open_knots(OpenKnotVector::from_weighted_data(
+            x, weights, n_basis, degree,
+        )?)
+    }
 
-        for index in 1..=interior {
-            let fraction = index as f64 / (interior + 1) as f64;
-            knots.push(min + fraction * (max - min));
-        }
-
-        knots.extend(std::iter::repeat_n(max, degree + 1));
-        Self::new(degree, knots)
+    /// Builds a basis from persisted open-knot metadata.
+    pub fn from_open_knots(knots: OpenKnotVector) -> Result<Self, SplineError> {
+        Self::new(knots.degree(), knots.into_knots())
     }
 
     /// Spline degree.

@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use approx::assert_relative_eq;
-use gamlss_core::{DenseDesign, Objective, Penalty, PredictorBlock};
+use gamlss_core::{DenseDesign, DesignMatrix, Objective, Penalty, PredictorBlock};
 use gamlss_spline::{
     ISplineBasis, MonotoneDirection, MonotoneISplineDesign, SplineError, SplineOrder,
 };
@@ -675,6 +675,168 @@ fn pspline_builder_exposes_configured_options() {
     assert_eq!(term.spline_order(), SplineOrder::Quadratic);
     assert_eq!(term.penalty_lambda(), 0.25);
     assert_eq!(term.difference_order(), 3);
+}
+
+#[test]
+fn tensor_builder_exposes_anisotropic_options_and_kind() {
+    let x = col::<f64>("x");
+    let z = col::<f64>("z");
+    let full = te(x.clone(), z.clone())
+        .k(7, 8)
+        .order(SplineOrder::Quadratic, SplineOrder::Linear)
+        .lambda(0.25, 3.0)
+        .penalty_order(1, 3);
+    let interaction = ti(x.clone(), z.clone());
+
+    assert_eq!(full.left(), &x);
+    assert_eq!(full.right(), &z);
+    assert_eq!(full.basis_counts(), (7, 8));
+    assert_eq!(
+        full.spline_orders(),
+        (SplineOrder::Quadratic, SplineOrder::Linear)
+    );
+    assert_eq!(full.penalty_lambdas(), (0.25, 3.0));
+    assert_eq!(full.difference_orders(), (1, 3));
+    assert_eq!(full.kind(), TensorSmoothKind::Full);
+    assert_eq!(interaction.kind(), TensorSmoothKind::Interaction);
+}
+
+#[test]
+fn tensor_pspline_compiles_anisotropic_penalty_and_preserves_it_for_prediction() {
+    let data = TestData::borrowed(&[
+        ("y", &[0.1, 0.2, 0.4, 0.7, 1.0]),
+        ("x", &[0.0, 0.2, 0.5, 0.8, 1.0]),
+        ("z", &[-1.0, -0.3, 0.1, 0.6, 1.0]),
+    ]);
+    let built = normal()
+        .response(col("y"))
+        .mu(tensor_pspline(col("x"), col("z"))
+            .k(4, 5)
+            .lambda(0.3, 2.0)
+            .penalty_order(1, 2))
+        .sigma(intercept())
+        .build(&data)
+        .unwrap();
+    let FittedTerm::TensorPSpline {
+        range,
+        kind,
+        left_lambda,
+        right_lambda,
+        left_penalty_order,
+        right_penalty_order,
+        ..
+    } = &built.terms_for("mu").unwrap()[0]
+    else {
+        panic!("expected tensor P-spline metadata");
+    };
+    assert_eq!(range.len(), 20);
+    assert_eq!(*kind, TensorSmoothKind::Full);
+    assert_eq!((*left_lambda, *right_lambda), (0.3, 2.0));
+    assert_eq!((*left_penalty_order, *right_penalty_order), (1, 2));
+
+    let beta = (0..range.len())
+        .map(|index| (index as f64 * 0.37).sin())
+        .collect::<Vec<_>>();
+    let training_penalty = built.model().blocks().as_inner().0.penalty();
+    let prediction_blocks = built.prediction_blocks(&data).unwrap();
+    let prediction_penalty = prediction_blocks.as_inner().0.penalty();
+    assert!(training_penalty.value(&beta) > 0.0);
+    assert_relative_eq!(
+        training_penalty.value(&beta),
+        prediction_penalty.value(&beta),
+        epsilon = 1.0e-12
+    );
+    assert_penalty_gradient_matches_finite_difference(training_penalty, &beta);
+}
+
+#[test]
+fn tensor_interaction_removes_marginal_constant_directions() {
+    let x_values = [0.0, 0.2, 0.5, 0.8, 1.0];
+    let z_values = [-1.0, -0.3, 0.1, 0.6, 1.0];
+    let data = TestData::borrowed(&[
+        ("y", &[0.1, 0.2, 0.4, 0.7, 1.0]),
+        ("x", &x_values),
+        ("z", &z_values),
+    ]);
+    let built = normal()
+        .response(col("y"))
+        .mu(tensor_pspline_interaction(col("x"), col("z"))
+            .k(4, 5)
+            .lambda(0.4, 1.7)
+            .penalty_order(1, 2))
+        .sigma(intercept())
+        .build(&data)
+        .unwrap();
+    let FittedTerm::TensorPSpline {
+        range,
+        left_basis,
+        right_basis,
+        kind,
+        ..
+    } = &built.terms_for("mu").unwrap()[0]
+    else {
+        panic!("expected tensor interaction metadata");
+    };
+    assert_eq!(*kind, TensorSmoothKind::Interaction);
+    assert_eq!(range.len(), (4 - 1) * (5 - 1));
+
+    let dense = built.model().blocks().as_inner().0.x().dense();
+    assert_eq!(dense.ncols(), range.len());
+    let mut left = vec![0.0; left_basis.n_basis()];
+    let mut right = vec![0.0; right_basis.n_basis()];
+    for row in 0..data.nrows() {
+        left.fill(0.0);
+        right.fill(0.0);
+        left_basis
+            .for_each_value_basis(x_values[row], |index, value| left[index] = value)
+            .unwrap();
+        right_basis
+            .for_each_value_basis(z_values[row], |index, value| right[index] = value)
+            .unwrap();
+        let actual = &dense.values()[row * range.len()..(row + 1) * range.len()];
+        for left_index in 0..left.len() - 1 {
+            for right_index in 0..right.len() - 1 {
+                let index = left_index * (right.len() - 1) + right_index;
+                let left_leading = (left_index + 1) as f64;
+                let right_leading = (right_index + 1) as f64;
+                let left_contrast = (left[..=left_index].iter().sum::<f64>()
+                    - left_leading * left[left_index + 1])
+                    / (left_leading * (left_leading + 1.0)).sqrt();
+                let right_contrast = (right[..=right_index].iter().sum::<f64>()
+                    - right_leading * right[right_index + 1])
+                    / (right_leading * (right_leading + 1.0)).sqrt();
+                let expected = left_contrast * right_contrast;
+                assert_relative_eq!(actual[index], expected, epsilon = 1.0e-14);
+            }
+        }
+    }
+
+    let beta = (0..range.len())
+        .map(|index| (index as f64 * 0.41).cos())
+        .collect::<Vec<_>>();
+    let penalty = built.model().blocks().as_inner().0.penalty();
+    assert!(penalty.value(&beta) > 0.0);
+    assert_penalty_gradient_matches_finite_difference(penalty, &beta);
+
+    let prediction = built.prediction_blocks(&data).unwrap();
+    assert_eq!(prediction.as_inner().0.x().dense().values(), dense.values());
+}
+
+fn assert_penalty_gradient_matches_finite_difference<P>(penalty: &P, beta: &[f64])
+where
+    P: Penalty,
+{
+    let mut gradient = vec![0.0; beta.len()];
+    penalty.add_gradient(beta, &mut gradient);
+    let step = 1.0e-6;
+    for index in 0..beta.len() {
+        let mut lower = beta.to_vec();
+        let mut upper = beta.to_vec();
+        lower[index] -= step;
+        upper[index] += step;
+        let finite_difference = (penalty.value(&upper) - penalty.value(&lower)) / (2.0 * step);
+        assert_relative_eq!(finite_difference, gradient[index], epsilon = 2.0e-7);
+    }
 }
 
 #[test]

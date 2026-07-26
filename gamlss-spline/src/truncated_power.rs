@@ -1,5 +1,4 @@
-use crate::validation::finite_data_range;
-use crate::{OnDemandSplineDesign, SplineError, SplineOrder};
+use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError, SplineOrder};
 
 /// Truncated-power predictor using the shared allocation-free on-demand engine.
 pub type TruncatedPowerDesign = OnDemandSplineDesign<TruncatedPowerBasis>;
@@ -70,20 +69,56 @@ impl TruncatedPowerBasis {
         order: SplineOrder,
         include_intercept: bool,
     ) -> Result<Self, SplineError> {
-        if x.is_empty() {
-            return Err(SplineError::EmptyInput);
-        }
+        Self::from_data_with_placement(x, n_knots, order, include_intercept, KnotPlacement::Uniform)
+    }
 
-        let (min, max) = finite_data_range(x)?;
-
-        let denominator = n_knots
-            .checked_add(1)
+    /// Builds truncated-power knots using a uniform or quantile policy.
+    pub fn from_data_with_placement(
+        x: &[f64],
+        n_knots: usize,
+        order: SplineOrder,
+        include_intercept: bool,
+        placement: KnotPlacement,
+    ) -> Result<Self, SplineError> {
+        let n_basis = n_knots
+            .checked_add(order.degree())
+            .and_then(|value| value.checked_add(1))
             .ok_or(SplineError::ParameterOverflow)?;
-        let step = (max - min) / denominator as f64;
-        let knots = (1..=n_knots)
-            .map(|index| min + step * index as f64)
-            .collect::<Vec<_>>();
-        Self::new(knots, order, include_intercept)
+        let knots = OpenKnotVector::from_data(x, n_basis, order.degree(), placement)?;
+        Self::new(unique_interior_knots(&knots), order, include_intercept)
+    }
+
+    /// Builds truncated-power knots from weighted empirical quantiles.
+    ///
+    /// Zero-weight coordinates do not affect the fitted boundaries or knots.
+    /// Repeated empirical quantiles collapse to one truncated-power column.
+    pub fn from_weighted_data(
+        x: &[f64],
+        weights: &[f64],
+        n_knots: usize,
+        order: SplineOrder,
+        include_intercept: bool,
+    ) -> Result<Self, SplineError> {
+        let n_basis = n_knots
+            .checked_add(order.degree())
+            .and_then(|value| value.checked_add(1))
+            .ok_or(SplineError::ParameterOverflow)?;
+        let knots = OpenKnotVector::from_weighted_data(x, weights, n_basis, order.degree())?;
+        Self::new(unique_interior_knots(&knots), order, include_intercept)
+    }
+
+    /// Builds a truncated-power basis from persisted open-knot metadata.
+    pub fn from_open_knots(
+        knots: &OpenKnotVector,
+        include_intercept: bool,
+    ) -> Result<Self, SplineError> {
+        let order = match knots.degree() {
+            1 => SplineOrder::Linear,
+            2 => SplineOrder::Quadratic,
+            3 => SplineOrder::Cubic,
+            degree => return Err(SplineError::UnsupportedDegree { degree }),
+        };
+        Self::new(unique_interior_knots(knots), order, include_intercept)
     }
 
     /// Builds a predictor design for concrete `x` coordinates.
@@ -178,7 +213,7 @@ impl TruncatedPowerBasis {
         }
         offset += degree;
 
-        let active_knots = self.knots.partition_point(|knot| *knot < x);
+        let active_knots = self.knots.partition_point(|knot| *knot <= x);
         for (knot_offset, knot) in self.knots[..active_knots].iter().copied().enumerate() {
             f(offset + knot_offset, pow_usize(x - knot, degree));
         }
@@ -227,12 +262,12 @@ impl TruncatedPowerBasis {
         }
         offset += degree;
 
-        let active_knots = self.knots.partition_point(|knot| *knot < x);
+        let active_knots = self.knots.partition_point(|knot| *knot <= x);
         for (knot_offset, knot) in self.knots[..active_knots].iter().copied().enumerate() {
-            f(
-                offset + knot_offset,
-                degree as f64 * pow_usize(x - knot, degree - 1),
-            );
+            let weight = degree as f64 * pow_usize(x - knot, degree - 1);
+            if weight != 0.0 {
+                f(offset + knot_offset, weight);
+            }
         }
     }
 }
@@ -263,6 +298,12 @@ impl OnDemandSplineDesign<TruncatedPowerBasis> {
             });
         value
     }
+}
+
+fn unique_interior_knots(knots: &OpenKnotVector) -> Vec<f64> {
+    let mut interior = knots.interior().to_vec();
+    interior.dedup_by(|left, right| left.total_cmp(right).is_eq());
+    interior
 }
 
 fn validate_strict_knots(knots: &[f64]) -> Result<(), SplineError> {

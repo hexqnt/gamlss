@@ -6,7 +6,7 @@ use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
 use crate::mspline::MSplineBasis;
 use crate::row_basis::SplineRowBasis;
 use crate::validation::validate_coordinates;
-use crate::{OnDemandSplineDesign, SplineError};
+use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError};
 
 const MAX_PREFIX_VALUES: usize = 5;
 const MAX_PARTIAL_VALUES: usize = 4;
@@ -52,7 +52,7 @@ pub struct ISplineBasis {
 impl ISplineBasis {
     /// Creates an I-spline basis from a finite nondecreasing knot vector.
     pub fn new(knots: Vec<f64>, degree: usize) -> Result<Self, SplineError> {
-        Ok(Self::from_mspline(MSplineBasis::new(knots, degree)?))
+        Ok(MSplineBasis::new(knots, degree)?.into())
     }
 
     /// Builds an open-uniform I-spline basis from data.
@@ -61,12 +61,35 @@ impl ISplineBasis {
         n_basis: usize,
         degree: usize,
     ) -> Result<Self, SplineError> {
-        Ok(Self::from_mspline(MSplineBasis::open_uniform_from_data(
-            x, n_basis, degree,
-        )?))
+        Ok(MSplineBasis::open_uniform_from_data(x, n_basis, degree)?.into())
     }
 
-    fn from_mspline(mspline: MSplineBasis) -> Self {
+    /// Builds an open I-spline basis with a persisted knot-placement policy.
+    pub fn open_from_data(
+        x: &[f64],
+        n_basis: usize,
+        degree: usize,
+        placement: KnotPlacement,
+    ) -> Result<Self, SplineError> {
+        Ok(MSplineBasis::open_from_data(x, n_basis, degree, placement)?.into())
+    }
+
+    /// Builds an open I-spline basis using weighted empirical quantiles.
+    pub fn open_from_weighted_data(
+        x: &[f64],
+        weights: &[f64],
+        n_basis: usize,
+        degree: usize,
+    ) -> Result<Self, SplineError> {
+        Ok(MSplineBasis::open_from_weighted_data(x, weights, n_basis, degree)?.into())
+    }
+
+    /// Builds an I-spline basis from persisted open-knot metadata.
+    pub fn from_open_knots(knots: OpenKnotVector) -> Result<Self, SplineError> {
+        Ok(MSplineBasis::from_open_knots(knots)?.into())
+    }
+
+    fn prepare_from_mspline(mspline: MSplineBasis) -> Self {
         let mut integral_prefixes = Vec::with_capacity(mspline.n_basis());
         let mut nondegenerate = Vec::with_capacity(mspline.n_basis());
         for index in 0..mspline.n_basis() {
@@ -95,6 +118,12 @@ impl ISplineBasis {
             nondegenerate: nondegenerate.into_boxed_slice(),
             all_nondegenerate,
         }
+    }
+
+    /// Underlying normalized M-spline derivative basis.
+    #[must_use]
+    pub const fn mspline(&self) -> &MSplineBasis {
+        &self.mspline
     }
 
     /// Builds a compact prepared predictor for repeated model passes.
@@ -240,6 +269,12 @@ impl ISplineBasis {
                 out[index] = scaled_left.mul_add(right_weight, out[index]);
             });
         });
+    }
+}
+
+impl From<MSplineBasis> for ISplineBasis {
+    fn from(mspline: MSplineBasis) -> Self {
+        Self::prepare_from_mspline(mspline)
     }
 }
 
@@ -600,7 +635,7 @@ impl RowMultiplier for UnitMultiplier {
     }
 }
 
-fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
+pub(crate) fn integrate_interval(left: f64, right: f64, f: &impl Fn(f64) -> f64) -> f64 {
     if right <= left {
         return 0.0;
     }

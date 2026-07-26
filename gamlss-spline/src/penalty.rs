@@ -689,7 +689,7 @@ fn add_cyclic_difference_penalty_matrix(
     }
 }
 
-fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
+pub(crate) fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> f64 {
     if lambda == 0.0 {
         return 0.0;
     }
@@ -708,7 +708,7 @@ fn difference_penalty_value(lambda: f64, coefficients: &[f64], beta: &[f64]) -> 
     normalized_scale(lambda, n_differences) * sum
 }
 
-fn add_difference_penalty_gradient(
+pub(crate) fn add_difference_penalty_gradient(
     lambda: f64,
     coefficients: &[f64],
     beta: &[f64],
@@ -990,7 +990,10 @@ fn validate_prepared_difference_penalty_for_dim(
     }
 }
 
-const fn validate_difference_order_for_dim(order: usize, dim: usize) -> Result<(), ModelError> {
+pub(crate) const fn validate_difference_order_for_dim(
+    order: usize,
+    dim: usize,
+) -> Result<(), ModelError> {
     if order < dim {
         Ok(())
     } else {
@@ -1010,7 +1013,7 @@ fn difference_coefficients(order: usize) -> Vec<f64> {
         .expect("difference penalty order must have binomial coefficients that fit in usize")
 }
 
-fn try_difference_coefficients(order: usize) -> Result<Vec<f64>, ModelError> {
+pub(crate) fn try_difference_coefficients(order: usize) -> Result<Vec<f64>, ModelError> {
     validate_difference_order(order)?;
     (0..=order)
         .map(|index| {

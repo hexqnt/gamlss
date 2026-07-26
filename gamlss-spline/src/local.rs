@@ -680,10 +680,23 @@ pub fn prepare_cyclic_local_basis(
     clippy::cast_sign_loss
 )]
 pub fn cyclic_local_basis_derivative(phi: f64, order: SplineOrder, n_basis: usize) -> LocalBasis {
+    cyclic_local_basis_derivative_order(phi, order, n_basis, 1)
+}
+
+/// Computes an arbitrary positive-order derivative of the local cyclic basis.
+#[allow(clippy::cast_precision_loss)]
+pub fn cyclic_local_basis_derivative_order(
+    phi: f64,
+    order: SplineOrder,
+    n_basis: usize,
+    derivative_order: usize,
+) -> LocalBasis {
+    debug_assert!(derivative_order > 0);
+    debug_assert!(derivative_order <= order.degree());
     let (start, u) = cyclic_start_and_u(phi, order, n_basis);
-    let weights = spline_weight_derivatives(order, u);
+    let weights = spline_weight_derivatives(order, u, derivative_order);
     let len = order.degree() + 1;
-    let scale = n_basis as f64;
+    let scale = pow_usize(n_basis as f64, derivative_order);
     let mut basis = LocalBasis::default();
     for (idx, weight) in weights.iter().copied().enumerate().take(len) {
         basis.push_nonzero(wrapped_index(start, idx, n_basis), scale * weight);
@@ -931,11 +944,12 @@ fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
 
 /// Local spline weight derivatives with respect to parameter `u`.
 #[allow(clippy::suboptimal_flops)]
-fn spline_weight_derivatives(order: SplineOrder, u: f64) -> [f64; 4] {
-    match order {
-        SplineOrder::Linear => [-1.0, 1.0, 0.0, 0.0],
-        SplineOrder::Quadratic => [u - 1.0, 1.0 - 2.0 * u, u, 0.0],
-        SplineOrder::Cubic => {
+fn spline_weight_derivatives(order: SplineOrder, u: f64, derivative_order: usize) -> [f64; 4] {
+    match (order, derivative_order) {
+        (SplineOrder::Linear, 1) => [-1.0, 1.0, 0.0, 0.0],
+        (SplineOrder::Quadratic, 1) => [u - 1.0, 1.0 - 2.0 * u, u, 0.0],
+        (SplineOrder::Quadratic, 2) => [1.0, -2.0, 1.0, 0.0],
+        (SplineOrder::Cubic, 1) => {
             let u2 = u * u;
             [
                 -(1.0 - u) * (1.0 - u) / 2.0,
@@ -944,7 +958,24 @@ fn spline_weight_derivatives(order: SplineOrder, u: f64) -> [f64; 4] {
                 u2 / 2.0,
             ]
         }
+        (SplineOrder::Cubic, 2) => [1.0 - u, 3.0 * u - 2.0, 1.0 - 3.0 * u, u],
+        (SplineOrder::Cubic, 3) => [-1.0, 3.0, -3.0, 1.0],
+        _ => [0.0; 4],
     }
+}
+
+fn pow_usize(mut base: f64, mut exponent: usize) -> f64 {
+    let mut value = 1.0;
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            value *= base;
+        }
+        exponent >>= 1;
+        if exponent > 0 {
+            base *= base;
+        }
+    }
+    value
 }
 
 /// Local spline weights (linear, quadratic, cubic) for parameter `u`.

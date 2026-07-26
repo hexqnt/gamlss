@@ -1,14 +1,58 @@
 use std::ops::Range;
 
-use gamlss_core::{ModelError, Penalty, SegmentPenalty};
-use gamlss_spline::{PreparedCyclicDifferencePenalty, PreparedDifferencePenalty};
+use gamlss_core::{MatrixPenalty, ModelError, Penalty, SegmentPenalty};
+use gamlss_spline::{
+    HelmertContrastPenalty, PreparedCyclicDifferencePenalty, PreparedDifferencePenalty,
+    TensorProductPenalty,
+};
 
-use crate::FittedTerm;
+use crate::{FittedTerm, TensorSmoothKind};
+
+type FormulaTensorPenalty = TensorProductPenalty<TensorMarginPenalty, TensorMarginPenalty>;
+
+#[derive(Debug, Clone, PartialEq)]
+enum TensorMarginPenalty {
+    Direct(PreparedDifferencePenalty),
+    Contrast(HelmertContrastPenalty<PreparedDifferencePenalty>),
+}
+
+impl Penalty for TensorMarginPenalty {
+    fn value(&self, beta: &[f64]) -> f64 {
+        match self {
+            Self::Direct(penalty) => penalty.value(beta),
+            Self::Contrast(penalty) => penalty.value(beta),
+        }
+    }
+
+    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+        match self {
+            Self::Direct(penalty) => penalty.add_gradient(beta, grad),
+            Self::Contrast(penalty) => penalty.add_gradient(beta, grad),
+        }
+    }
+
+    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+        match self {
+            Self::Direct(penalty) => penalty.validate_dim(dim),
+            Self::Contrast(penalty) => penalty.validate_dim(dim),
+        }
+    }
+}
+
+impl MatrixPenalty for TensorMarginPenalty {
+    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+        match self {
+            Self::Direct(penalty) => penalty.add_penalty_matrix(dim, gram),
+            Self::Contrast(penalty) => penalty.add_penalty_matrix(dim, gram),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum SegmentPenaltyKind {
     Difference(PreparedDifferencePenalty),
     Cyclic(PreparedCyclicDifferencePenalty),
+    Tensor(FormulaTensorPenalty),
 }
 
 impl Penalty for SegmentPenaltyKind {
@@ -16,6 +60,7 @@ impl Penalty for SegmentPenaltyKind {
         match self {
             Self::Difference(penalty) => penalty.value(beta),
             Self::Cyclic(penalty) => penalty.value(beta),
+            Self::Tensor(penalty) => penalty.value(beta),
         }
     }
 
@@ -23,6 +68,7 @@ impl Penalty for SegmentPenaltyKind {
         match self {
             Self::Difference(penalty) => penalty.add_gradient(beta, grad),
             Self::Cyclic(penalty) => penalty.add_gradient(beta, grad),
+            Self::Tensor(penalty) => penalty.add_gradient(beta, grad),
         }
     }
 
@@ -30,6 +76,7 @@ impl Penalty for SegmentPenaltyKind {
         match self {
             Self::Difference(penalty) => penalty.validate_dim(dim),
             Self::Cyclic(penalty) => penalty.validate_dim(dim),
+            Self::Tensor(penalty) => penalty.validate_dim(dim),
         }
     }
 }
@@ -37,7 +84,7 @@ impl Penalty for SegmentPenaltyKind {
 /// Formula-local segment penalty representation.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FormulaPenalty {
-    spline_segments: Vec<SegmentPenalty<SegmentPenaltyKind>>,
+    segments: Vec<SegmentPenalty<SegmentPenaltyKind>>,
 }
 
 impl FormulaPenalty {
@@ -48,7 +95,10 @@ impl FormulaPenalty {
         order: usize,
     ) -> Result<(), ModelError> {
         let penalty = PreparedDifferencePenalty::try_new(lambda, order)?;
-        self.push_difference_unchecked(range, penalty);
+        self.segments.push(SegmentPenalty::new(
+            range,
+            SegmentPenaltyKind::Difference(penalty),
+        ));
         Ok(())
     }
 
@@ -59,36 +109,45 @@ impl FormulaPenalty {
         order: usize,
     ) -> Result<(), ModelError> {
         let penalty = PreparedCyclicDifferencePenalty::try_new(lambda, order)?;
-        self.push_cyclic_unchecked(range, penalty);
-        Ok(())
-    }
-
-    fn push_difference_unchecked(
-        &mut self,
-        range: Range<usize>,
-        penalty: PreparedDifferencePenalty,
-    ) {
-        self.spline_segments.push(SegmentPenalty::new(
-            range,
-            SegmentPenaltyKind::Difference(penalty),
-        ));
-    }
-
-    fn push_cyclic_unchecked(
-        &mut self,
-        range: Range<usize>,
-        penalty: PreparedCyclicDifferencePenalty,
-    ) {
-        self.spline_segments.push(SegmentPenalty::new(
+        self.segments.push(SegmentPenalty::new(
             range,
             SegmentPenaltyKind::Cyclic(penalty),
         ));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_tensor_spline(
+        &mut self,
+        range: Range<usize>,
+        left_source_dim: usize,
+        right_source_dim: usize,
+        kind: TensorSmoothKind,
+        left_lambda: f64,
+        right_lambda: f64,
+        left_order: usize,
+        right_order: usize,
+    ) -> Result<(), ModelError> {
+        let penalty = prepare_tensor_penalty(
+            left_source_dim,
+            right_source_dim,
+            kind,
+            left_lambda,
+            right_lambda,
+            left_order,
+            right_order,
+        )?;
+        self.segments.push(SegmentPenalty::new(
+            range,
+            SegmentPenaltyKind::Tensor(penalty),
+        ));
+        Ok(())
     }
 }
 
 impl Penalty for FormulaPenalty {
     fn value(&self, beta: &[f64]) -> f64 {
-        self.spline_segments
+        self.segments
             .iter()
             .map(|segment| segment.value(beta))
             .sum()
@@ -97,20 +156,20 @@ impl Penalty for FormulaPenalty {
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(beta.len(), grad.len());
 
-        for segment in &self.spline_segments {
+        for segment in &self.segments {
             segment.add_gradient(beta, grad);
         }
     }
 
     fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
-        for segment in &self.spline_segments {
+        for segment in &self.segments {
             segment.validate_dim(dim)?;
         }
         Ok(())
     }
 }
 
-pub fn prediction_penalty(terms: &[FittedTerm]) -> FormulaPenalty {
+pub fn prediction_penalty(terms: &[FittedTerm]) -> Result<FormulaPenalty, ModelError> {
     let mut penalty = FormulaPenalty::default();
     for term in terms {
         match term {
@@ -119,29 +178,72 @@ pub fn prediction_penalty(terms: &[FittedTerm]) -> FormulaPenalty {
                 lambda,
                 penalty_order,
                 ..
-            } => {
-                debug_assert!(PreparedDifferencePenalty::try_new(*lambda, *penalty_order).is_ok());
-                penalty.push_difference_unchecked(
-                    range.clone(),
-                    PreparedDifferencePenalty::new_unchecked(*lambda, *penalty_order),
-                );
-            }
+            } => penalty.add_spline(range.clone(), *lambda, *penalty_order)?,
             FittedTerm::CyclicPSpline {
                 range,
                 lambda,
                 penalty_order,
                 ..
+            } => penalty.add_cyclic_spline(range.clone(), *lambda, *penalty_order)?,
+            FittedTerm::TensorPSpline {
+                range,
+                left_basis,
+                right_basis,
+                kind,
+                left_lambda,
+                right_lambda,
+                left_penalty_order,
+                right_penalty_order,
+                ..
             } => {
-                debug_assert!(
-                    PreparedCyclicDifferencePenalty::try_new(*lambda, *penalty_order).is_ok()
-                );
-                penalty.push_cyclic_unchecked(
+                penalty.add_tensor_spline(
                     range.clone(),
-                    PreparedCyclicDifferencePenalty::new_unchecked(*lambda, *penalty_order),
-                );
+                    left_basis.n_basis(),
+                    right_basis.n_basis(),
+                    *kind,
+                    *left_lambda,
+                    *right_lambda,
+                    *left_penalty_order,
+                    *right_penalty_order,
+                )?;
             }
             _ => {}
         }
     }
-    penalty
+    Ok(penalty)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_tensor_penalty(
+    left_source_dim: usize,
+    right_source_dim: usize,
+    kind: TensorSmoothKind,
+    left_lambda: f64,
+    right_lambda: f64,
+    left_order: usize,
+    right_order: usize,
+) -> Result<FormulaTensorPenalty, ModelError> {
+    let left = PreparedDifferencePenalty::try_new(left_lambda, left_order)?;
+    let right = PreparedDifferencePenalty::try_new(right_lambda, right_order)?;
+    let (left, right, left_dim, right_dim) = match kind {
+        TensorSmoothKind::Full => (
+            TensorMarginPenalty::Direct(left),
+            TensorMarginPenalty::Direct(right),
+            left_source_dim,
+            right_source_dim,
+        ),
+        TensorSmoothKind::Interaction => {
+            let left = HelmertContrastPenalty::try_new(left_source_dim, left)?;
+            let right = HelmertContrastPenalty::try_new(right_source_dim, right)?;
+            let left_dim = left.target_dim();
+            let right_dim = right.target_dim();
+            (
+                TensorMarginPenalty::Contrast(left),
+                TensorMarginPenalty::Contrast(right),
+                left_dim,
+                right_dim,
+            )
+        }
+    };
+    TensorProductPenalty::try_new(left_dim, right_dim, left, right)
 }

@@ -194,12 +194,12 @@ macro_rules! define_spec {
 
                 let first = ParameterBlock::<$first_param, _, _>::from_predictor(
                     first_x,
-                    prediction_penalty(first_terms),
+                    prediction_penalty(first_terms)?,
                     0,
                 );
                 let second = ParameterBlock::<$second_param, _, _>::from_predictor(
                     second_x,
-                    prediction_penalty(second_terms),
+                    prediction_penalty(second_terms)?,
                     0,
                 );
 

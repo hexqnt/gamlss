@@ -67,8 +67,9 @@ pub use spec::{
 };
 pub use terms::{
     CyclicPSplineTerm, FittedTerm, FourierTerm, MonotoneTerm, PSplineTerm, TensorPSplineTerm,
-    TermExpr, TermSpec, cyclic_pspline, factor, fourier, indicator, interaction, intercept, linear,
-    monotone, no_intercept, offset, pspline, tensor_pspline,
+    TensorSmoothKind, TermExpr, TermSpec, cyclic_pspline, factor, fourier, indicator, interaction,
+    intercept, linear, monotone, no_intercept, offset, pspline, te, tensor_pspline,
+    tensor_pspline_interaction, ti,
 };
 
 mod compile;
@@ -89,10 +90,11 @@ pub mod prelude {
         CyclicPSplineTerm, DataView, FittedTerm, FormulaError, FormulaPenalty,
         FormulaPredictorBlock, FourierTerm, GammaSpec, InverseGaussianSpec, LogNormalSpec,
         ModelSchema, ModelSpec, MonotoneTerm, NormalSpec, NumericCol, NumericResponse, PSplineTerm,
-        ParameterTerms, PredictionDesign, ResponseSchema, TensorPSplineTerm, TermExpr, TermSpec,
-        WeibullSpec, beta, col, cyclic_pspline, factor, fourier, gamma, indicator, interaction,
-        intercept, inverse_gaussian, linear, log_normal, monotone, no_intercept, normal, offset,
-        pspline, tensor_pspline, weibull,
+        ParameterTerms, PredictionDesign, ResponseSchema, TensorPSplineTerm, TensorSmoothKind,
+        TermExpr, TermSpec, WeibullSpec, beta, col, cyclic_pspline, factor, fourier, gamma,
+        indicator, interaction, intercept, inverse_gaussian, linear, log_normal, monotone,
+        no_intercept, normal, offset, pspline, te, tensor_pspline, tensor_pspline_interaction, ti,
+        weibull,
     };
 }
 
