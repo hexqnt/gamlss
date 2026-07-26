@@ -4,6 +4,7 @@ use crate::local::{
     bspline_active_range, bspline_value, cyclic_local_basis_derivative_order,
     open_uniform_local_basis_derivative,
 };
+use crate::numeric::pow_usize;
 use crate::{
     BSplineBasis, BSplineDesign, CyclicSplineDesign, CyclicSplineSpec, FourierBasis, FourierDesign,
     ISplineBasis, ISplineDesign, MSplineBasis, MSplineDesign, NaturalCubicSplineBasis,
@@ -647,20 +648,6 @@ fn falling_factorial(value: usize, count: usize) -> f64 {
 
 fn inverse_power(value: f64, exponent: usize) -> f64 {
     1.0 / pow_usize(value, exponent)
-}
-
-fn pow_usize(mut base: f64, mut exponent: usize) -> f64 {
-    let mut value = 1.0;
-    while exponent > 0 {
-        if exponent & 1 == 1 {
-            value *= base;
-        }
-        exponent >>= 1;
-        if exponent > 0 {
-            base *= base;
-        }
-    }
-    value
 }
 
 #[cfg(test)]

@@ -1,14 +1,9 @@
+use gamlss_core::{DenseDesign, DesignMatrix, ModelError};
 use std::num::NonZeroUsize;
-use std::ops::Range;
 
-use gamlss_core::{
-    DenseDesign, DesignMatrix, LinearPredictorBlock, LinearPredictorGeometry, ModelError,
-    PredictorBlock, RowMultiplier,
-};
-
-use crate::{
-    DiagonalPenaltyKernel, PenaltyKernel, ScaledPenalty, SplineBasisNd, SplineError, SplineRowBasis,
-};
+use crate::numeric::{dot, squared_norm};
+use crate::prepared::impl_prepared_dense_design;
+use crate::{DiagonalPenaltyKernel, PenaltyKernel, ScaledPenalty, SplineBasisNd, SplineError};
 
 /// Exact smoothness specification for a Duchon spline.
 ///
@@ -441,113 +436,9 @@ impl<const D: usize> DuchonSplineDesign<D> {
     pub fn row_major_values(&self) -> &[f64] {
         self.prepared.values()
     }
-
-    fn row(&self, row: usize) -> &[f64] {
-        let nparams = self.n_basis();
-        &self.prepared.values()[row * nparams..(row + 1) * nparams]
-    }
-
-    #[inline]
-    const fn linear_block(&self) -> LinearPredictorBlock<&DenseDesign> {
-        LinearPredictorBlock::new(&self.prepared)
-    }
 }
 
-impl<const D: usize> SplineRowBasis for DuchonSplineDesign<D> {
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    fn nparams(&self) -> usize {
-        self.prepared.ncols()
-    }
-
-    fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-        for (index, value) in self.row(row).iter().copied().enumerate() {
-            if value != 0.0 {
-                f(index, value);
-            }
-        }
-    }
-}
-
-impl<const D: usize> PredictorBlock for DuchonSplineDesign<D> {
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    fn nparams(&self) -> usize {
-        self.prepared.ncols()
-    }
-
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        self.prepared.dot_row(row, beta)
-    }
-
-    fn zero_beta_constant_contribution(&self) -> Option<f64> {
-        Some(0.0)
-    }
-
-    fn add_gradient_range(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        _beta: &[f64],
-        grad: &mut [f64],
-    ) {
-        self.prepared.add_t_mul_vec_range(rows, scores, grad);
-    }
-
-    fn add_weighted_gradient_by_range<M>(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        multiplier: &M,
-        _beta: &[f64],
-        grad: &mut [f64],
-    ) where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_weighted_t_mul_vec_by_range(rows, scores, multiplier, grad);
-    }
-}
-
-impl<const D: usize> LinearPredictorGeometry for DuchonSplineDesign<D> {
-    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.linear_block().add_weighted_gram(row_weights, out)
-    }
-
-    fn add_weighted_gram_by<M>(
-        &self,
-        row_weights: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.linear_block()
-            .add_weighted_gram_by(row_weights, multiplier, out)
-    }
-
-    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.linear_block().add_t_mul_vec(row_scores, out)
-    }
-
-    fn add_t_mul_vec_by<M>(
-        &self,
-        row_scores: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.linear_block()
-            .add_t_mul_vec_by(row_scores, multiplier, out)
-    }
-}
+impl_prepared_dense_design!([const D: usize] DuchonSplineDesign<D>);
 
 fn validate_centers<const D: usize>(centers: &[[f64; D]]) -> Result<(), SplineError> {
     if centers.is_empty() {
@@ -1050,17 +941,6 @@ fn points_have_same_bits<const D: usize>(left: &[f64; D], right: &[f64; D]) -> b
 const fn canonical_float_bits(value: f64) -> u64 {
     let bits = value.to_bits();
     if bits.trailing_zeros() >= 63 { 0 } else { bits }
-}
-
-fn squared_norm(values: &[f64]) -> f64 {
-    dot(values, values)
-}
-
-fn dot(left: &[f64], right: &[f64]) -> f64 {
-    left.iter()
-        .copied()
-        .zip(right.iter().copied())
-        .fold(0.0, |value, (left, right)| left.mul_add(right, value))
 }
 
 fn add_scaled(scale: f64, source: &[f64], output: &mut [f64]) {

@@ -8,7 +8,7 @@ use crate::row_basis::SplineRowBasis;
 use crate::validation::validate_coordinates;
 use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError};
 
-const MAX_PREFIX_VALUES: usize = 5;
+pub(crate) const MAX_PREFIX_VALUES: usize = 5;
 const MAX_PARTIAL_VALUES: usize = 4;
 const GAUSS_NODES: [f64; 5] = [
     -0.906_179_845_938_664,

@@ -1,5 +1,6 @@
 use gamlss_core::{MatrixPenalty, ModelError, Penalty};
 
+use crate::numeric::{dot, squared_norm};
 use crate::penalty::{
     add_difference_penalty_gradient, difference_penalty_value, try_difference_coefficients,
     validate_difference_order_for_dim,
@@ -572,6 +573,34 @@ where
     }
 }
 
+/// Delegates the standard penalty traits from a semantic wrapper to its
+/// `ScaledPenalty` field.
+macro_rules! delegate_scaled_penalty {
+    ($type:ty, $field:ident) => {
+        impl gamlss_core::Penalty for $type {
+            fn value(&self, beta: &[f64]) -> f64 {
+                self.$field.value(beta)
+            }
+
+            fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+                self.$field.add_gradient(beta, grad);
+            }
+
+            fn validate_dim(&self, dim: usize) -> Result<(), gamlss_core::ModelError> {
+                self.$field.validate_dim(dim)
+            }
+        }
+
+        impl gamlss_core::MatrixPenalty for $type {
+            fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
+                self.$field.add_penalty_matrix(dim, gram);
+            }
+        }
+    };
+}
+
+pub(crate) use delegate_scaled_penalty;
+
 /// Fixed-dimension normalized finite-difference penalty kernel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DifferencePenaltyKernel {
@@ -846,20 +875,6 @@ const fn validate_exact_dim(expected: usize, actual: usize) -> Result<(), ModelE
             actual_values: actual,
         })
     }
-}
-
-fn dot(left: &[f64], right: &[f64]) -> f64 {
-    left.iter()
-        .copied()
-        .zip(right.iter().copied())
-        .fold(0.0, |sum, (left, right)| left.mul_add(right, sum))
-}
-
-fn squared_norm(values: &[f64]) -> f64 {
-    values
-        .iter()
-        .copied()
-        .fold(0.0, |norm, value| value.mul_add(value, norm))
 }
 
 #[cfg(test)]

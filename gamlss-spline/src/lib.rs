@@ -69,6 +69,7 @@ mod local;
 pub mod monotone;
 pub mod mspline;
 pub mod natural;
+mod numeric;
 pub mod on_demand;
 pub mod open_uniform;
 pub mod order;

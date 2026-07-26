@@ -1,13 +1,9 @@
-use std::ops::Range;
-
-use gamlss_core::{
-    DenseDesign, LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier,
-};
+use gamlss_core::DenseDesign;
 
 use crate::local::{bspline_active_range, bspline_local_basis, bspline_value};
-use crate::prepared::PreparedContiguousGeometry;
+use crate::prepared::{PreparedContiguousGeometry, impl_prepared_contiguous_design};
 use crate::validation::validate_coordinates;
-use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError, SplineRowBasis};
+use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError};
 
 /// B-spline basis with degree $p$ and non-decreasing knot vector $\boldsymbol{t}=(t_0,\ldots,t_{M-1})$.
 ///
@@ -33,7 +29,7 @@ impl BSplineBasis {
     /// The knot vector must be finite, non-decreasing and long enough for the
     /// chosen degree.
     pub fn new(degree: usize, knots: Vec<f64>) -> Result<Self, SplineError> {
-        if knots.len() <= degree + 1 {
+        if knots.len() < 2 || degree >= knots.len() - 1 {
             return Err(SplineError::NotEnoughBasis { n_basis: 0, degree });
         }
 
@@ -173,8 +169,11 @@ impl BSplineBasis {
         validate_coordinates(x)?;
 
         let n_basis = self.n_basis();
-        let mut values = Vec::with_capacity(x.len() * n_basis);
-        values.resize(x.len() * n_basis, 0.0);
+        let value_count = x
+            .len()
+            .checked_mul(n_basis)
+            .ok_or(SplineError::ParameterOverflow)?;
+        let mut values = vec![0.0; value_count];
         for (row, value) in values.chunks_exact_mut(n_basis).zip(x.iter().copied()) {
             self.fill_values(value, row);
         }
@@ -231,113 +230,7 @@ impl BSplineDesign {
     }
 }
 
-impl SplineRowBasis for BSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.prepared.for_each(row, f);
-    }
-}
-
-impl PredictorBlock for BSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert_eq!(beta.len(), self.basis.n_basis());
-        self.prepared.dot(row, beta)
-    }
-
-    #[inline]
-    fn zero_beta_constant_contribution(&self) -> Option<f64> {
-        Some(0.0)
-    }
-
-    #[inline]
-    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        self.prepared
-            .add_gradient_range(self.basis.n_basis(), rows, scores, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by_range<M>(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        multiplier: &M,
-        _: &[f64],
-        grad: &mut [f64],
-    ) where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared.add_weighted_gradient_by_range(
-            self.basis.n_basis(),
-            rows,
-            scores,
-            multiplier,
-            grad,
-        );
-    }
-}
-
-impl LinearPredictorGeometry for BSplineDesign {
-    #[inline]
-    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared
-            .add_weighted_gram(self.basis.n_basis(), row_weights, out)
-    }
-
-    #[inline]
-    fn add_weighted_gram_by<M>(
-        &self,
-        row_weights: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_weighted_gram_by(self.basis.n_basis(), row_weights, multiplier, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared
-            .add_t_mul_vec(self.basis.n_basis(), row_scores, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec_by<M>(
-        &self,
-        row_scores: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
-    }
-}
+impl_prepared_contiguous_design!(BSplineDesign);
 
 /// Helper function for open uniform P-spline design matrix.
 pub fn pspline_design(
@@ -346,4 +239,21 @@ pub fn pspline_design(
     degree: usize,
 ) -> Result<DenseDesign, SplineError> {
     BSplineBasis::open_uniform_from_data(x, n_basis, degree)?.design_matrix(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BSplineBasis;
+    use crate::SplineError;
+
+    #[test]
+    fn construction_rejects_overflowing_degree_without_panicking() {
+        assert_eq!(
+            BSplineBasis::new(usize::MAX, vec![0.0, 1.0]),
+            Err(SplineError::NotEnoughBasis {
+                n_basis: 0,
+                degree: usize::MAX,
+            })
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use crate::numeric::pow_usize;
 use crate::{KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError, SplineOrder};
 
 /// Truncated-power predictor using the shared allocation-free on-demand engine.
@@ -327,9 +328,4 @@ fn coefficient_count(
         .checked_add(usize::from(include_intercept))
         .and_then(|count| count.checked_add(n_knots))
         .ok_or(SplineError::ParameterOverflow)
-}
-
-#[inline]
-fn pow_usize(value: f64, power: usize) -> f64 {
-    (0..power).fold(1.0, |product, _| product * value)
 }

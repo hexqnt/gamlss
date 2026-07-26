@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::SplineOrder;
+use crate::numeric::pow_usize;
 
 /// Local basis for one row — a compact sparse representation.
 ///
@@ -962,20 +963,6 @@ fn spline_weight_derivatives(order: SplineOrder, u: f64, derivative_order: usize
         (SplineOrder::Cubic, 3) => [-1.0, 3.0, -3.0, 1.0],
         _ => [0.0; 4],
     }
-}
-
-fn pow_usize(mut base: f64, mut exponent: usize) -> f64 {
-    let mut value = 1.0;
-    while exponent > 0 {
-        if exponent & 1 == 1 {
-            value *= base;
-        }
-        exponent >>= 1;
-        if exponent > 0 {
-            base *= base;
-        }
-    }
-    value
 }
 
 /// Local spline weights (linear, quadratic, cubic) for parameter `u`.

@@ -240,3 +240,285 @@ impl PreparedContiguousGeometry {
         Ok(())
     }
 }
+
+/// Implements the public predictor traits for a design backed by
+/// `PreparedContiguousGeometry` and fields named `basis` and `prepared`.
+///
+/// B- and M-spline designs intentionally retain distinct public metadata and
+/// evaluation APIs, but their prepared linear-algebra paths are identical.
+macro_rules! impl_prepared_contiguous_design {
+    ($design:ty) => {
+        impl crate::SplineRowBasis for $design {
+            #[inline]
+            fn nrows(&self) -> usize {
+                self.prepared.nrows()
+            }
+
+            #[inline]
+            fn nparams(&self) -> usize {
+                self.basis.n_basis()
+            }
+
+            #[inline]
+            fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+                self.prepared.for_each(row, f);
+            }
+        }
+
+        impl gamlss_core::PredictorBlock for $design {
+            #[inline]
+            fn nrows(&self) -> usize {
+                self.prepared.nrows()
+            }
+
+            #[inline]
+            fn nparams(&self) -> usize {
+                self.basis.n_basis()
+            }
+
+            #[inline]
+            fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
+                debug_assert!(row < self.prepared.nrows());
+                debug_assert_eq!(beta.len(), self.basis.n_basis());
+                self.prepared.dot(row, beta)
+            }
+
+            #[inline]
+            fn zero_beta_constant_contribution(&self) -> Option<f64> {
+                Some(0.0)
+            }
+
+            #[inline]
+            fn add_gradient_range(
+                &self,
+                rows: std::ops::Range<usize>,
+                scores: &[f64],
+                _: &[f64],
+                grad: &mut [f64],
+            ) {
+                self.prepared
+                    .add_gradient_range(self.basis.n_basis(), rows, scores, grad);
+            }
+
+            #[inline]
+            fn add_weighted_gradient_by_range<M>(
+                &self,
+                rows: std::ops::Range<usize>,
+                scores: &[f64],
+                multiplier: &M,
+                _: &[f64],
+                grad: &mut [f64],
+            ) where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared.add_weighted_gradient_by_range(
+                    self.basis.n_basis(),
+                    rows,
+                    scores,
+                    multiplier,
+                    grad,
+                );
+            }
+        }
+
+        impl gamlss_core::LinearPredictorGeometry for $design {
+            #[inline]
+            fn add_weighted_gram(
+                &self,
+                row_weights: &[f64],
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError> {
+                self.prepared
+                    .add_weighted_gram(self.basis.n_basis(), row_weights, out)
+            }
+
+            #[inline]
+            fn add_weighted_gram_by<M>(
+                &self,
+                row_weights: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared.add_weighted_gram_by(
+                    self.basis.n_basis(),
+                    row_weights,
+                    multiplier,
+                    out,
+                )
+            }
+
+            #[inline]
+            fn add_t_mul_vec(
+                &self,
+                row_scores: &[f64],
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError> {
+                self.prepared
+                    .add_t_mul_vec(self.basis.n_basis(), row_scores, out)
+            }
+
+            #[inline]
+            fn add_t_mul_vec_by<M>(
+                &self,
+                row_scores: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared
+                    .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_prepared_contiguous_design;
+
+/// Implements spline and predictor traits for a semantic wrapper around a
+/// field named `prepared` containing `gamlss_core::DenseDesign`.
+macro_rules! impl_prepared_dense_design {
+    ([$($generics:tt)*] $design:ty) => {
+        impl<$($generics)*> crate::SplineRowBasis for $design {
+            fn nrows(&self) -> usize {
+                gamlss_core::DesignMatrix::nrows(&self.prepared)
+            }
+
+            fn nparams(&self) -> usize {
+                gamlss_core::DesignMatrix::ncols(&self.prepared)
+            }
+
+            fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
+                let nparams = gamlss_core::DesignMatrix::ncols(&self.prepared);
+                let start = row * nparams;
+                for (index, value) in self.prepared.values()[start..start + nparams]
+                    .iter()
+                    .copied()
+                    .enumerate()
+                {
+                    if value != 0.0 {
+                        f(index, value);
+                    }
+                }
+            }
+        }
+
+        impl<$($generics)*> gamlss_core::PredictorBlock for $design {
+            fn nrows(&self) -> usize {
+                gamlss_core::DesignMatrix::nrows(&self.prepared)
+            }
+
+            fn nparams(&self) -> usize {
+                gamlss_core::DesignMatrix::ncols(&self.prepared)
+            }
+
+            fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
+                gamlss_core::DesignMatrix::dot_row(&self.prepared, row, beta)
+            }
+
+            fn zero_beta_constant_contribution(&self) -> Option<f64> {
+                Some(0.0)
+            }
+
+            fn add_gradient_range(
+                &self,
+                rows: std::ops::Range<usize>,
+                scores: &[f64],
+                _: &[f64],
+                grad: &mut [f64],
+            ) {
+                gamlss_core::DesignMatrix::add_t_mul_vec_range(
+                    &self.prepared,
+                    rows,
+                    scores,
+                    grad,
+                );
+            }
+
+            fn add_weighted_gradient_by_range<M>(
+                &self,
+                rows: std::ops::Range<usize>,
+                scores: &[f64],
+                multiplier: &M,
+                _: &[f64],
+                grad: &mut [f64],
+            ) where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                gamlss_core::DesignMatrix::add_weighted_t_mul_vec_by_range(
+                    &self.prepared,
+                    rows,
+                    scores,
+                    multiplier,
+                    grad,
+                );
+            }
+        }
+
+        impl<$($generics)*> gamlss_core::LinearPredictorGeometry for $design {
+            fn add_weighted_gram(
+                &self,
+                row_weights: &[f64],
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError> {
+                gamlss_core::LinearPredictorGeometry::add_weighted_gram(
+                    &gamlss_core::LinearPredictorBlock::new(&self.prepared),
+                    row_weights,
+                    out,
+                )
+            }
+
+            fn add_weighted_gram_by<M>(
+                &self,
+                row_weights: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                gamlss_core::LinearPredictorGeometry::add_weighted_gram_by(
+                    &gamlss_core::LinearPredictorBlock::new(&self.prepared),
+                    row_weights,
+                    multiplier,
+                    out,
+                )
+            }
+
+            fn add_t_mul_vec(
+                &self,
+                row_scores: &[f64],
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError> {
+                gamlss_core::LinearPredictorGeometry::add_t_mul_vec(
+                    &gamlss_core::LinearPredictorBlock::new(&self.prepared),
+                    row_scores,
+                    out,
+                )
+            }
+
+            fn add_t_mul_vec_by<M>(
+                &self,
+                row_scores: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                gamlss_core::LinearPredictorGeometry::add_t_mul_vec_by(
+                    &gamlss_core::LinearPredictorBlock::new(&self.prepared),
+                    row_scores,
+                    multiplier,
+                    out,
+                )
+            }
+        }
+    };
+}
+
+pub(crate) use impl_prepared_dense_design;

@@ -1,6 +1,6 @@
 use gamlss_core::{MatrixPenalty, ModelError, Penalty};
 
-use crate::kernel::DifferenceOperator;
+use crate::kernel::{DifferenceOperator, delegate_scaled_penalty};
 use crate::{PenaltyKernel, ScaledPenalty};
 
 const EXPECTED_DIFFERENCE_WEIGHTS: &str = "finite and >= 0 with at least one positive value";
@@ -137,25 +137,7 @@ impl WeightedDifferencePenalty {
     }
 }
 
-impl Penalty for WeightedDifferencePenalty {
-    fn value(&self, beta: &[f64]) -> f64 {
-        self.inner.value(beta)
-    }
-
-    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        self.inner.add_gradient(beta, grad);
-    }
-
-    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
-        self.inner.validate_dim(dim)
-    }
-}
-
-impl MatrixPenalty for WeightedDifferencePenalty {
-    fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
-        self.inner.add_penalty_matrix(dim, gram);
-    }
-}
+delegate_scaled_penalty!(WeightedDifferencePenalty, inner);
 
 /// Multiple spatial difference components with independent smoothing scales.
 ///

@@ -1,11 +1,6 @@
-use std::ops::Range;
-
-use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
-
 use crate::derivative::bspline_derivative_value;
 use crate::local::{LocalBasis, bspline_active_range, bspline_local_basis, bspline_value};
-use crate::prepared::PreparedContiguousGeometry;
-use crate::row_basis::SplineRowBasis;
+use crate::prepared::{PreparedContiguousGeometry, impl_prepared_contiguous_design};
 use crate::{BSplineBasis, KnotPlacement, OnDemandSplineDesign, OpenKnotVector, SplineError};
 
 /// M-spline basis with normalized non-negative basis functions.
@@ -27,9 +22,6 @@ pub struct MSplineBasis {
 impl MSplineBasis {
     /// Creates an M-spline basis from a finite nondecreasing knot vector.
     pub fn new(knots: Vec<f64>, degree: usize) -> Result<Self, SplineError> {
-        if knots.len() <= degree + 1 {
-            return Err(SplineError::NotEnoughKnots { min: degree + 2 });
-        }
         Self::try_from(BSplineBasis::new(degree, knots)?)
     }
 
@@ -277,112 +269,4 @@ impl MSplineDesign {
     }
 }
 
-impl SplineRowBasis for MSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.prepared.for_each(row, f);
-    }
-}
-
-impl PredictorBlock for MSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.basis.n_basis()
-    }
-
-    #[inline]
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        debug_assert!(row < self.x.len());
-        debug_assert_eq!(beta.len(), self.basis.n_basis());
-
-        self.prepared.dot(row, beta)
-    }
-
-    #[inline]
-    fn zero_beta_constant_contribution(&self) -> Option<f64> {
-        Some(0.0)
-    }
-
-    #[inline]
-    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        self.prepared
-            .add_gradient_range(self.basis.n_basis(), rows, scores, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by_range<M>(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        multiplier: &M,
-        _: &[f64],
-        grad: &mut [f64],
-    ) where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared.add_weighted_gradient_by_range(
-            self.basis.n_basis(),
-            rows,
-            scores,
-            multiplier,
-            grad,
-        );
-    }
-}
-
-impl LinearPredictorGeometry for MSplineDesign {
-    #[inline]
-    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared
-            .add_weighted_gram(self.basis.n_basis(), row_weights, out)
-    }
-
-    #[inline]
-    fn add_weighted_gram_by<M>(
-        &self,
-        row_weights: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_weighted_gram_by(self.basis.n_basis(), row_weights, multiplier, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared
-            .add_t_mul_vec(self.basis.n_basis(), row_scores, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec_by<M>(
-        &self,
-        row_scores: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_t_mul_vec_by(self.basis.n_basis(), row_scores, multiplier, out)
-    }
-}
+impl_prepared_contiguous_design!(MSplineDesign);

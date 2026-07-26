@@ -305,5 +305,7 @@ mod tests {
             epsilon = f64::EPSILON
         );
         assert_eq!(knots.placement(), KnotPlacement::WeightedQuantile);
+
+        assert!(OpenKnotVector::from_weighted_data(&[0.0, f64::NAN], &[1.0, 1.0], 4, 2).is_err());
     }
 }

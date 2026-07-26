@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gamlss_core::{Link, PredictorBlock, RowMultiplier, Softplus};
 
-use crate::ispline::integrate_interval;
+use crate::ispline::{MAX_PREFIX_VALUES, integrate_interval};
 use crate::{
     DifferentiableSplineBasis1d, ISplineBasis, KnotPlacement, OnDemandSplineDesign, OpenKnotVector,
     SplineBasis1d, SplineError,
@@ -37,32 +37,31 @@ impl CurvatureDirection {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CSplineBasis {
     ispline: ISplineBasis,
-    prefixes: Box<[f64]>,
-    knot_count: usize,
+    prefixes: Box<[[f64; MAX_PREFIX_VALUES]]>,
 }
 
 impl CSplineBasis {
     /// Creates a C-spline basis from an I-spline basis.
     #[must_use]
     pub fn new(ispline: ISplineBasis) -> Self {
-        let knot_count = ispline.knots().len();
-        let mut prefixes = vec![0.0; ispline.n_basis() * knot_count];
+        let mut prefixes = Vec::with_capacity(ispline.n_basis());
         for basis_index in 0..ispline.n_basis() {
-            let output = &mut prefixes[basis_index * knot_count..(basis_index + 1) * knot_count];
+            let mut prefix = [0.0; MAX_PREFIX_VALUES];
             let mut cumulative = 0.0;
-            for (interval, output_value) in output.iter_mut().enumerate().take(knot_count - 1) {
-                *output_value = cumulative;
+            for (offset, value) in prefix.iter_mut().enumerate().take(ispline.degree() + 1) {
+                *value = cumulative;
+                let interval = basis_index + offset;
                 let left = ispline.knots()[interval];
                 let right = ispline.knots()[interval + 1];
                 cumulative +=
                     integrate_interval(left, right, &|x| ispline.evaluate_one(basis_index, x));
             }
-            output[knot_count - 1] = cumulative;
+            prefix[ispline.degree() + 1] = cumulative;
+            prefixes.push(prefix);
         }
         Self {
             ispline,
             prefixes: prefixes.into_boxed_slice(),
-            knot_count,
         }
     }
 
@@ -128,16 +127,15 @@ impl CSplineBasis {
         if support_right <= support_left || x <= support_left {
             return 0.0;
         }
-        let prefix = &self.prefixes[index * self.knot_count..(index + 1) * self.knot_count];
-        let support_end = index + self.degree() + 1;
+        let prefix = &self.prefixes[index];
         if x >= support_right {
-            return prefix[support_end] + (x - support_right);
+            return prefix[self.degree() + 1] + (x - support_right);
         }
         let interval = knots
             .partition_point(|knot| *knot <= x)
             .saturating_sub(1)
             .clamp(index, index + self.degree());
-        prefix[interval]
+        prefix[interval - index]
             + integrate_interval(knots[interval], x, &|point| {
                 self.ispline.evaluate_one(index, point)
             })
@@ -354,6 +352,33 @@ mod tests {
         let second = basis.evaluate_basis_derivative(point, 2).unwrap();
         assert_eq!(first, basis.ispline().evaluate(point));
         assert_eq!(second, basis.ispline().evaluate_derivative(point));
+    }
+
+    #[test]
+    fn local_prefix_cache_preserves_integrals_and_linear_tails() {
+        let basis =
+            CSplineBasis::open_from_data(&[0.0, 0.2, 0.5, 0.8, 1.0], 6, 2, KnotPlacement::Quantile)
+                .unwrap();
+        let point = 0.37;
+        let step = 1.0e-6;
+        for index in 0..basis.n_basis() {
+            let numerical_derivative = (basis.evaluate_one(index, point + step)
+                - basis.evaluate_one(index, point - step))
+                / (2.0 * step);
+            assert_relative_eq!(
+                numerical_derivative,
+                basis.ispline().evaluate_one(index, point),
+                epsilon = 2.0e-9
+            );
+
+            let support_right = basis.ispline().knots()[index + basis.degree() + 1];
+            assert_relative_eq!(
+                basis.evaluate_one(index, support_right + 0.25)
+                    - basis.evaluate_one(index, support_right),
+                0.25,
+                epsilon = 1.0e-13
+            );
+        }
     }
 
     #[test]

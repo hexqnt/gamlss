@@ -1,7 +1,11 @@
-use gamlss_core::{MatrixPenalty, ModelError, Penalty};
+use gamlss_core::ModelError;
 
 use crate::derivative::bspline_derivative_value;
-use crate::kernel::{LowRankPenaltyKernel, SymmetricBandPenaltyKernel, validate_smoothing_scale};
+use crate::kernel::{
+    LowRankPenaltyKernel, SymmetricBandPenaltyKernel, delegate_scaled_penalty,
+    validate_smoothing_scale,
+};
+use crate::numeric::pow_usize;
 use crate::{
     BSplineBasis, DensePenaltyKernel, DiagonalPenaltyKernel, FourierBasis, NaturalCubicSplineBasis,
     ScaledPenalty,
@@ -10,30 +14,6 @@ use crate::{
 const EXPECTED_DERIVATIVE_ORDER: &str = "> 0 and <= spline degree";
 const EXPECTED_POSITIVE_DERIVATIVE_ORDER: &str = "> 0";
 const EXPECTED_FINITE_ROUGHNESS: &str = "finite for the supplied basis";
-
-macro_rules! delegate_scaled_penalty {
-    ($type:ty) => {
-        impl Penalty for $type {
-            fn value(&self, beta: &[f64]) -> f64 {
-                self.scaled.value(beta)
-            }
-
-            fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-                self.scaled.add_gradient(beta, grad);
-            }
-
-            fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
-                self.scaled.validate_dim(dim)
-            }
-        }
-
-        impl MatrixPenalty for $type {
-            fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
-                self.scaled.add_penalty_matrix(dim, gram);
-            }
-        }
-    };
-}
 
 /// Exact integrated squared-derivative penalty for an arbitrary-knot B-spline basis.
 ///
@@ -187,7 +167,7 @@ impl BSplineDerivativePenalty {
     }
 }
 
-delegate_scaled_penalty!(BSplineDerivativePenalty);
+delegate_scaled_penalty!(BSplineDerivativePenalty, scaled);
 
 /// Exact integrated squared-curvature penalty for a natural cubic cardinal basis.
 ///
@@ -260,7 +240,7 @@ impl NaturalCubicRoughnessPenalty {
     }
 }
 
-delegate_scaled_penalty!(NaturalCubicRoughnessPenalty);
+delegate_scaled_penalty!(NaturalCubicRoughnessPenalty, scaled);
 
 /// Exact periodic derivative roughness for a Fourier basis.
 ///
@@ -300,8 +280,7 @@ impl FourierRoughnessPenalty {
         for harmonic in 1..=basis.order() {
             #[allow(clippy::cast_precision_loss)]
             let frequency = harmonic as f64 * omega;
-            let weight =
-                0.5 * basis.period() * nonnegative_integer_power(frequency.abs(), exponent);
+            let weight = 0.5 * basis.period() * pow_usize(frequency.abs(), exponent);
             if !weight.is_finite() {
                 return Err(non_finite_roughness("Fourier derivative roughness"));
             }
@@ -361,7 +340,7 @@ impl FourierRoughnessPenalty {
     }
 }
 
-delegate_scaled_penalty!(FourierRoughnessPenalty);
+delegate_scaled_penalty!(FourierRoughnessPenalty, scaled);
 
 /// Low-rank shrinkage penalty for a supplied coefficient-space null space.
 ///
@@ -418,9 +397,9 @@ impl NullSpacePenalty {
         self.scaled.kernel().dim()
     }
 
-    /// Number of orthonormal null-space directions.
+    /// Rank of the penalty: the number of orthonormal directions it shrinks.
     #[must_use]
-    pub const fn nullity(&self) -> usize {
+    pub const fn rank(&self) -> usize {
         self.scaled.kernel().rank()
     }
 
@@ -438,7 +417,7 @@ impl NullSpacePenalty {
     }
 }
 
-delegate_scaled_penalty!(NullSpacePenalty);
+delegate_scaled_penalty!(NullSpacePenalty, scaled);
 
 fn bspline_null_space(
     basis: &BSplineBasis,
@@ -553,20 +532,6 @@ fn legendre_pair(order: usize, x: f64) -> (f64, f64) {
     (current, previous)
 }
 
-fn nonnegative_integer_power(mut base: f64, mut exponent: usize) -> f64 {
-    let mut value = 1.0;
-    while exponent > 0 {
-        if exponent & 1 == 1 {
-            value *= base;
-        }
-        exponent >>= 1;
-        if exponent > 0 {
-            base *= base;
-        }
-    }
-    value
-}
-
 fn checked_square(dim: usize, context: &'static str) -> Result<usize, ModelError> {
     dim.checked_mul(dim)
         .ok_or(ModelError::ArithmeticOverflow { context })
@@ -662,7 +627,7 @@ mod tests {
             vec![vec![1.0, 1.0, 1.0], vec![-1.0, 0.0, 1.0]],
         )
         .unwrap();
-        assert_eq!(penalty.nullity(), 2);
+        assert_eq!(penalty.rank(), 2);
         assert_relative_eq!(penalty.value(&[1.0, -2.0, 1.0]), 0.0, epsilon = 1.0e-12);
         assert!(penalty.value(&[1.0, 1.0, 1.0]) > 0.0);
         assert_gradient_and_matrix_match(&penalty, &[0.2, -0.4, 0.7]);

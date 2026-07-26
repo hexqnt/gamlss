@@ -1,10 +1,6 @@
-use std::ops::Range;
+use gamlss_core::{DenseDesign, ModelError};
 
-use gamlss_core::{
-    DenseDesign, DesignMatrix, LinearPredictorBlock, LinearPredictorGeometry, ModelError,
-    PredictorBlock, RowMultiplier,
-};
-
+use crate::prepared::impl_prepared_dense_design;
 use crate::{DifferentiableSplineRowBasis, HelmertContrast, SplineError, SplineRowBasis};
 
 const EXPECTED_CENTERING_WEIGHTS: &str = "finite and >= 0 with a positive finite sum";
@@ -187,130 +183,8 @@ where
     }
 }
 
-macro_rules! impl_prepared_transform_design {
-    ($type:ident) => {
-        impl<B> SplineRowBasis for $type<B>
-        where
-            B: SplineRowBasis,
-        {
-            fn nrows(&self) -> usize {
-                self.prepared.nrows()
-            }
-
-            fn nparams(&self) -> usize {
-                self.prepared.ncols()
-            }
-
-            fn for_each_row_basis(&self, row: usize, mut f: impl FnMut(usize, f64)) {
-                debug_assert!(row < self.prepared.nrows());
-                let nparams = self.prepared.ncols();
-                for (index, value) in self.prepared.values()[row * nparams..(row + 1) * nparams]
-                    .iter()
-                    .copied()
-                    .enumerate()
-                {
-                    if value != 0.0 {
-                        f(index, value);
-                    }
-                }
-            }
-        }
-
-        impl<B> PredictorBlock for $type<B>
-        where
-            B: SplineRowBasis,
-        {
-            fn nrows(&self) -> usize {
-                self.prepared.nrows()
-            }
-
-            fn nparams(&self) -> usize {
-                self.prepared.ncols()
-            }
-
-            fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-                self.prepared.dot_row(row, beta)
-            }
-
-            fn zero_beta_constant_contribution(&self) -> Option<f64> {
-                Some(0.0)
-            }
-
-            fn add_gradient_range(
-                &self,
-                rows: Range<usize>,
-                scores: &[f64],
-                _: &[f64],
-                grad: &mut [f64],
-            ) {
-                self.prepared.add_t_mul_vec_range(rows, scores, grad);
-            }
-
-            fn add_weighted_gradient_by_range<M>(
-                &self,
-                rows: Range<usize>,
-                scores: &[f64],
-                multiplier: &M,
-                _: &[f64],
-                grad: &mut [f64],
-            ) where
-                M: RowMultiplier + ?Sized,
-            {
-                self.prepared
-                    .add_weighted_t_mul_vec_by_range(rows, scores, multiplier, grad);
-            }
-        }
-
-        impl<B> LinearPredictorGeometry for $type<B>
-        where
-            B: SplineRowBasis,
-        {
-            fn add_weighted_gram(
-                &self,
-                row_weights: &[f64],
-                out: &mut [f64],
-            ) -> Result<(), ModelError> {
-                LinearPredictorBlock::new(&self.prepared).add_weighted_gram(row_weights, out)
-            }
-
-            fn add_weighted_gram_by<M>(
-                &self,
-                row_weights: &[f64],
-                multiplier: &M,
-                out: &mut [f64],
-            ) -> Result<(), ModelError>
-            where
-                M: RowMultiplier + ?Sized,
-            {
-                LinearPredictorBlock::new(&self.prepared).add_weighted_gram_by(
-                    row_weights,
-                    multiplier,
-                    out,
-                )
-            }
-
-            fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-                LinearPredictorBlock::new(&self.prepared).add_t_mul_vec(row_scores, out)
-            }
-
-            fn add_t_mul_vec_by<M>(
-                &self,
-                row_scores: &[f64],
-                multiplier: &M,
-                out: &mut [f64],
-            ) -> Result<(), ModelError>
-            where
-                M: RowMultiplier + ?Sized,
-            {
-                LinearPredictorBlock::new(&self.prepared)
-                    .add_t_mul_vec_by(row_scores, multiplier, out)
-            }
-        }
-    };
-}
-
-impl_prepared_transform_design!(HelmertContrastDesign);
-impl_prepared_transform_design!(CenteredSplineDesign);
+impl_prepared_dense_design!([B] HelmertContrastDesign<B>);
+impl_prepared_dense_design!([B] CenteredSplineDesign<B>);
 
 impl<B> DifferentiableSplineRowBasis for HelmertContrastDesign<B>
 where
