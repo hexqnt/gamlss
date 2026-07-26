@@ -23,6 +23,8 @@ The library supports scalar distributional models, optional multivariate familie
 
 Fitting loops and optimizer integrations intentionally remain outside the core API.
 
+[GAMLSS Book](http://gamlss.hexq.ru/)
+
 ## Crates
 
 Most users should depend on the `gamlss` facade. The workspace also publishes focused crates:

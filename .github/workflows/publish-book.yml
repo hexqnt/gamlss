@@ -1,6 +1,12 @@
 name: Publish book
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - "book/**"
+      - "book_build_and_push.sh"
+      - ".github/workflows/publish-book.yml"
   workflow_dispatch:
 
 permissions:
@@ -31,21 +37,6 @@ jobs:
           cargo install mdbook --version 0.5.3 --locked
           cargo install mdbook-katex --version 0.10.0-alpha --locked
 
-      - name: Build book
-        run: |
-          set -euo pipefail
-          mdbook build book
-
-          if [[ ! -f book/book/index.html ]]; then
-            echo "Error: book/book/index.html does not exist after the build." >&2
-            exit 1
-          fi
-
-          if ! find book/book -type f -print -quit | grep -q .; then
-            echo "Error: no files found in book/book after the build." >&2
-            exit 1
-          fi
-
       - name: Install Yandex Cloud CLI
         run: |
           set -euo pipefail
@@ -56,110 +47,29 @@ jobs:
           echo "${install_dir}/bin" >> "$GITHUB_PATH"
           "${install_dir}/bin/yc" version
 
-      - name: Publish book
+      - name: Configure Yandex Cloud CLI
         env:
           YC_SERVICE_ACCOUNT_KEY_JSON: ${{ secrets.YC_SERVICE_ACCOUNT_KEY_JSON }}
         run: |
           set -euo pipefail
-
-          readonly book_dir="book/book"
-          readonly s3_bucket="gamlss.hexq.ru"
-          readonly target_base_uri="s3://${s3_bucket}"
-          key_path="${RUNNER_TEMP}/yc-service-account-key.json"
-
-          cleanup() {
-            rm -f "$key_path"
-          }
-          trap cleanup EXIT
-
-          require_command() {
-            if ! command -v "$1" >/dev/null 2>&1; then
-              echo "Error: required command '$1' is not available in PATH." >&2
-              exit 1
-            fi
-          }
-
-          content_type_for() {
-            local file_path="$1"
-            case "$file_path" in
-              *.html) echo "text/html; charset=utf-8" ;;
-              *.js) echo "text/javascript; charset=utf-8" ;;
-              *.css) echo "text/css; charset=utf-8" ;;
-              *.json) echo "application/json" ;;
-              *.svg) echo "image/svg+xml" ;;
-              *.png) echo "image/png" ;;
-              *.jpg | *.jpeg) echo "image/jpeg" ;;
-              *.webp) echo "image/webp" ;;
-              *.ico) echo "image/x-icon" ;;
-              *.woff) echo "font/woff" ;;
-              *.woff2) echo "font/woff2" ;;
-              *.ttf) echo "font/ttf" ;;
-              *.eot) echo "application/vnd.ms-fontobject" ;;
-              *.txt) echo "text/plain; charset=utf-8" ;;
-              *) echo "application/octet-stream" ;;
-            esac
-          }
-
-          upload_file() {
-            local src_path="$1"
-            local rel_path="$2"
-            local content_type
-            local target_uri
-
-            content_type="$(content_type_for "$rel_path")"
-            target_uri="${target_base_uri}/${rel_path}"
-            yc storage s3 cp "$src_path" "$target_uri" --content-type "$content_type"
-            echo "Uploaded: ${rel_path} -> ${target_uri}"
-          }
-
-          require_command find
-          require_command yc
 
           if [[ -z "${YC_SERVICE_ACCOUNT_KEY_JSON:-}" ]]; then
             echo "Error: YC_SERVICE_ACCOUNT_KEY_JSON secret is not configured." >&2
             exit 1
           fi
 
-          if [[ ! -f "${book_dir}/index.html" ]]; then
-            echo "Error: ${book_dir}/index.html is missing; refusing to clean the bucket." >&2
-            exit 1
-          fi
-
-          mapfile -d '' book_files < <(find "$book_dir" -type f -print0 | sort -z)
-          if [[ "${#book_files[@]}" -eq 0 ]]; then
-            echo "Error: no files found in ${book_dir}; refusing to clean the bucket." >&2
-            exit 1
-          fi
-
+          key_path="${RUNNER_TEMP}/yc-service-account-key.json"
           umask 077
           printf '%s' "$YC_SERVICE_ACCOUNT_KEY_JSON" > "$key_path"
           yc config profile create book-publisher
           yc config set service-account-key "$key_path"
 
-          regular_files=()
-          html_files=()
-          for src_path in "${book_files[@]}"; do
-            rel_path="${src_path#"$book_dir"/}"
-            if [[ "$rel_path" == *.html ]]; then
-              html_files+=("$src_path")
-            else
-              regular_files+=("$src_path")
-            fi
-          done
+      - name: Build and publish book
+        env:
+          S3_BUCKET: gamlss.hexq.ru
+          GZIP_MIN_BYTES: "10240"
+        run: ./book_build_and_push.sh
 
-          echo "Cleaning remote objects at ${target_base_uri}..."
-          yc storage s3 rm "$target_base_uri" --recursive
-
-          echo "Uploading static assets to ${target_base_uri}..."
-          for src_path in "${regular_files[@]}"; do
-            rel_path="${src_path#"$book_dir"/}"
-            upload_file "$src_path" "$rel_path"
-          done
-
-          echo "Uploading HTML files to ${target_base_uri}..."
-          for src_path in "${html_files[@]}"; do
-            rel_path="${src_path#"$book_dir"/}"
-            upload_file "$src_path" "$rel_path"
-          done
-
-          echo "Publish complete."
+      - name: Remove service account key
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/yc-service-account-key.json"
