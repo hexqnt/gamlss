@@ -9,4 +9,9 @@ datasets! {
         x: u16,
         y: [f64; 2],
     }
+    cbr_inflation_and_interest_rate {
+        path: "data/cbr_inflation_and_interest_rate.csv",
+        x: Date,
+        y: [f64; 2],
+    }
 }

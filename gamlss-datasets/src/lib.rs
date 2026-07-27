@@ -75,7 +75,7 @@ impl<X, Y> Dataset<X, Y> {
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
-    use super::{Dataset, Date, Month, Time, a1, faithful};
+    use super::{Dataset, Date, Month, Time, a1, cbr_inflation_and_interest_rate, faithful};
 
     fn assert_aligned_finite(x: &[f64], y: &[f64]) {
         assert_eq!(x.len(), y.len());
@@ -100,6 +100,25 @@ mod tests {
         assert_eq!(data.x[271], 272);
         assert_eq!(data.y[0], [3.6, 79.0]);
         assert_eq!(data.y[271], [4.467, 74.0]);
+        assert!(data.y.iter().flatten().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn cbr_dataset_has_monthly_dates_and_bivariate_responses() {
+        let data = cbr_inflation_and_interest_rate();
+
+        assert_eq!(data.x.len(), 154);
+        assert_eq!(data.x.len(), data.y.len());
+        assert_eq!(
+            data.x[0],
+            Date::from_calendar_date(2026, Month::June, 1).unwrap()
+        );
+        assert_eq!(
+            data.x[153],
+            Date::from_calendar_date(2013, Month::September, 1).unwrap()
+        );
+        assert_eq!(data.y[0], [14.25, 6.02]);
+        assert_eq!(data.y[153], [5.5, 6.14]);
         assert!(data.y.iter().flatten().all(|value| value.is_finite()));
     }
 
