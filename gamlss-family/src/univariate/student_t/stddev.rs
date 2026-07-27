@@ -10,8 +10,8 @@ use gamlss_core::{SimulationError, TrySimulate};
 use crate::initial::{robust_location_scale, weighted_values};
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
-    student_t_standard_cdf, student_t_standard_quantile,
+    StudentTKernel, StudentTTheta, student_t_crps_theta, student_t_standard_cdf,
+    student_t_standard_quantile,
 };
 
 /// Dynamic-DF Student's t family where the natural `sigma` field is the standard deviation.
@@ -70,7 +70,8 @@ where
         let Some(location_scale) = theta.location_scale() else {
             return f64::INFINITY;
         };
-        student_t_nll_theta(theta.tau, y, location_scale)
+        StudentTKernel::try_new(theta.tau)
+            .map_or(f64::INFINITY, |kernel| kernel.nll_theta(y, location_scale))
     }
 
     #[inline]
@@ -79,12 +80,15 @@ where
         let Some(location_scale) = theta.location_scale() else {
             return (f64::INFINITY, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
         };
-        let nll = student_t_nll_theta(theta.tau, y, location_scale);
+        let Some(kernel) = StudentTKernel::try_new(theta.tau) else {
+            return (f64::INFINITY, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
+        };
+        let nll = kernel.nll_theta(y, location_scale);
         if !nll.is_finite() {
             return (nll, StudentTMuSdTauEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = student_t_nll_gradient_theta(theta.tau, y, location_scale);
+        let gradient = kernel.nll_gradient_theta(y, location_scale);
         let scale_per_sd = location_scale.sigma / theta.sigma;
         let scale_per_tau = location_scale.sigma / (theta.tau * (theta.tau - 2.0));
         let d_sigma = gradient.sigma * scale_per_sd;

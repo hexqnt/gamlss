@@ -128,13 +128,13 @@ $$
 Запустить оценивание модели можно командой
 
 ```bash
-cargo run --example a1_skew_normal
+cargo run --release --example a1_skew_normal
 ```
 
 Для воспроизведения графика пример умеет печатать исходный отклик, оценённые параметры и границы 90%-интервала в формате CSV:
 
 ```bash
-cargo run --quiet --example a1_skew_normal -- --csv > a1-fit.csv
+cargo run --release --quiet --example a1_skew_normal -- --csv > a1-fit.csv
 ```
 
 ## Результат и диагностика

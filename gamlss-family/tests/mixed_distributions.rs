@@ -9,6 +9,18 @@ mod common;
 
 #[test]
 fn zero_adjusted_and_inflated_gradients_match_finite_differences() {
+    let zero_adjusted_student_t = ZeroAdjustedStudentTMuSigma::try_new(5.0).unwrap();
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &zero_adjusted_student_t,
+        0.0,
+        [0.2, -0.3, -1.0],
+    );
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &zero_adjusted_student_t,
+        -0.7,
+        [0.2, -0.3, -1.0],
+    );
+
     let zip = ZipComponentMeanZeroProbability::new();
     assert_new_family_gradient_matches_finite_difference::<_, 2>(&zip, 0.0, [1.2_f64.ln(), -1.0]);
     assert_new_family_gradient_matches_finite_difference::<_, 2>(&zip, 3.0, [1.2_f64.ln(), -1.0]);
@@ -81,6 +93,36 @@ fn zero_adjusted_and_inflated_gradients_match_finite_differences() {
 
 #[test]
 fn mixed_likelihoods_match_their_component_and_atom_decompositions() {
+    let zero_adjusted_student_t = ZeroAdjustedStudentTMuSigma::try_new(5.0).unwrap();
+    let student_t = StudentTMuSigma::try_new(5.0).unwrap();
+    let zero_adjusted_student_t_theta = ZeroAdjustedStudentTTheta {
+        mu: 0.2,
+        sigma: 0.8,
+        zero_probability: 0.25,
+    };
+    let student_t_theta = zero_adjusted_student_t_theta.component();
+    assert_close(
+        zero_adjusted_student_t.nll(
+            0.0,
+            &zero_adjusted_student_t_theta,
+            &mut zero_adjusted_student_t.workspace(),
+        ),
+        -zero_adjusted_student_t_theta.zero_probability.ln(),
+        0.0,
+        2.0e-14,
+    );
+    assert_close(
+        zero_adjusted_student_t.nll(
+            -0.7,
+            &zero_adjusted_student_t_theta,
+            &mut zero_adjusted_student_t.workspace(),
+        ),
+        student_t.nll(-0.7, &student_t_theta, &mut student_t.workspace())
+            - (1.0 - zero_adjusted_student_t_theta.zero_probability).ln(),
+        0.0,
+        2.0e-14,
+    );
+
     let zip = ZipComponentMeanZeroProbability::new();
     let poisson = PoissonMean::new();
     let zip_theta = ZipComponentMeanZeroProbabilityTheta {

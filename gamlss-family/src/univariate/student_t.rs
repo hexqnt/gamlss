@@ -1,6 +1,6 @@
 //! Student's t distribution parameterizations.
 
-use gamlss_core::{Identity, Log, LogPlus};
+use gamlss_core::{Identity, Log, LogPlus, Logit};
 
 use gamlss_special::{
     digamma_delta, invert_real_cdf, ln_beta, regularized_beta, student_t_nll_constant,
@@ -9,15 +9,21 @@ use gamlss_special::{
 pub use dynamic::{StudentTDynamic, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta};
 pub use fixed::{StudentT, StudentTEta};
 pub use stddev::{StudentTMuSdTauEta, StudentTMuSdTauTheta, StudentTStdDev};
+pub use zero_adjusted::{ZeroAdjustedStudentT, ZeroAdjustedStudentTEta, ZeroAdjustedStudentTTheta};
 
 mod dynamic;
 mod fixed;
 mod stddev;
+mod zero_adjusted;
 
 /// Student's t location-scale distribution with fixed degrees of freedom $\tau>0$.
 ///
 /// Construct it with [`StudentT::try_new`]; [`Default`] uses $\tau=5$. The natural and eta fields are `mu` and `sigma`, and the default links give $\mu=\eta_\mu$ and $\sigma=\exp(\eta_\sigma)$.
 pub type StudentTMuSigma = StudentT<Identity, Log>;
+/// Zero-adjusted Student's t location-scale distribution with fixed degrees of freedom.
+///
+/// The natural and eta fields are `mu`, `sigma`, and `zero_probability`. The default links give $\mu=\eta_\mu$, $\sigma=\exp(\eta_\sigma)$, and $\pi=\operatorname{logit}^{-1}(\eta_\pi)$.
+pub type ZeroAdjustedStudentTMuSigma = ZeroAdjustedStudentT<Identity, Log, Logit>;
 /// Student's t location-scale distribution with estimated degrees of freedom $\tau>0$.
 ///
 /// The natural and eta carriers use the fields `mu`, `sigma`, and `tau`. Their default links give $\mu=\eta_\mu$, $\sigma=\exp(\eta_\sigma)$, and $\tau=\exp(\eta_\tau)$.
@@ -55,73 +61,143 @@ pub(super) struct StudentTGradientTheta {
     pub(super) tau: f64,
 }
 
-pub(super) fn student_t_nll_theta(nu: f64, y: f64, theta: StudentTTheta) -> f64 {
-    student_t_nll_theta_with_log_sigma(nu, y, theta, theta.sigma.ln())
+pub(super) struct StudentTMuSigmaGradientTheta {
+    pub(super) mu: f64,
+    pub(super) sigma: f64,
 }
 
-pub(super) fn student_t_nll_theta_with_log_sigma(
-    nu: f64,
-    y: f64,
-    theta: StudentTTheta,
-    log_sigma: f64,
-) -> f64 {
-    if !y.is_finite()
-        || !theta.mu.is_finite()
-        || theta.sigma <= 0.0
-        || !theta.sigma.is_finite()
-        || nu <= 0.0
-        || !nu.is_finite()
-    {
-        return f64::INFINITY;
+struct StudentTGradientGeometry {
+    mu: f64,
+    sigma: f64,
+    z2: f64,
+    squared_fraction: f64,
+}
+
+/// Link-independent location-scale kernel for one fixed number of degrees of freedom.
+///
+/// Keeping the normalizing constant beside `degrees_of_freedom` makes their
+/// relationship an invariant and amortizes special-function work for fixed-DF
+/// families. Dynamic-DF parameterizations construct the same kernel per row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct StudentTKernel {
+    degrees_of_freedom: f64,
+    nll_constant: f64,
+}
+
+impl StudentTKernel {
+    #[inline]
+    pub(super) fn try_new(degrees_of_freedom: f64) -> Option<Self> {
+        if degrees_of_freedom <= 0.0 || !degrees_of_freedom.is_finite() {
+            return None;
+        }
+
+        Some(Self {
+            degrees_of_freedom,
+            nll_constant: student_t_nll_constant(degrees_of_freedom),
+        })
     }
 
-    let z = (y - theta.mu) / theta.sigma;
-    student_t_nll_constant(nu) + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
-}
+    #[inline]
+    pub(super) const fn degrees_of_freedom(self) -> f64 {
+        self.degrees_of_freedom
+    }
 
-#[allow(clippy::suboptimal_flops)]
-pub(super) fn student_t_nll_gradient_theta(
-    nu: f64,
-    y: f64,
-    theta: StudentTTheta,
-) -> StudentTGradientTheta {
-    if !y.is_finite()
-        || !theta.mu.is_finite()
-        || theta.sigma <= 0.0
-        || !theta.sigma.is_finite()
-        || nu <= 0.0
-        || !nu.is_finite()
-    {
-        return StudentTGradientTheta {
-            mu: f64::NAN,
-            sigma: f64::NAN,
-            tau: f64::NAN,
+    #[inline]
+    pub(super) fn nll_theta(self, y: f64, theta: StudentTTheta) -> f64 {
+        self.nll_theta_with_log_sigma(y, theta, theta.sigma.ln())
+    }
+
+    #[inline]
+    pub(super) fn nll_theta_with_log_sigma(
+        self,
+        y: f64,
+        theta: StudentTTheta,
+        log_sigma: f64,
+    ) -> f64 {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return f64::INFINITY;
+        }
+
+        let nu = self.degrees_of_freedom;
+        let z = (y - theta.mu) / theta.sigma;
+        self.nll_constant + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
+    }
+
+    #[inline]
+    pub(super) fn nll_gradient_mu_sigma_theta(
+        self,
+        y: f64,
+        theta: StudentTTheta,
+    ) -> StudentTMuSigmaGradientTheta {
+        let Some(geometry) = self.gradient_geometry(y, theta) else {
+            return StudentTMuSigmaGradientTheta {
+                mu: f64::NAN,
+                sigma: f64::NAN,
+            };
         };
+
+        StudentTMuSigmaGradientTheta {
+            mu: geometry.mu,
+            sigma: geometry.sigma,
+        }
     }
 
-    let z = (y - theta.mu) / theta.sigma;
-    let z2 = z * z;
-    let squared_fraction = if z2 == 0.0 {
-        0.0
-    } else if z2 < nu {
-        let ratio = z2 / nu;
-        ratio / (1.0 + ratio)
-    } else {
-        1.0 / (1.0 + nu / z2)
-    };
-    let scale = nu.max(z2);
-    let slope = (nu / scale + 1.0 / scale) * z / (nu / scale + z2 / scale);
-    let mu = -slope / theta.sigma;
-    let sigma = (1.0 - (nu + 1.0) * squared_fraction) / theta.sigma;
-    let tail_derivative = if squared_fraction == 0.0 {
-        0.0
-    } else {
-        f64::midpoint(1.0, 1.0 / nu) * squared_fraction
-    };
-    let tau =
-        0.5 / nu - 0.5 * digamma_delta(0.5 * nu, 0.5) + 0.5 * (z2 / nu).ln_1p() - tail_derivative;
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    pub(super) fn nll_gradient_theta(self, y: f64, theta: StudentTTheta) -> StudentTGradientTheta {
+        let Some(geometry) = self.gradient_geometry(y, theta) else {
+            return StudentTGradientTheta {
+                mu: f64::NAN,
+                sigma: f64::NAN,
+                tau: f64::NAN,
+            };
+        };
 
-    StudentTGradientTheta { mu, sigma, tau }
+        let nu = self.degrees_of_freedom;
+        let tail_derivative = if geometry.squared_fraction == 0.0 {
+            0.0
+        } else {
+            f64::midpoint(1.0, 1.0 / nu) * geometry.squared_fraction
+        };
+        let tau = 0.5 / nu - 0.5 * digamma_delta(0.5 * nu, 0.5) + 0.5 * (geometry.z2 / nu).ln_1p()
+            - tail_derivative;
+
+        StudentTGradientTheta {
+            mu: geometry.mu,
+            sigma: geometry.sigma,
+            tau,
+        }
+    }
+
+    #[allow(clippy::suboptimal_flops)]
+    fn gradient_geometry(self, y: f64, theta: StudentTTheta) -> Option<StudentTGradientGeometry> {
+        if !y.is_finite() || !theta.mu.is_finite() || theta.sigma <= 0.0 || !theta.sigma.is_finite()
+        {
+            return None;
+        }
+
+        let nu = self.degrees_of_freedom;
+        let z = (y - theta.mu) / theta.sigma;
+        let z2 = z * z;
+        let squared_fraction = if z2 == 0.0 {
+            0.0
+        } else if z2 < nu {
+            let ratio = z2 / nu;
+            ratio / (1.0 + ratio)
+        } else {
+            1.0 / (1.0 + nu / z2)
+        };
+        let scale = nu.max(z2);
+        let slope = (nu / scale + 1.0 / scale) * z / (nu / scale + z2 / scale);
+
+        Some(StudentTGradientGeometry {
+            mu: -slope / theta.sigma,
+            sigma: (1.0 - (nu + 1.0) * squared_fraction) / theta.sigma,
+            z2,
+            squared_fraction,
+        })
+    }
 }
 
 pub(super) fn student_t_standard_cdf(nu: f64, t: f64) -> f64 {

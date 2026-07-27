@@ -247,6 +247,23 @@ fn student_t_dynamic_matches_fixed_df_equivalent() {
         0.0,
         1.0e-10,
     );
+
+    let fixed_eta = StudentTEta {
+        mu: dynamic_theta.mu,
+        sigma: dynamic_theta.sigma.ln(),
+    };
+    let dynamic_eta = StudentTMuSigmaTauEta {
+        mu: dynamic_theta.mu,
+        sigma: dynamic_theta.sigma.ln(),
+        tau: dynamic_theta.tau.ln(),
+    };
+    let (fixed_nll, fixed_gradient) =
+        fixed.nll_and_gradient_eta(0.7, &fixed_eta, &mut fixed.workspace());
+    let (dynamic_nll, dynamic_gradient) =
+        dynamic.nll_and_gradient_eta(0.7, &dynamic_eta, &mut dynamic.workspace());
+    assert_close(fixed_nll, dynamic_nll, 0.0, 1.0e-12);
+    assert_close(fixed_gradient.mu, dynamic_gradient.mu, 0.0, 1.0e-12);
+    assert_close(fixed_gradient.sigma, dynamic_gradient.sigma, 0.0, 1.0e-12);
 }
 
 #[test]

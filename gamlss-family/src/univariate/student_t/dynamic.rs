@@ -11,8 +11,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::link::positive_inverse_and_log;
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
-    student_t_nll_theta_with_log_sigma, student_t_standard_cdf, student_t_standard_quantile,
+    StudentTKernel, StudentTTheta, student_t_crps_theta, student_t_standard_cdf,
+    student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with estimated degrees of freedom.
@@ -72,10 +72,10 @@ where
 
     #[inline]
     fn nll_theta(y: f64, theta: StudentTMuSigmaTauTheta) -> f64 {
-        if !valid_dynamic_theta(theta) {
+        let Some(kernel) = StudentTKernel::try_new(theta.tau) else {
             return f64::INFINITY;
-        }
-        student_t_nll_theta(theta.tau, y, theta.location_scale())
+        };
+        kernel.nll_theta(y, theta.location_scale())
     }
 
     #[inline]
@@ -84,16 +84,18 @@ where
         eta: StudentTMuSigmaTauEta,
     ) -> (f64, StudentTMuSigmaTauEta) {
         let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
-        let nll = if valid_dynamic_theta(theta) {
-            student_t_nll_theta_with_log_sigma(theta.tau, y, theta.location_scale(), log_sigma)
-        } else {
-            f64::INFINITY
+        let Some(kernel) = StudentTKernel::try_new(theta.tau) else {
+            return (
+                f64::INFINITY,
+                StudentTMuSigmaTauEta::from_array([f64::NAN; 3]),
+            );
         };
+        let nll = kernel.nll_theta_with_log_sigma(y, theta.location_scale(), log_sigma);
         if !nll.is_finite() {
             return (nll, StudentTMuSigmaTauEta::from_array([f64::NAN; 3]));
         }
 
-        let gradient = student_t_nll_gradient_theta(theta.tau, y, theta.location_scale());
+        let gradient = kernel.nll_gradient_theta(y, theta.location_scale());
         (
             nll,
             StudentTMuSigmaTauEta {
@@ -149,10 +151,10 @@ where
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
         let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
-        if !valid_dynamic_theta(theta) {
+        let Some(kernel) = StudentTKernel::try_new(theta.tau) else {
             return f64::INFINITY;
-        }
-        student_t_nll_theta_with_log_sigma(theta.tau, y, theta.location_scale(), log_sigma)
+        };
+        kernel.nll_theta_with_log_sigma(y, theta.location_scale(), log_sigma)
     }
 
     #[inline]

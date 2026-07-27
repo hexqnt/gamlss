@@ -44,6 +44,7 @@ Legend: ✓ implemented, ✗ not implemented. Aliases inherit their underlying f
 | `Tweedie`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Weibull`               | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Zaga`                  | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
+| `ZeroAdjustedStudentT`  | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Zinb`                  | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 | `Zip`                   | ✓   | ✓        | analytic      | ✓   | ✓   | ✓        | ✓    | ✓        |
 

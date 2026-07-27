@@ -11,8 +11,8 @@ use crate::initial::{robust_location_scale, weighted_values};
 use crate::link::positive_inverse_and_log;
 
 use super::{
-    StudentTTheta, student_t_crps_theta, student_t_nll_gradient_theta, student_t_nll_theta,
-    student_t_nll_theta_with_log_sigma, student_t_standard_cdf, student_t_standard_quantile,
+    StudentTKernel, StudentTTheta, student_t_crps_theta, student_t_standard_cdf,
+    student_t_standard_quantile,
 };
 
 /// Student's t location-scale family with a fixed number of degrees of freedom.
@@ -26,7 +26,7 @@ use super::{
 )]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StudentT<MuLink = gamlss_core::Identity, SigmaLink = gamlss_core::Log> {
-    degrees_of_freedom: f64,
+    kernel: StudentTKernel,
     marker: PhantomData<(MuLink, SigmaLink)>,
 }
 
@@ -37,15 +37,14 @@ where
 {
     /// Creates a Student's t family with finite positive degrees of freedom.
     pub fn try_new(degrees_of_freedom: f64) -> Result<Self, ModelError> {
-        if !degrees_of_freedom.is_finite() || degrees_of_freedom <= 0.0 {
-            return Err(ModelError::InvalidParameter {
+        let kernel =
+            StudentTKernel::try_new(degrees_of_freedom).ok_or(ModelError::InvalidParameter {
                 parameter: "degrees_of_freedom",
                 expected: "finite and > 0",
-            });
-        }
+            })?;
 
         Ok(Self {
-            degrees_of_freedom,
+            kernel,
             marker: PhantomData,
         })
     }
@@ -53,7 +52,7 @@ where
     /// Returns the fixed degrees of freedom.
     #[must_use]
     pub const fn degrees_of_freedom(&self) -> f64 {
-        self.degrees_of_freedom
+        self.kernel.degrees_of_freedom()
     }
 
     #[inline]
@@ -78,14 +77,14 @@ where
 
     #[inline]
     fn nll_theta(&self, y: f64, theta: StudentTTheta) -> f64 {
-        student_t_nll_theta(self.degrees_of_freedom, y, theta)
+        self.kernel.nll_theta(y, theta)
     }
 
     #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll_and_gradient_eta_values(&self, y: f64, eta: StudentTEta) -> (f64, StudentTEta) {
         let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(eta);
-        let nll = student_t_nll_theta_with_log_sigma(self.degrees_of_freedom, y, theta, log_sigma);
+        let nll = self.kernel.nll_theta_with_log_sigma(y, theta, log_sigma);
         if !nll.is_finite() {
             return (
                 nll,
@@ -96,7 +95,7 @@ where
             );
         }
 
-        let gradient = student_t_nll_gradient_theta(self.degrees_of_freedom, y, theta);
+        let gradient = self.kernel.nll_gradient_mu_sigma_theta(y, theta);
 
         (
             nll,
@@ -150,7 +149,7 @@ where
     #[inline]
     fn nll_eta(&self, y: f64, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> f64 {
         let (theta, log_sigma) = Self::theta_and_log_sigma_from_eta(*eta);
-        student_t_nll_theta_with_log_sigma(self.degrees_of_freedom, y, theta, log_sigma)
+        self.kernel.nll_theta_with_log_sigma(y, theta, log_sigma)
     }
 
     #[inline]
@@ -196,7 +195,7 @@ where
             return f64::NAN;
         }
 
-        student_t_standard_cdf(self.degrees_of_freedom, (y - theta.mu) / theta.sigma)
+        student_t_standard_cdf(self.degrees_of_freedom(), (y - theta.mu) / theta.sigma)
     }
 }
 
@@ -211,7 +210,7 @@ where
             return f64::NAN;
         }
 
-        theta.mu + theta.sigma * student_t_standard_quantile(self.degrees_of_freedom, p)
+        theta.mu + theta.sigma * student_t_standard_quantile(self.degrees_of_freedom(), p)
     }
 }
 
@@ -225,12 +224,12 @@ where
             || !theta.mu.is_finite()
             || theta.sigma <= 0.0
             || !theta.sigma.is_finite()
-            || self.degrees_of_freedom <= 1.0
+            || self.degrees_of_freedom() <= 1.0
         {
             return f64::NAN;
         }
 
-        student_t_crps_theta(self.degrees_of_freedom, y, *theta)
+        student_t_crps_theta(self.degrees_of_freedom(), y, *theta)
     }
 }
 
@@ -249,7 +248,7 @@ where
             return Err(SimulationError::InvalidParameters("Student-t theta"));
         }
 
-        let distribution = rand_distr::StudentT::new(self.degrees_of_freedom)
+        let distribution = rand_distr::StudentT::new(self.degrees_of_freedom())
             .map_err(|_| SimulationError::BackendRejected("Student-t degrees of freedom"))?;
         let z = rand_distr::Distribution::sample(&distribution, rng);
         crate::simulation::ensure_finite(theta.mu + theta.sigma * z, "Student-t transform")

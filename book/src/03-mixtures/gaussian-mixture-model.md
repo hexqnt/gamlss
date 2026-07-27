@@ -149,7 +149,7 @@ $$
 Запустить пример можно командой
 
 ```bash
-cargo run --example faithful_mixture_fit --features multivariate
+cargo run --release --example faithful_mixture_fit --features multivariate
 ```
 
 ![Примерные результаты оценивания](../assets/figures/faithful-gmm.svg "Примерные результаты оценивания")

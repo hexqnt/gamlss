@@ -13,7 +13,8 @@ use gamlss_family::{
     StudentTMuSigmaTauTheta, TweedieMeanCvPower, TweedieMeanCvPowerTheta,
     TweedieMeanDispersionPower, TweedieTheta, WeibullMeanShape, WeibullMeanShapeTheta,
     WeibullScaleShape, WeibullScaleShapeTheta, ZagaTotalMeanCvZeroProbability,
-    ZagaTotalMeanCvZeroProbabilityTheta, ZinbTotalMeanSizeZeroProbability,
+    ZagaTotalMeanCvZeroProbabilityTheta, ZeroAdjustedStudentT, ZeroAdjustedStudentTMuSigma,
+    ZeroAdjustedStudentTTheta, ZinbTotalMeanSizeZeroProbability,
     ZinbTotalMeanSizeZeroProbabilityTheta, ZipTotalMeanZeroProbability,
     ZipTotalMeanZeroProbabilityTheta,
 };
@@ -215,6 +216,23 @@ fn semantic_parameterization_aliases_construct_without_type_annotations() {
             sigma: 1.0,
             tau: 5.0,
         }
+    ));
+    let zero_adjusted_student_t: ZeroAdjustedStudentT =
+        ZeroAdjustedStudentTMuSigma::try_new(5.0).unwrap();
+    let zero_adjusted_theta = ZeroAdjustedStudentTTheta {
+        mu: 0.0,
+        sigma: 1.0,
+        zero_probability: 0.3,
+    };
+    assert!(finite_nll(
+        zero_adjusted_student_t,
+        0.0,
+        zero_adjusted_theta,
+    ));
+    assert!(finite_nll(
+        zero_adjusted_student_t,
+        1.2,
+        zero_adjusted_theta,
     ));
     assert!(finite_nll(
         SkewNormalMeanSdNu::new(),

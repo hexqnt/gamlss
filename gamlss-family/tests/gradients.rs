@@ -25,6 +25,11 @@ proptest! {
         assert_gradient_matches_finite_difference::<_, 2>(&LaplaceMuSigma::new(), y_real, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&LogisticMuSigma::new(), y_real, [eta1, eta2]);
         assert_gradient_matches_finite_difference::<_, 2>(&StudentTMuSigma::default(), y_real, [eta1, eta2]);
+        assert_gradient_matches_finite_difference::<_, 3>(
+            &ZeroAdjustedStudentTMuSigma::default(),
+            y_real,
+            [eta1, eta2, 0.5 * eta1],
+        );
 
         assert_gradient_matches_finite_difference::<_, 1>(&ExponentialRate::new(), y_positive, [eta1]);
         assert_gradient_matches_finite_difference::<_, 1>(&RayleighScale::new(), y_positive, [eta1]);
@@ -58,6 +63,11 @@ proptest! {
 
 #[test]
 fn higher_parameter_continuous_family_gradients_match_finite_differences() {
+    assert_new_family_gradient_matches_finite_difference::<_, 3>(
+        &ZeroAdjustedStudentTMuSigma::default(),
+        0.0,
+        [0.1, -0.2, -0.5],
+    );
     assert_new_family_gradient_matches_finite_difference::<_, 3>(
         &SkewNormalMuSigmaNu::new(),
         0.4,

@@ -1,8 +1,11 @@
 //! Profile an implicit inflation target from monthly Bank of Russia data.
 //!
-//! The response is the monthly key-rate change. For each candidate inflation
-//! target and reaction lag, a Student-t GAMLSS models both its location and
-//! scale. Strict nested rolling-origin validation selects the spline penalties,
+//! The response is the monthly key-rate change from 2017 onward, when the 4%
+//! target was already in force. Exact zero changes get their own point mass;
+//! non-zero changes follow a Student-t distribution with a constant scale. Its
+//! location is anchored to zero at each candidate target, so the candidate has
+//! the intended interpretation instead of being absorbed by a free intercept.
+//! Strict nested rolling-origin validation selects the mean-spline penalty,
 //! while outer rolling-origin validation selects the lag and target. Rayon runs
 //! independent outer folds in parallel while each target path remains ordered
 //! for warm starts. The official 4% target is printed only after model selection
@@ -13,6 +16,9 @@
 //! quick-start example. The two observed series cannot identify a causal
 //! monetary-policy rule, and the reported one-standard-error range is a
 //! predictive-stability heuristic rather than a confidence interval.
+//!
+//! Run the optimized example with
+//! `cargo run --release --example cbr_inflation_target`.
 
 #![allow(clippy::cast_precision_loss)]
 
@@ -31,12 +37,11 @@ use argmin::{
 };
 use gamlss::{
     core::{
-        DenseDesign, Family, Gamlss, HasQuantile, Identity, LinearPredictorBlock, Log, Mu,
+        DenseDesign, Family, Gamlss, HasCdf, HasQuantile, LinearPredictorBlock, Mu, NoPenalty,
         Objective, ObjectiveScale, ParameterBlock, ParameterBlocks, SegmentPenalty, Sigma,
-        SumBlock,
+        SumBlock, ZeroProbability,
     },
-    diagnostics::CdfDiagnosticsExt,
-    family::{StudentT, StudentTTheta},
+    family::{ZeroAdjustedStudentTMuSigma, ZeroAdjustedStudentTTheta},
     spline::{
         HelmertContrastDesign, HelmertContrastPenalty, OpenUniformSplineBasis,
         PreparedDifferencePenalty, SplineOrder,
@@ -51,13 +56,13 @@ const TARGET_MIN: f64 = 2.0;
 const TARGET_MAX: f64 = 8.0;
 const OFFICIAL_TARGET: f64 = 4.0;
 const STUDENT_T_DF: f64 = 5.0;
+const ANALYSIS_START_YEAR: i32 = 2017;
 
 const MEAN_BASIS: usize = 6;
-const SCALE_BASIS: usize = 5;
 const DIFFERENCE_ORDER: usize = 2;
 
-const OUTER_INITIAL_TRAIN: usize = 52;
-const OUTER_FOLDS: usize = 15;
+const OUTER_INITIAL_TRAIN: usize = 48;
+const OUTER_FOLDS: usize = 11;
 const INNER_FOLDS: usize = 3;
 const FOLD_MONTHS: usize = 6;
 const SMOOTHING_LEVELS_DESC: [f64; 3] = [1.0, 0.1, 0.01];
@@ -70,21 +75,16 @@ const COST_TOLERANCE: f64 = 1.0e-8;
 const RETRY_GRADIENT_RATIO_LIMIT: f64 = 10.0;
 
 type ExampleResult<T> = Result<T, Box<dyn StdError + Send + Sync>>;
-type PolicyFamily = StudentT<Identity, Log>;
+type PolicyFamily = ZeroAdjustedStudentTMuSigma;
+type PolicyTheta = ZeroAdjustedStudentTTheta;
 type LinearTerm<'a> = LinearPredictorBlock<&'a DenseDesign>;
-type MeanPredictor<'a> = SumBlock<(
-    LinearTerm<'a>,
-    LinearTerm<'a>,
-    LinearTerm<'a>,
-    LinearTerm<'a>,
-)>;
-type ScalePredictor<'a> = SumBlock<(LinearTerm<'a>, LinearTerm<'a>)>;
+type MeanPredictor<'a> = SumBlock<(LinearTerm<'a>, LinearTerm<'a>, LinearTerm<'a>)>;
 type SmoothPenalty = HelmertContrastPenalty<PreparedDifferencePenalty>;
 type MeanPenalty = (SegmentPenalty<SmoothPenalty>, SegmentPenalty<SmoothPenalty>);
-type ScalePenalty = SegmentPenalty<SmoothPenalty>;
 type PolicyBlocks<'a> = ParameterBlocks<(
     ParameterBlock<Mu, MeanPredictor<'a>, MeanPenalty>,
-    ParameterBlock<Sigma, ScalePredictor<'a>, ScalePenalty>,
+    ParameterBlock<Sigma, LinearTerm<'a>, NoPenalty>,
+    ParameterBlock<ZeroProbability, LinearTerm<'a>, NoPenalty>,
 )>;
 
 fn l2_norm(values: &[f64]) -> f64 {
@@ -120,12 +120,11 @@ impl StdError for ExampleError {}
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Smoothing {
     mean: f64,
-    scale: f64,
 }
 
 impl Smoothing {
-    const fn new(mean: f64, scale: f64) -> Self {
-        Self { mean, scale }
+    const fn new(mean: f64) -> Self {
+        Self { mean }
     }
 }
 
@@ -134,11 +133,7 @@ fn smoothing_grid() -> Vec<Smoothing> {
     // regularized. Selection itself uses an explicit score/tie comparison.
     SMOOTHING_LEVELS_DESC
         .into_iter()
-        .flat_map(|mean| {
-            SMOOTHING_LEVELS_DESC
-                .into_iter()
-                .map(move |scale| Smoothing::new(mean, scale))
-        })
+        .map(Smoothing::new)
         .collect()
 }
 
@@ -228,12 +223,11 @@ impl AnalysisConfig {
         if self.targets.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(ExampleError::boxed("targets must be strictly increasing"));
         }
-        if self.smoothings.iter().any(|smoothing| {
-            !smoothing.mean.is_finite()
-                || smoothing.mean <= 0.0
-                || !smoothing.scale.is_finite()
-                || smoothing.scale <= 0.0
-        }) {
+        if self
+            .smoothings
+            .iter()
+            .any(|smoothing| !smoothing.mean.is_finite() || smoothing.mean <= 0.0)
+        {
             return Err(ExampleError::boxed(
                 "smoothing values must be finite and positive",
             ));
@@ -286,6 +280,9 @@ impl PreparedData {
             .collect::<Vec<_>>();
 
         for current in MAX_REACTION_LAG..raw.len() {
+            if raw[current].0.year() < ANALYSIS_START_YEAR {
+                continue;
+            }
             let [rate, _inflation] = raw[current].1;
             let [previous_rate, _previous_inflation] = raw[current - 1].1;
             let [twice_previous_rate, _twice_previous_inflation] = raw[current - 2].1;
@@ -407,7 +404,6 @@ fn inner_ranges(
 struct SplineBases {
     above: OpenUniformSplineBasis,
     below: OpenUniformSplineBasis,
-    absolute: OpenUniformSplineBasis,
 }
 
 impl SplineBases {
@@ -421,8 +417,7 @@ impl SplineBases {
             .ok_or_else(|| ExampleError::boxed("training inflation has no finite values"))?;
         let above_max = maximum - TARGET_MIN;
         let below_max = TARGET_MAX - minimum;
-        let absolute_max = above_max.max(below_max);
-        if above_max <= 0.0 || below_max <= 0.0 || absolute_max <= 0.0 {
+        if above_max <= 0.0 || below_max <= 0.0 {
             return Err(ExampleError::boxed(format!(
                 "training inflation range [{minimum}, {maximum}] does not cover the target profile domain"
             )));
@@ -431,12 +426,6 @@ impl SplineBases {
         Ok(Self {
             above: OpenUniformSplineBasis::new(0.0, above_max, MEAN_BASIS, SplineOrder::Cubic)?,
             below: OpenUniformSplineBasis::new(0.0, below_max, MEAN_BASIS, SplineOrder::Cubic)?,
-            absolute: OpenUniformSplineBasis::new(
-                0.0,
-                absolute_max,
-                SCALE_BASIS,
-                SplineOrder::Cubic,
-            )?,
         })
     }
 }
@@ -447,7 +436,6 @@ struct PolicyDesigns {
     above: DenseDesign,
     below: DenseDesign,
     previous_delta_rate: DenseDesign,
-    absolute: DenseDesign,
 }
 
 impl PolicyDesigns {
@@ -462,28 +450,20 @@ impl PolicyDesigns {
             .iter()
             .map(|inflation| (target - inflation).max(0.0))
             .collect::<Vec<_>>();
-        let absolute = rows
-            .inflation
-            .iter()
-            .map(|inflation| (inflation - target).abs())
-            .collect::<Vec<_>>();
-
         Ok(Self {
             intercept: DenseDesign::intercept(rows.len()),
             above: anchored_spline_design(bases.above, &above)?,
             below: anchored_spline_design(bases.below, &below)?,
             previous_delta_rate: DenseDesign::column(rows.previous_delta_rate),
-            absolute: anchored_spline_design(bases.absolute, &absolute)?,
         })
     }
 
     fn blocks(&self, smoothing: Smoothing) -> ExampleResult<PolicyBlocks<'_>> {
         let mean_contrasts = MEAN_BASIS - 1;
-        let above_start = 1;
+        let above_start = 0;
         let below_start = above_start + mean_contrasts;
 
         let mean_predictor = SumBlock::new((
-            LinearPredictorBlock::new(&self.intercept),
             LinearPredictorBlock::new(&self.above),
             LinearPredictorBlock::new(&self.below),
             LinearPredictorBlock::new(&self.previous_delta_rate),
@@ -500,17 +480,18 @@ impl PolicyDesigns {
         );
         let mean = ParameterBlock::<Mu, _, _>::new(mean_predictor, mean_penalty, 0);
 
-        let scale_predictor = SumBlock::new((
+        let scale = ParameterBlock::<Sigma, _, _>::new(
             LinearPredictorBlock::new(&self.intercept),
-            LinearPredictorBlock::new(&self.absolute),
-        ));
-        let scale_penalty = SegmentPenalty::new(
-            1..SCALE_BASIS,
-            smooth_penalty(SCALE_BASIS, smoothing.scale)?,
+            NoPenalty,
+            0,
         );
-        let scale = ParameterBlock::<Sigma, _, _>::new(scale_predictor, scale_penalty, mean.len());
+        let zero_probability = ParameterBlock::<ZeroProbability, _, _>::new(
+            LinearPredictorBlock::new(&self.intercept),
+            NoPenalty,
+            0,
+        );
 
-        Ok(ParameterBlocks::new((mean, scale)))
+        Ok(ParameterBlocks::new((mean, scale, zero_probability)))
     }
 }
 
@@ -846,22 +827,28 @@ struct FitStarts<'a> {
     retry: Option<&'a [f64]>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DesignedSplit<'design, 'data> {
+    train: FeatureRows<'data>,
+    validation: FeatureRows<'data>,
+    train_designs: &'design PolicyDesigns,
+    validation_designs: &'design PolicyDesigns,
+}
+
 fn fit_and_score(
-    train: FeatureRows<'_>,
-    validation: FeatureRows<'_>,
-    train_designs: &PolicyDesigns,
-    validation_designs: &PolicyDesigns,
+    family: PolicyFamily,
+    split: DesignedSplit<'_, '_>,
     smoothing: Smoothing,
     starts: FitStarts<'_>,
     optimization: &mut OptimizationStats,
 ) -> ExampleResult<ScoredFit> {
-    if validation.is_empty() {
+    if split.validation.is_empty() {
         return Err(ExampleError::boxed(
             "validation window must contain observations",
         ));
     }
-    let blocks = train_designs.blocks(smoothing)?;
-    let model = Gamlss::try_new(policy_family()?, blocks, train.response)?
+    let blocks = split.train_designs.blocks(smoothing)?;
+    let model = Gamlss::try_new(family, blocks, split.train.response)?
         .with_objective_scale(ObjectiveScale::Mean);
     let cold_start = model.initial_parameters()?;
     // Coefficients from the last inner window are usually the strongest
@@ -892,16 +879,17 @@ fn fit_and_score(
         optimization,
     )?;
 
-    let validation_blocks = validation_designs.blocks(smoothing)?;
+    let validation_blocks = split.validation_designs.blocks(smoothing)?;
     let fitted = model.predict_theta_with_blocks(&fit.parameters, &validation_blocks)?;
-    let validation_nll = validation
+    let validation_nll = split
+        .validation
         .response
         .iter()
         .copied()
         .zip(&fitted)
         .map(|(observation, theta)| model.family().nll(observation, theta, &mut ()))
         .sum::<f64>();
-    let validation_mean_nll = validation_nll / validation.len() as f64;
+    let validation_mean_nll = validation_nll / split.validation.len() as f64;
     if !validation_mean_nll.is_finite() {
         return Err(ExampleError::boxed(
             "validation negative log-likelihood is non-finite",
@@ -954,14 +942,12 @@ fn smoothing_is_better(
     match candidate_score.total_cmp(&best_score) {
         std::cmp::Ordering::Less => true,
         std::cmp::Ordering::Greater => false,
-        std::cmp::Ordering::Equal => {
-            candidate.mean > best.mean
-                || (candidate.mean.total_cmp(&best.mean).is_eq() && candidate.scale > best.scale)
-        }
+        std::cmp::Ordering::Equal => candidate.mean > best.mean,
     }
 }
 
 fn select_smoothing(
+    family: PolicyFamily,
     inner: &[SplitContext<'_>],
     target: f64,
     smoothings: &[Smoothing],
@@ -980,10 +966,13 @@ fn select_smoothing(
             let cached = warm_starts.inner[cache_index].as_deref();
             let start = cached.or(preceding_smoothing_fit.as_deref());
             let scored = fit_and_score(
-                split.train,
-                split.validation,
-                &train_designs,
-                &validation_designs,
+                family,
+                DesignedSplit {
+                    train: split.train,
+                    validation: split.validation,
+                    train_designs: &train_designs,
+                    validation_designs: &validation_designs,
+                },
                 smoothing,
                 FitStarts {
                     primary: start,
@@ -993,10 +982,9 @@ fn select_smoothing(
             )
             .map_err(|error| {
                 ExampleError::boxed(format!(
-                    "inner fold {}, lambda_mu={}, lambda_sigma={}: {error}",
+                    "inner fold {}, lambda_mu={}: {error}",
                     inner_index + 1,
                     smoothing.mean,
-                    smoothing.scale
                 ))
             })?;
             score_sums[smoothing_index] += scored.validation_mean_nll;
@@ -1034,23 +1022,34 @@ struct FoldEvaluation {
 }
 
 fn evaluate_target(
+    family: PolicyFamily,
     context: &NestedContext<'_>,
     target: f64,
     smoothings: &[Smoothing],
     warm_starts: &mut NestedWarmStarts,
     stats: &mut OptimizationStats,
 ) -> ExampleResult<FoldEvaluation> {
-    let selection = select_smoothing(&context.inner, target, smoothings, warm_starts, stats)?;
+    let selection = select_smoothing(
+        family,
+        &context.inner,
+        target,
+        smoothings,
+        warm_starts,
+        stats,
+    )?;
     let train_designs = PolicyDesigns::try_new(context.outer.train, context.outer.bases, target)?;
     let validation_designs =
         PolicyDesigns::try_new(context.outer.validation, context.outer.bases, target)?;
     let neighboring_target_start = warm_starts.outer.as_deref();
     let start = neighboring_target_start.unwrap_or(&selection.refit_start);
     let scored = fit_and_score(
-        context.outer.train,
-        context.outer.validation,
-        &train_designs,
-        &validation_designs,
+        family,
+        DesignedSplit {
+            train: context.outer.train,
+            validation: context.outer.validation,
+            train_designs: &train_designs,
+            validation_designs: &validation_designs,
+        },
         selection.smoothing,
         FitStarts {
             primary: Some(start),
@@ -1060,8 +1059,8 @@ fn evaluate_target(
     )
     .map_err(|error| {
         ExampleError::boxed(format!(
-            "outer refit, lambda_mu={}, lambda_sigma={}: {error}",
-            selection.smoothing.mean, selection.smoothing.scale
+            "outer refit, lambda_mu={}: {error}",
+            selection.smoothing.mean,
         ))
     })?;
     warm_starts.outer = Some(scored.fit.parameters);
@@ -1119,6 +1118,7 @@ struct FinalFitReport {
     nonfinite_gradients: usize,
     mu_range: (f64, f64),
     sigma_range: (f64, f64),
+    zero_probability_range: (f64, f64),
     pit_mean_sd: (f64, f64),
     residual_mean_sd: (f64, f64),
     coverage_90: f64,
@@ -1141,6 +1141,7 @@ const fn profile_index(target_count: usize, lag_index: usize, target_index: usiz
 }
 
 struct TargetScanner<'scan, 'data> {
+    family: PolicyFamily,
     context: &'scan NestedContext<'data>,
     config: &'scan AnalysisConfig,
     outer_fold: usize,
@@ -1163,6 +1164,7 @@ impl TargetScanner<'_, '_> {
         for target_index in target_indices {
             let target = self.config.targets[target_index];
             let evaluation = evaluate_target(
+                self.family,
                 self.context,
                 target,
                 &self.config.smoothings,
@@ -1192,6 +1194,7 @@ struct OuterFoldResult {
 fn evaluate_outer_fold(
     data: &PreparedData,
     config: &AnalysisConfig,
+    family: PolicyFamily,
     outer_fold: usize,
 ) -> ExampleResult<OuterFoldResult> {
     let targets_len = config.targets.len();
@@ -1203,6 +1206,7 @@ fn evaluate_outer_fold(
         let center = central_target_index(&config.targets);
         let mut center_warm = NestedWarmStarts::new(config.inner_folds, config.smoothings.len());
         let mut scanner = TargetScanner {
+            family,
             context: &context,
             config,
             outer_fold,
@@ -1235,6 +1239,7 @@ fn evaluate_outer_fold(
 
 fn run_analysis(data: &PreparedData, config: &AnalysisConfig) -> ExampleResult<AnalysisResult> {
     config.validate(data)?;
+    let family = policy_family()?;
     let targets_len = config.targets.len();
     let mut profile = config
         .lags
@@ -1259,7 +1264,7 @@ fn run_analysis(data: &PreparedData, config: &AnalysisConfig) -> ExampleResult<A
     let fold_results = (0..config.outer_folds)
         .into_par_iter()
         .map(|outer_fold| {
-            let result = evaluate_outer_fold(data, config, outer_fold);
+            let result = evaluate_outer_fold(data, config, family, outer_fold);
             if let Ok(fold) = &result
                 && config.show_progress
             {
@@ -1308,6 +1313,7 @@ fn run_analysis(data: &PreparedData, config: &AnalysisConfig) -> ExampleResult<A
     let final_fit = fit_final_model(
         data,
         config,
+        family,
         analysis_len,
         selected_lag,
         selected_target,
@@ -1399,6 +1405,7 @@ fn contiguous_one_se_range(
 fn fit_final_model(
     data: &PreparedData,
     config: &AnalysisConfig,
+    family: PolicyFamily,
     analysis_len: usize,
     lag: usize,
     target: f64,
@@ -1412,11 +1419,18 @@ fn fit_final_model(
         })
         .collect::<ExampleResult<Vec<_>>>()?;
     let mut warm_starts = NestedWarmStarts::new(config.inner_folds, config.smoothings.len());
-    let selection = select_smoothing(&inner, target, &config.smoothings, &mut warm_starts, stats)?;
+    let selection = select_smoothing(
+        family,
+        &inner,
+        target,
+        &config.smoothings,
+        &mut warm_starts,
+        stats,
+    )?;
     let bases = SplineBases::from_training(full_rows)?;
     let designs = PolicyDesigns::try_new(full_rows, bases, target)?;
     let blocks = designs.blocks(selection.smoothing)?;
-    let model = Gamlss::try_new(policy_family()?, blocks, full_rows.response)?
+    let model = Gamlss::try_new(family, blocks, full_rows.response)?
         .with_objective_scale(ObjectiveScale::Mean);
     let cold_start = model.initial_parameters()?;
     let fit = optimize_with_retry(
@@ -1427,12 +1441,28 @@ fn fit_final_model(
     )?;
     let diagnostics = model.training_diagnostics(&fit.parameters)?;
     let fitted = model.predict_theta(&fit.parameters)?;
-    let pit = model.pit_values(&fit.parameters)?;
-    let residuals = model.quantile_residuals(&fit.parameters)?;
+    let pit = fitted
+        .iter()
+        .zip(full_rows.response)
+        .filter(|(_, observation)| **observation != 0.0)
+        .map(|(theta, observation)| {
+            model
+                .family()
+                .component()
+                .cdf(*observation, &theta.component())
+        })
+        .collect::<Vec<_>>();
+    let residuals = pit
+        .iter()
+        .copied()
+        .map(gamlss::special::unit_normal_quantile)
+        .collect::<Vec<_>>();
     let mu_range = finite_range(fitted.iter().map(|theta| theta.mu))
         .ok_or_else(|| ExampleError::boxed("fitted locations are non-finite"))?;
     let sigma_range = finite_range(fitted.iter().map(|theta| theta.sigma))
         .ok_or_else(|| ExampleError::boxed("fitted scales are non-finite"))?;
+    let zero_probability_range = finite_range(fitted.iter().map(|theta| theta.zero_probability))
+        .ok_or_else(|| ExampleError::boxed("fitted zero probabilities are non-finite"))?;
     let pit_mean_sd = finite_mean_sd(&pit)
         .ok_or_else(|| ExampleError::boxed("PIT diagnostics are non-finite"))?;
     let residual_mean_sd = finite_mean_sd(&residuals)
@@ -1452,17 +1482,14 @@ fn fit_final_model(
         nonfinite_gradients: diagnostics.nonfinite_gradient_count,
         mu_range,
         sigma_range,
+        zero_probability_range,
         pit_mean_sd,
         residual_mean_sd,
         coverage_90,
     })
 }
 
-fn interval_coverage_90(
-    family: PolicyFamily,
-    fitted: &[StudentTTheta],
-    observations: &[f64],
-) -> f64 {
+fn interval_coverage_90(family: PolicyFamily, fitted: &[PolicyTheta], observations: &[f64]) -> f64 {
     let covered = fitted
         .iter()
         .zip(observations)
@@ -1547,15 +1574,14 @@ fn print_report(
         100.0 * zero_changes as f64 / analysis_len as f64,
     );
     println!(
-        "model=Student-t(df={STUDENT_T_DF:.0}), mean_bases={MEAN_BASIS}+{MEAN_BASIS}, scale_basis={SCALE_BASIS}, lags={:?}, targets={TARGET_MIN:.1}..={TARGET_MAX:.1} by 0.1",
+        "model=zero-adjusted Student-t(df={STUDENT_T_DF:.0}), anchored mean without intercept, constant scale/zero mass, mean_bases={MEAN_BASIS}+{MEAN_BASIS}, lags={:?}, targets={TARGET_MIN:.1}..={TARGET_MAX:.1} by 0.1",
         config.lags,
     );
     println!(
-        "outer_folds={}, inner_folds={}, fold_months={}, lambda_levels={SMOOTHING_LEVELS_DESC:?}, lambda_pairs={}, rayon_threads={}",
+        "outer_folds={}, inner_folds={}, fold_months={}, lambda_levels={SMOOTHING_LEVELS_DESC:?}, rayon_threads={}",
         config.outer_folds,
         config.inner_folds,
         config.fold_months,
-        config.smoothings.len(),
         rayon::current_num_threads(),
     );
     println!();
@@ -1586,10 +1612,8 @@ fn print_report(
     );
     println!();
     println!(
-        "final nested-CV smoothing: lambda_mu={}, lambda_sigma={}, inner mean NLL={:.6}",
-        analysis.final_fit.smoothing.mean,
-        analysis.final_fit.smoothing.scale,
-        analysis.final_fit.inner_mean_nll,
+        "final nested-CV smoothing: lambda_mu={}, inner mean NLL={:.6}",
+        analysis.final_fit.smoothing.mean, analysis.final_fit.inner_mean_nll,
     );
     println!(
         "full fit: parameters={}, iterations={}, termination={}, objective={:.6}, mean_nll={:.6}, penalty={:.6}, grad_norm={:.3e}, nonfinite_gradients={}",
@@ -1603,11 +1627,16 @@ fn print_report(
         analysis.final_fit.nonfinite_gradients,
     );
     println!(
-        "fitted mu=[{:.4}, {:.4}], sigma=[{:.4}, {:.4}], PIT mean/sd={:.4}/{:.4}, qres mean/sd={:.4}/{:.4}, in-sample 90% coverage={:.3}",
+        "fitted mu=[{:.4}, {:.4}], sigma=[{:.4}, {:.4}], zero_probability=[{:.4}, {:.4}]",
         analysis.final_fit.mu_range.0,
         analysis.final_fit.mu_range.1,
         analysis.final_fit.sigma_range.0,
         analysis.final_fit.sigma_range.1,
+        analysis.final_fit.zero_probability_range.0,
+        analysis.final_fit.zero_probability_range.1,
+    );
+    println!(
+        "non-zero component PIT mean/sd={:.4}/{:.4}, qres mean/sd={:.4}/{:.4}, full-mixture in-sample 90% coverage={:.3}",
         analysis.final_fit.pit_mean_sd.0,
         analysis.final_fit.pit_mean_sd.1,
         analysis.final_fit.residual_mean_sd.0,
@@ -1644,15 +1673,20 @@ mod tests {
             .collect::<Vec<_>>();
         raw.sort_by_key(|(date, _)| *date);
 
-        assert_eq!(data.len(), 142);
+        let analysis_start = raw
+            .iter()
+            .position(|(date, _)| date.year() >= ANALYSIS_START_YEAR)
+            .unwrap();
+
+        assert_eq!(data.len(), 114);
         assert_eq!(data.source_start, raw[0].0);
         assert_eq!(data.source_end, raw[raw.len() - 1].0);
         assert_eq!(
             data.dates[0],
-            Date::from_calendar_date(2014, Month::September, 1).unwrap()
+            Date::from_calendar_date(2017, Month::January, 1).unwrap()
         );
         assert_eq!(
-            data.dates[141],
+            data.dates[113],
             Date::from_calendar_date(2026, Month::June, 1).unwrap()
         );
         assert_eq!(
@@ -1660,7 +1694,7 @@ mod tests {
                 .iter()
                 .filter(|change| **change == 0.0)
                 .count(),
-            84
+            65
         );
         for lag in REACTION_LAGS {
             let rows = data.rows(lag, 0..data.len()).unwrap();
@@ -1668,16 +1702,16 @@ mod tests {
         }
         assert_abs_diff_eq!(
             data.delta_rate[0],
-            raw[MAX_REACTION_LAG].1[0] - raw[MAX_REACTION_LAG - 1].1[0],
+            raw[analysis_start].1[0] - raw[analysis_start - 1].1[0],
         );
         assert_abs_diff_eq!(
             data.previous_delta_rate[0],
-            raw[MAX_REACTION_LAG - 1].1[0] - raw[MAX_REACTION_LAG - 2].1[0],
+            raw[analysis_start - 1].1[0] - raw[analysis_start - 2].1[0],
         );
         for (lag_index, lag) in REACTION_LAGS.into_iter().enumerate() {
             assert_abs_diff_eq!(
                 data.lagged_inflation[lag_index][0],
-                raw[MAX_REACTION_LAG - lag].1[1],
+                raw[analysis_start - lag].1[1],
             );
         }
     }
@@ -1689,16 +1723,16 @@ mod tests {
         config.validate(&data).unwrap();
 
         let (first_train, first_validation) = outer_ranges(&config, 0).unwrap();
-        assert_eq!(first_train, 0..52);
-        assert_eq!(first_validation, 52..58);
+        assert_eq!(first_train, 0..48);
+        assert_eq!(first_validation, 48..54);
         let first_inner =
             inner_ranges(first_train.end, config.inner_folds, config.fold_months).unwrap();
-        assert_eq!(first_inner[0], (0..34, 34..40));
-        assert_eq!(first_inner[2], (0..46, 46..52));
+        assert_eq!(first_inner[0], (0..30, 30..36));
+        assert_eq!(first_inner[2], (0..42, 42..48));
 
-        let (last_train, last_validation) = outer_ranges(&config, 14).unwrap();
-        assert_eq!(last_train, 0..136);
-        assert_eq!(last_validation, 136..142);
+        let (last_train, last_validation) = outer_ranges(&config, 10).unwrap();
+        assert_eq!(last_train, 0..108);
+        assert_eq!(last_validation, 108..114);
 
         for outer_fold in 0..config.outer_folds {
             let (outer_train, outer_validation) = outer_ranges(&config, outer_fold).unwrap();
@@ -1727,11 +1761,9 @@ mod tests {
         assert_eq!(REACTION_LAGS, [1, 2, 3, 6, 9, 12]);
         assert!(!REACTION_LAGS.contains(&0));
         let smoothings = smoothing_grid();
-        assert_eq!(smoothings.len(), 9);
+        assert_eq!(smoothings.len(), 3);
         for mean in [0.01, 0.1, 1.0] {
-            for scale in [0.01, 0.1, 1.0] {
-                assert!(smoothings.contains(&Smoothing::new(mean, scale)));
-            }
+            assert!(smoothings.contains(&Smoothing::new(mean)));
         }
     }
 
@@ -1752,24 +1784,18 @@ mod tests {
     }
 
     #[test]
-    fn smoothing_ties_prefer_stronger_mean_then_scale_penalties() {
+    fn smoothing_ties_prefer_stronger_mean_penalty() {
         assert!(smoothing_is_better(
             1.0,
-            Smoothing::new(1.0, 0.1),
+            Smoothing::new(1.0),
             1.0,
-            Smoothing::new(0.1, 1.0),
-        ));
-        assert!(smoothing_is_better(
-            1.0,
-            Smoothing::new(1.0, 1.0),
-            1.0,
-            Smoothing::new(1.0, 0.1),
+            Smoothing::new(0.1),
         ));
         assert!(!smoothing_is_better(
             1.1,
-            Smoothing::new(1.0, 1.0),
+            Smoothing::new(1.0),
             1.0,
-            Smoothing::new(0.01, 0.01),
+            Smoothing::new(0.01),
         ));
     }
 
@@ -1805,7 +1831,7 @@ mod tests {
         let config = AnalysisConfig {
             lags: vec![9],
             targets: vec![6.0],
-            smoothings: vec![Smoothing::new(0.01, 0.1)],
+            smoothings: vec![Smoothing::new(0.01)],
             initial_train: OUTER_INITIAL_TRAIN,
             outer_folds: 1,
             inner_folds: INNER_FOLDS,
@@ -1827,7 +1853,7 @@ mod tests {
         let config = AnalysisConfig {
             lags: vec![9],
             targets: vec![4.9, 5.0, 5.1],
-            smoothings: vec![Smoothing::new(1.0, 1.0)],
+            smoothings: vec![Smoothing::new(1.0)],
             initial_train: OUTER_INITIAL_TRAIN,
             outer_folds: 1,
             inner_folds: INNER_FOLDS,
@@ -1835,7 +1861,7 @@ mod tests {
             show_progress: false,
         };
 
-        let fold = evaluate_outer_fold(&data, &config, 0).unwrap();
+        let fold = evaluate_outer_fold(&data, &config, policy_family().unwrap(), 0).unwrap();
 
         assert_eq!(fold.scores.len(), 3);
         assert!(fold.scores.iter().all(|score| score.is_finite()));

@@ -47,6 +47,9 @@ fn nll_eta_matches_nll_after_theta_transform_for_builtin_families() {
     assert_nll_eta_matches_theta::<_, 3>(&SkewNormalMeanSdNu::new(), 0.4, [0.2, -0.3, 0.1]);
     assert_nll_eta_matches_theta::<_, 3>(&StudentTMuSigmaTau::new(), 0.4, [0.2, -0.3, 1.2]);
     assert_nll_eta_matches_theta::<_, 3>(&StudentTMuSdTau::new(), 0.4, [0.2, -0.3, 1.2]);
+    let zero_adjusted_student_t = ZeroAdjustedStudentTMuSigma::try_new(5.0).unwrap();
+    assert_nll_eta_matches_theta::<_, 3>(&zero_adjusted_student_t, 0.0, [0.2, -0.3, -1.0]);
+    assert_nll_eta_matches_theta::<_, 3>(&zero_adjusted_student_t, 0.4, [0.2, -0.3, -1.0]);
     assert_nll_eta_matches_theta::<_, 3>(&TweedieMeanDispersionPower::new(), 1.4, [0.2, -0.3, 0.0]);
     assert_nll_eta_matches_theta::<_, 3>(&TweedieMeanCvPower::new(), 1.4, [0.2, -0.3, 0.0]);
     assert_nll_eta_matches_theta::<_, 3>(

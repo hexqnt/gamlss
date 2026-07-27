@@ -12,6 +12,12 @@ members = [
 ]
 resolver = "3"
 
+# Release-equivalent code generation with symbols retained for `perf`.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
+
 [workspace.package]
 version = "0.4.1"
 edition = "2024"

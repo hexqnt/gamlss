@@ -40,7 +40,7 @@ impl OutputMode {
             [argument] if argument == "--csv" => Ok(Self::Csv),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "usage: cargo run --example a1_skew_normal [-- --csv]",
+                "usage: cargo run --release --example a1_skew_normal [-- --csv]",
             )),
         }
     }

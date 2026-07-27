@@ -82,7 +82,8 @@ pub use skew_student_t::{
 pub use student_t::{
     StudentT, StudentTDynamic, StudentTEta, StudentTMuSdTau, StudentTMuSdTauEta,
     StudentTMuSdTauTheta, StudentTMuSigma, StudentTMuSigmaTau, StudentTMuSigmaTauEta,
-    StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta,
+    StudentTMuSigmaTauTheta, StudentTStdDev, StudentTTheta, ZeroAdjustedStudentT,
+    ZeroAdjustedStudentTEta, ZeroAdjustedStudentTMuSigma, ZeroAdjustedStudentTTheta,
 };
 pub use tweedie::{
     Tweedie, TweedieCv, TweedieEta, TweedieMeanCvPower, TweedieMeanCvPowerEta,
@@ -173,7 +174,7 @@ pub mod skew_normal;
 pub mod skew_power_exponential;
 /// Skew Student-t distribution.
 pub mod skew_student_t;
-/// Student distribution with a fixed number of degrees of freedom.
+/// Student-t distributions.
 pub mod student_t;
 /// Tweedie compound Poisson-gamma distribution.
 pub mod tweedie;
