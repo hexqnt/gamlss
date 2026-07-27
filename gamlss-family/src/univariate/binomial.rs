@@ -30,18 +30,21 @@ pub type BinomialVaryingTrialsProbability = BinomialVaryingTrials<Logit>;
     doc = include_str!("../../doc-assets/distributions/binomial_fixed_trials.svg")
 )]
 #[allow(clippy::doc_markdown)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BinomialFixedTrials<ProbabilityLink = Logit> {
     trials: u32,
+    nll_constant: f64,
     marker: PhantomData<ProbabilityLink>,
 }
+
+impl<ProbabilityLink> Eq for BinomialFixedTrials<ProbabilityLink> where ProbabilityLink: PartialEq {}
 
 impl<ProbabilityLink> BinomialFixedTrials<ProbabilityLink>
 where
     ProbabilityLink: UnitIntervalLink<f64>,
 {
     /// Creates a fixed-trials family after validating `trials > 0`.
-    pub const fn try_new(trials: u32) -> Result<Self, ModelError> {
+    pub fn try_new(trials: u32) -> Result<Self, ModelError> {
         if trials == 0 {
             return Err(ModelError::InvalidParameter {
                 parameter: "binomial trials",
@@ -50,6 +53,7 @@ where
         }
         Ok(Self {
             trials,
+            nll_constant: BinomialKernel::nll_constant(f64::from(trials)),
             marker: PhantomData,
         })
     }
@@ -63,6 +67,16 @@ where
     #[inline]
     fn trials_f64(&self) -> f64 {
         f64::from(self.trials)
+    }
+
+    #[inline]
+    fn nll_theta(&self, successes: f64, probability: f64) -> f64 {
+        BinomialKernel::nll_with_constant(
+            successes,
+            self.trials_f64(),
+            probability,
+            self.nll_constant,
+        )
     }
 
     #[inline]
@@ -135,8 +149,19 @@ impl BinomialKernel {
     }
 
     #[inline]
+    fn nll_constant(trials: f64) -> f64 {
+        trials.ln() - ln_gamma_stirling_residual(trials)
+    }
+
+    #[inline]
     #[allow(clippy::suboptimal_flops)]
     fn nll(successes: f64, trials: f64, probability: f64) -> f64 {
+        Self::nll_with_constant(successes, trials, probability, Self::nll_constant(trials))
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    fn nll_with_constant(successes: f64, trials: f64, probability: f64, nll_constant: f64) -> f64 {
         if !Self::valid_observation(successes, trials) || !is_strict_probability(probability) {
             return f64::INFINITY;
         }
@@ -148,9 +173,9 @@ impl BinomialKernel {
             return -trials * probability.ln();
         }
         let success_fraction = successes / trials;
-        ln_gamma_stirling_residual(successes) + ln_gamma_stirling_residual(failures)
-            - ln_gamma_stirling_residual(trials)
-            + trials.ln()
+        ln_gamma_stirling_residual(successes)
+            + ln_gamma_stirling_residual(failures)
+            + nll_constant
             + success_fraction.ln()
             + (-success_fraction).ln_1p()
             + trials * bernoulli_kl(success_fraction, probability)
@@ -193,7 +218,7 @@ gamlss_core::impl_scalar_compilable_family!(
 );
 
 macro_rules! impl_family {
-    ($family:ident, $observation:ty, $parts:expr) => {
+    ($family:ident, $observation:ty, $parts:expr, $nll:expr) => {
         impl<ProbabilityLink> Family for $family<ProbabilityLink>
         where
             ProbabilityLink: UnitIntervalLink<f64>,
@@ -217,7 +242,7 @@ macro_rules! impl_family {
                 _workspace: &mut (),
             ) -> f64 {
                 let (successes, trials) = $parts(self, observation);
-                BinomialKernel::nll(successes, trials, theta.probability)
+                $nll(self, successes, trials, theta.probability)
             }
 
             fn nll_and_gradient_eta(
@@ -228,7 +253,7 @@ macro_rules! impl_family {
             ) -> (f64, Self::GradientEta) {
                 let theta = Self::theta_from_eta(*eta);
                 let (successes, trials) = $parts(self, observation);
-                let nll = BinomialKernel::nll(successes, trials, theta.probability);
+                let nll = $nll(self, successes, trials, theta.probability);
                 if !nll.is_finite() {
                     return (
                         nll,
@@ -253,12 +278,18 @@ macro_rules! impl_family {
 impl_family!(
     BinomialFixedTrials,
     f64,
-    |family: &BinomialFixedTrials<ProbabilityLink>, successes| { (successes, family.trials_f64()) }
+    |family: &BinomialFixedTrials<ProbabilityLink>, successes| { (successes, family.trials_f64()) },
+    |family: &BinomialFixedTrials<ProbabilityLink>, successes, _trials, probability| {
+        family.nll_theta(successes, probability)
+    }
 );
 impl_family!(
     BinomialVaryingTrials,
     [f64; 2],
-    |_family, observation: [f64; 2]| { observation.into() }
+    |_family, observation: [f64; 2]| { observation.into() },
+    |_family: &BinomialVaryingTrials<ProbabilityLink>, successes, trials, probability| {
+        BinomialKernel::nll(successes, trials, probability)
+    }
 );
 
 impl<ProbabilityLink> InitialEtaFromObservations<1> for BinomialFixedTrials<ProbabilityLink>
@@ -302,7 +333,7 @@ where
             return f64::NAN;
         }
         let mut lower = 0_u32;
-        let mut upper = self.trials;
+        let mut upper = self.trials();
         while lower < upper {
             let middle = lower + (upper - lower) / 2;
             if self.cdf(f64::from(middle), theta) >= probability {
@@ -337,8 +368,9 @@ where
         if !is_strict_probability(theta.probability) {
             return Err(SimulationError::InvalidParameters("Binomial theta"));
         }
-        let distribution = rand_distr::Binomial::new(u64::from(self.trials), theta.probability)
-            .map_err(|_| SimulationError::BackendRejected("Binomial trials/probability"))?;
+        let distribution =
+            rand_distr::Binomial::new(u64::from(self.trials()), theta.probability)
+                .map_err(|_| SimulationError::BackendRejected("Binomial trials/probability"))?;
         Ok(rand_distr::Distribution::sample(&distribution, rng) as f64)
     }
 }

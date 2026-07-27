@@ -21,7 +21,7 @@ use gamlss_special::{baseline_softmax, digamma_delta, is_nonnegative_integer, ln
 use crate::multivariate::{count::try_sample_multinomial, simplex::try_sample_dirichlet};
 use crate::{
     domain::is_interior_simplex,
-    multivariate::count::{TrialPolicy, negative_log_multinomial_coefficient, validated_total},
+    multivariate::count::{FixedTrialCount, PerObservationTrials, TrialPolicy, validated_total},
     univariate::{BetaBinomialMeanPrecision, BetaBinomialTheta},
 };
 
@@ -91,8 +91,8 @@ where
     }
 
     #[inline]
-    const fn trial_policy(&self) -> TrialPolicy {
-        TrialPolicy::Fixed(self.trials)
+    const fn trial_policy(&self) -> FixedTrialCount {
+        FixedTrialCount::new(self.trials)
     }
 }
 
@@ -144,9 +144,9 @@ where
     }
 
     #[inline]
-    const fn trial_policy(&self) -> TrialPolicy {
+    const fn trial_policy(&self) -> PerObservationTrials {
         match self {
-            Self { marker: _ } => TrialPolicy::PerObservation,
+            Self { marker: _ } => PerObservationTrials,
         }
     }
 }
@@ -256,8 +256,9 @@ fn nll_validated<const K: usize>(
     counts: &[f64; K],
     theta: &DirichletMultinomialMeanPrecisionTheta<K>,
     total: f64,
+    policy: impl TrialPolicy,
 ) -> f64 {
-    let mut nll = negative_log_multinomial_coefficient(counts, total)
+    let mut nll = policy.negative_log_multinomial_coefficient(counts, total)
         + ln_gamma_delta(theta.precision, total);
     for (count, mean) in counts.iter().zip(theta.mean) {
         nll -= ln_gamma_delta(mean * theta.precision, *count);
@@ -268,7 +269,7 @@ fn nll_validated<const K: usize>(
 fn nll_theta<const K: usize>(
     counts: [f64; K],
     theta: &DirichletMultinomialMeanPrecisionTheta<K>,
-    policy: TrialPolicy,
+    policy: impl TrialPolicy,
 ) -> f64 {
     let Some(total) = validated_total(&counts, policy) else {
         return f64::INFINITY;
@@ -276,7 +277,7 @@ fn nll_theta<const K: usize>(
     if !valid_theta(theta) {
         return f64::INFINITY;
     }
-    let nll = nll_validated(&counts, theta, total);
+    let nll = nll_validated(&counts, theta, total, policy);
     if nll.is_finite() { nll } else { f64::INFINITY }
 }
 
@@ -290,7 +291,7 @@ const fn nan_eta<const K: usize>() -> DirichletMultinomialMeanPrecisionEta<K> {
 fn nll_and_gradient_eta<const K: usize, PrecisionLink>(
     counts: [f64; K],
     eta: &DirichletMultinomialMeanPrecisionEta<K>,
-    policy: TrialPolicy,
+    policy: impl TrialPolicy,
 ) -> (f64, DirichletMultinomialMeanPrecisionEta<K>)
 where
     PrecisionLink: PositiveLink<f64>,
@@ -302,7 +303,7 @@ where
     if !valid_theta(&theta) {
         return (f64::INFINITY, nan_eta());
     }
-    let nll = nll_validated(&counts, &theta, total);
+    let nll = nll_validated(&counts, &theta, total, policy);
     if !nll.is_finite() {
         return (f64::INFINITY, nan_eta());
     }
@@ -392,7 +393,7 @@ impl_family!(DirichletMultinomialVaryingTrials);
 
 fn initial_shape<'obs, const K: usize, PrecisionLink, Obs>(
     obs: &'obs Obs,
-    policy: TrialPolicy,
+    policy: impl TrialPolicy,
 ) -> ([f64; K], f64)
 where
     PrecisionLink: InitialEtaFromTheta<f64> + PositiveLink<f64>,
@@ -483,7 +484,7 @@ macro_rules! impl_compilable {
 }
 
 impl_compilable!(DirichletMultinomialFixedTrials, |family: &Self| {
-    Self::try_new(family.trials).map(|_| ())
+    Self::try_new(family.trials()).map(|_| ())
 });
 impl_compilable!(DirichletMultinomialVaryingTrials, |_family: &Self| {
     Self::try_new().map(|_| ())
@@ -611,7 +612,7 @@ where
         )?;
         try_sample_multinomial(
             rng,
-            self.trials,
+            self.trials(),
             &probabilities,
             "Dirichlet-multinomial conditional binomial",
             "Dirichlet-multinomial sequential sampling",

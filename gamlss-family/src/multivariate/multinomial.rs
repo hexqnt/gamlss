@@ -7,14 +7,14 @@ use gamlss_core::{
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
-use gamlss_special::{baseline_softmax, categorical_kl, is_nonnegative_integer};
+use gamlss_special::{baseline_softmax, is_nonnegative_integer};
 
 #[cfg(feature = "rand")]
 use crate::multivariate::count::try_sample_multinomial;
 use crate::{
     domain::is_interior_simplex,
     multivariate::count::{
-        TrialPolicy, multinomial_nll_at_empirical_probabilities, validated_total,
+        PerObservationTrials, PreparedFixedTrials, TrialPolicy, validated_total,
     },
     univariate::binomial::BinomialKernel,
 };
@@ -35,7 +35,7 @@ use crate::{
 /// Marginal and ordered conditional CDFs reduce to binomial CDFs. [`HasRosenblattTransform`] exposes their non-randomized discrete PIT values; consequently the final coordinate is exactly one for every valid count vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultinomialFixedTrials<const K: usize> {
-    trials: u32,
+    trials: PreparedFixedTrials,
 }
 
 impl<const K: usize> MultinomialFixedTrials<K> {
@@ -44,7 +44,7 @@ impl<const K: usize> MultinomialFixedTrials<K> {
     /// # Errors
     ///
     /// Returns [`ModelError::InvalidParameter`] when `K < 2` or `trials == 0`.
-    pub const fn try_new(trials: u32) -> Result<Self, ModelError> {
+    pub fn try_new(trials: u32) -> Result<Self, ModelError> {
         if K < 2 {
             return Err(ModelError::InvalidParameter {
                 parameter: "multinomial category count",
@@ -57,7 +57,9 @@ impl<const K: usize> MultinomialFixedTrials<K> {
                 expected: "positive",
             });
         }
-        Ok(Self { trials })
+        Ok(Self {
+            trials: PreparedFixedTrials::new(trials),
+        })
     }
 
     /// Creates a fixed-trials multinomial family.
@@ -66,24 +68,26 @@ impl<const K: usize> MultinomialFixedTrials<K> {
     ///
     /// Panics when `K < 2` or `trials == 0`.
     #[must_use]
-    pub const fn new(trials: u32) -> Self {
+    pub fn new(trials: u32) -> Self {
         assert!(
             K >= 2,
             "multinomial family requires at least two categories"
         );
         assert!(trials > 0, "multinomial trials must be positive");
-        Self { trials }
+        Self {
+            trials: PreparedFixedTrials::new(trials),
+        }
     }
 
     /// Returns the common number of trials.
     #[must_use]
     pub const fn trials(&self) -> u32 {
-        self.trials
+        self.trials.trials()
     }
 
     #[inline]
-    const fn trial_policy(self) -> TrialPolicy {
-        TrialPolicy::Fixed(self.trials)
+    const fn trial_policy(&self) -> &PreparedFixedTrials {
+        &self.trials
     }
 }
 
@@ -128,9 +132,9 @@ impl<const K: usize> MultinomialVaryingTrials<K> {
     }
 
     #[inline]
-    const fn trial_policy(self) -> TrialPolicy {
+    const fn trial_policy(self) -> PerObservationTrials {
         match self {
-            Self { private: () } => TrialPolicy::PerObservation,
+            Self { private: () } => PerObservationTrials,
         }
     }
 }
@@ -213,20 +217,19 @@ fn valid_theta<const K: usize>(theta: &MultinomialTheta<K>) -> bool {
     is_interior_simplex(&theta.probabilities)
 }
 
-fn nll_validated<const K: usize>(counts: [f64; K], theta: &MultinomialTheta<K>, total: f64) -> f64 {
-    if total == 0.0 {
-        return 0.0;
-    }
-
-    let nll = multinomial_nll_at_empirical_probabilities(&counts, total);
-    let proportions = counts.map(|count| count / total);
-    total.mul_add(categorical_kl(&proportions, &theta.probabilities), nll)
+fn nll_validated<const K: usize>(
+    counts: &[f64; K],
+    theta: &MultinomialTheta<K>,
+    total: f64,
+    trial_policy: impl TrialPolicy,
+) -> f64 {
+    trial_policy.multinomial_nll(counts, total, &theta.probabilities)
 }
 
 fn nll_theta<const K: usize>(
     counts: [f64; K],
     theta: &MultinomialTheta<K>,
-    trial_policy: TrialPolicy,
+    trial_policy: impl TrialPolicy,
 ) -> f64 {
     let Some(total) = validated_total(&counts, trial_policy) else {
         return f64::INFINITY;
@@ -234,7 +237,7 @@ fn nll_theta<const K: usize>(
     if !valid_theta(theta) {
         return f64::INFINITY;
     }
-    nll_validated(counts, theta, total)
+    nll_validated(&counts, theta, total, trial_policy)
 }
 
 const fn nan_eta<const K: usize>() -> MultinomialEta<K> {
@@ -246,7 +249,7 @@ const fn nan_eta<const K: usize>() -> MultinomialEta<K> {
 fn nll_and_gradient_eta<const K: usize>(
     counts: [f64; K],
     eta: &MultinomialEta<K>,
-    trial_policy: TrialPolicy,
+    trial_policy: impl TrialPolicy,
 ) -> (f64, MultinomialEta<K>) {
     let theta = theta_from_eta(eta);
     let Some(total) = validated_total(&counts, trial_policy) else {
@@ -255,7 +258,7 @@ fn nll_and_gradient_eta<const K: usize>(
     if !valid_theta(&theta) {
         return (f64::INFINITY, nan_eta());
     }
-    let nll = nll_validated(counts, &theta, total);
+    let nll = nll_validated(&counts, &theta, total, trial_policy);
     if !nll.is_finite() {
         return (nll, nan_eta());
     }
@@ -315,7 +318,10 @@ macro_rules! impl_family {
 impl_family!(MultinomialFixedTrials);
 impl_family!(MultinomialVaryingTrials);
 
-fn initial_logits<'obs, const K: usize, Obs>(obs: &'obs Obs, trial_policy: TrialPolicy) -> [f64; K]
+fn initial_logits<'obs, const K: usize, Obs>(
+    obs: &'obs Obs,
+    trial_policy: impl TrialPolicy,
+) -> [f64; K]
 where
     Obs: ObservationView<'obs, Observation = [f64; K]> + 'obs,
 {
@@ -363,7 +369,7 @@ macro_rules! impl_compilable {
 }
 
 impl_compilable!(MultinomialFixedTrials, |family: &Self| {
-    Self::try_new(family.trials).map(|_| ())
+    Self::try_new(family.trials()).map(|_| ())
 });
 impl_compilable!(MultinomialVaryingTrials, |_family: &Self| {
     Self::try_new().map(|_| ())
@@ -377,7 +383,7 @@ impl<const K: usize> HasMarginalCdf for MultinomialFixedTrials<K> {
         if !valid_theta(theta) {
             return f64::NAN;
         }
-        binomial_cdf_allow_degenerate(y, f64::from(self.trials), probability)
+        binomial_cdf_allow_degenerate(y, self.trials.total(), probability)
     }
 }
 
@@ -402,7 +408,7 @@ impl<const K: usize> HasConditionalCdf for MultinomialFixedTrials<K> {
         let Some(preceding_total) = preceding_total else {
             return f64::NAN;
         };
-        let trials = f64::from(self.trials);
+        let trials = self.trials.total();
         if !preceding_total.is_finite() || preceding_total > trials {
             return f64::NAN;
         }
@@ -458,7 +464,7 @@ where
         }
         try_sample_multinomial(
             rng,
-            self.trials,
+            self.trials(),
             &theta.probabilities,
             "Multinomial conditional binomial",
             "Multinomial sequential sampling",
@@ -546,6 +552,7 @@ mod tests {
     #[test]
     fn likelihood_matches_closed_form_and_binomial_special_case() {
         let family = MultinomialFixedTrials::<3>::new(10);
+        let varying = MultinomialVaryingTrials::<3>::new();
         let theta = MultinomialTheta::try_new([0.2, 0.3, 0.5]).unwrap();
         let probability = 2_520.0_f64 * 0.2_f64.powi(2) * 0.3_f64.powi(3) * 0.5_f64.powi(5);
         assert_relative_eq!(
@@ -553,6 +560,12 @@ mod tests {
             -probability.ln(),
             epsilon = 2.0e-14
         );
+        for counts in [[2.0, 3.0, 5.0], [0.0, 4.0, 6.0], [9.0, 0.0, 1.0]] {
+            assert_eq!(
+                family.nll(counts, &theta, &mut ()),
+                varying.nll(counts, &theta, &mut ())
+            );
+        }
 
         let multinomial = MultinomialVaryingTrials::<2>::new();
         let binomial = BinomialVaryingTrialsProbability::new();

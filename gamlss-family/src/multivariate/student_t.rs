@@ -29,6 +29,50 @@ pub(super) fn robust_weight(dimension: f64, tau: f64, quadratic: f64) -> f64 {
     (tau / scale + dimension / scale) / (tau / scale + quadratic / scale)
 }
 
+/// Prepared multivariate Student-t density for one dimension and fixed `tau`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MvStudentTKernel<const D: usize> {
+    tau: f64,
+    nll_constant: f64,
+}
+
+impl<const D: usize> MvStudentTKernel<D> {
+    #[inline]
+    pub(super) fn try_new(tau: f64) -> Option<Self> {
+        if D == 0 || !valid_degrees_of_freedom(tau) {
+            return None;
+        }
+        let dimension = D as f64;
+        Some(Self {
+            tau,
+            nll_constant: -ln_gamma_delta(0.5 * tau, 0.5 * dimension)
+                + 0.5 * dimension * (tau.ln() + std::f64::consts::PI.ln()),
+        })
+    }
+
+    #[inline]
+    pub(super) const fn tau(self) -> f64 {
+        self.tau
+    }
+
+    pub(super) fn nll_location_scale(
+        self,
+        observation: [f64; D],
+        location: &[f64; D],
+        cholesky: &impl LowerTriangularMatrix,
+        standardized: &mut [f64; D],
+    ) -> f64 {
+        let Some((quadratic, log_det_scale)) =
+            elliptical::standardize(D, &observation, location, cholesky, standardized)
+        else {
+            return f64::INFINITY;
+        };
+        log_det_scale
+            + f64::midpoint(self.tau, D as f64) * (quadratic / self.tau).ln_1p()
+            + self.nll_constant
+    }
+}
+
 fn direct_tau_score(dimension: f64, tau: f64, quadratic: f64) -> f64 {
     let quadratic_fraction = if quadratic == 0.0 {
         0.0
@@ -56,18 +100,10 @@ pub(super) fn nll_location_scale<const D: usize>(
     tau: f64,
     standardized: &mut [f64; D],
 ) -> f64 {
-    if !valid_degrees_of_freedom(tau) {
-        return f64::INFINITY;
-    }
-    let Some((quadratic, log_det_scale)) =
-        elliptical::standardize(D, &observation, location, cholesky, standardized)
-    else {
+    let Some(kernel) = MvStudentTKernel::try_new(tau) else {
         return f64::INFINITY;
     };
-    let dimension = D as f64;
-    log_det_scale + f64::midpoint(tau, dimension) * (quadratic / tau).ln_1p()
-        - ln_gamma_delta(0.5 * tau, 0.5 * dimension)
-        + 0.5 * dimension * (tau.ln() + std::f64::consts::PI.ln())
+    kernel.nll_location_scale(observation, location, cholesky, standardized)
 }
 
 #[cfg(feature = "rand")]

@@ -8,12 +8,14 @@ use criterion::{
 use gamlss_core::{
     CholeskyScale, DenseDesign, DenseRows, DynamicParameterBlocks, Family, Gamlss, GamlssBlocks,
     HasRosenblattTransform, LinearPredictorBlock, LowerTriangularParameterBlock, MixtureWeight, Mu,
-    NoPenalty, ObservationView, ParameterBlock, ParameterBlocks, PartialCorrelation, Sigma,
-    SimplexLogitParameterBlock, StrictLowerTriangularParameterBlock, Tau, VectorParameterBlock,
+    NoPenalty, Nu, ObservationView, ParameterBlock, ParameterBlocks, PartialCorrelation,
+    Probability, Sigma, SimplexLogitParameterBlock, StrictLowerTriangularParameterBlock, Tau,
+    VectorParameterBlock,
 };
 use gamlss_family::{
-    DynMvNormalCholeskyDefault, Mixture, MvNormalCholeskyDefault,
-    MvNormalMeanStdPartialCorrDefault, MvStudentTCholeskyDefault, NormalMuSigma,
+    BinomialFixedTrialsProbability, DynMvNormalCholeskyDefault, Mixture, MultinomialFixedTrials,
+    MvNormalCholeskyDefault, MvNormalMeanStdPartialCorrDefault,
+    MvSkewStudentTFixedTauCholeskyDefault, MvStudentTCholeskyDefault, NormalMuSigma,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -182,6 +184,68 @@ fn benchmark_scalar(criterion: &mut Criterion, nobs: usize, ncols: usize, covera
     group.finish();
 }
 
+fn benchmark_fixed_binomial(criterion: &mut Criterion, nobs: usize, trials: u32) {
+    assert!(trials > 1, "benchmark needs interior binomial counts");
+    let interior_count = usize::try_from(trials - 1).expect("trial count fits usize");
+    let observations = (0..nobs)
+        .map(|row| 1.0 + (row % interior_count) as f64)
+        .collect::<Vec<_>>();
+    let probability_design = DenseDesign::intercept(nobs);
+    let blocks = ParameterBlocks::new((ParameterBlock::<Probability, _, _>::linear(
+        &probability_design,
+        NoPenalty,
+        0,
+    ),));
+    let model = Gamlss::try_new(
+        BinomialFixedTrialsProbability::try_new(trials).unwrap(),
+        blocks,
+        observations.as_slice(),
+    )
+    .unwrap();
+    let beta = [0.3];
+
+    let mut group =
+        criterion.benchmark_group(format!("binomial_fixed_trials/n{nobs}/trials{trials}"));
+    benchmark_model(&mut group, &model, &beta, Coverage::WorkspaceHotPath);
+    group.finish();
+}
+
+fn benchmark_fixed_multinomial(criterion: &mut Criterion, nobs: usize) {
+    let observations = (0..nobs)
+        .map(|row| {
+            let first = 1 + row % 4;
+            let second = 2 + (3 * row) % 5;
+            let third = 3 + (5 * row) % 6;
+            [
+                first as f64,
+                second as f64,
+                third as f64,
+                (20 - first - second - third) as f64,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let shared_design = DenseDesign::intercept(nobs);
+    let probabilities = SimplexLogitParameterBlock::<Probability, 4, _, _>::new(
+        (0..3)
+            .map(|_| LinearPredictorBlock::new(&shared_design))
+            .collect(),
+        NoPenalty,
+        0,
+    );
+    let model = Gamlss::try_new_with_observations(
+        MultinomialFixedTrials::<4>::new(20),
+        ParameterBlocks::new(probabilities),
+        observations.as_slice(),
+    )
+    .unwrap();
+    let beta = [0.3, -0.2, 0.1];
+
+    let mut group =
+        criterion.benchmark_group(format!("multinomial_fixed_trials/k4/n{nobs}/trials20"));
+    benchmark_model(&mut group, &model, &beta, Coverage::WorkspaceHotPath);
+    group.finish();
+}
+
 fn benchmark_fixed_mvn<const D: usize>(
     criterion: &mut Criterion,
     nobs: usize,
@@ -343,6 +407,43 @@ fn benchmark_student_t<const D: usize>(criterion: &mut Criterion, nobs: usize) {
     group.finish();
 }
 
+fn benchmark_fixed_skew_student_t<const D: usize>(criterion: &mut Criterion, nobs: usize) {
+    let observations = fixed_observations::<D>(nobs);
+    let shared_design = DenseDesign::intercept(nobs);
+    let mu = VectorParameterBlock::<Mu, D, _, _>::new(
+        array::from_fn(|_| LinearPredictorBlock::new(&shared_design)),
+        NoPenalty,
+        0,
+    );
+    let cholesky = LowerTriangularParameterBlock::<CholeskyScale, D, _, _>::new(
+        (0..D * (D + 1) / 2)
+            .map(|_| LinearPredictorBlock::new(&shared_design))
+            .collect(),
+        NoPenalty,
+        0,
+    );
+    let shape = VectorParameterBlock::<Nu, D, _, _>::new(
+        array::from_fn(|_| LinearPredictorBlock::new(&shared_design)),
+        NoPenalty,
+        0,
+    );
+    let model = Gamlss::try_new_with_observations(
+        MvSkewStudentTFixedTauCholeskyDefault::<D>::new(5.0),
+        ParameterBlocks::new((mu, cholesky, shape)),
+        observations.as_slice(),
+    )
+    .unwrap();
+    let mut beta = vec![0.0; model.nparams()];
+    let shape_start = D + D * (D + 1) / 2;
+    beta[shape_start..].fill(0.5);
+
+    let mut group = criterion.benchmark_group(format!(
+        "mv_skew_student_t_fixed_tau/d{D}/n{nobs}/shared_intercept"
+    ));
+    benchmark_model(&mut group, &model, &beta, Coverage::WorkspaceHotPath);
+    group.finish();
+}
+
 fn benchmark_mixture<const C: usize>(criterion: &mut Criterion, nobs: usize) {
     let observations = scalar_observations(nobs);
     let shared_design = DenseDesign::intercept(nobs);
@@ -382,6 +483,8 @@ fn objective_baseline(criterion: &mut Criterion) {
     benchmark_scalar(criterion, 1_000, 8, Coverage::Full);
     benchmark_scalar(criterion, 1_000, 64, Coverage::WorkspaceHotPath);
     benchmark_scalar(criterion, 100_000, 8, Coverage::WorkspaceHotPath);
+    benchmark_fixed_binomial(criterion, 1_000, 20);
+    benchmark_fixed_multinomial(criterion, 1_000);
 
     benchmark_fixed_mvn::<2>(criterion, 1_000, 1, Coverage::Full);
     benchmark_fixed_mvn::<8>(criterion, 1_000, 1, Coverage::Full);
@@ -401,6 +504,7 @@ fn objective_baseline(criterion: &mut Criterion) {
 
     benchmark_mean_std_partial::<4>(criterion, 1_000);
     benchmark_student_t::<4>(criterion, 1_000);
+    benchmark_fixed_skew_student_t::<4>(criterion, 1_000);
     benchmark_mixture::<2>(criterion, 1_000);
     benchmark_mixture::<4>(criterion, 1_000);
 }

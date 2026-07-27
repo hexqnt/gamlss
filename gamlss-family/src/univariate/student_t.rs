@@ -3,7 +3,8 @@
 use gamlss_core::{Identity, Log, LogPlus, Logit};
 
 use gamlss_special::{
-    digamma_delta, invert_real_cdf, ln_beta, regularized_beta, student_t_nll_constant,
+    StandardStudentTKernel, digamma_delta, invert_real_cdf, ln_beta, regularized_beta,
+    student_t_nll_constant,
 };
 
 pub use dynamic::{StudentTDynamic, StudentTMuSigmaTauEta, StudentTMuSigmaTauTheta};
@@ -80,26 +81,19 @@ struct StudentTGradientGeometry {
 /// families. Dynamic-DF parameterizations construct the same kernel per row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct StudentTKernel {
-    degrees_of_freedom: f64,
-    nll_constant: f64,
+    standardized: StandardStudentTKernel,
 }
 
 impl StudentTKernel {
     #[inline]
     pub(super) fn try_new(degrees_of_freedom: f64) -> Option<Self> {
-        if degrees_of_freedom <= 0.0 || !degrees_of_freedom.is_finite() {
-            return None;
-        }
-
-        Some(Self {
-            degrees_of_freedom,
-            nll_constant: student_t_nll_constant(degrees_of_freedom),
-        })
+        StandardStudentTKernel::try_new(degrees_of_freedom)
+            .map(|standardized| Self { standardized })
     }
 
     #[inline]
     pub(super) const fn degrees_of_freedom(self) -> f64 {
-        self.degrees_of_freedom
+        self.standardized.degrees_of_freedom()
     }
 
     #[inline]
@@ -119,9 +113,9 @@ impl StudentTKernel {
             return f64::INFINITY;
         }
 
-        let nu = self.degrees_of_freedom;
+        let nu = self.degrees_of_freedom();
         let z = (y - theta.mu) / theta.sigma;
-        self.nll_constant + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
+        self.standardized.nll_constant() + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
     }
 
     #[inline]
@@ -154,7 +148,7 @@ impl StudentTKernel {
             };
         };
 
-        let nu = self.degrees_of_freedom;
+        let nu = self.degrees_of_freedom();
         let tail_derivative = if geometry.squared_fraction == 0.0 {
             0.0
         } else {
@@ -177,7 +171,7 @@ impl StudentTKernel {
             return None;
         }
 
-        let nu = self.degrees_of_freedom;
+        let nu = self.degrees_of_freedom();
         let z = (y - theta.mu) / theta.sigma;
         let z2 = z * z;
         let squared_fraction = if z2 == 0.0 {

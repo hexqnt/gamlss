@@ -2,9 +2,10 @@
 
 //! Multivariate skew-Student-t distributions.
 
-use gamlss_special::{student_t_log_cdf_standardized, student_t_log_pdf_standardized};
+use gamlss_special::{StandardStudentTKernel, student_t_log_cdf_standardized};
 
 use crate::constants::LOG_2;
+use crate::multivariate::student_t::MvStudentTKernel;
 
 pub use fixed_tau_cholesky::{
     MvSkewStudentTFixedTauCholesky, MvSkewStudentTFixedTauCholeskyDefault,
@@ -19,65 +20,94 @@ pub(super) struct SkewStudentTGradientTerms<const D: usize> {
     pub shape: [f64; D],
 }
 
-pub(super) fn skew_student_t_nll<const D: usize>(
-    base_nll: f64,
-    standardized: &[f64; D],
-    shape: &[f64; D],
-    tau: f64,
-) -> f64 {
-    if !base_nll.is_finite() {
-        return f64::INFINITY;
-    }
-    let quadratic = standardized.iter().map(|value| value * value).sum::<f64>();
-    let projection = shape
-        .iter()
-        .zip(standardized)
-        .map(|(shape, standardized)| shape * standardized)
-        .sum::<f64>();
-    let argument = projection * ((tau + D as f64) / (tau + quadratic)).sqrt();
-    let nll = base_nll - LOG_2 - student_t_log_cdf_standardized(argument, tau + D as f64);
-    if nll.is_finite() { nll } else { f64::INFINITY }
+/// Prepared fixed-`tau` multivariate skew-Student-t density.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MvSkewStudentTKernel<const D: usize> {
+    base: MvStudentTKernel<D>,
+    skew_density: StandardStudentTKernel,
 }
 
-pub(super) fn skew_student_t_gradient_terms<const D: usize>(
-    base_nll: f64,
-    standardized: &[f64; D],
-    shape: &[f64; D],
-    tau: f64,
-) -> Option<SkewStudentTGradientTerms<D>> {
-    if !base_nll.is_finite() {
-        return None;
+impl<const D: usize> MvSkewStudentTKernel<D> {
+    pub(super) fn try_new(tau: f64) -> Option<Self> {
+        let base = MvStudentTKernel::try_new(tau)?;
+        let skew_density = StandardStudentTKernel::try_new(tau + D as f64)?;
+        Some(Self { base, skew_density })
     }
-    let dimension = D as f64;
-    let quadratic = standardized.iter().map(|value| value * value).sum::<f64>();
-    let denominator = tau + quadratic;
-    let projection = shape
-        .iter()
-        .zip(standardized)
-        .map(|(shape, standardized)| shape * standardized)
-        .sum::<f64>();
-    let argument_scale = ((tau + dimension) / denominator).sqrt();
-    let argument = projection * argument_scale;
-    let skew_log_probability = student_t_log_cdf_standardized(argument, tau + dimension);
-    let skew_log_density = student_t_log_pdf_standardized(argument, tau + dimension);
-    let cdf_score = (skew_log_density - skew_log_probability).exp();
-    let nll = base_nll - LOG_2 - skew_log_probability;
-    if !nll.is_finite() || !cdf_score.is_finite() || !argument_scale.is_finite() {
-        return None;
+
+    #[inline]
+    pub(super) const fn tau(self) -> f64 {
+        self.base.tau()
     }
-    let base_weight = crate::multivariate::student_t::robust_weight(dimension, tau, quadratic);
-    Some(SkewStudentTGradientTerms {
-        nll,
-        standardized: std::array::from_fn(|component| {
-            base_weight * standardized[component]
-                - cdf_score
-                    * argument_scale
-                    * (shape[component] - projection * standardized[component] / denominator)
-        }),
-        shape: std::array::from_fn(|component| {
-            -cdf_score * argument_scale * standardized[component]
-        }),
-    })
+
+    pub(super) fn base_nll_location_scale(
+        self,
+        observation: [f64; D],
+        location: &[f64; D],
+        cholesky: &impl crate::multivariate::elliptical::LowerTriangularMatrix,
+        standardized: &mut [f64; D],
+    ) -> f64 {
+        self.base
+            .nll_location_scale(observation, location, cholesky, standardized)
+    }
+
+    pub(super) fn nll(self, base_nll: f64, standardized: &[f64; D], shape: &[f64; D]) -> f64 {
+        if !base_nll.is_finite() {
+            return f64::INFINITY;
+        }
+        let quadratic = standardized.iter().map(|value| value * value).sum::<f64>();
+        let projection = shape
+            .iter()
+            .zip(standardized)
+            .map(|(shape, standardized)| shape * standardized)
+            .sum::<f64>();
+        let skew_df = self.skew_density.degrees_of_freedom();
+        let argument = projection * (skew_df / (self.tau() + quadratic)).sqrt();
+        let nll = base_nll - LOG_2 - student_t_log_cdf_standardized(argument, skew_df);
+        if nll.is_finite() { nll } else { f64::INFINITY }
+    }
+
+    pub(super) fn gradient_terms(
+        self,
+        base_nll: f64,
+        standardized: &[f64; D],
+        shape: &[f64; D],
+    ) -> Option<SkewStudentTGradientTerms<D>> {
+        if !base_nll.is_finite() {
+            return None;
+        }
+        let dimension = D as f64;
+        let tau = self.tau();
+        let quadratic = standardized.iter().map(|value| value * value).sum::<f64>();
+        let denominator = tau + quadratic;
+        let projection = shape
+            .iter()
+            .zip(standardized)
+            .map(|(shape, standardized)| shape * standardized)
+            .sum::<f64>();
+        let skew_df = self.skew_density.degrees_of_freedom();
+        let argument_scale = (skew_df / denominator).sqrt();
+        let argument = projection * argument_scale;
+        let skew_log_probability = student_t_log_cdf_standardized(argument, skew_df);
+        let skew_log_density = self.skew_density.log_pdf(argument);
+        let cdf_score = (skew_log_density - skew_log_probability).exp();
+        let nll = base_nll - LOG_2 - skew_log_probability;
+        if !nll.is_finite() || !cdf_score.is_finite() || !argument_scale.is_finite() {
+            return None;
+        }
+        let base_weight = crate::multivariate::student_t::robust_weight(dimension, tau, quadratic);
+        Some(SkewStudentTGradientTerms {
+            nll,
+            standardized: std::array::from_fn(|component| {
+                base_weight * standardized[component]
+                    - cdf_score
+                        * argument_scale
+                        * (shape[component] - projection * standardized[component] / denominator)
+            }),
+            shape: std::array::from_fn(|component| {
+                -cdf_score * argument_scale * standardized[component]
+            }),
+        })
+    }
 }
 
 #[cfg(feature = "rand")]

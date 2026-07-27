@@ -15,14 +15,12 @@ use gamlss_core::{SimulationError, TrySimulate};
 use gamlss_special::ln_gamma;
 
 use crate::multivariate::{
-    elliptical, initial,
-    matrix::FixedLowerTriangular,
-    student_t::{nll_location_scale, valid_degrees_of_freedom},
+    elliptical, initial, matrix::FixedLowerTriangular, student_t::valid_degrees_of_freedom,
 };
 
+use super::MvSkewStudentTKernel;
 #[cfg(feature = "rand")]
 use super::try_sample_location_scale;
-use super::{skew_student_t_gradient_terms, skew_student_t_nll};
 
 /// Default-link fixed-`tau` multivariate skew-Student-t.
 pub type MvSkewStudentTFixedTauCholeskyDefault<const D: usize> =
@@ -48,7 +46,7 @@ pub struct MvSkewStudentTFixedTauCholesky<
     OffDiagonalLink = Identity,
     ShapeLink = Identity,
 > {
-    tau: f64,
+    kernel: MvSkewStudentTKernel<D>,
     marker: PhantomData<(MuLink, DiagonalLink, OffDiagonalLink, ShapeLink)>,
 }
 
@@ -66,21 +64,19 @@ where
     ///
     /// Returns [`ModelError::InvalidParameter`] when `D == 0` or `tau` is not
     /// finite and strictly positive.
-    pub const fn try_new(tau: f64) -> Result<Self, ModelError> {
+    pub fn try_new(tau: f64) -> Result<Self, ModelError> {
         if D == 0 {
             return Err(ModelError::InvalidParameter {
                 parameter: "dimension",
                 expected: "positive",
             });
         }
-        if !(tau > 0.0 && tau.is_finite()) {
-            return Err(ModelError::InvalidParameter {
-                parameter: "tau",
-                expected: "finite and > 0",
-            });
-        }
+        let kernel = MvSkewStudentTKernel::try_new(tau).ok_or(ModelError::InvalidParameter {
+            parameter: "tau",
+            expected: "finite and > 0",
+        })?;
         Ok(Self {
-            tau,
+            kernel,
             marker: PhantomData,
         })
     }
@@ -91,25 +87,18 @@ where
     ///
     /// Panics when `D == 0` or `tau` is not finite and strictly positive.
     #[must_use]
-    pub const fn new(tau: f64) -> Self {
+    pub fn new(tau: f64) -> Self {
         assert!(
             D > 0,
             "multivariate skew-Student-t dimension must be positive"
         );
-        assert!(
-            tau > 0.0 && tau.is_finite(),
-            "multivariate skew-Student-t tau must be finite and positive"
-        );
-        Self {
-            tau,
-            marker: PhantomData,
-        }
+        Self::try_new(tau).expect("multivariate skew-Student-t tau must be finite and positive")
     }
 
     /// Fixed degrees of freedom.
     #[must_use]
     pub const fn tau(&self) -> f64 {
-        self.tau
+        self.kernel.tau()
     }
 
     /// Creates natural-scale parameters tied to this family's fixed `tau`.
@@ -128,7 +117,7 @@ where
         cholesky: FixedLowerTriangular<D>,
         shape: [f64; D],
     ) -> Result<MvSkewStudentTFixedTauCholeskyTheta<D>, ModelError> {
-        MvSkewStudentTFixedTauCholeskyTheta::try_new(mu, cholesky, shape, self.tau)
+        MvSkewStudentTFixedTauCholeskyTheta::try_new(mu, cholesky, shape, self.tau())
     }
 
     fn theta_from_eta(
@@ -151,7 +140,7 @@ where
                     .expect("valid lower-triangular index");
             }
         }
-        MvSkewStudentTFixedTauCholeskyTheta::from_parts_unchecked(mu, cholesky, shape, self.tau)
+        MvSkewStudentTFixedTauCholeskyTheta::from_parts_unchecked(mu, cholesky, shape, self.tau())
     }
 
     fn nan_eta() -> MvSkewStudentTFixedTauCholeskyEta<D> {
@@ -167,13 +156,14 @@ where
         observation: [f64; D],
         theta: &MvSkewStudentTFixedTauCholeskyTheta<D>,
     ) -> f64 {
-        if theta.tau.to_bits() != self.tau.to_bits() || !valid_theta(theta) {
+        if theta.tau.to_bits() != self.tau().to_bits() || !valid_theta(theta) {
             return f64::INFINITY;
         }
         let mut z = [0.0; D];
         let base_nll =
-            nll_location_scale(observation, &theta.mu, &theta.cholesky, theta.tau, &mut z);
-        skew_student_t_nll(base_nll, &z, &theta.shape, theta.tau)
+            self.kernel
+                .base_nll_location_scale(observation, &theta.mu, &theta.cholesky, &mut z);
+        self.kernel.nll(base_nll, &z, &theta.shape)
     }
 
     fn nll_and_gradient_eta_values(
@@ -187,9 +177,9 @@ where
         }
         let mut z = [0.0; D];
         let base_nll =
-            nll_location_scale(observation, &theta.mu, &theta.cholesky, theta.tau, &mut z);
-        let Some(terms) = skew_student_t_gradient_terms(base_nll, &z, &theta.shape, theta.tau)
-        else {
+            self.kernel
+                .base_nll_location_scale(observation, &theta.mu, &theta.cholesky, &mut z);
+        let Some(terms) = self.kernel.gradient_terms(base_nll, &z, &theta.shape) else {
             return (f64::INFINITY, Self::nan_eta());
         };
         let mut location_score = [0.0; D];
@@ -321,7 +311,7 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
-        if theta.tau.to_bits() != self.tau.to_bits() || !valid_theta(theta) {
+        if theta.tau.to_bits() != self.tau().to_bits() || !valid_theta(theta) {
             return Err(SimulationError::InvalidParameters(
                 "fixed-tau multivariate skew-Student-t theta",
             ));

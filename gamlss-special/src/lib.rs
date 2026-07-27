@@ -497,6 +497,63 @@ pub fn student_t_nll_constant(nu: f64) -> f64 {
     f64::midpoint(nu.ln(), std::f64::consts::PI.ln()) - ln_gamma_delta(0.5 * nu, 0.5)
 }
 
+/// Prepared standard Student-t density for one fixed number of degrees of freedom.
+///
+/// Construction validates the degrees of freedom and evaluates the
+/// normalizing constant once. Reuse the value when many variates share `nu`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardStudentTKernel {
+    degrees_of_freedom: f64,
+    nll_constant: f64,
+}
+
+impl StandardStudentTKernel {
+    /// Creates a kernel for finite, strictly positive degrees of freedom.
+    #[must_use]
+    #[inline]
+    pub fn try_new(degrees_of_freedom: f64) -> Option<Self> {
+        if degrees_of_freedom <= 0.0 || !degrees_of_freedom.is_finite() {
+            return None;
+        }
+        Some(Self {
+            degrees_of_freedom,
+            nll_constant: student_t_nll_constant(degrees_of_freedom),
+        })
+    }
+
+    /// Returns the prepared number of degrees of freedom.
+    #[must_use]
+    #[inline]
+    pub const fn degrees_of_freedom(self) -> f64 {
+        self.degrees_of_freedom
+    }
+
+    /// Returns the standard density's negative-log normalizing constant.
+    #[must_use]
+    #[inline]
+    pub const fn nll_constant(self) -> f64 {
+        self.nll_constant
+    }
+
+    /// Evaluates the standard Student-t log-density.
+    ///
+    /// Returns `NaN` for a `NaN` variate and negative infinity at either
+    /// infinite tail.
+    #[must_use]
+    #[inline]
+    pub fn log_pdf(self, t: f64) -> f64 {
+        if t.is_nan() {
+            return f64::NAN;
+        }
+        if t.is_infinite() {
+            return f64::NEG_INFINITY;
+        }
+        -self.nll_constant
+            - f64::midpoint(self.degrees_of_freedom, 1.0)
+                * log_one_plus_square_over_positive(t, self.degrees_of_freedom)
+    }
+}
+
 /// Standard Student-t log-density.
 ///
 /// Returns `NaN` for invalid degrees of freedom or a `NaN` variate, and
@@ -504,14 +561,7 @@ pub fn student_t_nll_constant(nu: f64) -> f64 {
 #[must_use]
 #[inline]
 pub fn student_t_log_pdf_standardized(t: f64, nu: f64) -> f64 {
-    if nu <= 0.0 || !nu.is_finite() || t.is_nan() {
-        return f64::NAN;
-    }
-    if t.is_infinite() {
-        return f64::NEG_INFINITY;
-    }
-
-    -student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * log_one_plus_square_over_positive(t, nu)
+    StandardStudentTKernel::try_new(nu).map_or(f64::NAN, |kernel| kernel.log_pdf(t))
 }
 
 /// Standard Student-t CDF.
@@ -1601,7 +1651,7 @@ mod tests {
     use approx::assert_relative_eq;
 
     use super::{
-        exponential_integral_e1, log_regularized_beta, regularized_beta,
+        StandardStudentTKernel, exponential_integral_e1, log_regularized_beta, regularized_beta,
         student_t_cdf_standardized, student_t_log_cdf_standardized, student_t_log_pdf_standardized,
     };
 
@@ -1668,5 +1718,21 @@ mod tests {
         let small_df_far_tail = student_t_cdf_standardized(-1.0e200, 0.01);
         assert!(small_df_far_tail > 0.0);
         assert!(small_df_far_tail < 0.5);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // The function API constructs the identical prepared kernel.
+    fn prepared_student_t_density_matches_function_api() {
+        for nu in [0.01, 1.0, 5.0, 1.0e16] {
+            let kernel = StandardStudentTKernel::try_new(nu).unwrap();
+            assert_eq!(kernel.degrees_of_freedom(), nu);
+            assert_eq!(kernel.nll_constant(), super::student_t_nll_constant(nu));
+            for t in [-1.0e308, -2.0, 0.0, 3.5, f64::INFINITY] {
+                assert_eq!(kernel.log_pdf(t), student_t_log_pdf_standardized(t, nu));
+            }
+        }
+        assert!(StandardStudentTKernel::try_new(0.0).is_none());
+        assert!(StandardStudentTKernel::try_new(f64::INFINITY).is_none());
+        assert!(StandardStudentTKernel::try_new(f64::NAN).is_none());
     }
 }
