@@ -72,6 +72,11 @@ where
     }
 
     #[inline]
+    fn eta_range(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+        self.x.mul_vec_range_into(rows, beta, out);
+    }
+
+    #[inline]
     fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
         self.x.add_t_mul_vec_range(rows, scores, grad);
     }
@@ -807,6 +812,19 @@ pub trait PredictorBlock {
     fn nparams(&self) -> usize;
     /// Predictor contribution for one row.
     fn eta_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Writes predictor contributions for a contiguous row range into `out`.
+    ///
+    /// The default implementation delegates to [`Self::eta_row`]. Blocks with
+    /// a backend-native bulk forward operation should override this method.
+    #[inline]
+    fn eta_range(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(beta.len(), self.nparams());
+        debug_assert_eq!(out.len(), rows.len());
+        for (row, value) in rows.zip(out) {
+            *value = self.eta_row(row, beta);
+        }
+    }
     /// Writes a constant predictor start into the local coefficient slice.
     ///
     /// Implementations should return `true` only when the write makes this

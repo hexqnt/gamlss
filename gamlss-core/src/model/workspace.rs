@@ -240,6 +240,13 @@ impl GradientWorkspace {
         self.score_tile[index * self.score_tile_rows + tile_row] = value;
     }
 
+    /// Returns one mutable coordinate buffer for the current tile.
+    pub(crate) fn scores_mut(&mut self, index: usize) -> &mut [f64] {
+        debug_assert!(index < self.score_coordinate_count);
+        let start = index * self.score_tile_rows;
+        &mut self.score_tile[start..start + self.score_tile_len]
+    }
+
     /// Fills one row across all score coordinates in the current tile.
     pub fn fill_score_row(&mut self, tile_row: usize, value: f64) {
         debug_assert!(tile_row < self.score_tile_len);

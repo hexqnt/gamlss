@@ -196,6 +196,27 @@ impl DesignMatrix for DenseDesign {
     }
 
     #[inline]
+    fn mul_vec_range_into(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows);
+        debug_assert_eq!(beta.len(), self.ncols);
+        debug_assert_eq!(out.len(), rows.len());
+
+        if self.ncols == 0 {
+            out.fill(0.0);
+            return;
+        }
+
+        let start = rows.start * self.ncols;
+        let end = rows.end * self.ncols;
+        for (value, row_values) in out
+            .iter_mut()
+            .zip(self.values[start..end].chunks_exact(self.ncols))
+        {
+            *value = row_values.iter().zip(beta).map(|(x, b)| x * b).sum();
+        }
+    }
+
+    #[inline]
     fn add_t_mul_vec_range(&self, rows: Range<usize>, weights: &[f64], out: &mut [f64]) {
         debug_assert!(rows.end <= self.nrows);
         debug_assert_eq!(weights.len(), rows.len());
@@ -335,6 +356,26 @@ pub trait DesignMatrix {
     fn ncols(&self) -> usize;
     /// Dot product of row `row` with `beta`.
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64;
+    /// Writes `X[rows, :] beta` into the range-local `out` buffer.
+    ///
+    /// The default implementation delegates to [`Self::dot_row`]. Dense,
+    /// sparse or external matrix backends should override this method to use
+    /// their contiguous or backend-native matrix-vector kernel.
+    #[inline]
+    fn mul_vec_range_into(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+        debug_assert!(rows.end <= self.nrows());
+        debug_assert_eq!(beta.len(), self.ncols());
+        debug_assert_eq!(out.len(), rows.len());
+        for (row, value) in rows.zip(out) {
+            *value = self.dot_row(row, beta);
+        }
+    }
+    /// Writes `X beta` into `out`.
+    #[inline]
+    fn mul_vec_into(&self, beta: &[f64], out: &mut [f64]) {
+        debug_assert_eq!(out.len(), self.nrows());
+        self.mul_vec_range_into(0..self.nrows(), beta, out);
+    }
     /// Adds `X[rows, :]^T weights` into `out`.
     ///
     /// `weights` contains one value per selected row. Implementations must be
@@ -482,6 +523,11 @@ where
     #[inline]
     fn dot_row(&self, row: usize, beta: &[f64]) -> f64 {
         T::dot_row(*self, row, beta)
+    }
+
+    #[inline]
+    fn mul_vec_range_into(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+        T::mul_vec_range_into(*self, rows, beta, out);
     }
 
     #[inline]
@@ -638,6 +684,15 @@ mod tests {
 
         assert_relative_eq!(design.dot_row(1, &[10.0, 1.0]), 34.0);
 
+        let mut forward = [0.0; 2];
+        design.mul_vec_into(&[10.0, 1.0], &mut forward);
+        assert_relative_eq!(forward[0], 12.0);
+        assert_relative_eq!(forward[1], 34.0);
+
+        let mut range_forward = [0.0; 1];
+        design.mul_vec_range_into(1..2, &[10.0, 1.0], &mut range_forward);
+        assert_relative_eq!(range_forward[0], 34.0);
+
         let mut out = vec![0.0, 0.0];
         design.add_t_mul_vec(&[0.5, 2.0], &mut out);
 
@@ -653,6 +708,11 @@ mod tests {
         assert_eq!(DesignMatrix::nrows(&borrowed), 2);
         assert_eq!(DesignMatrix::ncols(&borrowed), 2);
         assert_relative_eq!(DesignMatrix::dot_row(&borrowed, 1, &[2.0, -1.0]), 2.0);
+
+        let mut forward = [0.0; 2];
+        DesignMatrix::mul_vec_into(&borrowed, &[2.0, -1.0], &mut forward);
+        assert_relative_eq!(forward[0], 0.0);
+        assert_relative_eq!(forward[1], 2.0);
 
         let mut start = [0.0; 2];
         assert!(DesignMatrix::set_constant_start(

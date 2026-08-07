@@ -2009,6 +2009,61 @@ where
         loss
     }
 
+    fn train_nll_into_workspace<'obs, Obs>(
+        &self,
+        family: &F,
+        obs: &'obs Obs,
+        beta: &[f64],
+        family_workspace: &mut F::Workspace,
+        workspace: &mut GradientWorkspace,
+    ) -> f64
+    where
+        Obs: ObservationView<'obs, Observation = F::Observation<'obs>> + 'obs,
+    {
+        let tile_rows = workspace.prepare_score_tile(self.as_inner().leaf_count(), obs.len());
+        let mut loss = 0.0;
+        let mut tile_start = 0;
+
+        while tile_start < obs.len() {
+            let tile_end = tile_start.saturating_add(tile_rows).min(obs.len());
+            let rows = tile_start..tile_end;
+            workspace.set_score_tile_len(rows.len());
+            let use_prepared_values = rows.clone().all(|row| obs.weight_at(row) != 0.0);
+
+            if use_prepared_values {
+                let mut cursor = 0;
+                self.as_inner()
+                    .prepare_values(rows.clone(), beta, workspace, &mut cursor);
+                debug_assert_eq!(cursor, self.as_inner().leaf_count());
+            }
+
+            for (tile_row, row) in rows.clone().enumerate() {
+                let weight = obs.weight_at(row);
+                if weight == 0.0 {
+                    continue;
+                }
+                let values = if use_prepared_values {
+                    let mut cursor = 0;
+                    let values =
+                        self.as_inner()
+                            .prepared_values_row(tile_row, workspace, &mut cursor);
+                    debug_assert_eq!(cursor, self.as_inner().leaf_count());
+                    values
+                } else {
+                    self.as_inner().values_row(beta, row)
+                };
+                let eta = F::eta_from_shape(values);
+                loss = weight.mul_add(
+                    family.nll_eta(obs.observation_at(row), &eta, family_workspace),
+                    loss,
+                );
+            }
+
+            tile_start = tile_end;
+        }
+        loss
+    }
+
     fn eta_row(&self, _family: &F, beta: &[f64], row: usize) -> F::Eta {
         F::eta_from_shape(self.as_inner().values_row(beta, row))
     }
@@ -2070,13 +2125,34 @@ where
             let rows = tile_start..tile_end;
             workspace.set_score_tile_len(rows.len());
 
+            // Bulk forward paths may read every selected design row. Preserve
+            // the contract that a zero-weight observation disables its row by
+            // retaining the row-wise path for tiles containing a mask.
+            let use_prepared_values = rows.clone().all(|row| obs.weight_at(row) != 0.0);
+            if use_prepared_values {
+                let mut cursor = 0;
+                self.as_inner()
+                    .prepare_values(rows.clone(), beta, workspace, &mut cursor);
+                debug_assert_eq!(cursor, self.as_inner().leaf_count());
+            }
+
             for (tile_row, row) in rows.clone().enumerate() {
                 let weight = obs.weight_at(row);
                 if weight == 0.0 {
                     workspace.fill_score_row(tile_row, 0.0);
                     continue;
                 }
-                let eta = F::eta_from_shape(self.as_inner().values_row(beta, row));
+                let values = if use_prepared_values {
+                    let mut cursor = 0;
+                    let values =
+                        self.as_inner()
+                            .prepared_values_row(tile_row, workspace, &mut cursor);
+                    debug_assert_eq!(cursor, self.as_inner().leaf_count());
+                    values
+                } else {
+                    self.as_inner().values_row(beta, row)
+                };
+                let eta = F::eta_from_shape(values);
                 let (nll, gradient) =
                     family.nll_and_gradient_eta(obs.observation_at(row), &eta, family_workspace);
                 loss = weight.mul_add(nll, loss);
@@ -2084,11 +2160,13 @@ where
                 let mut cursor = 0;
                 self.as_inner()
                     .set_scores(&scores, tile_row, weight, workspace, &mut cursor);
+                debug_assert_eq!(cursor, self.as_inner().leaf_count());
             }
 
             let mut cursor = 0;
             self.as_inner()
                 .backprop(rows, beta, grad, workspace, &mut cursor);
+            debug_assert_eq!(cursor, self.as_inner().leaf_count());
             tile_start = tile_end;
         }
         self.as_inner().add_penalty_gradient(beta, grad);
@@ -2822,6 +2900,64 @@ mod tests {
         assert_relative_eq!(grad[0], 0.0);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct BulkOnlyPredictor {
+        nrows: usize,
+    }
+
+    impl PredictorBlock for BulkOnlyPredictor {
+        fn nrows(&self) -> usize {
+            self.nrows
+        }
+
+        fn nparams(&self) -> usize {
+            1
+        }
+
+        fn eta_row(&self, _: usize, _: &[f64]) -> f64 {
+            panic!("unmasked workspace objective must use bulk forward")
+        }
+
+        fn eta_range(&self, rows: Range<usize>, beta: &[f64], out: &mut [f64]) {
+            assert_eq!(out.len(), rows.len());
+            out.fill(beta[0]);
+        }
+
+        fn add_gradient_range(
+            &self,
+            rows: Range<usize>,
+            scores: &[f64],
+            _: &[f64],
+            gradient: &mut [f64],
+        ) {
+            assert_eq!(scores.len(), rows.len());
+            gradient[0] += scores.iter().sum::<f64>();
+        }
+    }
+
+    #[test]
+    fn workspace_objective_uses_bulk_predictor_forward() {
+        let y = [1.0, 2.0, 3.0];
+        let mu =
+            ParameterBlock::<Mu, _, _>::new(BulkOnlyPredictor { nrows: y.len() }, NoPenalty, 0);
+        let model =
+            Gamlss::try_new(FixedSigmaNormal, ParameterBlocks::from_assigned((mu,)), &y).unwrap();
+        let beta = [2.0];
+        let mut gradient = [0.0];
+        let mut workspace = model.gradient_workspace();
+
+        let value = model
+            .try_value_into_workspace(&beta, &mut workspace)
+            .unwrap();
+        let fused_value = model
+            .try_value_gradient_into_workspace(&beta, &mut gradient, &mut workspace)
+            .unwrap();
+
+        assert_relative_eq!(value, 1.0);
+        assert_relative_eq!(fused_value, value);
+        assert_relative_eq!(gradient[0], 0.0);
+    }
+
     #[test]
     fn broadcast_shape_owns_one_predictor_and_sums_consumer_scores() {
         let y = [[1.0, 3.0], [2.0, 4.0]];
@@ -3271,6 +3407,15 @@ mod tests {
         for tile_rows in [1, 2] {
             let policy = ScoreTilePolicy::try_max_rows(tile_rows).unwrap();
             let mut workspace = model.gradient_workspace_with_policy(policy);
+            let workspace_value = model
+                .try_value_into_workspace(&beta, &mut workspace)
+                .unwrap();
+            let workspace_likelihood = model
+                .try_likelihood_value_into_workspace(&beta, &mut workspace)
+                .unwrap();
+            assert_relative_eq!(workspace_value, 0.0);
+            assert_relative_eq!(workspace_likelihood, 0.0);
+
             grad.fill(f64::NAN);
             let value = model
                 .try_value_gradient_into_workspace(&beta, &mut grad, &mut workspace)

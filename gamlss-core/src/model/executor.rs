@@ -20,6 +20,19 @@ pub trait ShapeBlocks<S: ParameterShape> {
     fn try_len(&self) -> Result<usize, ModelError>;
     fn validate(&self, nobs: usize) -> Result<(), ModelError>;
     fn values_row(&self, beta: &[f64], row: usize) -> S::Values;
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    );
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> S::Values;
     fn penalty_value(&self, beta: &[f64]) -> f64;
     fn add_penalty_gradient(&self, beta: &[f64], grad: &mut [f64]);
     fn set_initial(&self, values: &S::Values, beta: &mut [f64]);
@@ -69,6 +82,26 @@ where
     }
     fn values_row(&self, beta: &[f64], row: usize) -> f64 {
         self.x().eta_row(row, &beta[self.range()])
+    }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        prepare_leaf(self.x(), rows, self.range(), beta, workspace, *cursor);
+        *cursor += 1;
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> f64 {
+        let value = workspace.scores(*cursor)[tile_row];
+        *cursor += 1;
+        value
     }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
         self.penalty().value(&beta[self.range()])
@@ -143,6 +176,17 @@ fn backprop_leaf<X: PredictorBlock>(
     );
 }
 
+fn prepare_leaf<X: PredictorBlock>(
+    predictor: &X,
+    rows: Range<usize>,
+    range: Range<usize>,
+    beta: &[f64],
+    workspace: &mut GradientWorkspace,
+    cursor: usize,
+) {
+    predictor.eta_range(rows, &beta[range], workspace.scores_mut(cursor));
+}
+
 macro_rules! impl_scalar_tuple_blocks {
     ($k:literal; $(($index:tt, $param:ident, $x:ident, $penalty:ident)),+ $(,)?) => {
         impl<$($param, $x, $penalty,)+> ShapeBlocks<ScalarTuple<($($param,)+), $k>>
@@ -170,6 +214,21 @@ macro_rules! impl_scalar_tuple_blocks {
 
             fn values_row(&self, beta: &[f64], row: usize) -> [f64; $k] {
                 [$(self.$index.x().eta_row(row, &beta[self.$index.range()])),+]
+            }
+
+            fn prepare_values(&self, rows: Range<usize>, beta: &[f64], workspace: &mut GradientWorkspace, cursor: &mut usize) {
+                $(prepare_leaf(self.$index.x(), rows.clone(), self.$index.range(), beta, workspace, *cursor); *cursor += 1;)+
+            }
+
+            fn prepared_values_row(&self, tile_row: usize, workspace: &GradientWorkspace, cursor: &mut usize) -> [f64; $k] {
+                [$(
+                    {
+                        let _ = $index;
+                        let value = workspace.scores(*cursor)[tile_row];
+                        *cursor += 1;
+                        value
+                    }
+                ),+]
             }
 
             fn penalty_value(&self, beta: &[f64]) -> f64 {
@@ -248,6 +307,37 @@ where
     fn values_row(&self, beta: &[f64], row: usize) -> [f64; D] {
         std::array::from_fn(|i| {
             self.components()[i].eta_row(row, &beta[self.component_range(i).unwrap()])
+        })
+    }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        for (i, x) in self.components().iter().enumerate() {
+            prepare_leaf(
+                x,
+                rows.clone(),
+                self.component_range(i).unwrap(),
+                beta,
+                workspace,
+                *cursor,
+            );
+            *cursor += 1;
+        }
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> [f64; D] {
+        std::array::from_fn(|_| {
+            let value = workspace.scores(*cursor)[tile_row];
+            *cursor += 1;
+            value
         })
     }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
@@ -359,6 +449,46 @@ macro_rules! impl_triangular_shape_blocks {
                         out[r][col] = self.entries()[i]
                             .eta_row(row, &beta[self.entry_range(r, col).unwrap()]);
                         i += 1;
+                    }
+                }
+                out
+            }
+            fn prepare_values(
+                &self,
+                rows: Range<usize>,
+                beta: &[f64],
+                workspace: &mut GradientWorkspace,
+                cursor: &mut usize,
+            ) {
+                let mut i = 0;
+                for r in 0..D {
+                    let end = if $strict { r } else { r + 1 };
+                    for col in 0..end {
+                        prepare_leaf(
+                            &self.entries()[i],
+                            rows.clone(),
+                            self.entry_range(r, col).unwrap(),
+                            beta,
+                            workspace,
+                            *cursor,
+                        );
+                        *cursor += 1;
+                        i += 1;
+                    }
+                }
+            }
+            fn prepared_values_row(
+                &self,
+                tile_row: usize,
+                workspace: &GradientWorkspace,
+                cursor: &mut usize,
+            ) -> [[f64; D]; D] {
+                let mut out = [[0.0; D]; D];
+                for r in 0..D {
+                    let end = if $strict { r } else { r + 1 };
+                    for col in 0..end {
+                        out[r][col] = workspace.scores(*cursor)[tile_row];
+                        *cursor += 1;
                     }
                 }
                 out
@@ -498,6 +628,38 @@ where
         }
         out
     }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        for (i, x) in self.logits().iter().enumerate() {
+            prepare_leaf(
+                x,
+                rows.clone(),
+                self.logit_range(i).unwrap(),
+                beta,
+                workspace,
+                *cursor,
+            );
+            *cursor += 1;
+        }
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> [f64; C] {
+        let mut out = [0.0; C];
+        for value in out.iter_mut().take(self.logits().len()) {
+            *value = workspace.scores(*cursor)[tile_row];
+            *cursor += 1;
+        }
+        out
+    }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
         self.penalty().value(&beta[self.range()])
     }
@@ -596,6 +758,27 @@ where
     fn values_row(&self, beta: &[f64], row: usize) -> (A::Values, B::Values) {
         (self.0.values_row(beta, row), self.1.values_row(beta, row))
     }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        self.0.prepare_values(rows.clone(), beta, workspace, cursor);
+        self.1.prepare_values(rows, beta, workspace, cursor);
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> (A::Values, B::Values) {
+        (
+            self.0.prepared_values_row(tile_row, workspace, cursor),
+            self.1.prepared_values_row(tile_row, workspace, cursor),
+        )
+    }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
         self.0.penalty_value(beta) + self.1.penalty_value(beta)
     }
@@ -681,6 +864,31 @@ where
             self.2.values_row(beta, row),
         )
     }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        self.0.prepare_values(rows.clone(), beta, workspace, cursor);
+        self.1.prepare_values(rows.clone(), beta, workspace, cursor);
+        self.2.prepare_values(rows, beta, workspace, cursor);
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> ((A::Values, B::Values), C::Values) {
+        (
+            (
+                self.0.prepared_values_row(tile_row, workspace, cursor),
+                self.1.prepared_values_row(tile_row, workspace, cursor),
+            ),
+            self.2.prepared_values_row(tile_row, workspace, cursor),
+        )
+    }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
         self.0.penalty_value(beta) + self.1.penalty_value(beta) + self.2.penalty_value(beta)
     }
@@ -758,6 +966,25 @@ where
     }
     fn values_row(&self, beta: &[f64], row: usize) -> [A::Values; C] {
         std::array::from_fn(|i| self[i].values_row(beta, row))
+    }
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        for block in self {
+            block.prepare_values(rows.clone(), beta, workspace, cursor);
+        }
+    }
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> [A::Values; C] {
+        std::array::from_fn(|i| self[i].prepared_values_row(tile_row, workspace, cursor))
     }
     fn penalty_value(&self, beta: &[f64]) -> f64 {
         self.iter().map(|b| b.penalty_value(beta)).sum()
@@ -840,6 +1067,26 @@ where
 
     fn values_row(&self, beta: &[f64], row: usize) -> [A::Values; C] {
         let value = <B as ShapeBlocks<A>>::values_row(self, beta, row);
+        std::array::from_fn(|_| value.clone())
+    }
+
+    fn prepare_values(
+        &self,
+        rows: Range<usize>,
+        beta: &[f64],
+        workspace: &mut GradientWorkspace,
+        cursor: &mut usize,
+    ) {
+        <B as ShapeBlocks<A>>::prepare_values(self, rows, beta, workspace, cursor);
+    }
+
+    fn prepared_values_row(
+        &self,
+        tile_row: usize,
+        workspace: &GradientWorkspace,
+        cursor: &mut usize,
+    ) -> [A::Values; C] {
+        let value = <B as ShapeBlocks<A>>::prepared_values_row(self, tile_row, workspace, cursor);
         std::array::from_fn(|_| value.clone())
     }
 
