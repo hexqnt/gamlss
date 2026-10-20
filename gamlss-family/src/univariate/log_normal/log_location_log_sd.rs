@@ -23,24 +23,7 @@ pub struct LogNormalLogLocationLogSdEta {
     pub log_sd: f64,
 }
 
-impl ParameterParts<2> for LogNormalLogLocationLogSdEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            log_location: values[0],
-            log_sd: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.log_location,
-            1 => self.log_sd,
-            _ => unreachable!("log-normal log-location/log-SD eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(LogNormalLogLocationLogSdEta, 2, { 0 => log_location, 1 => log_sd }, "log-normal log-location/log-SD eta only has indices 0 and 1");
 
 /// Natural-scale log-normal log-location/log-SD parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

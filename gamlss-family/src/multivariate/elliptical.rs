@@ -31,6 +31,21 @@ impl LowerTriangularMatrix for PackedLowerTriangular {
     }
 }
 
+pub(super) fn covariance_from_cholesky(
+    cholesky: &impl LowerTriangularMatrix,
+    row: usize,
+    col: usize,
+) -> Option<f64> {
+    if row >= cholesky.dimension() || col >= cholesky.dimension() {
+        return None;
+    }
+    Some(
+        (0..=row.min(col))
+            .map(|index| cholesky.lower(row, index) * cholesky.lower(col, index))
+            .sum(),
+    )
+}
+
 pub(super) fn valid_location_scale(
     dimension: usize,
     location: &[f64],

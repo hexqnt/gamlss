@@ -291,45 +291,11 @@ pub trait DynamicallyCompilableFamily: Family {
 #[macro_export]
 macro_rules! impl_scalar_compilable_family {
     (
-        impl for $family:ty;
+        impl $(<$($generic:ident),+>)? for $family:ty;
         parameters = ($($parameter:ty),+ $(,)?);
         arity = $arity:literal $(;)?
     ) => {
-        impl $crate::CompilableFamily for $family
-        where
-            $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
-            <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
-            <$family as $crate::Family>::GradientEta: $crate::ParameterParts<$arity>,
-        {
-            type Shape = $crate::shape::ScalarTuple<($($parameter,)+), $arity>;
-
-            fn eta_from_shape(values: [f64; $arity]) -> Self::Eta {
-                <Self::Eta as $crate::ParameterParts<$arity>>::from_array(values)
-            }
-
-            fn gradient_to_shape(gradient: &Self::GradientEta) -> [f64; $arity] {
-                std::array::from_fn(|index| {
-                    <Self::GradientEta as $crate::ParameterParts<$arity>>::part(gradient, index)
-                })
-            }
-
-            fn initial_shape<'obs, Obs>(&self, obs: &'obs Obs) -> [f64; $arity]
-            where
-                Obs: $crate::ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
-            {
-                let eta = self.initial_eta_from_observations(obs);
-                std::array::from_fn(|index| {
-                    <Self::Eta as $crate::ParameterParts<$arity>>::part(&eta, index)
-                })
-            }
-        }
-    };
-    (
-        impl<$($generic:ident),+> for $family:ty;
-        parameters = ($($parameter:ty),+ $(,)?);
-        arity = $arity:literal $(;)?
-    ) => {
-        impl<$($generic),+> $crate::CompilableFamily for $family
+        impl $(<$($generic),+>)? $crate::CompilableFamily for $family
         where
             $family: $crate::Family + $crate::InitialEtaFromObservations<$arity>,
             <$family as $crate::Family>::Eta: $crate::ParameterParts<$arity>,
@@ -482,138 +448,67 @@ impl ParameterParts<1> for f64 {
     }
 }
 
-impl ParameterParts<2> for (f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        values.into()
-    }
+macro_rules! impl_tuple_parameter_parts {
+    ($arity:literal, $tuple:ty, ($($index:tt),+), $invalid_index:literal) => {
+        impl ParameterParts<$arity> for $tuple {
+            #[inline]
+            fn from_array(values: [f64; $arity]) -> Self {
+                values.into()
+            }
 
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            _ => unreachable!("two-parameter parts only have indices 0 and 1"),
+            #[inline]
+            fn part(&self, index: usize) -> f64 {
+                match index {
+                    $($index => self.$index,)+
+                    _ => unreachable!($invalid_index),
+                }
+            }
         }
-    }
+    };
 }
 
-impl ParameterParts<3> for (f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            _ => unreachable!("three-parameter parts only have indices 0, 1 and 2"),
-        }
-    }
-}
-
-impl ParameterParts<4> for (f64, f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 4]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            3 => self.3,
-            _ => unreachable!("four-parameter parts only have indices 0, 1, 2 and 3"),
-        }
-    }
-}
-
-impl ParameterParts<5> for (f64, f64, f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 5]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            3 => self.3,
-            4 => self.4,
-            _ => unreachable!("five-parameter parts only have indices 0 through 4"),
-        }
-    }
-}
-
-impl ParameterParts<6> for (f64, f64, f64, f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 6]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            3 => self.3,
-            4 => self.4,
-            5 => self.5,
-            _ => unreachable!("six-parameter parts only have indices 0 through 5"),
-        }
-    }
-}
-
-impl ParameterParts<7> for (f64, f64, f64, f64, f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 7]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            3 => self.3,
-            4 => self.4,
-            5 => self.5,
-            6 => self.6,
-            _ => unreachable!("seven-parameter parts only have indices 0 through 6"),
-        }
-    }
-}
-
-impl ParameterParts<8> for (f64, f64, f64, f64, f64, f64, f64, f64) {
-    #[inline]
-    fn from_array(values: [f64; 8]) -> Self {
-        values.into()
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.0,
-            1 => self.1,
-            2 => self.2,
-            3 => self.3,
-            4 => self.4,
-            5 => self.5,
-            6 => self.6,
-            7 => self.7,
-            _ => unreachable!("eight-parameter parts only have indices 0 through 7"),
-        }
-    }
-}
+impl_tuple_parameter_parts!(
+    2,
+    (f64, f64),
+    (0, 1),
+    "two-parameter parts only have indices 0 and 1"
+);
+impl_tuple_parameter_parts!(
+    3,
+    (f64, f64, f64),
+    (0, 1, 2),
+    "three-parameter parts only have indices 0, 1 and 2"
+);
+impl_tuple_parameter_parts!(
+    4,
+    (f64, f64, f64, f64),
+    (0, 1, 2, 3),
+    "four-parameter parts only have indices 0, 1, 2 and 3"
+);
+impl_tuple_parameter_parts!(
+    5,
+    (f64, f64, f64, f64, f64),
+    (0, 1, 2, 3, 4),
+    "five-parameter parts only have indices 0 through 4"
+);
+impl_tuple_parameter_parts!(
+    6,
+    (f64, f64, f64, f64, f64, f64),
+    (0, 1, 2, 3, 4, 5),
+    "six-parameter parts only have indices 0 through 5"
+);
+impl_tuple_parameter_parts!(
+    7,
+    (f64, f64, f64, f64, f64, f64, f64),
+    (0, 1, 2, 3, 4, 5, 6),
+    "seven-parameter parts only have indices 0 through 6"
+);
+impl_tuple_parameter_parts!(
+    8,
+    (f64, f64, f64, f64, f64, f64, f64, f64),
+    (0, 1, 2, 3, 4, 5, 6, 7),
+    "eight-parameter parts only have indices 0 through 7"
+);
 
 /// Sample-aware initialization for scalar-parameter families.
 pub trait InitialEtaFromObservations<const K: usize>: Family

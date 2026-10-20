@@ -161,14 +161,18 @@ impl RowMajorDesignBuilder {
 
         let mut left_values = vec![0.0; left_basis.n_basis()];
         let mut right_values = vec![0.0; right_basis.n_basis()];
-        let mut left_contrasts = vec![0.0; left_dim];
-        let mut right_contrasts = vec![0.0; right_dim];
+        let mut left_contrasts = Vec::new();
+        let mut right_contrasts = Vec::new();
         let contrasts = match kind {
             TensorSmoothKind::Full => None,
-            TensorSmoothKind::Interaction => Some((
-                HelmertContrast::try_new(left_basis.n_basis())?,
-                HelmertContrast::try_new(right_basis.n_basis())?,
-            )),
+            TensorSmoothKind::Interaction => {
+                left_contrasts.resize(left_dim, 0.0);
+                right_contrasts.resize(right_dim, 0.0);
+                Some((
+                    HelmertContrast::try_new(left_basis.n_basis())?,
+                    HelmertContrast::try_new(right_basis.n_basis())?,
+                ))
+            }
         };
         for ((row_values, left_x), right_x) in self
             .values
@@ -208,19 +212,7 @@ impl RowMajorDesignBuilder {
     }
 }
 
-pub fn validate_col_len(name: &str, values: &[f64], expected: usize) -> Result<(), FormulaError> {
-    validate_len(name, values.len(), expected)
-}
-
-fn validate_bool_col_len(name: &str, values: &[bool], expected: usize) -> Result<(), FormulaError> {
-    validate_len(name, values.len(), expected)
-}
-
-fn validate_cat_col_len(
-    name: &str,
-    values: &[String],
-    expected: usize,
-) -> Result<(), FormulaError> {
+fn validate_col_len<T>(name: &str, values: &[T], expected: usize) -> Result<(), FormulaError> {
     validate_len(name, values.len(), expected)
 }
 
@@ -542,23 +534,20 @@ where
                     term.left_penalty_order,
                     term.right_penalty_order,
                 )?;
-                let left_name = term.left.name().to_owned();
-                let right_name = term.right.name().to_owned();
                 let term_name = match term.kind {
                     TensorSmoothKind::Full => "tensor",
                     TensorSmoothKind::Interaction => "tensor_interaction",
                 };
-                let coefficients = (0..left_dim)
-                    .flat_map(|left_index| {
-                        let left_name = left_name.clone();
-                        let right_name = right_name.clone();
-                        (0..right_dim).map(move |right_index| {
-                            format!(
-                                "{parameter}.{left_name}:{right_name}:{term_name}[{left_index},{right_index}]"
-                            )
-                        })
-                    })
-                    .collect();
+                let mut coefficients = Vec::with_capacity(width);
+                for left_index in 0..left_dim {
+                    for right_index in 0..right_dim {
+                        coefficients.push(format!(
+                            "{parameter}.{}:{}:{term_name}[{left_index},{right_index}]",
+                            term.left.name(),
+                            term.right.name(),
+                        ));
+                    }
+                }
                 prepared.push(PreparedDenseTerm::TensorPSpline {
                     left,
                     right,
@@ -807,7 +796,7 @@ where
     D: DataView + ?Sized,
 {
     let values = data.bool_col(col)?;
-    validate_bool_col_len(col.name(), values.as_slice(), data.nrows())?;
+    validate_col_len(col.name(), values.as_slice(), data.nrows())?;
     Ok(values)
 }
 
@@ -816,7 +805,7 @@ where
     D: DataView + ?Sized,
 {
     let values = data.cat_col(col)?;
-    validate_cat_col_len(col.name(), values.as_slice(), data.nrows())?;
+    validate_col_len(col.name(), values.as_slice(), data.nrows())?;
     Ok(values)
 }
 

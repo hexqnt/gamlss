@@ -2,6 +2,15 @@ use gamlss_core::{ModelError, RowMultiplier};
 
 use crate::SplineRowBasis;
 
+pub struct UnitMultiplier;
+
+impl RowMultiplier for UnitMultiplier {
+    #[inline]
+    fn multiplier_at(&self, _: usize) -> f64 {
+        1.0
+    }
+}
+
 #[inline]
 pub fn validate_gram_lengths(
     nrows: usize,

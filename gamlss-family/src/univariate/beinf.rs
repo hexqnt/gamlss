@@ -7,10 +7,9 @@ use gamlss_core::{
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
 
-use gamlss_special::{
-    bernoulli_kl, digamma_minus_ln, integrate_finite, invert_bounded_cdf,
-    ln_gamma_stirling_residual, regularized_beta,
-};
+use gamlss_special::{integrate_finite, invert_bounded_cdf, regularized_beta};
+
+use super::beta::BetaKernel;
 
 use crate::initial::{
     POSITIVE_FLOOR, VARIANCE_FLOOR, positive_floor, probability_floor, weighted_summary,
@@ -104,26 +103,6 @@ where
     }
 
     #[inline]
-    #[allow(clippy::suboptimal_flops)]
-    fn beta_log_density(y: f64, mean: f64, parts: BeinfParts) -> f64 {
-        -(ln_gamma_stirling_residual(parts.alpha) + ln_gamma_stirling_residual(parts.beta)
-            - ln_gamma_stirling_residual(parts.precision)
-            + parts.precision * bernoulli_kl(mean, y)
-            + y.ln()
-            + (-y).ln_1p())
-    }
-
-    #[inline]
-    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
-        let centered = (numerator - denominator) / denominator;
-        if centered.abs() <= 0.5 {
-            centered.ln_1p()
-        } else {
-            numerator.ln() - denominator.ln()
-        }
-    }
-
-    #[inline]
     #[allow(clippy::float_cmp)]
     fn nll_theta(y: f64, theta: BeinfTheta) -> f64 {
         if !(0.0..=1.0).contains(&y) || !y.is_finite() {
@@ -132,6 +111,12 @@ where
         let Some(parts) = Self::parts(theta) else {
             return f64::INFINITY;
         };
+        Self::nll_with_parts(y, theta.mu, parts)
+    }
+
+    #[inline]
+    #[allow(clippy::float_cmp)]
+    fn nll_with_parts(y: f64, mean: f64, parts: BeinfParts) -> f64 {
         if y == 0.0 {
             return -parts.log_p0;
         }
@@ -139,7 +124,7 @@ where
             return -parts.log_p1;
         }
 
-        -parts.log_p_beta - Self::beta_log_density(y, theta.mu, parts)
+        -parts.log_p_beta - (-BetaKernel::nll(y, mean, parts.precision, parts.alpha, parts.beta))
     }
 
     #[inline]
@@ -164,13 +149,8 @@ where
             };
         }
 
-        let precision_residual = digamma_minus_ln(parts.precision);
-        let d_alpha =
-            digamma_minus_ln(parts.alpha) - precision_residual + Self::log_ratio(theta.mu, y);
-        let d_beta = digamma_minus_ln(parts.beta) - precision_residual
-            + Self::log_ratio(1.0 - theta.mu, 1.0 - y);
-        let d_mu = parts.precision * (d_alpha - d_beta);
-        let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
+        let (d_mu, d_precision) =
+            BetaKernel::gradient(y, theta.mu, parts.precision, parts.alpha, parts.beta);
 
         BeinfTheta {
             mu: d_mu,
@@ -204,14 +184,17 @@ where
     #[inline]
     fn nll_and_gradient_eta_values(y: f64, eta: BeinfEta) -> (f64, BeinfEta) {
         let theta = Self::theta_from_eta(eta);
-        let nll = Self::nll_theta(y, theta);
-        if !nll.is_finite() {
-            return (nll, BeinfEta::from_array([f64::NAN; 4]));
+        if !(0.0..=1.0).contains(&y) || !y.is_finite() {
+            return (f64::INFINITY, BeinfEta::from_array([f64::NAN; 4]));
         }
 
         let Some(parts) = Self::parts(theta) else {
-            return (nll, BeinfEta::from_array([f64::NAN; 4]));
+            return (f64::INFINITY, BeinfEta::from_array([f64::NAN; 4]));
         };
+        let nll = Self::nll_with_parts(y, theta.mu, parts);
+        if !nll.is_finite() {
+            return (nll, BeinfEta::from_array([f64::NAN; 4]));
+        }
         let gradient = Self::gradient_theta(y, theta, parts);
         (
             nll,
@@ -446,28 +429,7 @@ pub struct BeinfEta {
     pub tau: f64,
 }
 
-impl ParameterParts<4> for BeinfEta {
-    #[inline]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("beinf eta only has indices 0 through 3"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(BeinfEta, 4, { 0 => mu, 1 => sigma, 2 => nu, 3 => tau }, "beinf eta only has indices 0 through 3");
 
 /// Natural-scale BEINF parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

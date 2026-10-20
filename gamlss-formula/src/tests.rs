@@ -799,12 +799,14 @@ fn tensor_interaction_removes_marginal_constant_directions() {
                 let index = left_index * (right.len() - 1) + right_index;
                 let left_leading = (left_index + 1) as f64;
                 let right_leading = (right_index + 1) as f64;
-                let left_contrast = (left[..=left_index].iter().sum::<f64>()
-                    - left_leading * left[left_index + 1])
-                    / (left_leading * (left_leading + 1.0)).sqrt();
-                let right_contrast = (right[..=right_index].iter().sum::<f64>()
-                    - right_leading * right[right_index + 1])
-                    / (right_leading * (right_leading + 1.0)).sqrt();
+                let left_contrast = left_leading.mul_add(
+                    -left[left_index + 1],
+                    left[..=left_index].iter().sum::<f64>(),
+                ) / (left_leading * (left_leading + 1.0)).sqrt();
+                let right_contrast = right_leading.mul_add(
+                    -right[right_index + 1],
+                    right[..=right_index].iter().sum::<f64>(),
+                ) / (right_leading * (right_leading + 1.0)).sqrt();
                 let expected = left_contrast * right_contrast;
                 assert_relative_eq!(actual[index], expected, epsilon = 1.0e-14);
             }

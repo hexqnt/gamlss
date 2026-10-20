@@ -10,7 +10,7 @@ use gamlss_special::exponential_integral_e1;
 
 use crate::constants::{EULER_MASCHERONI, LOG_2};
 use crate::domain::{is_finite_location_scale, is_probability};
-use crate::initial::{positive_floor, weighted_quantile, weighted_values};
+use crate::initial::{positive_floor, weighted_quantiles, weighted_values};
 use crate::link::positive_inverse_and_log;
 
 /// Gumbel distribution with identity link for location and log link for scale.
@@ -176,16 +176,17 @@ where
         Obs: ObservationView<'obs, Observation = Self::Observation<'obs>> + 'obs,
     {
         let values = weighted_values::<Self, _, _>(obs, |y| y.is_finite().then_some(y));
-        let Some(median) = weighted_quantile(&values, 0.5) else {
+        let [median, q1, q3] = weighted_quantiles(&values, [0.5, 0.25, 0.75]);
+        let Some(median) = median else {
             return GumbelEta::from_array([0.0, 0.0]);
         };
-        let q1 = weighted_quantile(&values, 0.25).unwrap_or(median);
-        let q3 = weighted_quantile(&values, 0.75).unwrap_or(median);
+        let q1 = q1.unwrap_or(median);
+        let q3 = q3.unwrap_or(median);
         let standard_q1 = -(-0.25_f64.ln()).ln();
         let standard_q3 = -(-0.75_f64.ln()).ln();
         let standard_median = -(-0.5_f64.ln()).ln();
         let sigma = positive_floor((q3 - q1).abs() / (standard_q3 - standard_q1));
-        let mu = median - sigma * standard_median;
+        let mu = sigma.mul_add(-standard_median, median);
 
         GumbelEta {
             mu: MuLink::initial_eta_from_theta(mu),
@@ -280,24 +281,7 @@ pub struct GumbelEta {
     pub sigma: f64,
 }
 
-impl ParameterParts<2> for GumbelEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("gumbel eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(GumbelEta, 2, { 0 => mu, 1 => sigma }, "gumbel eta only has indices 0 and 1");
 
 /// Natural-scale Gumbel parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

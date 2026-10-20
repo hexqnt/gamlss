@@ -31,24 +31,7 @@ pub struct ZinbComponentMeanSizeZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZinbComponentMeanSizeZeroProbabilityEta {
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            component_mean: values[0],
-            size: values[1],
-            zero_probability: values[2],
-        }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.component_mean,
-            1 => self.size,
-            2 => self.zero_probability,
-            _ => unreachable!("zinb eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZinbComponentMeanSizeZeroProbabilityEta, 3, { 0 => component_mean, 1 => size, 2 => zero_probability }, "zinb eta only has indices 0 through 2");
 
 impl<ComponentMeanLink, SizeLink, ZeroProbabilityLink>
     Zinb<ComponentMeanLink, SizeLink, ZeroProbabilityLink>

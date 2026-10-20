@@ -332,7 +332,7 @@ impl DesignMatrix for DenseDesign {
     }
 }
 
-struct UnitRowMultiplier;
+pub(crate) struct UnitRowMultiplier;
 
 impl RowMultiplier for UnitRowMultiplier {
     #[inline]

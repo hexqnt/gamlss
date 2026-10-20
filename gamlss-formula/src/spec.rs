@@ -12,7 +12,6 @@ use crate::{
     compile::{fit_terms, predictor_from_fitted_terms, required_response},
     penalty::prediction_penalty,
     predictor::FormulaPredictorBlock,
-    schema::terms_for,
 };
 
 /// Formula block type used by supported family specs.
@@ -187,8 +186,8 @@ macro_rules! define_spec {
             where
                 D: DataView + ?Sized,
             {
-                let first_terms = terms_for(self.schema(), $first_name);
-                let second_terms = terms_for(self.schema(), $second_name);
+                let first_terms = self.terms_for($first_name).unwrap_or(&[]);
+                let second_terms = self.terms_for($second_name).unwrap_or(&[]);
                 let first_x = predictor_from_fitted_terms($first_name, first_terms, data)?;
                 let second_x = predictor_from_fitted_terms($second_name, second_terms, data)?;
 

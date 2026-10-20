@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     DegreesOfFreedom, Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations,
-    InitialEtaFromTheta, Log, ObservationView, ParameterParts, PositiveLink,
+    InitialEtaFromTheta, Log, ObservationView, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -239,19 +239,7 @@ pub struct ChiSquaredEta {
     pub degrees_of_freedom: f64,
 }
 
-impl ParameterParts<1> for ChiSquaredEta {
-    fn from_array(values: [f64; 1]) -> Self {
-        Self {
-            degrees_of_freedom: values[0],
-        }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.degrees_of_freedom,
-            _ => unreachable!("chi-squared eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ChiSquaredEta, 1, { 0 => degrees_of_freedom }, "chi-squared eta only has index 0");
 
 /// Natural-scale degrees of freedom for [`ChiSquared`].
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -298,24 +298,7 @@ pub struct LogisticEta {
     pub sigma: f64,
 }
 
-impl ParameterParts<2> for LogisticEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            _ => unreachable!("logistic eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(LogisticEta, 2, { 0 => mu, 1 => sigma }, "logistic eta only has indices 0 and 1");
 
 /// Natural-scale logistic parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -20,4 +20,6 @@ Prepared, unprepared, and separated-kernel second-difference penalties are measu
 
 The `duchon_thin_plate/d2/n1000/centers49/k20` group separates out-of-sample radial basis evaluation from prepared prediction and VJP passes, and records the linear-time diagonal penalty value and gradient paths. Spectral setup is deliberately outside timed iterations because it is fitted metadata construction rather than an optimizer hot path.
 
+The `natural_cubic_construction` group separately measures fitted operator construction for `k = 8/32/128`, including its factorization, scratch buffers, and output allocation.
+
 Treat results as local comparison data rather than portable performance guarantees or CI thresholds.

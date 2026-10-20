@@ -233,26 +233,7 @@ pub struct SkewNormalEta {
     pub nu: f64,
 }
 
-impl ParameterParts<3> for SkewNormalEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("skew-normal eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(SkewNormalEta, 3, { 0 => mu, 1 => sigma, 2 => nu }, "skew-normal eta only has indices 0 through 2");
 
 /// Natural-scale skew-normal parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

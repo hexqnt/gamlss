@@ -19,7 +19,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::multivariate::{elliptical, initial, matrix::FixedLowerTriangular};
 
-use super::{direct_power_score, radial_nll_constant};
+use super::{RadialTerms, direct_power_score, location_scale_terms};
 
 /// Default-link multivariate power-exponential with Cholesky scale.
 pub type MvPowerExponentialCholeskyDefault<const D: usize> =
@@ -95,19 +95,10 @@ where
     ) -> MvPowerExponentialCholeskyTheta<D> {
         let mu = eta.mu.map(MuLink::inverse);
         let mut cholesky = FixedLowerTriangular::zeros();
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.lower(row, col);
-                let value = if row == col {
-                    DiagonalLink::inverse(eta_value)
-                } else {
-                    OffDiagonalLink::inverse(eta_value)
-                };
-                cholesky
-                    .set_lower(row, col, value)
-                    .expect("valid lower-triangular index");
-            }
-        }
+        crate::multivariate::cholesky::from_eta_into::<D, DiagonalLink, OffDiagonalLink>(
+            &eta.cholesky,
+            &mut cholesky,
+        );
         MvPowerExponentialCholeskyTheta::from_parts_unchecked(
             mu,
             cholesky,
@@ -128,14 +119,14 @@ where
             return f64::INFINITY;
         }
         let mut z = [0.0; D];
-        let Some((quadratic, log_det_scale)) =
-            elliptical::standardize(D, &observation, &theta.mu, &theta.cholesky, &mut z)
-        else {
-            return f64::INFINITY;
-        };
-        let radial_power = quadratic.powf(0.5 * theta.power);
-        let nll = log_det_scale + radial_nll_constant(D as f64, theta.power) + 0.5 * radial_power;
-        if nll.is_finite() { nll } else { f64::INFINITY }
+        location_scale_terms(
+            &observation,
+            &theta.mu,
+            &theta.cholesky,
+            theta.power,
+            &mut z,
+        )
+        .map_or(f64::INFINITY, |terms| terms.nll)
     }
 
     fn nll_and_gradient_eta_values(
@@ -147,33 +138,25 @@ where
             return (f64::INFINITY, Self::nan_eta());
         }
         let mut z = [0.0; D];
-        let Some((quadratic, log_det_scale)) =
-            elliptical::standardize(D, &observation, &theta.mu, &theta.cholesky, &mut z)
+        let Some(terms) = location_scale_terms(
+            &observation,
+            &theta.mu,
+            &theta.cholesky,
+            theta.power,
+            &mut z,
+        ) else {
+            return (f64::INFINITY, Self::nan_eta());
+        };
+        let Some((location_score, _radial_weight)) =
+            terms.location_score(&theta.cholesky, z, theta.power)
         else {
             return (f64::INFINITY, Self::nan_eta());
         };
-        let radial_power = quadratic.powf(0.5 * theta.power);
-        let nll = log_det_scale + radial_nll_constant(D as f64, theta.power) + 0.5 * radial_power;
-        if !nll.is_finite() {
-            return (f64::INFINITY, Self::nan_eta());
-        }
-
-        let radial_weight = if quadratic == 0.0 {
-            0.0
-        } else {
-            0.5 * theta.power * quadratic.powf(0.5 * theta.power - 1.0)
-        };
-        let standardized_gradient = z.map(|standardized| radial_weight * standardized);
-        let mut location_score = [0.0; D];
-        if !elliptical::transpose_solve(
-            D,
-            &theta.cholesky,
-            &standardized_gradient,
-            &mut location_score,
-        ) {
-            return (f64::INFINITY, Self::nan_eta());
-        }
-
+        let RadialTerms {
+            nll,
+            quadratic,
+            radial_power,
+        } = terms;
         let mut gradient = MvPowerExponentialCholeskyEta {
             mu: std::array::from_fn(|component| {
                 -location_score[component] * MuLink::derivative_inverse(eta.mu[component])
@@ -182,21 +165,11 @@ where
             power: direct_power_score(D as f64, theta.power, quadratic, radial_power)
                 * PowerLink::derivative_inverse(eta.power),
         };
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.lower(row, col);
-                let score = if row == col {
-                    DiagonalLink::derivative_log_inverse(eta_value)
-                        - location_score[row] * z[col] * DiagonalLink::derivative_inverse(eta_value)
-                } else {
-                    -location_score[row] * z[col] * OffDiagonalLink::derivative_inverse(eta_value)
-                };
-                gradient
-                    .cholesky
-                    .set_lower(row, col, score)
-                    .expect("valid lower-triangular index");
-            }
-        }
+        crate::multivariate::cholesky::gradient_from_location_score_into::<
+            D,
+            DiagonalLink,
+            OffDiagonalLink,
+        >(&eta.cholesky, &z, &location_score, &mut gradient.cholesky);
         (nll, gradient)
     }
 }
@@ -297,36 +270,13 @@ where
                 "multivariate power-exponential theta",
             ));
         }
-        let dimension = D as f64;
-        let gamma = rand_distr::Gamma::new(dimension / theta.power, 1.0)
-            .map_err(|_| SimulationError::BackendRejected("power-exponential radial shape"))?;
-        let radial_gamma = rand_distr::Distribution::sample(&gamma, rng);
-        let radius = (2.0 * radial_gamma).powf(1.0 / theta.power);
-        let normal = rand_distr::StandardNormal;
-        let direction: [f64; D] =
-            std::array::from_fn(|_| rand_distr::Distribution::sample(&normal, rng));
-        let direction_norm = direction
-            .iter()
-            .fold(0.0_f64, |norm, value| norm.hypot(*value));
-        if !radius.is_finite() || direction_norm == 0.0 || !direction_norm.is_finite() {
-            return Err(SimulationError::NumericalFailure(
-                "power-exponential radial transform",
-            ));
-        }
-        let standardized = direction.map(|value| radius * value / direction_norm);
-        let mut out = theta.mu;
-        for row in 0..D {
-            for col in 0..=row {
-                out[row] += theta.cholesky.lower(row, col) * standardized[col];
-            }
-        }
-        if out.iter().all(|value| value.is_finite()) {
-            Ok(out)
-        } else {
-            Err(SimulationError::NumericalFailure(
-                "multivariate power-exponential transform",
-            ))
-        }
+        super::try_sample_location_scale(
+            rng,
+            theta.mu,
+            &theta.cholesky,
+            theta.power,
+            "multivariate power-exponential transform",
+        )
     }
 }
 
@@ -349,9 +299,7 @@ where
     }
 
     fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape> {
-        let lower = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
-        });
+        let lower = *gradient.cholesky.as_full_rows();
         ((gradient.mu, lower), gradient.power)
     }
 
@@ -491,14 +439,7 @@ impl<const D: usize> MvPowerExponentialCholeskyTheta<D> {
     /// Returns one scatter entry from `L L'`.
     #[must_use]
     pub fn scatter(&self, row: usize, col: usize) -> Option<f64> {
-        if row >= D || col >= D {
-            return None;
-        }
-        Some(
-            (0..=row.min(col))
-                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
-                .sum(),
-        )
+        crate::multivariate::elliptical::covariance_from_cholesky(&self.cholesky, row, col)
     }
 }
 

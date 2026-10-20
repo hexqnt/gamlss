@@ -2,7 +2,7 @@ use gamlss_core::ModelError;
 
 use crate::local::{
     bspline_active_range, bspline_value, cyclic_local_basis_derivative_order,
-    open_uniform_local_basis_derivative,
+    open_uniform_basis_value, open_uniform_knot, open_uniform_local_basis_derivative,
 };
 use crate::numeric::pow_usize;
 use crate::{
@@ -596,49 +596,6 @@ where
         );
     }
     value
-}
-
-fn open_uniform_basis_value(
-    index: usize,
-    degree: usize,
-    u: f64,
-    n_basis: usize,
-    spline_degree: usize,
-) -> f64 {
-    if degree == 0 {
-        let left = open_uniform_knot(index, n_basis, spline_degree);
-        let right = open_uniform_knot(index + 1, n_basis, spline_degree);
-        return f64::from(left <= u && u < right);
-    }
-    let left_knot = open_uniform_knot(index, n_basis, spline_degree);
-    let left_end = open_uniform_knot(index + degree, n_basis, spline_degree);
-    let right_start = open_uniform_knot(index + 1, n_basis, spline_degree);
-    let right_knot = open_uniform_knot(index + degree + 1, n_basis, spline_degree);
-    let mut value = 0.0;
-    if left_end > left_knot {
-        value = ((u - left_knot) / (left_end - left_knot)).mul_add(
-            open_uniform_basis_value(index, degree - 1, u, n_basis, spline_degree),
-            value,
-        );
-    }
-    if right_knot > right_start {
-        value = ((right_knot - u) / (right_knot - right_start)).mul_add(
-            open_uniform_basis_value(index + 1, degree - 1, u, n_basis, spline_degree),
-            value,
-        );
-    }
-    value
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
-    if index <= degree {
-        0.0
-    } else if index >= n_basis {
-        1.0
-    } else {
-        (index - degree) as f64 / (n_basis - degree) as f64
-    }
 }
 
 #[allow(clippy::cast_precision_loss)]

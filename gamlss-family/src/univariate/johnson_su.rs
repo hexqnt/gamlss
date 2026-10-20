@@ -335,28 +335,7 @@ pub struct JohnsonSuEta {
     pub tau: f64,
 }
 
-impl ParameterParts<4> for JohnsonSuEta {
-    #[inline]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            nu: values[2],
-            tau: values[3],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.nu,
-            3 => self.tau,
-            _ => unreachable!("johnson-su eta only has indices 0 through 3"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(JohnsonSuEta, 4, { 0 => mu, 1 => sigma, 2 => nu, 3 => tau }, "johnson-su eta only has indices 0 through 3");
 
 /// Natural-scale Johnson SU parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

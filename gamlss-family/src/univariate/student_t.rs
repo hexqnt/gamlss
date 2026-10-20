@@ -115,7 +115,10 @@ impl StudentTKernel {
 
         let nu = self.degrees_of_freedom();
         let z = (y - theta.mu) / theta.sigma;
-        self.standardized.nll_constant() + log_sigma + f64::midpoint(nu, 1.0) * (z * z / nu).ln_1p()
+        f64::midpoint(nu, 1.0).mul_add(
+            (z * z / nu).ln_1p(),
+            self.standardized.nll_constant() + log_sigma,
+        )
     }
 
     #[inline]
@@ -233,7 +236,9 @@ fn student_t_standard_density(nu: f64, t: f64) -> f64 {
         return 0.0;
     }
 
-    (-student_t_nll_constant(nu) - f64::midpoint(nu, 1.0) * (t * t / nu).ln_1p()).exp()
+    f64::midpoint(nu, 1.0)
+        .mul_add(-(t * t / nu).ln_1p(), -student_t_nll_constant(nu))
+        .exp()
 }
 
 #[allow(clippy::suboptimal_flops)]
@@ -316,7 +321,7 @@ mod tests {
             dynamic.nll_and_gradient_eta(y, &eta, &mut dynamic.workspace());
         assert_relative_eq!(dynamic_nll, expected, epsilon = 2.0e-14);
         assert_relative_eq!(gradient.mu, -y, epsilon = 2.0e-15);
-        assert_relative_eq!(gradient.sigma, 1.0 - y * y, epsilon = 2.0e-15);
+        assert_relative_eq!(gradient.sigma, f64::mul_add(y, -y, 1.0), epsilon = 2.0e-15);
         assert!(
             gradient.tau.abs() < 1.0e-12,
             "tau gradient was {}",

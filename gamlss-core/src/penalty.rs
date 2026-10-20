@@ -1564,7 +1564,7 @@ mod tests {
         NoPenalty.add_penalty_matrix(0, &mut gram);
         RidgePenalty::new_unchecked(3.0).add_penalty_matrix(0, &mut gram);
 
-        assert!(gram.is_empty());
+        assert_eq!(gram, [] as [f64; 0]);
     }
 
     #[test]

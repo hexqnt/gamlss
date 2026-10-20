@@ -153,7 +153,7 @@ where
         let inverse_cv = 1.0 / theta.cv;
         let inverse_cv_squared = inverse_cv * inverse_cv;
         let log_mean_score = 0.5f64.mul_add(inverse_cv_squared * ratio_difference, -0.5);
-        let log_cv_score = 1.0 - inverse_cv_squared * ratio_deviance;
+        let log_cv_score = f64::mul_add(inverse_cv_squared, -ratio_deviance, 1.0);
         let d_mean = log_mean_score / theta.mean;
         let d_cv = log_cv_score / theta.cv;
 

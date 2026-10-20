@@ -292,21 +292,7 @@ pub struct BetaBinomialEta {
     pub precision: f64,
 }
 
-impl ParameterParts<2> for BetaBinomialEta {
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            probability: values[0],
-            precision: values[1],
-        }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.probability,
-            1 => self.precision,
-            _ => unreachable!("beta-binomial eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(BetaBinomialEta, 2, { 0 => probability, 1 => precision }, "beta-binomial eta only has indices 0 and 1");
 
 /// Natural-scale mean/precision parameters for [`BetaBinomial`].
 #[derive(Debug, Clone, Copy, PartialEq)]

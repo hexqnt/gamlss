@@ -104,6 +104,19 @@ impl<const D: usize> FixedLowerTriangular<D> {
     pub(crate) const fn lower(&self, row: usize, col: usize) -> f64 {
         self.values[row][col]
     }
+
+    /// Maps modeled entries in row-major order, preserving the zero upper triangle.
+    #[inline]
+    pub(super) fn map_lower(&self, mut map: impl FnMut(usize, usize, f64) -> f64) -> Self {
+        let mut out = Self::zeros();
+        for row in 0..D {
+            for col in 0..=row {
+                out.set_lower(row, col, map(row, col, self.lower(row, col)))
+                    .expect("valid lower-triangular index");
+            }
+        }
+        out
+    }
 }
 
 /// Runtime-dimensional packed lower-triangular matrix storage.

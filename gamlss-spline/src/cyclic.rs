@@ -1,10 +1,10 @@
 use std::ops::Range;
 
-use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
+use gamlss_core::{ModelError, RowMultiplier};
 
 use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
 use crate::local::{PreparedLocalBasis, cyclic_local_basis_derivative, prepare_cyclic_local_basis};
-use crate::row_basis::SplineRowBasis;
+use crate::prepared::impl_prepared_cyclic_design;
 use crate::{OnDemandSplineDesign, SplineError, SplineOrder};
 
 /// Metadata for a cyclic spline predictor on phase coordinates.
@@ -361,105 +361,8 @@ impl CyclicSplineDesign {
     }
 }
 
-impl SplineRowBasis for CyclicSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
+impl_prepared_cyclic_design!(CyclicSplineDesign, spec);
 
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.spec.n_basis
-    }
-
-    #[inline]
-    fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
-        self.prepared.for_each_row_basis(self.spec, row, f);
-    }
-}
-
-impl PredictorBlock for CyclicSplineDesign {
-    #[inline]
-    fn nrows(&self) -> usize {
-        self.prepared.nrows()
-    }
-
-    #[inline]
-    fn nparams(&self) -> usize {
-        self.spec.n_basis
-    }
-
-    #[inline]
-    fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
-        self.prepared.eta_row(self.spec, row, beta)
-    }
-
-    #[inline]
-    fn zero_beta_constant_contribution(&self) -> Option<f64> {
-        Some(0.0)
-    }
-
-    #[inline]
-    fn add_gradient_range(&self, rows: Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
-        self.prepared
-            .add_gradient_range(self.spec, rows, scores, grad);
-    }
-
-    #[inline]
-    fn add_weighted_gradient_by_range<M>(
-        &self,
-        rows: Range<usize>,
-        scores: &[f64],
-        multiplier: &M,
-        _: &[f64],
-        grad: &mut [f64],
-    ) where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_weighted_gradient_by_range(self.spec, rows, scores, multiplier, grad);
-    }
-}
-
-impl LinearPredictorGeometry for CyclicSplineDesign {
-    #[inline]
-    fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared.add_weighted_gram(self.spec, row_weights, out)
-    }
-
-    #[inline]
-    fn add_weighted_gram_by<M>(
-        &self,
-        row_weights: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_weighted_gram_by(self.spec, row_weights, multiplier, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        self.prepared.add_t_mul_vec(self.spec, row_scores, out)
-    }
-
-    #[inline]
-    fn add_t_mul_vec_by<M>(
-        &self,
-        row_scores: &[f64],
-        multiplier: &M,
-        out: &mut [f64],
-    ) -> Result<(), ModelError>
-    where
-        M: RowMultiplier + ?Sized,
-    {
-        self.prepared
-            .add_t_mul_vec_by(self.spec, row_scores, multiplier, out)
-    }
-}
 impl OnDemandSplineDesign<CyclicSplineSpec> {
     /// Derivative of the predictor contribution with respect to phase `phi`.
     #[must_use]

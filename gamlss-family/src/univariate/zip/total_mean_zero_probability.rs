@@ -45,24 +45,7 @@ pub struct ZipTotalMeanZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<2> for ZipTotalMeanZeroProbabilityEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            total_mean: values[0],
-            zero_probability: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.total_mean,
-            1 => self.zero_probability,
-            _ => unreachable!("total-mean ZIP eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZipTotalMeanZeroProbabilityEta, 2, { 0 => total_mean, 1 => zero_probability }, "total-mean ZIP eta only has indices 0 and 1");
 
 /// Natural-scale ZIP total-mean/zero-probability parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Logit,
-    ModelError, ObservationView, ParameterParts, Probability, UnitIntervalLink,
+    ModelError, ObservationView, Probability, UnitIntervalLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -422,19 +422,7 @@ pub struct BinomialEta {
     pub probability: f64,
 }
 
-impl ParameterParts<1> for BinomialEta {
-    fn from_array(values: [f64; 1]) -> Self {
-        Self {
-            probability: values[0],
-        }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.probability,
-            _ => unreachable!("binomial eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(BinomialEta, 1, { 0 => probability }, "binomial eta only has index 0");
 
 /// Natural-scale probability shared by binomial families.
 #[derive(Debug, Clone, Copy, PartialEq)]

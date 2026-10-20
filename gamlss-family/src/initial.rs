@@ -64,13 +64,27 @@ pub fn weighted_mean(values: &[(f64, f64)]) -> Option<f64> {
     weighted_summary(values).map(|summary| summary.mean)
 }
 
-pub fn weighted_quantile(values: &[(f64, f64)], probability: f64) -> Option<f64> {
-    if values.is_empty() || !(0.0..=1.0).contains(&probability) {
-        return None;
-    }
+#[cfg(test)]
+fn weighted_quantile(values: &[(f64, f64)], probability: f64) -> Option<f64> {
+    weighted_quantiles(values, [probability])[0]
+}
 
+pub fn weighted_quantiles<const K: usize>(
+    values: &[(f64, f64)],
+    probabilities: [f64; K],
+) -> [Option<f64>; K] {
     let mut sorted = values.to_vec();
     sorted.sort_by(|left, right| left.0.total_cmp(&right.0));
+    probabilities.map(|probability| {
+        if (0.0..=1.0).contains(&probability) {
+            sorted_weighted_quantile(&sorted, probability)
+        } else {
+            None
+        }
+    })
+}
+
+fn sorted_weighted_quantile(sorted: &[(f64, f64)], probability: f64) -> Option<f64> {
     let total_weight = sorted.iter().map(|(_, weight)| weight).sum::<f64>();
     if total_weight <= 0.0 || !total_weight.is_finite() {
         return None;
@@ -88,20 +102,19 @@ pub fn weighted_quantile(values: &[(f64, f64)], probability: f64) -> Option<f64>
     sorted.last().map(|(value, _)| *value)
 }
 
-pub fn weighted_median(values: &[(f64, f64)]) -> Option<f64> {
-    weighted_quantile(values, 0.5)
-}
-
 pub fn robust_location_scale(values: &[(f64, f64)]) -> Option<(f64, f64)> {
-    let location = weighted_median(values)?;
-    let q1 = weighted_quantile(values, 0.25).unwrap_or(location);
-    let q3 = weighted_quantile(values, 0.75).unwrap_or(location);
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let location = sorted_weighted_quantile(&sorted, 0.5)?;
+    let q1 = sorted_weighted_quantile(&sorted, 0.25).unwrap_or(location);
+    let q3 = sorted_weighted_quantile(&sorted, 0.75).unwrap_or(location);
     let iqr_scale = (q3 - q1).abs() / 1.349;
-    let deviations = values
+    let mut deviations = values
         .iter()
         .map(|(value, weight)| ((value - location).abs(), *weight))
         .collect::<Vec<_>>();
-    let mad_scale = weighted_median(&deviations).unwrap_or(0.0) * 1.4826;
+    deviations.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mad_scale = sorted_weighted_quantile(&deviations, 0.5).unwrap_or(0.0) * 1.4826;
     let moment_scale = weighted_summary(values).map_or(0.0, |summary| summary.variance.sqrt());
 
     let scale = positive_floor(
@@ -123,4 +136,49 @@ pub fn positive_floor(value: f64) -> f64 {
 
 pub fn probability_floor(value: f64) -> f64 {
     value.clamp(PROBABILITY_FLOOR, 1.0 - PROBABILITY_FLOOR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        POSITIVE_FLOOR, positive_floor, robust_location_scale, weighted_quantile, weighted_summary,
+    };
+
+    #[test]
+    #[allow(clippy::float_cmp)] // Sorting reuse must preserve the previous initializer exactly.
+    fn robust_initialization_preserves_independently_sorted_quantiles() {
+        for values in [
+            vec![],
+            vec![(3.0, 2.0)],
+            vec![(4.0, 1.0), (-1.0, 0.5), (4.0, 2.0), (0.0, 3.0)],
+            vec![(-0.0, 1.0), (0.0, 2.0), (2.0, 3.0), (-2.0, 1.0)],
+            vec![(1.0, 0.0)],
+            vec![(1.0, f64::INFINITY)],
+        ] {
+            let expected = weighted_quantile(&values, 0.5).map(|location| {
+                let q1 = weighted_quantile(&values, 0.25).unwrap_or(location);
+                let q3 = weighted_quantile(&values, 0.75).unwrap_or(location);
+                let deviations = values
+                    .iter()
+                    .map(|(value, weight)| ((value - location).abs(), *weight))
+                    .collect::<Vec<_>>();
+                let mad_scale = weighted_quantile(&deviations, 0.5).unwrap_or(0.0) * 1.4826;
+                let moment_scale =
+                    weighted_summary(&values).map_or(0.0, |summary| summary.variance.sqrt());
+                let scale = positive_floor(
+                    [
+                        mad_scale,
+                        (q3 - q1).abs() / 1.349,
+                        moment_scale,
+                        POSITIVE_FLOOR,
+                    ]
+                    .into_iter()
+                    .find(|value| value.is_finite() && *value > 0.0)
+                    .unwrap_or(POSITIVE_FLOOR),
+                );
+                (location, scale)
+            });
+            assert_eq!(robust_location_scale(&values), expected);
+        }
+    }
 }

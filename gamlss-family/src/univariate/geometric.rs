@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    Mean, ObservationView, ParameterParts, PositiveLink,
+    Mean, ObservationView, PositiveLink,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -260,18 +260,7 @@ pub struct GeometricEta {
     pub mean: f64,
 }
 
-impl ParameterParts<1> for GeometricEta {
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mean: values[0] }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            _ => unreachable!("geometric eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(GeometricEta, 1, { 0 => mean }, "geometric eta only has index 0");
 
 /// Natural-scale parameter for [`Geometric`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -309,7 +298,7 @@ mod tests {
         let family = GeometricMean::new();
         let mean = 1.0e16;
         let theta = GeometricTheta { mean };
-        let expected_nll = mean.ln_1p() + mean * (1.0 / mean).ln_1p();
+        let expected_nll = f64::mul_add(mean, (1.0 / mean).ln_1p(), mean.ln_1p());
         assert_relative_eq!(
             family.nll(mean, &theta, &mut ()),
             expected_nll,

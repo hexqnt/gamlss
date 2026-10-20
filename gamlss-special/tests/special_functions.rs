@@ -212,7 +212,7 @@ fn categorical_kl_handles_near_equal_and_boundary_probabilities() {
 
 #[test]
 fn digamma_matches_known_constants_and_recurrence() {
-    let euler_gamma = 0.577_215_664_901_532_9;
+    let euler_gamma = std::f64::consts::EULER_GAMMA;
 
     assert_relative_eq!(digamma(1.0), -euler_gamma, epsilon = 1.0e-10);
     assert_relative_eq!(

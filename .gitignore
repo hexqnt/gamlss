@@ -1,9 +1,39 @@
-/target
-/out
-/book/book
-/docs/diagrams
-/issues
+# Build and generated documentation.
+/target/
+/out/
+/book/book/
+/docs/diagrams/
 
+# Local development notes, audits, and agent settings.
+/.local/
+/.agents/
+/.codex/
+/issues/
 gamlss-doc-diagrams-pseudographics.md
-dhat-objective-*.json
-gamlss-family/benches/results/2026-07-19-serial-memory.md
+
+# Local benchmark and profiler output.
+**/benches/results/
+dhat-*.json
+perf.data
+perf.data.*
+*.profraw
+*.profdata
+
+# Python environments and caches.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor backups, temporary files, and OS metadata.
+*~
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*.rej
+.DS_Store
+Thumbs.db

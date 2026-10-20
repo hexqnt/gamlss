@@ -9,6 +9,8 @@ cargo bench -p gamlss-family --bench objective --all-features -- "mvn_cholesky_d
 
 Setup and allocations are excluded from timed iterations. Treat results as local baselines and compare runs under the same environment.
 
+Fixed Student-t and skew-Student-t cases include `D = 32` alongside `D = 4` to expose large carrier copies and changes in Cholesky loop code generation.
+
 ## Allocation and memory profiling
 
 Build the dynamic-MVN profiler with release debug information:

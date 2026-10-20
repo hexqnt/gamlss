@@ -115,21 +115,7 @@ where
             return f64::INFINITY;
         }
 
-        ln_gamma_stirling_residual(alpha) + ln_gamma_stirling_residual(beta)
-            - ln_gamma_stirling_residual(theta.precision)
-            + theta.precision * bernoulli_kl(theta.mu, y)
-            + y.ln()
-            + (-y).ln_1p()
-    }
-
-    #[inline]
-    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
-        let centered = (numerator - denominator) / denominator;
-        if centered.abs() <= 0.5 {
-            centered.ln_1p()
-        } else {
-            numerator.ln() - denominator.ln()
-        }
+        BetaKernel::nll(y, theta.mu, theta.precision, alpha, beta)
     }
 
     #[inline]
@@ -149,18 +135,51 @@ where
 
         let alpha = theta.mu * theta.precision;
         let beta = (1.0 - theta.mu) * theta.precision;
-        let precision_residual = digamma_minus_ln(theta.precision);
-        let d_alpha = digamma_minus_ln(alpha) - precision_residual + Self::log_ratio(theta.mu, y);
-        let d_beta =
-            digamma_minus_ln(beta) - precision_residual + Self::log_ratio(1.0 - theta.mu, 1.0 - y);
-        let d_mu = theta.precision * (d_alpha - d_beta);
-        let d_precision = theta.mu * d_alpha + (1.0 - theta.mu) * d_beta;
+        let (d_mu, d_precision) = BetaKernel::gradient(y, theta.mu, theta.precision, alpha, beta);
         let gradient_eta = BetaEta {
             mu: d_mu * MuLink::derivative_inverse(eta.mu),
             precision: d_precision * PrecisionLink::derivative_inverse(eta.precision),
         };
 
         (nll, gradient_eta)
+    }
+}
+
+/// Shared beta component arithmetic; callers own support and parameter validation.
+pub(super) struct BetaKernel;
+
+impl BetaKernel {
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    pub(super) fn nll(y: f64, mean: f64, precision: f64, alpha: f64, beta: f64) -> f64 {
+        ln_gamma_stirling_residual(alpha) + ln_gamma_stirling_residual(beta)
+            - ln_gamma_stirling_residual(precision)
+            + precision * bernoulli_kl(mean, y)
+            + y.ln()
+            + (-y).ln_1p()
+    }
+
+    #[inline]
+    #[allow(clippy::suboptimal_flops)]
+    pub(super) fn gradient(y: f64, mean: f64, precision: f64, alpha: f64, beta: f64) -> (f64, f64) {
+        let precision_residual = digamma_minus_ln(precision);
+        let d_alpha = digamma_minus_ln(alpha) - precision_residual + Self::log_ratio(mean, y);
+        let d_beta =
+            digamma_minus_ln(beta) - precision_residual + Self::log_ratio(1.0 - mean, 1.0 - y);
+        (
+            precision * (d_alpha - d_beta),
+            mean * d_alpha + (1.0 - mean) * d_beta,
+        )
+    }
+
+    #[inline]
+    fn log_ratio(numerator: f64, denominator: f64) -> f64 {
+        let centered = (numerator - denominator) / denominator;
+        if centered.abs() <= 0.5 {
+            centered.ln_1p()
+        } else {
+            numerator.ln() - denominator.ln()
+        }
     }
 }
 
@@ -376,24 +395,7 @@ pub struct BetaEta {
     pub precision: f64,
 }
 
-impl ParameterParts<2> for BetaEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            precision: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.precision,
-            _ => unreachable!("beta eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(BetaEta, 2, { 0 => mu, 1 => precision }, "beta eta only has indices 0 and 1");
 
 /// Natural-scale beta parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

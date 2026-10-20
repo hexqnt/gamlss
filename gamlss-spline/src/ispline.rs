@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
-use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
+use crate::geometry::{
+    UnitMultiplier, add_row_basis_weighted_gram, add_row_basis_weighted_gram_by,
+    validate_transpose_lengths,
+};
 use crate::mspline::MSplineBasis;
 use crate::row_basis::SplineRowBasis;
 use crate::validation::validate_coordinates;
@@ -555,21 +558,7 @@ impl PredictorBlock for ISplineDesign {
 impl LinearPredictorGeometry for ISplineDesign {
     #[inline]
     fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), ModelError> {
-        let nparams = self.basis.n_basis();
-        validate_gram_lengths(self.rows.len(), nparams, row_weights, out)?;
-        for (row, scale) in row_weights.iter().copied().enumerate() {
-            if scale == 0.0 {
-                continue;
-            }
-            self.for_each_row_basis(row, |left_index, left_weight| {
-                let scaled_left = scale * left_weight;
-                self.for_each_row_basis(row, |right_index, right_weight| {
-                    let index = left_index * nparams + right_index;
-                    out[index] = scaled_left.mul_add(right_weight, out[index]);
-                });
-            });
-        }
-        Ok(())
+        add_row_basis_weighted_gram(self, row_weights, out)
     }
 
     #[inline]
@@ -582,25 +571,7 @@ impl LinearPredictorGeometry for ISplineDesign {
     where
         M: RowMultiplier + ?Sized,
     {
-        let nparams = self.basis.n_basis();
-        validate_gram_lengths(self.rows.len(), nparams, row_weights, out)?;
-        for (row, weight) in row_weights.iter().copied().enumerate() {
-            if weight == 0.0 {
-                continue;
-            }
-            let scale = weight * multiplier.multiplier_at(row);
-            if scale == 0.0 {
-                continue;
-            }
-            self.for_each_row_basis(row, |left_index, left_weight| {
-                let scaled_left = scale * left_weight;
-                self.for_each_row_basis(row, |right_index, right_weight| {
-                    let index = left_index * nparams + right_index;
-                    out[index] = scaled_left.mul_add(right_weight, out[index]);
-                });
-            });
-        }
-        Ok(())
+        add_row_basis_weighted_gram_by(self, row_weights, multiplier, out)
     }
 
     #[inline]
@@ -623,15 +594,6 @@ impl LinearPredictorGeometry for ISplineDesign {
         validate_transpose_lengths(self.rows.len(), self.basis.n_basis(), row_scores, out)?;
         self.add_weighted_gradient_by(row_scores, multiplier, &[], out);
         Ok(())
-    }
-}
-
-struct UnitMultiplier;
-
-impl RowMultiplier for UnitMultiplier {
-    #[inline]
-    fn multiplier_at(&self, _: usize) -> f64 {
-        1.0
     }
 }
 

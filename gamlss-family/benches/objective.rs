@@ -505,6 +505,8 @@ fn objective_baseline(criterion: &mut Criterion) {
     benchmark_mean_std_partial::<4>(criterion, 1_000);
     benchmark_student_t::<4>(criterion, 1_000);
     benchmark_fixed_skew_student_t::<4>(criterion, 1_000);
+    benchmark_student_t::<32>(criterion, 1_000);
+    benchmark_fixed_skew_student_t::<32>(criterion, 1_000);
     benchmark_mixture::<2>(criterion, 1_000);
     benchmark_mixture::<4>(criterion, 1_000);
 }

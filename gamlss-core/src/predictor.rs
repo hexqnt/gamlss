@@ -2,7 +2,7 @@ use std::{marker::PhantomData, ops::Range};
 
 use crate::{
     DesignMatrix, Link, ModelError, RowMultiplier, Softplus,
-    design::{scale_active_rows, scale_active_rows_range},
+    design::{UnitRowMultiplier, scale_active_rows, scale_active_rows_range},
 };
 
 const EXPECTED_FINITE: &str = "finite";
@@ -780,15 +780,6 @@ where
     #[inline]
     fn multiplier_at(&self, row: usize) -> f64 {
         self.product[row] * self.product[row] * self.right.multiplier_at(row)
-    }
-}
-
-struct UnitRowMultiplier;
-
-impl RowMultiplier for UnitRowMultiplier {
-    #[inline]
-    fn multiplier_at(&self, _: usize) -> f64 {
-        1.0
     }
 }
 

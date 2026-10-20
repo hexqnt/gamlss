@@ -149,7 +149,11 @@ where
     let delta = nu / nu.hypot(1.0);
     let u = crate::simulation::standard_normal(rng).abs();
     let v = crate::simulation::standard_normal(rng);
-    let numerator = (1.0 - delta * delta).max(0.0).sqrt().mul_add(v, delta * u);
+    let numerator = delta
+        .mul_add(-delta, 1.0)
+        .max(0.0)
+        .sqrt()
+        .mul_add(v, delta * u);
     let sample = sigma.mul_add(numerator / denominator, mu);
     if sample.is_finite() {
         Ok(sample)
@@ -257,9 +261,9 @@ mod tests {
             tau: 1.0e16,
         };
         let standardized_mean = 1.0 / std::f64::consts::PI.sqrt();
-        let scale = theta.sigma / (1.0 - standardized_mean * standardized_mean).sqrt();
+        let scale = theta.sigma / standardized_mean.mul_add(-standardized_mean, 1.0).sqrt();
         let location_scale = SkewStudentTTheta {
-            mu: theta.mean - scale * standardized_mean,
+            mu: scale.mul_add(-standardized_mean, theta.mean),
             sigma: scale,
             nu: theta.nu,
             tau: theta.tau,

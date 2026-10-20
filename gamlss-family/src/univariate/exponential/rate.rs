@@ -29,20 +29,7 @@ pub struct ExponentialRateEta {
     pub rate: f64,
 }
 
-impl ParameterParts<1> for ExponentialRateEta {
-    #[inline]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { rate: values[0] }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.rate,
-            _ => unreachable!("exponential rate eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ExponentialRateEta, 1, { 0 => rate }, "exponential rate eta only has index 0");
 
 /// Natural-scale exponential rate parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]

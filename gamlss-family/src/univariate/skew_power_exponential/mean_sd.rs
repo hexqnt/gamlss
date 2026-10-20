@@ -303,28 +303,7 @@ pub struct SkewPowerExponentialMeanSdEta {
     pub power: f64,
 }
 
-impl ParameterParts<4> for SkewPowerExponentialMeanSdEta {
-    #[inline]
-    fn from_array(values: [f64; 4]) -> Self {
-        Self {
-            mean: values[0],
-            sigma: values[1],
-            skew_ratio: values[2],
-            power: values[3],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.sigma,
-            2 => self.skew_ratio,
-            3 => self.power,
-            _ => unreachable!("mean/SD skew power-exponential eta only has indices 0 through 3"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(SkewPowerExponentialMeanSdEta, 4, { 0 => mean, 1 => sigma, 2 => skew_ratio, 3 => power }, "mean/SD skew power-exponential eta only has indices 0 through 3");
 
 /// Natural-scale mean/SD two-piece power-exponential parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -260,20 +260,7 @@ pub struct BernoulliEta {
     pub mu: f64,
 }
 
-impl ParameterParts<1> for BernoulliEta {
-    #[inline]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mu: values[0] }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            _ => unreachable!("bernoulli eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(BernoulliEta, 1, { 0 => mu }, "bernoulli eta only has index 0");
 
 /// Natural-scale Bernoulli parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

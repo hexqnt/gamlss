@@ -201,21 +201,11 @@ where
                 terms.shape[component] * ShapeLink::derivative_inverse(eta.shape[component])
             }),
         };
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.lower(row, col);
-                let score = if row == col {
-                    DiagonalLink::derivative_log_inverse(eta_value)
-                        - location_score[row] * z[col] * DiagonalLink::derivative_inverse(eta_value)
-                } else {
-                    -location_score[row] * z[col] * OffDiagonalLink::derivative_inverse(eta_value)
-                };
-                gradient
-                    .cholesky
-                    .set_lower(row, col, score)
-                    .expect("valid lower-triangular index");
-            }
-        }
+        crate::multivariate::cholesky::gradient_from_location_score_into::<
+            D,
+            DiagonalLink,
+            OffDiagonalLink,
+        >(&eta.cholesky, &z, &location_score, &mut gradient.cholesky);
         (terms.nll, gradient)
     }
 }
@@ -339,9 +329,7 @@ where
     }
 
     fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape> {
-        let lower = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
-        });
+        let lower = *gradient.cholesky.as_full_rows();
         ((gradient.mu, lower), gradient.shape)
     }
 

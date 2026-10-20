@@ -12,13 +12,15 @@
 
 #![allow(clippy::cast_precision_loss, clippy::suboptimal_flops)]
 
-use std::cell::RefCell;
+#[path = "support/argmin.rs"]
+mod argmin_adapter;
+
+use argmin_adapter::ArgminObjective;
 
 use argmin::{
-    core::{CostFunction, Error, Executor, Gradient, State},
+    core::{Executor, State},
     solver::{linesearch::MoreThuenteLineSearch, quasinewton::LBFGS},
 };
-use gamlss::core::Objective;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use gamlss::core::{
@@ -100,73 +102,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         grad.iter().map(|v| v * v).sum::<f64>().sqrt()
     );
     Ok(())
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ARGMIN ADAPTER: RefCell resolves the &self (argmin) vs &mut self (Objective) conflict
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Objective requires &mut self to reuse internal buffers (predictor vectors,
-// gradient vectors). Allocating them anew on every call is unacceptable.
-// argmin requires &self. RefCell moves the borrow check to runtime:
-// since argmin calls cost/gradient strictly sequentially, there will be no panic.
-
-#[derive(Debug)]
-struct ArgminObjective<O> {
-    objective: RefCell<O>,
-}
-
-impl<O> ArgminObjective<O> {
-    const fn new(objective: O) -> Self {
-        Self {
-            objective: RefCell::new(objective),
-        }
-    }
-
-    fn dim(&self) -> usize
-    where
-        O: Objective,
-    {
-        self.objective.borrow().dim()
-    }
-
-    fn value_gradient(&mut self, parameters: &[f64], grad: &mut [f64]) -> Result<f64, O::Error>
-    where
-        O: Objective,
-    {
-        self.objective.get_mut().value_gradient(parameters, grad)
-    }
-}
-
-impl<O> CostFunction for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: std::error::Error + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Output = f64;
-
-    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
-        self.objective.borrow_mut().value(param).map_err(Error::new)
-    }
-}
-
-impl<O> Gradient for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: std::error::Error + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, Error> {
-        let mut grad = vec![0.0; self.dim()];
-        self.objective
-            .borrow_mut()
-            .gradient(param, &mut grad)
-            .map_err(Error::new)?;
-        Ok(grad)
-    }
 }
 
 // Synthetic data: y = 3 - 0.08·T + 0.004·T² - 0.35·wknd + 0.2·trnd + noise.

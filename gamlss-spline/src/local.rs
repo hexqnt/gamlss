@@ -535,7 +535,7 @@ pub fn bspline_local_basis(knots: &[f64], n_basis: usize, degree: usize, x: f64)
 
     if conventional_interior {
         let span = upper - 1;
-        let weights = arbitrary_bspline_basis_funs(knots, span, degree, x);
+        let weights = bspline_basis_funs(span, degree, x, |index| knots[index]);
         let mut basis = LocalBasis::default();
         for (offset, weight) in weights.iter().copied().enumerate().take(degree + 1) {
             basis.push_nonzero(first + offset, weight);
@@ -551,14 +551,14 @@ pub fn bspline_local_basis(knots: &[f64], n_basis: usize, degree: usize, x: f64)
 }
 
 #[inline]
-fn arbitrary_bspline_basis_funs(knots: &[f64], span: usize, degree: usize, x: f64) -> [f64; 4] {
+fn bspline_basis_funs(span: usize, degree: usize, x: f64, knot: impl Fn(usize) -> f64) -> [f64; 4] {
     let mut weights = [0.0; 4];
     let mut left = [0.0; 4];
     let mut right = [0.0; 4];
     weights[0] = 1.0;
     for j in 1..=degree {
-        left[j] = x - knots[span + 1 - j];
-        right[j] = knots[span + j] - x;
+        left[j] = x - knot(span + 1 - j);
+        right[j] = knot(span + j) - x;
         let mut saved = 0.0;
         for r in 0..j {
             let denominator = right[r + 1] + left[j - r];
@@ -595,7 +595,9 @@ pub fn open_uniform_local_basis(
     }
 
     let span = open_uniform_span(u, n_basis, degree);
-    let weights = open_uniform_basis_funs(span, u, n_basis, degree);
+    let weights = bspline_basis_funs(span, degree, u, |index| {
+        open_uniform_knot(index, n_basis, degree)
+    });
     let start = span - degree;
     let mut basis = LocalBasis {
         len: degree + 1,
@@ -833,33 +835,6 @@ fn open_uniform_span(u: f64, n_basis: usize, degree: usize) -> usize {
     span
 }
 
-/// Computes the weights of the B-spline basis functions in a given span.
-///
-/// Uses the Cox-de Boor recurrence algorithm.
-fn open_uniform_basis_funs(span: usize, u: f64, n_basis: usize, degree: usize) -> [f64; 4] {
-    let mut weights = [0.0; 4];
-    let mut left = [0.0; 4];
-    let mut right = [0.0; 4];
-    weights[0] = 1.0;
-    for j in 1..=degree {
-        left[j] = u - open_uniform_knot(span + 1 - j, n_basis, degree);
-        right[j] = open_uniform_knot(span + j, n_basis, degree) - u;
-        let mut saved = 0.0;
-        for r in 0..j {
-            let denominator = right[r + 1] + left[j - r];
-            let temp = if denominator == 0.0 {
-                0.0
-            } else {
-                weights[r] / denominator
-            };
-            weights[r] = right[r + 1].mul_add(temp, saved);
-            saved = left[j - r] * temp;
-        }
-        weights[j] = saved;
-    }
-    weights
-}
-
 #[allow(clippy::cast_precision_loss)]
 fn open_uniform_basis_derivative_value(
     index: usize,
@@ -892,7 +867,7 @@ fn open_uniform_basis_derivative_value(
     value
 }
 
-fn open_uniform_basis_value(
+pub fn open_uniform_basis_value(
     index: usize,
     degree: usize,
     u: f64,
@@ -933,7 +908,7 @@ fn open_uniform_basis_value(
 /// Knots are uniformly distributed between 0 and 1 with repeated boundary
 /// knots.
 #[allow(clippy::cast_precision_loss)]
-fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
+pub fn open_uniform_knot(index: usize, n_basis: usize, degree: usize) -> f64 {
     if index <= degree {
         0.0
     } else if index >= n_basis {

@@ -139,11 +139,3 @@ impl<Blocks> PredictionDesign<Blocks> {
         self.blocks
     }
 }
-
-pub fn terms_for<'a>(schema: &'a ModelSchema, parameter: &'static str) -> &'a [FittedTerm] {
-    schema
-        .parameters
-        .iter()
-        .find(|terms| terms.parameter == parameter)
-        .map_or(&[], |terms| terms.terms.as_slice())
-}

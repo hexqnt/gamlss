@@ -4,7 +4,7 @@
 pub const LOG_2: f64 = std::f64::consts::LN_2;
 
 /// Euler-Mascheroni constant.
-pub const EULER_MASCHERONI: f64 = 0.577_215_664_901_532_9;
+pub const EULER_MASCHERONI: f64 = std::f64::consts::EULER_GAMMA;
 
 /// Half of the natural logarithm of `2 * pi`.
 pub const HALF_LOG_2_PI: f64 = 0.918_938_533_204_672_7;

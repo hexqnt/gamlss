@@ -380,26 +380,7 @@ pub struct ZeroAdjustedStudentTEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZeroAdjustedStudentTEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            zero_probability: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.zero_probability,
-            _ => unreachable!("zero-adjusted student-t eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZeroAdjustedStudentTEta, 3, { 0 => mu, 1 => sigma, 2 => zero_probability }, "zero-adjusted student-t eta only has indices 0 through 2");
 
 /// Natural-scale parameters for zero-adjusted Student-t.
 #[derive(Debug, Clone, Copy, PartialEq)]

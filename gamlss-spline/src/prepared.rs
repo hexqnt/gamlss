@@ -522,3 +522,110 @@ macro_rules! impl_prepared_dense_design {
 }
 
 pub(crate) use impl_prepared_dense_design;
+
+/// Delegates designs with phase or physical coordinates to their shared cyclic row geometry.
+macro_rules! impl_prepared_cyclic_design {
+    ($design:ty, $spec:ident $(.$field:ident)*) => {
+        impl crate::SplineRowBasis for $design {
+            #[inline]
+            fn nrows(&self) -> usize {
+                self.prepared.nrows()
+            }
+
+            #[inline]
+            fn nparams(&self) -> usize {
+                self.$spec$(.$field)*.n_basis()
+            }
+
+            #[inline]
+            fn for_each_row_basis(&self, row: usize, f: impl FnMut(usize, f64)) {
+                self.prepared.for_each_row_basis(self.$spec$(.$field)*, row, f);
+            }
+        }
+
+        impl gamlss_core::PredictorBlock for $design {
+            #[inline]
+            fn nrows(&self) -> usize {
+                self.prepared.nrows()
+            }
+
+            #[inline]
+            fn nparams(&self) -> usize {
+                self.$spec$(.$field)*.n_basis()
+            }
+
+            #[inline]
+            fn eta_row(&self, row: usize, beta: &[f64]) -> f64 {
+                self.prepared.eta_row(self.$spec$(.$field)*, row, beta)
+            }
+
+            #[inline]
+            fn zero_beta_constant_contribution(&self) -> Option<f64> {
+                Some(0.0)
+            }
+
+            #[inline]
+            fn add_gradient_range(&self, rows: std::ops::Range<usize>, scores: &[f64], _: &[f64], grad: &mut [f64]) {
+                self.prepared
+                    .add_gradient_range(self.$spec$(.$field)*, rows, scores, grad);
+            }
+
+            #[inline]
+            fn add_weighted_gradient_by_range<M>(
+                &self,
+                rows: std::ops::Range<usize>,
+                scores: &[f64],
+                multiplier: &M,
+                _: &[f64],
+                grad: &mut [f64],
+            ) where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared
+                    .add_weighted_gradient_by_range(self.$spec$(.$field)*, rows, scores, multiplier, grad);
+            }
+        }
+
+        impl gamlss_core::LinearPredictorGeometry for $design {
+            #[inline]
+            fn add_weighted_gram(&self, row_weights: &[f64], out: &mut [f64]) -> Result<(), gamlss_core::ModelError> {
+                self.prepared.add_weighted_gram(self.$spec$(.$field)*, row_weights, out)
+            }
+
+            #[inline]
+            fn add_weighted_gram_by<M>(
+                &self,
+                row_weights: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared
+                    .add_weighted_gram_by(self.$spec$(.$field)*, row_weights, multiplier, out)
+            }
+
+            #[inline]
+            fn add_t_mul_vec(&self, row_scores: &[f64], out: &mut [f64]) -> Result<(), gamlss_core::ModelError> {
+                self.prepared.add_t_mul_vec(self.$spec$(.$field)*, row_scores, out)
+            }
+
+            #[inline]
+            fn add_t_mul_vec_by<M>(
+                &self,
+                row_scores: &[f64],
+                multiplier: &M,
+                out: &mut [f64],
+            ) -> Result<(), gamlss_core::ModelError>
+            where
+                M: gamlss_core::RowMultiplier + ?Sized,
+            {
+                self.prepared
+                    .add_t_mul_vec_by(self.$spec$(.$field)*, row_scores, multiplier, out)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_prepared_cyclic_design;

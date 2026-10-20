@@ -864,7 +864,7 @@ fn jacobi_rotation(
     } else {
         -1.0 / (-tau + tau.hypot(1.0))
     };
-    let cosine = 1.0 / (1.0 + tangent * tangent).sqrt();
+    let cosine = 1.0 / f64::mul_add(tangent, tangent, 1.0).sqrt();
     let sine = tangent * cosine;
     for index in 0..dimension {
         if index == left || index == right {
@@ -879,8 +879,8 @@ fn jacobi_rotation(
         matrix[index * dimension + right] = rotated_right;
         matrix[right * dimension + index] = rotated_right;
     }
-    matrix[left * dimension + left] = diagonal_left - tangent * off_diagonal;
-    matrix[right * dimension + right] = diagonal_right + tangent * off_diagonal;
+    matrix[left * dimension + left] = f64::mul_add(tangent, -off_diagonal, diagonal_left);
+    matrix[right * dimension + right] = f64::mul_add(tangent, off_diagonal, diagonal_right);
     matrix[left * dimension + right] = 0.0;
     matrix[right * dimension + left] = 0.0;
     for row in 0..dimension {

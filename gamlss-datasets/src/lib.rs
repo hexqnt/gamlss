@@ -79,7 +79,7 @@ mod tests {
 
     fn assert_aligned_finite(x: &[f64], y: &[f64]) {
         assert_eq!(x.len(), y.len());
-        assert!(!x.is_empty());
+        assert_ne!(x, []);
         assert!(x.iter().chain(y).all(|value| value.is_finite()));
     }
 

@@ -1,3 +1,25 @@
+/// Implements the fixed ordering of a named scalar parameter carrier.
+///
+/// Keeping the field indices and invalid-index message at the call site preserves each carrier's contract without repeating the conversion and indexing implementations.
+macro_rules! impl_scalar_parameter_parts {
+    ($eta:ident, $arity:literal, { $($index:literal => $field:ident),+ $(,)? }, $message:expr) => {
+        impl gamlss_core::ParameterParts<$arity> for $eta {
+            #[inline]
+            fn from_array(values: [f64; $arity]) -> Self {
+                Self { $($field: values[$index]),+ }
+            }
+
+            #[inline]
+            fn part(&self, index: usize) -> f64 {
+                match index {
+                    $($index => self.$field,)+
+                    _ => unreachable!($message),
+                }
+            }
+        }
+    };
+}
+
 /// Defines the repeated parameter plumbing for a family with two independently linked positive parameters.
 ///
 /// Each invocation generates two distinct named carrier types. The eta carrier stores the predictors
@@ -75,27 +97,10 @@ macro_rules! define_two_positive_parameter_blocks {
             pub $second: f64,
         }
 
-        impl gamlss_core::ParameterParts<2> for $eta {
-            #[inline]
-            fn from_array(values: [f64; 2]) -> Self {
-                Self {
-                    $first: values[0],
-                    $second: values[1],
-                }
-            }
-
-            #[inline]
-            fn part(&self, index: usize) -> f64 {
-                match index {
-                    0 => self.$first,
-                    1 => self.$second,
-                    _ => unreachable!(concat!(
-                        stringify!($eta),
-                        " only has indices 0 and 1"
-                    )),
-                }
-            }
-        }
+        impl_scalar_parameter_parts!(
+            $eta, 2, { 0 => $first, 1 => $second },
+            concat!(stringify!($eta), " only has indices 0 and 1")
+        );
 
         $(#[$theta_meta])*
         #[derive(Debug, Clone, Copy, PartialEq)]

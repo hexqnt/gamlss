@@ -551,6 +551,17 @@ fn benchmark_duchon_case(criterion: &mut Criterion) {
 }
 
 fn spline_hot_paths(criterion: &mut Criterion) {
+    {
+        let mut construction = criterion.benchmark_group("natural_cubic_construction");
+        for n_basis in [8, 32, 128] {
+            let knots = coordinates(n_basis);
+            construction.bench_function(format!("k{n_basis}"), |bencher| {
+                bencher.iter(|| NaturalCubicSplineBasis::new(black_box(knots.clone())).unwrap());
+            });
+        }
+        construction.finish();
+    }
+
     benchmark_design_case(criterion, 1_000, 16, SplineOrder::Cubic, Coverage::Full);
     benchmark_design_case(criterion, 1_000, 64, SplineOrder::Cubic, Coverage::Full);
     benchmark_design_case(

@@ -8,7 +8,7 @@ use gamlss_core::{
 use gamlss_core::{SimulationError, TrySimulate};
 
 use crate::domain::{is_positive_finite, is_probability};
-use crate::initial::{positive_floor, weighted_quantile, weighted_values};
+use crate::initial::{positive_floor, weighted_quantiles, weighted_values};
 
 /// Lomax distribution with log links for shape and scale.
 pub type LomaxShapeScale = Lomax<Log, Log>;
@@ -150,10 +150,11 @@ where
     {
         let values =
             weighted_values::<Self, _, _>(obs, |y| (y.is_finite() && y >= 0.0).then_some(y));
-        let Some(q50) = weighted_quantile(&values, 0.5) else {
+        let [q50, q75] = weighted_quantiles(&values, [0.5, 0.75]);
+        let Some(q50) = q50 else {
             return LomaxEta::from_array([0.0, 0.0]);
         };
-        let q75 = weighted_quantile(&values, 0.75).unwrap_or(q50);
+        let q75 = q75.unwrap_or(q50);
 
         let (shape, scale) = if q50 > 0.0 && q75 > q50 {
             let ratio = (q75 / q50).max(2.0 + 1.0e-6);

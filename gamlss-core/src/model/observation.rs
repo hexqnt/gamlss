@@ -59,17 +59,9 @@ impl<'a> DenseRows<'a> {
                 row_width: width.get(),
             });
         }
-        let nrows = values.len() / width.get();
+        let nrows = values.len() / width;
         if let Some(weights) = weights {
-            if weights.len() != nrows {
-                return Err(ModelError::WeightLength {
-                    expected: nrows,
-                    actual: weights.len(),
-                });
-            }
-            for (index, weight) in weights.iter().copied().enumerate() {
-                validate_observation_weight(index, weight)?;
-            }
+            validate_observation_weights(weights, nrows)?;
         }
         Ok(Self {
             values,
@@ -183,7 +175,8 @@ impl<'row> ObservationView<'row> for FiniteScalarObservations<'_> {
 
     #[inline]
     fn validate(&self) -> Result<(), ModelError> {
-        validate_scalar_observations(self.values)
+        // Private, immutable storage was checked by `new`.
+        Ok(())
     }
 }
 
@@ -269,17 +262,7 @@ impl<'row> ObservationView<'row> for (&[f64], &[f64]) {
     }
 
     fn validate(&self) -> Result<(), ModelError> {
-        let expected = self.0.len();
-        let actual = self.1.len();
-        if actual != expected {
-            return Err(ModelError::WeightLength { expected, actual });
-        }
-
-        for (index, weight) in self.1.iter().copied().enumerate() {
-            validate_observation_weight(index, weight)?;
-        }
-
-        Ok(())
+        validate_observation_weights(self.1, self.0.len())
     }
 }
 
@@ -326,18 +309,19 @@ impl<'row, const N: usize> ObservationView<'row> for (&[[f64; N]], &[f64]) {
     }
 
     fn validate(&self) -> Result<(), ModelError> {
-        let expected = self.0.len();
-        let actual = self.1.len();
-        if actual != expected {
-            return Err(ModelError::WeightLength { expected, actual });
-        }
-
-        for (index, weight) in self.1.iter().copied().enumerate() {
-            validate_observation_weight(index, weight)?;
-        }
-
-        Ok(())
+        validate_observation_weights(self.1, self.0.len())
     }
+}
+
+fn validate_observation_weights(weights: &[f64], expected: usize) -> Result<(), ModelError> {
+    let actual = weights.len();
+    if actual != expected {
+        return Err(ModelError::WeightLength { expected, actual });
+    }
+    for (index, weight) in weights.iter().copied().enumerate() {
+        validate_observation_weight(index, weight)?;
+    }
+    Ok(())
 }
 
 fn validate_observation_weight(index: usize, weight: f64) -> Result<(), ModelError> {

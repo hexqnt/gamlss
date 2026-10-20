@@ -275,8 +275,9 @@ mod tests {
         assert_eq!(contrast.nparams(), 5);
         let (source_rows, source_remainder) = source_rows.as_chunks::<6>();
         let (transformed_rows, transformed_remainder) = contrast.values().as_chunks::<5>();
-        assert!(source_remainder.is_empty());
-        assert!(transformed_remainder.is_empty());
+        let empty: &[f64] = &[];
+        assert_eq!(source_remainder, empty);
+        assert_eq!(transformed_remainder, empty);
         for (source, transformed) in source_rows.iter().zip(transformed_rows) {
             let mut expected = [0.0; 5];
             contrast

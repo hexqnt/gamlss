@@ -568,27 +568,6 @@ mod tests {
     where
         P: MatrixPenalty,
     {
-        let mut gradient = vec![0.0; beta.len()];
-        penalty.add_gradient(beta, &mut gradient);
-        let mut matrix = vec![0.0; beta.len() * beta.len()];
-        penalty.add_penalty_matrix(beta.len(), &mut matrix);
-        for (row, expected) in gradient.iter().copied().enumerate() {
-            let actual = matrix[row * beta.len()..(row + 1) * beta.len()]
-                .iter()
-                .zip(beta)
-                .map(|(weight, value)| weight * value)
-                .sum::<f64>();
-            assert_relative_eq!(actual, expected, epsilon = 1.0e-11);
-        }
-
-        let step = 1.0e-6;
-        for index in 0..beta.len() {
-            let mut lower = beta.to_vec();
-            let mut upper = beta.to_vec();
-            lower[index] -= step;
-            upper[index] += step;
-            let finite_difference = (penalty.value(&upper) - penalty.value(&lower)) / (2.0 * step);
-            assert_relative_eq!(finite_difference, gradient[index], epsilon = 2.0e-8);
-        }
+        crate::tests::assert_penalty_gradient_and_matrix_match(penalty, beta, 1.0e-11, 2.0e-8);
     }
 }

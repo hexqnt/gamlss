@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use gamlss_core::{
     Family, HasCdf, HasCrps, HasQuantile, InitialEtaFromObservations, InitialEtaFromTheta, Log,
-    ObservationView, ParameterParts, PositiveLink, Scale,
+    ObservationView, PositiveLink, Scale,
 };
 #[cfg(feature = "rand")]
 use gamlss_core::{SimulationError, TrySimulate};
@@ -209,17 +209,7 @@ pub struct RayleighEta {
     pub scale: f64,
 }
 
-impl ParameterParts<1> for RayleighEta {
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { scale: values[0] }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.scale,
-            _ => unreachable!("Rayleigh eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(RayleighEta, 1, { 0 => scale }, "Rayleigh eta only has index 0");
 
 /// Natural-scale parameter for [`Rayleigh`].
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -131,19 +131,8 @@ impl<'row> ObservationView<'row> for NumericResponse<'_> {
     }
 
     fn validate(&self) -> Result<(), ModelError> {
-        if let Some(weights) = self.weights() {
-            let expected = self.as_slice().len();
-            let actual = weights.len();
-            if actual != expected {
-                return Err(ModelError::WeightLength { expected, actual });
-            }
-            for (index, weight) in weights.iter().copied().enumerate() {
-                if !weight.is_finite() || weight < 0.0 {
-                    return Err(ModelError::InvalidWeight { index });
-                }
-            }
-        }
-        Ok(())
+        self.weights()
+            .map_or(Ok(()), |weights| (self.as_slice(), weights).validate())
     }
 }
 /// Marker type for categorical columns.

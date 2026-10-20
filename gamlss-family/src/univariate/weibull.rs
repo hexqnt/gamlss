@@ -6,6 +6,7 @@ use gamlss_core::{SimulationError, TrySimulate};
 
 use gamlss_special::{ln_gamma, regularized_gamma_lower};
 
+use crate::constants::EULER_MASCHERONI;
 use crate::domain::{ScalarObservationDomain, is_positive_finite, is_probability};
 use crate::initial::{VARIANCE_FLOOR, positive_floor, weighted_summary};
 
@@ -16,8 +17,6 @@ pub use scale_shape::{
 
 mod mean_shape;
 mod scale_shape;
-
-const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
 
 /// Weibull family implementation carrier.
 ///
@@ -150,7 +149,7 @@ impl<Param, FirstLink, SecondLink> Weibull<Param, FirstLink, SecondLink> {
         } else {
             positive_floor(std::f64::consts::PI / (6.0 * summary.variance).sqrt())
         };
-        let scale = positive_floor((summary.mean + EULER_GAMMA / shape).exp());
+        let scale = positive_floor((summary.mean + EULER_MASCHERONI / shape).exp());
         Some((scale, shape))
     }
 }

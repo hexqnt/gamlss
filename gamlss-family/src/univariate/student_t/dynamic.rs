@@ -278,26 +278,7 @@ pub struct StudentTMuSigmaTauEta {
     pub tau: f64,
 }
 
-impl ParameterParts<3> for StudentTMuSigmaTauEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mu: values[0],
-            sigma: values[1],
-            tau: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.sigma,
-            2 => self.tau,
-            _ => unreachable!("dynamic student-t eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(StudentTMuSigmaTauEta, 3, { 0 => mu, 1 => sigma, 2 => tau }, "dynamic student-t eta only has indices 0 through 2");
 
 /// Dynamic-DF Student's t parameters on the natural scale.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -578,26 +578,7 @@ pub struct TweedieEta {
     pub power: f64,
 }
 
-impl ParameterParts<3> for TweedieEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mean: values[0],
-            dispersion: values[1],
-            power: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.dispersion,
-            2 => self.power,
-            _ => unreachable!("tweedie eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(TweedieEta, 3, { 0 => mean, 1 => dispersion, 2 => power }, "tweedie eta only has indices 0 through 2");
 
 /// Natural-scale Tweedie parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -832,26 +813,7 @@ pub struct TweedieMeanCvPowerEta {
     pub power: f64,
 }
 
-impl ParameterParts<3> for TweedieMeanCvPowerEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            mean: values[0],
-            cv: values[1],
-            power: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            1 => self.cv,
-            2 => self.power,
-            _ => unreachable!("tweedie mean/CV/power eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(TweedieMeanCvPowerEta, 3, { 0 => mean, 1 => cv, 2 => power }, "tweedie mean/CV/power eta only has indices 0 through 2");
 
 /// Natural-scale Tweedie mean/CV/power parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

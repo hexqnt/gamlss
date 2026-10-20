@@ -26,24 +26,7 @@ pub struct NegativeBinomialEta {
     pub shape: f64,
 }
 
-impl ParameterParts<2> for NegativeBinomialEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            mu: values[0],
-            shape: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            1 => self.shape,
-            _ => unreachable!("negative binomial eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(NegativeBinomialEta, 2, { 0 => mu, 1 => shape }, "negative binomial eta only has indices 0 and 1");
 
 impl<MuLink, ShapeLink> NegativeBinomial<MuLink, ShapeLink>
 where

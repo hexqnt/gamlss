@@ -30,8 +30,12 @@
 
 #![allow(clippy::cast_precision_loss)]
 
+#[path = "support/argmin.rs"]
+mod argmin_adapter;
+
+use argmin_adapter::ArgminObjective;
+
 use std::{
-    cell::RefCell,
     error::Error as StdError,
     fmt,
     ops::Range,
@@ -40,7 +44,7 @@ use std::{
 };
 
 use argmin::{
-    core::{CostFunction, Error as ArgminError, Executor, Gradient, State, TerminationReason},
+    core::{Error as ArgminError, Executor, State, TerminationReason},
     solver::{linesearch::MoreThuenteLineSearch, quasinewton::LBFGS},
 };
 use gamlss::{
@@ -504,60 +508,6 @@ impl<'a> SplitContext<'a> {
             train: data.rows(lag, outer_train)?,
             validation: data.rows(lag, outer_validation)?,
         })
-    }
-}
-
-#[derive(Debug)]
-struct ArgminObjective<O> {
-    objective: RefCell<O>,
-}
-
-impl<O> ArgminObjective<O> {
-    const fn new(objective: O) -> Self {
-        Self {
-            objective: RefCell::new(objective),
-        }
-    }
-
-    fn dim(&self) -> usize
-    where
-        O: Objective,
-    {
-        self.objective.borrow().dim()
-    }
-}
-
-impl<O> CostFunction for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: StdError + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Output = f64;
-
-    fn cost(&self, parameters: &Self::Param) -> Result<Self::Output, ArgminError> {
-        self.objective
-            .borrow_mut()
-            .value(parameters)
-            .map_err(ArgminError::new)
-    }
-}
-
-impl<O> Gradient for ArgminObjective<O>
-where
-    O: Objective,
-    O::Error: StdError + Send + Sync + 'static,
-{
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
-
-    fn gradient(&self, parameters: &Self::Param) -> Result<Self::Gradient, ArgminError> {
-        let mut gradient = vec![0.0; self.dim()];
-        self.objective
-            .borrow_mut()
-            .gradient(parameters, &mut gradient)
-            .map_err(ArgminError::new)?;
-        Ok(gradient)
     }
 }
 
@@ -1578,7 +1528,7 @@ fn interval_coverage_90(family: PolicyFamily, fitted: &[PolicyTheta], observatio
 }
 
 fn mean_and_standard_error(values: &[f64]) -> (f64, f64) {
-    debug_assert!(!values.is_empty());
+    debug_assert_ne!(values, []);
     let count = values.len() as f64;
     let mean = values.iter().sum::<f64>() / count;
     if values.len() == 1 {

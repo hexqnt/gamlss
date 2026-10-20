@@ -608,15 +608,7 @@ impl<const K: usize> LogisticNormalAlrCholeskyTheta<K> {
     /// Returns one covariance entry of the latent ALR normal distribution.
     #[must_use]
     pub fn log_ratio_covariance(&self, row: usize, col: usize) -> Option<f64> {
-        let dimension = K.saturating_sub(1);
-        if row >= dimension || col >= dimension {
-            return None;
-        }
-        Some(
-            (0..=row.min(col))
-                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
-                .sum(),
-        )
+        crate::multivariate::elliptical::covariance_from_cholesky(&self.cholesky, row, col)
     }
 }
 

@@ -1,5 +1,7 @@
 use crate::transforms::{TargetTransform, TransformError, validate_non_empty_finite};
 
+use super::moments::Moments;
+
 /// Standardization by the training mean and root-mean-square deviation.
 ///
 /// For $n$ training targets,
@@ -26,23 +28,16 @@ pub struct Standardize;
 impl TargetTransform for Standardize {
     type State = StandardizeState;
 
-    #[allow(clippy::cast_precision_loss)]
     fn fit(y: &[f64]) -> Result<Self::State, TransformError> {
         validate_non_empty_finite(y)?;
 
-        let mut count = 0.0;
-        let mut center = 0.0;
-        let mut sum_squares = 0.0;
+        let mut moments = Moments::default();
         for value in y.iter().copied() {
-            count += 1.0;
-            let delta = value - center;
-            center += delta / count;
-            let centered = value - center;
-            sum_squares += delta * centered;
+            moments.push(value);
         }
 
-        let variance = sum_squares / count;
-        let scale = variance.sqrt();
+        let center = moments.mean();
+        let scale = moments.variance().sqrt();
         if !scale.is_finite() || scale <= 0.0 {
             return Err(TransformError::ZeroScale);
         }
@@ -113,9 +108,8 @@ mod tests {
         let (state, transformed) = Standardize::fit_transform(&y).unwrap();
         let restored = Standardize::inverse_slice(&state, &transformed).unwrap();
 
-        assert!(state.center.is_finite());
-        assert!(state.scale.is_finite());
-        assert!(state.scale > 0.0);
+        assert_relative_eq!(state.center, 1.0e12 + 2.0, epsilon = 1.0e-6);
+        assert_relative_eq!(state.scale, (8.0_f64 / 3.0).sqrt(), epsilon = 1.0e-14);
         for (actual, expected) in restored.iter().zip(y) {
             assert_relative_eq!(*actual, expected, epsilon = 1.0e-6);
         }

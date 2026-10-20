@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gamlss_core::{LinearPredictorGeometry, ModelError, PredictorBlock, RowMultiplier};
 
-use crate::geometry::{validate_gram_lengths, validate_transpose_lengths};
+use crate::geometry::{UnitMultiplier, validate_gram_lengths, validate_transpose_lengths};
 use crate::row_basis::SplineRowBasis;
 use crate::validation::{finite_data_range, validate_coordinates};
 use crate::{OnDemandSplineDesign, SplineError};
@@ -118,7 +118,7 @@ impl NaturalCubicSplineBasis {
 
         let step = (max - min) / (n_basis - 1) as f64;
         let knots = (0..n_basis)
-            .map(|index| min + step * index as f64)
+            .map(|index| step.mul_add(index as f64, min))
             .collect::<Vec<_>>();
         Self::new(knots)
     }
@@ -663,15 +663,6 @@ impl LinearPredictorGeometry for NaturalCubicSplineDesign {
     }
 }
 
-struct UnitMultiplier;
-
-impl RowMultiplier for UnitMultiplier {
-    #[inline]
-    fn multiplier_at(&self, _: usize) -> f64 {
-        1.0
-    }
-}
-
 #[inline]
 fn add_scaled_pair_outer(pair: &[(usize, f64); 2], scale: f64, n_basis: usize, out: &mut [f64]) {
     for (left_index, left_value) in pair.iter().copied() {
@@ -757,63 +748,128 @@ fn validate_strict_knots(knots: &[f64]) -> Result<(), SplineError> {
     Ok(())
 }
 
+/// Factorizes the shared tridiagonal system once, then solves each cardinal right-hand side.
+#[allow(clippy::suboptimal_flops)]
 fn precompute_second_derivatives(knots: &[f64]) -> Vec<f64> {
     let n = knots.len();
-    let mut basis_major = Vec::with_capacity(n * n);
-    for basis in 0..n {
-        basis_major.extend(natural_basis_second_derivatives(knots, basis));
-    }
     let mut second_derivatives = vec![0.0; n * n];
-    for basis in 0..n {
-        for knot in 0..n {
-            second_derivatives[knot * n + basis] = basis_major[basis * n + knot];
-        }
-    }
-    debug_assert_eq!(second_derivatives.len(), n * n);
-    second_derivatives
-}
-
-#[allow(clippy::suboptimal_flops)]
-fn natural_basis_second_derivatives(x: &[f64], basis: usize) -> Vec<f64> {
-    let n = x.len();
-    debug_assert!(basis < n);
-
-    let mut second = vec![0.0; n];
     if n <= 2 {
-        return second;
+        return second_derivatives;
     }
 
     let m = n - 2;
-    let mut lower = vec![0.0; m];
-    let mut diag = vec![0.0; m];
+    let mut factors = vec![0.0; m];
+    let mut diagonal = vec![0.0; m];
     let mut upper = vec![0.0; m];
-    let mut rhs = vec![0.0; m];
-
     for row in 0..m {
-        let i = row + 1;
-        let h0 = x[i] - x[i - 1];
-        let h1 = x[i + 1] - x[i];
-        lower[row] = h0;
-        diag[row] = 2.0 * (h0 + h1);
-        upper[row] = h1;
-        let y_prev = f64::from(i - 1 == basis);
-        let y = f64::from(i == basis);
-        let y_next = f64::from(i + 1 == basis);
-        rhs[row] = 6.0 * ((y_next - y) / h1 - (y - y_prev) / h0);
+        let knot = row + 1;
+        factors[row] = knots[knot] - knots[knot - 1];
+        upper[row] = knots[knot + 1] - knots[knot];
+        diagonal[row] = 2.0 * (factors[row] + upper[row]);
     }
-
     for row in 1..m {
-        let factor = lower[row] / diag[row - 1];
-        diag[row] -= factor * upper[row - 1];
-        rhs[row] -= factor * rhs[row - 1];
+        factors[row] /= diagonal[row - 1];
+        diagonal[row] -= factors[row] * upper[row - 1];
     }
 
-    let mut interior = vec![0.0; m];
-    interior[m - 1] = rhs[m - 1] / diag[m - 1];
-    for row in (0..m - 1).rev() {
-        interior[row] = (rhs[row] - upper[row] * interior[row + 1]) / diag[row];
+    let mut rhs = vec![0.0; m];
+    for basis in 0..n {
+        for (row, value) in rhs.iter_mut().enumerate() {
+            let knot = row + 1;
+            let h0 = knots[knot] - knots[knot - 1];
+            let h1 = knots[knot + 1] - knots[knot];
+            let y_prev = f64::from(knot - 1 == basis);
+            let y = f64::from(knot == basis);
+            let y_next = f64::from(knot + 1 == basis);
+            *value = 6.0 * ((y_next - y) / h1 - (y - y_prev) / h0);
+        }
+        for row in 1..m {
+            rhs[row] -= factors[row] * rhs[row - 1];
+        }
+        rhs[m - 1] /= diagonal[m - 1];
+        for row in (0..m - 1).rev() {
+            rhs[row] = (rhs[row] - upper[row] * rhs[row + 1]) / diagonal[row];
+        }
+        for (row, value) in rhs.iter().copied().enumerate() {
+            second_derivatives[(row + 1) * n + basis] = value;
+        }
+    }
+    second_derivatives
+}
+
+#[cfg(test)]
+mod tests {
+    use super::precompute_second_derivatives;
+
+    #[test]
+    fn shared_factorization_preserves_cardinal_operator() {
+        let cases = [
+            vec![-1.0, 2.0],
+            vec![-2.0, 0.25, 4.0],
+            vec![-3.0, -1.0, 0.0, 0.1, 2.0, 7.0],
+            vec![0.0, 1.0e-100, 2.0e-100, 1.0e-50, 1.0, 2.0],
+            vec![-f64::MAX, -1.0, 0.0, 1.0, f64::MAX],
+            (0..65).map(f64::from).collect(),
+        ];
+        for knots in cases {
+            let actual = precompute_second_derivatives(&knots);
+            for basis in 0..knots.len() {
+                let expected = reference_cardinal_second_derivatives(&knots, basis);
+                for (knot, expected) in expected.into_iter().enumerate() {
+                    let actual = actual[knot * knots.len() + basis];
+                    assert!(
+                        actual.to_bits() == expected.to_bits()
+                            || (actual.is_nan() && expected.is_nan()),
+                        "basis={basis}, knot={knot}, knots={knots:?}: {actual:?} != {expected:?}",
+                    );
+                }
+            }
+        }
     }
 
-    second[1..n - 1].copy_from_slice(&interior);
-    second
+    // Keep the original per-response Thomas solve as an independent regression oracle.
+    #[allow(clippy::suboptimal_flops)]
+    fn reference_cardinal_second_derivatives(x: &[f64], basis: usize) -> Vec<f64> {
+        let n = x.len();
+        debug_assert!(basis < n);
+
+        let mut second = vec![0.0; n];
+        if n <= 2 {
+            return second;
+        }
+
+        let m = n - 2;
+        let mut lower = vec![0.0; m];
+        let mut diag = vec![0.0; m];
+        let mut upper = vec![0.0; m];
+        let mut rhs = vec![0.0; m];
+
+        for row in 0..m {
+            let i = row + 1;
+            let h0 = x[i] - x[i - 1];
+            let h1 = x[i + 1] - x[i];
+            lower[row] = h0;
+            diag[row] = 2.0 * (h0 + h1);
+            upper[row] = h1;
+            let y_prev = f64::from(i - 1 == basis);
+            let y = f64::from(i == basis);
+            let y_next = f64::from(i + 1 == basis);
+            rhs[row] = 6.0 * ((y_next - y) / h1 - (y - y_prev) / h0);
+        }
+
+        for row in 1..m {
+            let factor = lower[row] / diag[row - 1];
+            diag[row] -= factor * upper[row - 1];
+            rhs[row] -= factor * rhs[row - 1];
+        }
+
+        let mut interior = vec![0.0; m];
+        interior[m - 1] = rhs[m - 1] / diag[m - 1];
+        for row in (0..m - 1).rev() {
+            interior[row] = (rhs[row] - upper[row] * interior[row + 1]) / diag[row];
+        }
+
+        second[1..n - 1].copy_from_slice(&interior);
+        second
+    }
 }

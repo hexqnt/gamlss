@@ -45,26 +45,7 @@ pub struct ZagaTotalMeanCvZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZagaTotalMeanCvZeroProbabilityEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            total_mean: values[0],
-            cv: values[1],
-            zero_probability: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.total_mean,
-            1 => self.cv,
-            2 => self.zero_probability,
-            _ => unreachable!("ZAGA total-mean/CV eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZagaTotalMeanCvZeroProbabilityEta, 3, { 0 => total_mean, 1 => cv, 2 => zero_probability }, "ZAGA total-mean/CV eta only has indices 0 through 2");
 
 /// Natural-scale ZAGA total-mean/CV/zero-probability parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

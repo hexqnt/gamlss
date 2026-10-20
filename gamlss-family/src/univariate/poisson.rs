@@ -369,20 +369,7 @@ pub struct PoissonEta {
     pub mu: f64,
 }
 
-impl ParameterParts<1> for PoissonEta {
-    #[inline]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mu: values[0] }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mu,
-            _ => unreachable!("poisson eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(PoissonEta, 1, { 0 => mu }, "poisson eta only has index 0");
 
 /// Natural-scale Poisson parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

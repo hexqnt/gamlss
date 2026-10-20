@@ -73,19 +73,10 @@ where
     fn theta_from_eta(eta: MvLogNormalCholeskyEta<D>) -> MvLogNormalCholeskyTheta<D> {
         let log_location = eta.log_location.map(LogLocationLink::inverse);
         let mut cholesky = FixedLowerTriangular::zeros();
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.lower(row, col);
-                let value = if row == col {
-                    DiagonalLink::inverse(eta_value)
-                } else {
-                    OffDiagonalLink::inverse(eta_value)
-                };
-                cholesky
-                    .set_lower(row, col, value)
-                    .expect("valid lower index");
-            }
-        }
+        crate::multivariate::cholesky::from_eta_into::<D, DiagonalLink, OffDiagonalLink>(
+            &eta.cholesky,
+            &mut cholesky,
+        );
         MvLogNormalCholeskyTheta::from_parts_unchecked(log_location, cholesky)
     }
 
@@ -135,22 +126,11 @@ where
             gradient.log_location[component] =
                 -a[component] * LogLocationLink::derivative_inverse(eta.log_location[component]);
         }
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.lower(row, col);
-                let score = if row == col {
-                    DiagonalLink::derivative_log_inverse(eta_value)
-                        - a[row] * z[col] * DiagonalLink::derivative_inverse(eta_value)
-                } else {
-                    kernel::cholesky_score(row, col, z[col], &a, &theta.cholesky)
-                        * OffDiagonalLink::derivative_inverse(eta_value)
-                };
-                gradient
-                    .cholesky
-                    .set_lower(row, col, score)
-                    .expect("valid lower index");
-            }
-        }
+        crate::multivariate::cholesky::gradient_from_location_score_into::<
+            D,
+            DiagonalLink,
+            OffDiagonalLink,
+        >(&eta.cholesky, &z, &a, &mut gradient.cholesky);
         (nll, gradient)
     }
 }
@@ -372,9 +352,7 @@ where
     }
 
     fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape> {
-        let lower = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
-        });
+        let lower = *gradient.cholesky.as_full_rows();
         (gradient.log_location, lower)
     }
 
@@ -521,14 +499,7 @@ impl<const D: usize> MvLogNormalCholeskyTheta<D> {
     /// Returns one covariance entry of `log(Y)`.
     #[must_use]
     pub fn log_covariance(&self, row: usize, col: usize) -> Option<f64> {
-        if row >= D || col >= D {
-            return None;
-        }
-        Some(
-            (0..=row.min(col))
-                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
-                .sum(),
-        )
+        crate::multivariate::elliptical::covariance_from_cholesky(&self.cholesky, row, col)
     }
 
     /// Returns the marginal mean of one original-scale component.

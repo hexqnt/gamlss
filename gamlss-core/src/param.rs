@@ -110,239 +110,162 @@ impl<B> ParameterBlocks<B> {
     }
 }
 
-/// Marker for the location parameter `mu`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Mu;
+macro_rules! define_parameter_names {
+    ($($(#[$meta:meta])* $name:ident => $value:literal),+ $(,)?) => {
+        $(
+            $(#[$meta])*
+            #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+            pub struct $name;
 
-impl ParameterName for Mu {
-    const NAME: &'static str = "mu";
+            impl ParameterName for $name {
+                const NAME: &'static str = $value;
+            }
+        )+
+    };
 }
 
-/// Marker for a mathematical mean parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Mean;
-
-impl ParameterName for Mean {
-    const NAME: &'static str = "mean";
+define_parameter_names! {
+    /// Marker for the location parameter `mu`.
+    Mu => "mu",
+    /// Marker for a mathematical mean parameter.
+    Mean => "mean",
+    /// Marker for a median parameter.
+    Median => "median",
+    /// Marker for a component mean in mixture or zero-adjusted models.
+    ComponentMean => "component_mean",
+    /// Marker for baseline-softmax mixture weights.
+    MixtureWeight => "mixture_weight",
+    /// Marker for an unconditional total mean in mixture or zero-adjusted models.
+    TotalMean => "total_mean",
+    /// Marker for the scale parameter `sigma`.
+    Sigma => "sigma",
+    /// Marker for a marginal standard deviation of an underlying distribution kernel.
+    KernelSigma => "kernel_sigma",
+    /// Marker for a coefficient of variation parameter.
+    Cv => "cv",
+    /// Marker for a log-standard-deviation parameter.
+    LogSd => "log_sd",
+    /// Marker for the location parameter of a log-scale distribution.
+    LogLocation => "log_location",
+    /// Marker for the third GAMLSS parameter `nu`.
+    Nu => "nu",
+    /// Marker for the fourth GAMLSS parameter `tau`.
+    Tau => "tau",
+    /// Marker for a positive ratio controlling two-piece skewness.
+    SkewRatio => "skew_ratio",
+    /// Marker for the rate parameter of a distribution.
+    Rate => "rate",
+    /// Marker for a component-specific latent rate.
+    IdiosyncraticRate => "idiosyncratic_rate",
+    /// Marker for a rate shared by multiple response components.
+    SharedRate => "shared_rate",
+    /// Marker for a dispersion parameter.
+    Dispersion => "dispersion",
+    /// Marker for the shape parameter of a distribution.
+    Shape => "shape",
+    /// Marker for a degrees-of-freedom parameter.
+    DegreesOfFreedom => "degrees_of_freedom",
+    /// Marker for a negative-binomial size parameter.
+    Size => "size",
+    /// Marker for the scale parameter of a distribution.
+    Scale => "scale",
+    /// Marker for a probability parameter.
+    Probability => "probability",
+    /// Marker for a zero-mass or zero-inflation probability parameter.
+    ZeroProbability => "zero_probability",
+    /// Marker for a one-mass probability parameter.
+    OneProbability => "one_probability",
+    /// Marker for a power parameter.
+    Power => "power",
+    /// Marker for the precision parameter of a distribution.
+    ///
+    /// Used for mean/precision parameterizations, e.g. the beta distribution, where
+    /// `precision > 0` controls the concentration around the mean.
+    Precision => "precision",
+    /// Marker for a Cholesky scale factor parameter.
+    CholeskyScale => "cholesky",
+    /// Marker for strict-lower partial-correlation predictors.
+    PartialCorrelation => "partial_corr",
 }
 
-/// Marker for a median parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Median;
+macro_rules! impl_block_accessors {
+    ($block:ident $(<const $dimension:ident: $dimension_ty:ty>)?, $end_message:literal) => {
+        impl<P, $(const $dimension: $dimension_ty,)? X, Penalty>
+            $block<P, $($dimension,)? X, Penalty>
+        {
+            /// Returns a copy of the block with a new offset.
+            #[must_use]
+            #[inline]
+            pub const fn with_offset(mut self, offset: usize) -> Self {
+                self.offset = offset;
+                self
+            }
 
-impl ParameterName for Median {
-    const NAME: &'static str = "median";
-}
+            /// Penalty applied to the block's coefficients.
+            #[must_use]
+            #[inline]
+            pub const fn penalty(&self) -> &Penalty {
+                &self.penalty
+            }
 
-/// Marker for a component mean in mixture or zero-adjusted models.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ComponentMean;
+            /// Coefficient range of the block in the common beta vector.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `offset + len` overflows. Use [`Self::try_range`] for recoverable validation.
+            #[must_use]
+            #[inline]
+            pub const fn range(&self) -> Range<usize> {
+                self.offset..self.end()
+            }
 
-impl ParameterName for ComponentMean {
-    const NAME: &'static str = "component_mean";
-}
+            /// Index immediately after the last coefficient of the block.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `offset + len` overflows. Use [`Self::try_range`] for recoverable validation.
+            #[must_use]
+            #[inline]
+            pub const fn end(&self) -> usize {
+                self.offset.checked_add(self.len).expect($end_message)
+            }
 
-/// Marker for baseline-softmax mixture weights.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MixtureWeight;
+            /// Number of coefficients in the block.
+            #[must_use]
+            #[inline]
+            pub const fn len(&self) -> usize {
+                self.len
+            }
 
-impl ParameterName for MixtureWeight {
-    const NAME: &'static str = "mixture_weight";
-}
+            /// `true` if the block contains no coefficients.
+            #[must_use]
+            #[inline]
+            pub const fn is_empty(&self) -> bool {
+                self.len == 0
+            }
+        }
 
-/// Marker for an unconditional total mean in mixture or zero-adjusted models.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TotalMean;
-
-impl ParameterName for TotalMean {
-    const NAME: &'static str = "total_mean";
-}
-
-/// Marker for the scale parameter `sigma`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Sigma;
-
-impl ParameterName for Sigma {
-    const NAME: &'static str = "sigma";
-}
-
-/// Marker for a marginal standard deviation of an underlying distribution kernel.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct KernelSigma;
-
-impl ParameterName for KernelSigma {
-    const NAME: &'static str = "kernel_sigma";
-}
-
-/// Marker for a coefficient of variation parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Cv;
-
-impl ParameterName for Cv {
-    const NAME: &'static str = "cv";
-}
-
-/// Marker for a log-standard-deviation parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LogSd;
-
-impl ParameterName for LogSd {
-    const NAME: &'static str = "log_sd";
-}
-
-/// Marker for the location parameter of a log-scale distribution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LogLocation;
-
-impl ParameterName for LogLocation {
-    const NAME: &'static str = "log_location";
-}
-
-/// Marker for the third GAMLSS parameter `nu`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Nu;
-
-impl ParameterName for Nu {
-    const NAME: &'static str = "nu";
-}
-
-/// Marker for the fourth GAMLSS parameter `tau`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Tau;
-
-impl ParameterName for Tau {
-    const NAME: &'static str = "tau";
-}
-
-/// Marker for a positive ratio controlling two-piece skewness.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SkewRatio;
-
-impl ParameterName for SkewRatio {
-    const NAME: &'static str = "skew_ratio";
-}
-
-/// Marker for the rate parameter of a distribution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Rate;
-
-impl ParameterName for Rate {
-    const NAME: &'static str = "rate";
-}
-
-/// Marker for a component-specific latent rate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct IdiosyncraticRate;
-
-impl ParameterName for IdiosyncraticRate {
-    const NAME: &'static str = "idiosyncratic_rate";
-}
-
-/// Marker for a rate shared by multiple response components.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SharedRate;
-
-impl ParameterName for SharedRate {
-    const NAME: &'static str = "shared_rate";
-}
-
-/// Marker for a dispersion parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Dispersion;
-
-impl ParameterName for Dispersion {
-    const NAME: &'static str = "dispersion";
-}
-
-/// Marker for the shape parameter of a distribution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Shape;
-
-impl ParameterName for Shape {
-    const NAME: &'static str = "shape";
-}
-
-/// Marker for a degrees-of-freedom parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DegreesOfFreedom;
-
-impl ParameterName for DegreesOfFreedom {
-    const NAME: &'static str = "degrees_of_freedom";
-}
-
-/// Marker for a negative-binomial size parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Size;
-
-impl ParameterName for Size {
-    const NAME: &'static str = "size";
-}
-
-/// Marker for the scale parameter of a distribution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Scale;
-
-impl ParameterName for Scale {
-    const NAME: &'static str = "scale";
-}
-
-/// Marker for a probability parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Probability;
-
-impl ParameterName for Probability {
-    const NAME: &'static str = "probability";
-}
-
-/// Marker for a zero-mass or zero-inflation probability parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ZeroProbability;
-
-impl ParameterName for ZeroProbability {
-    const NAME: &'static str = "zero_probability";
-}
-
-/// Marker for a one-mass probability parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct OneProbability;
-
-impl ParameterName for OneProbability {
-    const NAME: &'static str = "one_probability";
-}
-
-/// Marker for a power parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Power;
-
-impl ParameterName for Power {
-    const NAME: &'static str = "power";
-}
-
-/// Marker for the precision parameter of a distribution.
-///
-/// Used for mean/precision parameterizations, e.g. the beta distribution, where
-/// `precision > 0` controls the concentration around the mean.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Precision;
-
-impl ParameterName for Precision {
-    const NAME: &'static str = "precision";
-}
-
-/// Marker for a Cholesky scale factor parameter.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CholeskyScale;
-
-impl ParameterName for CholeskyScale {
-    const NAME: &'static str = "cholesky";
-}
-
-/// Marker for strict-lower partial-correlation predictors.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PartialCorrelation;
-
-impl ParameterName for PartialCorrelation {
-    const NAME: &'static str = "partial_corr";
+        impl<P, $(const $dimension: $dimension_ty,)? X, Penalty>
+            $block<P, $($dimension,)? X, Penalty>
+        where
+            P: ParameterName,
+        {
+            /// Validates and returns the block's coefficient range.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit in `usize`.
+            #[inline]
+            pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
+                let end = self.offset.checked_add(self.len).ok_or(ModelError::BlockRangeOverflow {
+                    parameter: P::NAME,
+                    offset: self.offset,
+                    len: self.len,
+                })?;
+                Ok(self.offset..end)
+            }
+        }
+    };
 }
 
 /// Typed coefficient block for a single distribution parameter.
@@ -360,6 +283,11 @@ pub struct ParameterBlock<P, X, Penalty> {
     marker: PhantomData<P>,
 }
 
+impl_block_accessors!(
+    ParameterBlock,
+    "parameter block range end must fit in usize"
+);
+
 impl<P, X, Penalty> ParameterBlock<P, X, Penalty>
 where
     X: PredictorBlock,
@@ -369,7 +297,13 @@ where
     #[inline]
     pub fn new(x: X, penalty: Penalty, offset: usize) -> Self {
         let len = x.nparams();
-        Self::from_len(x, penalty, offset, len)
+        Self {
+            x,
+            penalty,
+            offset,
+            len,
+            marker: PhantomData,
+        }
     }
 
     /// Creates a block from a generic predictor.
@@ -396,112 +330,11 @@ where
 }
 
 impl<P, X, Penalty> ParameterBlock<P, X, Penalty> {
-    #[inline]
-    const fn from_len(x: X, penalty: Penalty, offset: usize, len: usize) -> Self {
-        Self {
-            x,
-            penalty,
-            offset,
-            len,
-            marker: PhantomData,
-        }
-    }
-
-    /// Returns a copy of the block with a new offset.
-    #[must_use]
-    #[inline]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Predictor block.
     #[must_use]
     #[inline]
     pub const fn x(&self) -> &X {
         &self.x
-    }
-
-    /// Penalty applied to the block's coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn penalty(&self) -> &Penalty {
-        &self.penalty
-    }
-
-    #[must_use]
-    #[inline]
-    pub(crate) const fn offset(&self) -> usize {
-        self.offset
-    }
-
-    /// Coefficient range of the block in the common beta vector.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] when the
-    /// offset may come from unchecked external input.
-    #[must_use]
-    #[inline]
-    pub const fn range(&self) -> Range<usize> {
-        self.offset..self.end()
-    }
-
-    /// Index immediately after the last coefficient of the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    #[must_use]
-    #[inline]
-    pub const fn end(&self) -> usize {
-        self.offset
-            .checked_add(self.len)
-            .expect("parameter block range end must fit in usize")
-    }
-
-    /// Number of coefficients in the block.
-    #[must_use]
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// `true` if the block contains no coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-impl<P, X, Penalty> ParameterBlock<P, X, Penalty>
-where
-    P: ParameterName,
-{
-    /// Validates and returns the block's coefficient range.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
-    /// in `usize`.
-    #[inline]
-    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
-        let end = self
-            .offset
-            .checked_add(self.len)
-            .ok_or(ModelError::BlockRangeOverflow {
-                parameter: P::NAME,
-                offset: self.offset,
-                len: self.len,
-            })?;
-        Ok(self.offset..end)
     }
 }
 
@@ -521,6 +354,8 @@ pub struct VectorParameterBlock<P, const D: usize, X, Penalty> {
     marker: PhantomData<P>,
 }
 
+impl_block_accessors!(VectorParameterBlock<const D: usize>, "vector parameter block range end must fit in usize");
+
 impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty>
 where
     X: PredictorBlock,
@@ -533,13 +368,8 @@ where
     #[must_use]
     pub fn new(x: [X; D], penalty: Penalty, offset: usize) -> Self {
         let mut component_offsets = [0; D];
-        let mut len: usize = 0;
-        for index in 0..D {
-            component_offsets[index] = len;
-            len = len
-                .checked_add(x[index].nparams())
-                .expect("vector parameter block length must fit in usize");
-        }
+        let len = predictor_offsets(&x, &mut component_offsets, "vector parameter block length")
+            .unwrap_or_else(|_| panic!("vector parameter block length must fit in usize"));
         Self {
             x,
             penalty,
@@ -552,14 +382,6 @@ where
 }
 
 impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty> {
-    /// Returns a copy of the block with a new offset.
-    #[must_use]
-    #[inline]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Returns all component predictors.
     #[must_use]
     #[inline]
@@ -572,53 +394,6 @@ impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty> {
     #[inline]
     pub fn component(&self, component: usize) -> Option<&X> {
         self.x.get(component)
-    }
-
-    /// Penalty applied to the block's concatenated coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn penalty(&self) -> &Penalty {
-        &self.penalty
-    }
-
-    /// Coefficient range of the full vector block.
-    #[must_use]
-    #[inline]
-    pub const fn range(&self) -> Range<usize> {
-        self.offset..self.end()
-    }
-
-    /// Index immediately after the last coefficient of the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    #[must_use]
-    #[inline]
-    pub const fn end(&self) -> usize {
-        self.offset
-            .checked_add(self.len)
-            .expect("vector parameter block range end must fit in usize")
-    }
-
-    /// Number of coefficients in the full vector block.
-    #[must_use]
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// `true` if the block contains no coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Local coefficient range for one vector component.
@@ -647,29 +422,6 @@ impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty> {
     }
 }
 
-impl<P, const D: usize, X, Penalty> VectorParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    /// Validates and returns the full block coefficient range.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
-    /// in `usize`.
-    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
-        let end = self
-            .offset
-            .checked_add(self.len)
-            .ok_or(ModelError::BlockRangeOverflow {
-                parameter: P::NAME,
-                offset: self.offset,
-                len: self.len,
-            })?;
-        Ok(self.offset..end)
-    }
-}
-
 /// Typed coefficient block for a packed lower-triangular matrix parameter.
 ///
 /// Predictors are stored in row-major lower-triangular order:
@@ -685,6 +437,8 @@ pub struct LowerTriangularParameterBlock<P, const D: usize, X, Penalty> {
     entry_offsets: Vec<usize>,
     marker: PhantomData<P>,
 }
+
+impl_block_accessors!(LowerTriangularParameterBlock<const D: usize>, "lower-triangular parameter block range end must fit in usize");
 
 impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penalty>
 where
@@ -722,15 +476,11 @@ where
         }
 
         let mut entry_offsets = vec![0; expected];
-        let mut len: usize = 0;
-        for (index, predictor) in x.iter().enumerate() {
-            entry_offsets[index] = len;
-            len = len
-                .checked_add(predictor.nparams())
-                .ok_or(ModelError::ArithmeticOverflow {
-                    context: "lower-triangular parameter block length",
-                })?;
-        }
+        let len = predictor_offsets(
+            &x,
+            &mut entry_offsets,
+            "lower-triangular parameter block length",
+        )?;
 
         Ok(Self {
             x,
@@ -762,14 +512,6 @@ impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penal
         }
     }
 
-    /// Returns a copy of the block with a new offset.
-    #[must_use]
-    #[inline]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Returns all packed lower-triangular predictors.
     #[must_use]
     #[inline]
@@ -782,48 +524,6 @@ impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penal
     #[inline]
     pub fn entry(&self, row: usize, col: usize) -> Option<&X> {
         Self::packed_index(row, col).and_then(|index| self.x.get(index))
-    }
-
-    /// Penalty applied to the block's concatenated coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn penalty(&self) -> &Penalty {
-        &self.penalty
-    }
-
-    /// Coefficient range of the full lower-triangular block.
-    #[must_use]
-    #[inline]
-    pub const fn range(&self) -> Range<usize> {
-        self.offset..self.end()
-    }
-
-    /// Index immediately after the last coefficient of the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    #[must_use]
-    #[inline]
-    pub const fn end(&self) -> usize {
-        self.offset
-            .checked_add(self.len)
-            .expect("lower-triangular parameter block range end must fit in usize")
-    }
-
-    /// Number of coefficients in the full lower-triangular block.
-    #[must_use]
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// `true` if the block contains no coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Local coefficient range for one lower-triangular entry.
@@ -853,29 +553,6 @@ impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penal
     }
 }
 
-impl<P, const D: usize, X, Penalty> LowerTriangularParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    /// Validates and returns the full block coefficient range.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
-    /// in `usize`.
-    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
-        let end = self
-            .offset
-            .checked_add(self.len)
-            .ok_or(ModelError::BlockRangeOverflow {
-                parameter: P::NAME,
-                offset: self.offset,
-                len: self.len,
-            })?;
-        Ok(self.offset..end)
-    }
-}
-
 /// Typed coefficient block for a packed strict-lower triangular matrix parameter.
 ///
 /// Predictors are stored in row-major strict-lower order:
@@ -891,6 +568,8 @@ pub struct StrictLowerTriangularParameterBlock<P, const D: usize, X, Penalty> {
     entry_offsets: Vec<usize>,
     marker: PhantomData<P>,
 }
+
+impl_block_accessors!(StrictLowerTriangularParameterBlock<const D: usize>, "strict-lower parameter block range end must fit in usize");
 
 impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X, Penalty>
 where
@@ -929,15 +608,11 @@ where
         }
 
         let mut entry_offsets = vec![0; expected];
-        let mut len: usize = 0;
-        for (index, predictor) in x.iter().enumerate() {
-            entry_offsets[index] = len;
-            len = len
-                .checked_add(predictor.nparams())
-                .ok_or(ModelError::ArithmeticOverflow {
-                    context: "strict-lower parameter block length",
-                })?;
-        }
+        let len = predictor_offsets(
+            &x,
+            &mut entry_offsets,
+            "strict-lower parameter block length",
+        )?;
 
         Ok(Self {
             x,
@@ -969,14 +644,6 @@ impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X,
         }
     }
 
-    /// Returns a copy of the block with a new offset.
-    #[must_use]
-    #[inline]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Returns all packed strict-lower predictors.
     #[must_use]
     #[inline]
@@ -989,48 +656,6 @@ impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X,
     #[inline]
     pub fn entry(&self, row: usize, col: usize) -> Option<&X> {
         Self::packed_index(row, col).and_then(|index| self.x.get(index))
-    }
-
-    /// Penalty applied to the block's concatenated coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn penalty(&self) -> &Penalty {
-        &self.penalty
-    }
-
-    /// Coefficient range of the full strict-lower block.
-    #[must_use]
-    #[inline]
-    pub const fn range(&self) -> Range<usize> {
-        self.offset..self.end()
-    }
-
-    /// Index immediately after the last coefficient of the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    #[must_use]
-    #[inline]
-    pub const fn end(&self) -> usize {
-        self.offset
-            .checked_add(self.len)
-            .expect("strict-lower parameter block range end must fit in usize")
-    }
-
-    /// Number of coefficients in the full strict-lower block.
-    #[must_use]
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// `true` if the block contains no coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Local coefficient range for one strict-lower entry.
@@ -1060,29 +685,6 @@ impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X,
     }
 }
 
-impl<P, const D: usize, X, Penalty> StrictLowerTriangularParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    /// Validates and returns the full block coefficient range.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
-    /// in `usize`.
-    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
-        let end = self
-            .offset
-            .checked_add(self.len)
-            .ok_or(ModelError::BlockRangeOverflow {
-                parameter: P::NAME,
-                offset: self.offset,
-                len: self.len,
-            })?;
-        Ok(self.offset..end)
-    }
-}
-
 /// Typed coefficient block for `D - 1` baseline-softmax logits of a simplex parameter.
 ///
 /// The last simplex logit is fixed to zero and is not represented by a
@@ -1098,6 +700,8 @@ pub struct SimplexLogitParameterBlock<P, const D: usize, X, Penalty> {
     component_offsets: Vec<usize>,
     marker: PhantomData<P>,
 }
+
+impl_block_accessors!(SimplexLogitParameterBlock<const D: usize>, "simplex-logit parameter block range end must fit in usize");
 
 impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
 where
@@ -1135,15 +739,11 @@ where
         }
 
         let mut component_offsets = vec![0; expected];
-        let mut len: usize = 0;
-        for (index, predictor) in x.iter().enumerate() {
-            component_offsets[index] = len;
-            len = len
-                .checked_add(predictor.nparams())
-                .ok_or(ModelError::ArithmeticOverflow {
-                    context: "simplex-logit parameter block length",
-                })?;
-        }
+        let len = predictor_offsets(
+            &x,
+            &mut component_offsets,
+            "simplex-logit parameter block length",
+        )?;
 
         Ok(Self {
             x,
@@ -1164,14 +764,6 @@ impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
         D.checked_sub(1)
     }
 
-    /// Returns a copy of the block with a new offset.
-    #[must_use]
-    #[inline]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-
     /// Returns all free-logit predictors.
     #[must_use]
     #[inline]
@@ -1184,48 +776,6 @@ impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
     #[inline]
     pub fn logit(&self, component: usize) -> Option<&X> {
         self.x.get(component)
-    }
-
-    /// Penalty applied to the block's concatenated coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn penalty(&self) -> &Penalty {
-        &self.penalty
-    }
-
-    /// Coefficient range of the full simplex-logit block.
-    #[must_use]
-    #[inline]
-    pub const fn range(&self) -> Range<usize> {
-        self.offset..self.end()
-    }
-
-    /// Index immediately after the last coefficient of the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + len` overflows. Use [`Self::try_range`] for
-    /// recoverable validation.
-    #[must_use]
-    #[inline]
-    pub const fn end(&self) -> usize {
-        self.offset
-            .checked_add(self.len)
-            .expect("simplex-logit parameter block range end must fit in usize")
-    }
-
-    /// Number of coefficients in the full simplex-logit block.
-    #[must_use]
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// `true` if the block contains no coefficients.
-    #[must_use]
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Local coefficient range for one free logit.
@@ -1251,29 +801,6 @@ impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
         let start = self.offset.checked_add(range.start)?;
         let end = self.offset.checked_add(range.end)?;
         Some(start..end)
-    }
-}
-
-impl<P, const D: usize, X, Penalty> SimplexLogitParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    /// Validates and returns the full block coefficient range.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ModelError::BlockRangeOverflow`] if `offset + len` does not fit
-    /// in `usize`.
-    pub fn try_range(&self) -> Result<Range<usize>, ModelError> {
-        let end = self
-            .offset
-            .checked_add(self.len)
-            .ok_or(ModelError::BlockRangeOverflow {
-                parameter: P::NAME,
-                offset: self.offset,
-                len: self.len,
-            })?;
-        Ok(self.offset..end)
     }
 }
 
@@ -1306,6 +833,22 @@ where
             })?;
         Ok(self.with_offset(start))
     }
+}
+
+fn predictor_offsets<X: PredictorBlock>(
+    predictors: &[X],
+    offsets: &mut [usize],
+    context: &'static str,
+) -> Result<usize, ModelError> {
+    debug_assert_eq!(predictors.len(), offsets.len());
+    let mut len = 0usize;
+    for (predictor, offset) in predictors.iter().zip(offsets) {
+        *offset = len;
+        len = len
+            .checked_add(predictor.nparams())
+            .ok_or(ModelError::ArithmeticOverflow { context })?;
+    }
+    Ok(len)
 }
 
 /// Stable public name for a distribution parameter marker.
@@ -1447,169 +990,49 @@ macro_rules! impl_assign_offsets {
     };
 }
 
-impl<P, X, Penalty> OffsetAssignable for ParameterBlock<P, X, Penalty> {
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
+macro_rules! impl_offset_assignable {
+    ($block:ident $(<const $dimension:ident: $dimension_ty:ty>)?) => {
+        impl<P, $(const $dimension: $dimension_ty,)? X, Penalty> OffsetAssignable
+            for $block<P, $($dimension,)? X, Penalty>
+        {
+            fn with_assigned_offset(self, offset: usize) -> Self {
+                self.with_offset(offset)
+            }
 
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
+            fn assigned_len(&self) -> usize {
+                self.len()
+            }
+        }
+
+        impl<P, $(const $dimension: $dimension_ty,)? X, Penalty> TryOffsetAssignable
+            for $block<P, $($dimension,)? X, Penalty>
+        where
+            P: ParameterName,
+        {
+            fn with_assigned_offset(self, offset: usize) -> Self {
+                self.with_offset(offset)
+            }
+
+            fn assigned_offset(&self) -> usize {
+                self.offset
+            }
+
+            fn assigned_len(&self) -> usize {
+                self.len()
+            }
+
+            fn assigned_name(&self) -> &'static str {
+                P::NAME
+            }
+        }
+    };
 }
 
-impl<P, X, Penalty> TryOffsetAssignable for ParameterBlock<P, X, Penalty>
-where
-    P: ParameterName,
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_offset(&self) -> usize {
-        self.offset()
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-
-    fn assigned_name(&self) -> &'static str {
-        P::NAME
-    }
-}
-
-impl<P, const D: usize, X, Penalty> OffsetAssignable for VectorParameterBlock<P, D, X, Penalty> {
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<P, const D: usize, X, Penalty> TryOffsetAssignable for VectorParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_offset(&self) -> usize {
-        self.offset
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-
-    fn assigned_name(&self) -> &'static str {
-        P::NAME
-    }
-}
-
-impl<P, const D: usize, X, Penalty> OffsetAssignable
-    for LowerTriangularParameterBlock<P, D, X, Penalty>
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<P, const D: usize, X, Penalty> TryOffsetAssignable
-    for LowerTriangularParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_offset(&self) -> usize {
-        self.offset
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-
-    fn assigned_name(&self) -> &'static str {
-        P::NAME
-    }
-}
-
-impl<P, const D: usize, X, Penalty> OffsetAssignable
-    for StrictLowerTriangularParameterBlock<P, D, X, Penalty>
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<P, const D: usize, X, Penalty> TryOffsetAssignable
-    for StrictLowerTriangularParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_offset(&self) -> usize {
-        self.offset
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-
-    fn assigned_name(&self) -> &'static str {
-        P::NAME
-    }
-}
-
-impl<P, const D: usize, X, Penalty> OffsetAssignable
-    for SimplexLogitParameterBlock<P, D, X, Penalty>
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<P, const D: usize, X, Penalty> TryOffsetAssignable
-    for SimplexLogitParameterBlock<P, D, X, Penalty>
-where
-    P: ParameterName,
-{
-    fn with_assigned_offset(self, offset: usize) -> Self {
-        self.with_offset(offset)
-    }
-
-    fn assigned_offset(&self) -> usize {
-        self.offset
-    }
-
-    fn assigned_len(&self) -> usize {
-        self.len()
-    }
-
-    fn assigned_name(&self) -> &'static str {
-        P::NAME
-    }
-}
+impl_offset_assignable!(ParameterBlock);
+impl_offset_assignable!(VectorParameterBlock<const D: usize>);
+impl_offset_assignable!(LowerTriangularParameterBlock<const D: usize>);
+impl_offset_assignable!(StrictLowerTriangularParameterBlock<const D: usize>);
+impl_offset_assignable!(SimplexLogitParameterBlock<const D: usize>);
 
 impl<B, const D: usize> AssignParameterOffsets for [B; D]
 where
@@ -1848,6 +1271,102 @@ mod tests {
                 offset: usize::MAX,
                 len: 2,
             }
+        );
+    }
+
+    #[test]
+    fn structured_blocks_share_checked_heterogeneous_coefficient_layouts() {
+        use super::{
+            LowerTriangularParameterBlock, StrictLowerTriangularParameterBlock,
+            VectorParameterBlock,
+        };
+
+        let predictors = || {
+            [2, 0, 3].map(|width| {
+                LinearPredictorBlock::new(
+                    DenseDesign::from_row_major(1, width, vec![0.0; width]).unwrap(),
+                )
+            })
+        };
+        let vector = VectorParameterBlock::<Mu, 3, _, _>::new(predictors(), NoPenalty, 10);
+        let lower = LowerTriangularParameterBlock::<Mu, 2, _, _>::try_new(
+            predictors().into(),
+            NoPenalty,
+            10,
+        )
+        .unwrap();
+        let strict = StrictLowerTriangularParameterBlock::<Mu, 3, _, _>::try_new(
+            predictors().into(),
+            NoPenalty,
+            10,
+        )
+        .unwrap();
+        let simplex =
+            SimplexLogitParameterBlock::<Mu, 4, _, _>::try_new(predictors().into(), NoPenalty, 10)
+                .unwrap();
+
+        assert_eq!(vector.try_range().unwrap(), 10..15);
+        assert_eq!(lower.try_range().unwrap(), 10..15);
+        assert_eq!(strict.try_range().unwrap(), 10..15);
+        assert_eq!(simplex.try_range().unwrap(), 10..15);
+        for (index, expected) in [10..12, 12..12, 12..15].into_iter().enumerate() {
+            assert_eq!(vector.component_range(index), Some(expected.clone()));
+            assert_eq!(simplex.logit_range(index), Some(expected));
+        }
+        assert_eq!(lower.entry_range(0, 0), Some(10..12));
+        assert_eq!(lower.entry_range(1, 0), Some(12..12));
+        assert_eq!(lower.entry_range(1, 1), Some(12..15));
+        assert_eq!(strict.entry_range(1, 0), Some(10..12));
+        assert_eq!(strict.entry_range(2, 0), Some(12..12));
+        assert_eq!(strict.entry_range(2, 1), Some(12..15));
+        assert_eq!(lower.entry_range(0, 1), None);
+        assert_eq!(strict.entry_range(1, 1), None);
+        assert_eq!(simplex.logit_range(3), None);
+    }
+
+    #[test]
+    fn vector_coefficient_overflow_preserves_the_panic_message() {
+        use super::VectorParameterBlock;
+        use crate::PredictorBlock;
+
+        #[derive(Debug)]
+        struct SizedPredictor(usize);
+
+        impl PredictorBlock for SizedPredictor {
+            fn nrows(&self) -> usize {
+                1
+            }
+            fn nparams(&self) -> usize {
+                self.0
+            }
+            fn eta_row(&self, _: usize, _: &[f64]) -> f64 {
+                0.0
+            }
+            fn add_gradient_range(
+                &self,
+                _: std::ops::Range<usize>,
+                _: &[f64],
+                _: &[f64],
+                _: &mut [f64],
+            ) {
+            }
+        }
+
+        let error = std::panic::catch_unwind(|| {
+            VectorParameterBlock::<Mu, 2, _, _>::new(
+                [SizedPredictor(usize::MAX), SizedPredictor(1)],
+                NoPenalty,
+                0,
+            )
+        })
+        .unwrap_err();
+        let message = error
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| error.downcast_ref::<&str>().copied());
+        assert_eq!(
+            message,
+            Some("vector parameter block length must fit in usize")
         );
     }
 

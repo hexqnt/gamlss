@@ -206,19 +206,9 @@ pub const fn tensor_pspline(left: Col<f64>, right: Col<f64>) -> TensorPSplineTer
 /// the result cannot reproduce either one-dimensional main effect.
 #[must_use]
 pub const fn tensor_pspline_interaction(left: Col<f64>, right: Col<f64>) -> TensorPSplineTerm {
-    TensorPSplineTerm {
-        left,
-        right,
-        left_k: 10,
-        right_k: 10,
-        left_order: SplineOrder::Cubic,
-        right_order: SplineOrder::Cubic,
-        left_lambda: 1.0,
-        right_lambda: 1.0,
-        left_penalty_order: 2,
-        right_penalty_order: 2,
-        kind: TensorSmoothKind::Interaction,
-    }
+    let mut term = tensor_pspline(left, right);
+    term.kind = TensorSmoothKind::Interaction;
+    term
 }
 
 /// Short alias for a full tensor-product smooth, analogous to `te` notation.

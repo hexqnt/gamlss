@@ -142,7 +142,7 @@ where
         GeneralizedGammaTheta {
             scale: -d_log_z * theta.nu / theta.scale,
             sigma: d_k * (-2.0 * k / theta.sigma),
-            nu: d_k * (-2.0 * k / theta.nu) + d_log_z * log_ratio - 1.0 / theta.nu,
+            nu: d_log_z.mul_add(log_ratio, d_k * (-2.0 * k / theta.nu)) - 1.0 / theta.nu,
         }
     }
 
@@ -368,26 +368,7 @@ pub struct GeneralizedGammaEta {
     pub nu: f64,
 }
 
-impl ParameterParts<3> for GeneralizedGammaEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            scale: values[0],
-            sigma: values[1],
-            nu: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.scale,
-            1 => self.sigma,
-            2 => self.nu,
-            _ => unreachable!("generalized gamma eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(GeneralizedGammaEta, 3, { 0 => scale, 1 => sigma, 2 => nu }, "generalized gamma eta only has indices 0 through 2");
 
 /// Natural-scale generalized gamma parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

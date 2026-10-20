@@ -5,7 +5,8 @@ use crate::transforms::{
     validate_positive_value,
 };
 
-use super::power::{ProfileAccumulator, fit_lambda};
+use super::moments::Moments;
+use super::power::{fit_lambda, profile_log_likelihood};
 
 const LAMBDA_EPSILON: f64 = 1.0e-12;
 
@@ -155,15 +156,13 @@ fn validate_box_cox_inverse_value(lambda: f64, value: f64) -> Result<(), Transfo
 }
 
 fn box_cox_profile_log_likelihood(y: &[f64], lambda: f64) -> Option<f64> {
-    let mut accumulator = ProfileAccumulator::default();
+    let mut accumulator = Moments::default();
     let mut log_jacobian = 0.0;
     for value in y.iter().copied() {
-        accumulator.push(transform_value(lambda, value))?;
+        accumulator.push_finite(transform_value(lambda, value))?;
         log_jacobian += value.ln();
     }
-    accumulator
-        .log_likelihood()
-        .map(|profile| (lambda - 1.0).mul_add(log_jacobian, profile))
+    profile_log_likelihood(accumulator).map(|profile| (lambda - 1.0).mul_add(log_jacobian, profile))
 }
 
 #[cfg(test)]

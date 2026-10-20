@@ -164,7 +164,7 @@ fn empirical_component(
     let covariance = covariance.map(|value| value / denominator);
     let l00 = covariance[0].sqrt();
     let l10 = covariance[1] / l00;
-    let l11 = (covariance[2] - l10 * l10).sqrt();
+    let l11 = f64::mul_add(l10, -l10, covariance[2]).sqrt();
 
     Ok(EmpiricalComponent {
         count,

@@ -493,7 +493,8 @@ fn gauss_legendre(order: usize) -> Result<Vec<(f64, f64)>, ModelError> {
         let mut converged = false;
         for _ in 0..64 {
             let (polynomial, previous) = legendre_pair(order, root);
-            let derivative = order_f64 * (root * polynomial - previous) / (root * root - 1.0);
+            let derivative =
+                order_f64 * root.mul_add(polynomial, -previous) / root.mul_add(root, -1.0);
             let next = root - polynomial / derivative;
             if (next - root).abs() <= 8.0 * f64::EPSILON * next.abs().max(1.0) {
                 root = next;
@@ -503,8 +504,8 @@ fn gauss_legendre(order: usize) -> Result<Vec<(f64, f64)>, ModelError> {
             root = next;
         }
         let (polynomial, previous) = legendre_pair(order, root);
-        let derivative = order_f64 * (root * polynomial - previous) / (root * root - 1.0);
-        let weight = 2.0 / ((1.0 - root * root) * derivative * derivative);
+        let derivative = order_f64 * root.mul_add(polynomial, -previous) / root.mul_add(root, -1.0);
+        let weight = 2.0 / (root.mul_add(-root, 1.0) * derivative * derivative);
         if !converged || !root.is_finite() || !weight.is_finite() || weight <= 0.0 {
             return Err(non_finite_roughness("Gauss-Legendre quadrature"));
         }
@@ -553,8 +554,32 @@ mod tests {
 
     use super::{
         BSplineDerivativePenalty, FourierRoughnessPenalty, NaturalCubicRoughnessPenalty,
-        NullSpacePenalty, binomial_f64,
+        NullSpacePenalty, binomial_f64, gauss_legendre,
     };
+
+    #[test]
+    fn gauss_legendre_integrates_monomials_exactly() {
+        for order in [1, 2, 3, 8, 16, 32] {
+            let nodes = gauss_legendre(order).unwrap();
+            assert_eq!(nodes.len(), order);
+            for &(node, weight) in &nodes {
+                assert!(node.is_finite() && (-1.0..1.0).contains(&node));
+                assert!(weight.is_finite() && weight > 0.0);
+            }
+            for degree in 0..2 * i32::try_from(order).unwrap() {
+                let integral = nodes
+                    .iter()
+                    .map(|&(node, weight)| weight * node.powi(degree))
+                    .sum::<f64>();
+                let expected = if degree % 2 == 0 {
+                    2.0 / f64::from(degree + 1)
+                } else {
+                    0.0
+                };
+                assert_relative_eq!(integral, expected, epsilon = 2.0e-14);
+            }
+        }
+    }
 
     #[test]
     #[allow(clippy::cast_precision_loss)]
@@ -704,27 +729,6 @@ mod tests {
     where
         P: MatrixPenalty,
     {
-        let mut gradient = vec![0.0; beta.len()];
-        penalty.add_gradient(beta, &mut gradient);
-        let mut matrix = vec![0.0; beta.len() * beta.len()];
-        penalty.add_penalty_matrix(beta.len(), &mut matrix);
-        for (row, expected) in gradient.iter().copied().enumerate() {
-            let actual = matrix[row * beta.len()..(row + 1) * beta.len()]
-                .iter()
-                .zip(beta)
-                .map(|(weight, value)| weight * value)
-                .sum::<f64>();
-            assert_relative_eq!(actual, expected, epsilon = 2.0e-10);
-        }
-
-        let step = 1.0e-6;
-        for index in 0..beta.len() {
-            let mut lower = beta.to_vec();
-            let mut upper = beta.to_vec();
-            lower[index] -= step;
-            upper[index] += step;
-            let finite_difference = (penalty.value(&upper) - penalty.value(&lower)) / (2.0 * step);
-            assert_relative_eq!(finite_difference, gradient[index], epsilon = 2.0e-7);
-        }
+        crate::tests::assert_penalty_gradient_and_matrix_match(penalty, beta, 2.0e-10, 2.0e-7);
     }
 }

@@ -2,6 +2,8 @@
 
 use crate::transforms::TransformError;
 
+use super::moments::Moments;
+
 const INV_PHI: f64 = 0.618_033_988_749_894_9;
 const LAMBDA_SEARCH_LOWER: f64 = -5.0;
 const LAMBDA_SEARCH_UPPER: f64 = 5.0;
@@ -9,37 +11,16 @@ const LAMBDA_SEARCH_RADIUS: f64 = 2.0;
 const LAMBDA_SEARCH_ITERATIONS: usize = 80;
 const LAMBDA_SEARCH_GRID: [f64; 7] = [-5.0, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0];
 
-#[derive(Debug, Clone, Copy, Default)]
-pub(super) struct ProfileAccumulator {
-    count: f64,
-    mean: f64,
-    sum_squares: f64,
-}
-
-impl ProfileAccumulator {
-    pub(super) fn push(&mut self, value: f64) -> Option<()> {
-        if !value.is_finite() {
-            return None;
-        }
-
-        self.count += 1.0;
-        let delta = value - self.mean;
-        self.mean += delta / self.count;
-        self.sum_squares = delta.mul_add(value - self.mean, self.sum_squares);
-        Some(())
+pub(super) fn profile_log_likelihood(moments: Moments) -> Option<f64> {
+    if moments.count() < 2.0 {
+        return None;
     }
 
-    pub(super) fn log_likelihood(self) -> Option<f64> {
-        if self.count < 2.0 {
-            return None;
-        }
-
-        let variance = self.sum_squares / self.count;
-        if variance.is_finite() && variance > 0.0 {
-            Some(-0.5 * self.count * variance.ln())
-        } else {
-            None
-        }
+    let variance = moments.variance();
+    if variance.is_finite() && variance > 0.0 {
+        Some(-0.5 * moments.count() * variance.ln())
+    } else {
+        None
     }
 }
 pub(super) fn fit_lambda(

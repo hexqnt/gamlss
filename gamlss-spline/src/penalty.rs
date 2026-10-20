@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use gamlss_core::{MatrixPenalty, ModelError, Penalty};
 
 const EXPECTED_FINITE_POSITIVE: &str = "finite and > 0";
@@ -77,8 +79,8 @@ impl DifferencePenalty {
         self.order
     }
 
-    fn coefficients(&self) -> Vec<f64> {
-        difference_coefficients(self.order)
+    fn coefficients(&self) -> Cow<'static, [f64]> {
+        difference_coefficients_for_evaluation(self.order)
     }
 }
 
@@ -279,8 +281,8 @@ impl CyclicDifferencePenalty {
         self.order
     }
 
-    fn coefficients(&self) -> Vec<f64> {
-        difference_coefficients(self.order)
+    fn coefficients(&self) -> Cow<'static, [f64]> {
+        difference_coefficients_for_evaluation(self.order)
     }
 }
 
@@ -460,7 +462,7 @@ impl Penalty for EdgeMonotonicPenalty {
         }
         let left = (beta[1] - beta[0]).max(0.0);
         let right = (beta[beta.len() - 2] - beta[beta.len() - 1]).max(0.0);
-        self.weight * (left * left + right * right)
+        self.weight * right.mul_add(right, left * left)
     }
 
     fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
@@ -1011,6 +1013,14 @@ pub(crate) const fn validate_difference_order_for_dim(
 fn difference_coefficients(order: usize) -> Vec<f64> {
     try_difference_coefficients(order)
         .expect("difference penalty order must have binomial coefficients that fit in usize")
+}
+
+fn difference_coefficients_for_evaluation(order: usize) -> Cow<'static, [f64]> {
+    match order {
+        1 => Cow::Borrowed(&FIRST_DIFFERENCE_COEFFICIENTS),
+        2 => Cow::Borrowed(&SECOND_DIFFERENCE_COEFFICIENTS),
+        _ => Cow::Owned(difference_coefficients(order)),
+    }
 }
 
 pub(crate) fn try_difference_coefficients(order: usize) -> Result<Vec<f64>, ModelError> {

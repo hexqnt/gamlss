@@ -28,8 +28,8 @@ use crate::multivariate::{
 };
 
 use super::{
-    d_log_covariance_multiplier_d_power, direct_power_score, log_covariance_multiplier,
-    radial_nll_constant,
+    RadialTerms, d_log_covariance_multiplier_d_power, direct_power_score, location_scale_terms,
+    log_covariance_multiplier,
 };
 
 /// Default-link multivariate power-exponential with explicit marginal SDs.
@@ -125,14 +125,14 @@ where
             return f64::INFINITY;
         }
         let mut z = [0.0; D];
-        let Some((quadratic, log_det_scale)) =
-            elliptical::standardize(D, &observation, &theta.mu, &theta.scatter_cholesky, &mut z)
-        else {
-            return f64::INFINITY;
-        };
-        let radial_power = quadratic.powf(0.5 * theta.power);
-        let nll = log_det_scale + radial_nll_constant(D as f64, theta.power) + 0.5 * radial_power;
-        if nll.is_finite() { nll } else { f64::INFINITY }
+        location_scale_terms(
+            &observation,
+            &theta.mu,
+            &theta.scatter_cholesky,
+            theta.power,
+            &mut z,
+        )
+        .map_or(f64::INFINITY, |terms| terms.nll)
     }
 
     fn nll_and_gradient_eta_values(
@@ -144,33 +144,25 @@ where
             return (f64::INFINITY, Self::nan_eta());
         }
         let mut z = [0.0; D];
-        let Some((quadratic, log_det_scale)) =
-            elliptical::standardize(D, &observation, &theta.mu, &theta.scatter_cholesky, &mut z)
+        let Some(terms) = location_scale_terms(
+            &observation,
+            &theta.mu,
+            &theta.scatter_cholesky,
+            theta.power,
+            &mut z,
+        ) else {
+            return (f64::INFINITY, Self::nan_eta());
+        };
+        let Some((location_score, radial_weight)) =
+            terms.location_score(&theta.scatter_cholesky, z, theta.power)
         else {
             return (f64::INFINITY, Self::nan_eta());
         };
-        let radial_power = quadratic.powf(0.5 * theta.power);
-        let nll = log_det_scale + radial_nll_constant(D as f64, theta.power) + 0.5 * radial_power;
-        if !nll.is_finite() {
-            return (f64::INFINITY, Self::nan_eta());
-        }
-
-        let radial_weight = if quadratic == 0.0 {
-            0.0
-        } else {
-            0.5 * theta.power * quadratic.powf(0.5 * theta.power - 1.0)
-        };
-        let standardized_gradient = z.map(|standardized| radial_weight * standardized);
-        let mut location_score = [0.0; D];
-        if !elliptical::transpose_solve(
-            D,
-            &theta.scatter_cholesky,
-            &standardized_gradient,
-            &mut location_score,
-        ) {
-            return (f64::INFINITY, Self::nan_eta());
-        }
-
+        let RadialTerms {
+            nll,
+            quadratic,
+            radial_power,
+        } = terms;
         let mut gradient = zero_eta();
         let mut correlation_score = [[0.0; D]; D];
         for row in 0..D {
@@ -304,35 +296,13 @@ where
                 "MV power-exponential mean/SD/partial-correlation theta",
             ));
         }
-        let dimension = D as f64;
-        let gamma = rand_distr::Gamma::new(dimension / theta.power, 1.0)
-            .map_err(|_| SimulationError::BackendRejected("power-exponential radial shape"))?;
-        let radius = (2.0 * rand_distr::Distribution::sample(&gamma, rng)).powf(1.0 / theta.power);
-        let normal = rand_distr::StandardNormal;
-        let direction: [f64; D] =
-            std::array::from_fn(|_| rand_distr::Distribution::sample(&normal, rng));
-        let direction_norm = direction
-            .iter()
-            .fold(0.0_f64, |norm, value| norm.hypot(*value));
-        if !radius.is_finite() || direction_norm == 0.0 || !direction_norm.is_finite() {
-            return Err(SimulationError::NumericalFailure(
-                "power-exponential radial transform",
-            ));
-        }
-        let standardized = direction.map(|value| radius * value / direction_norm);
-        let mut out = theta.mu;
-        for row in 0..D {
-            for col in 0..=row {
-                out[row] += theta.scatter_cholesky.lower(row, col) * standardized[col];
-            }
-        }
-        if out.iter().all(|value| value.is_finite()) {
-            Ok(out)
-        } else {
-            Err(SimulationError::NumericalFailure(
-                "MV power-exponential mean/SD transform",
-            ))
-        }
+        super::try_sample_location_scale(
+            rng,
+            theta.mu,
+            &theta.scatter_cholesky,
+            theta.power,
+            "MV power-exponential mean/SD transform",
+        )
     }
 }
 
@@ -462,18 +432,8 @@ impl<const D: usize> MvPowerExponentialMeanStdPartialCorrTheta<D> {
         let covariance_cholesky = scale_cholesky_from_correlation(&sigma, &correlation_cholesky);
         let scatter_per_standard_deviation =
             (-0.5 * log_covariance_multiplier(D as f64, power)).exp();
-        let mut scatter_cholesky = FixedLowerTriangular::zeros();
-        for row in 0..D {
-            for col in 0..=row {
-                scatter_cholesky
-                    .set_lower(
-                        row,
-                        col,
-                        scatter_per_standard_deviation * covariance_cholesky.lower(row, col),
-                    )
-                    .expect("valid lower-triangular index");
-            }
-        }
+        let scatter_cholesky =
+            covariance_cholesky.map_lower(|_, _, value| scatter_per_standard_deviation * value);
         Self {
             mu,
             sigma,

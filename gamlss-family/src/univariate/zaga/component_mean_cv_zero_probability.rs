@@ -27,24 +27,7 @@ pub struct ZagaComponentMeanCvZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZagaComponentMeanCvZeroProbabilityEta {
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            component_mean: values[0],
-            cv: values[1],
-            zero_probability: values[2],
-        }
-    }
-
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.component_mean,
-            1 => self.cv,
-            2 => self.zero_probability,
-            _ => unreachable!("zaga eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZagaComponentMeanCvZeroProbabilityEta, 3, { 0 => component_mean, 1 => cv, 2 => zero_probability }, "zaga eta only has indices 0 through 2");
 
 impl<ComponentMeanLink, CvLink, ZeroProbabilityLink>
     Zaga<ComponentMeanLink, CvLink, ZeroProbabilityLink>

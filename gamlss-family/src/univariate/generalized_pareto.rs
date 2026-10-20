@@ -317,21 +317,7 @@ pub struct GeneralizedParetoEta {
     pub shape: f64,
 }
 
-impl ParameterParts<2> for GeneralizedParetoEta {
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            scale: values[0],
-            shape: values[1],
-        }
-    }
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.scale,
-            1 => self.shape,
-            _ => unreachable!("generalized Pareto eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(GeneralizedParetoEta, 2, { 0 => scale, 1 => shape }, "generalized Pareto eta only has indices 0 and 1");
 
 /// Natural-scale parameters for [`GeneralizedPareto`].
 #[derive(Debug, Clone, Copy, PartialEq)]

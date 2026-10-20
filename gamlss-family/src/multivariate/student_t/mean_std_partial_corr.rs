@@ -98,7 +98,7 @@ where
         let correlation_cholesky = correlation_cholesky_from_partial(&partial_corr);
         let covariance_cholesky = scale_cholesky_from_correlation(&sigma, &correlation_cholesky);
         let scale_factor = scatter_per_standard_deviation(tau);
-        let scale_cholesky = scaled_cholesky(&covariance_cholesky, scale_factor);
+        let scale_cholesky = covariance_cholesky.map_lower(|_, _, value| scale_factor * value);
         MvStudentTMeanStdPartialCorrTheta::from_parts_unchecked(
             mu,
             sigma,
@@ -109,19 +109,11 @@ where
         )
     }
 
-    fn nan_eta() -> MvStudentTMeanStdPartialCorrEta<D> {
-        let mut partial_corr = FixedPartialCorrelations::zeros();
-        for row in 1..D {
-            for col in 0..row {
-                *partial_corr
-                    .get_mut(row, col)
-                    .expect("valid strict-lower index") = f64::NAN;
-            }
-        }
+    const fn nan_eta() -> MvStudentTMeanStdPartialCorrEta<D> {
         MvStudentTMeanStdPartialCorrEta {
             mu: [f64::NAN; D],
             sigma: [f64::NAN; D],
-            partial_corr,
+            partial_corr: FixedPartialCorrelations::filled_strict_lower(f64::NAN),
             tau: f64::NAN,
         }
     }
@@ -336,21 +328,12 @@ where
     >;
 
     fn eta_from_shape(values: ShapeValues<Self::Shape>) -> Self::Eta {
-        let mut partial_corr = FixedPartialCorrelations::zeros();
-        for row in 1..D {
-            for col in 0..row {
-                *partial_corr
-                    .get_mut(row, col)
-                    .expect("valid strict-lower index") = values.0.1[row][col];
-            }
-        }
+        let partial_corr = FixedPartialCorrelations::from_lower_rows(values.0.1);
         MvStudentTMeanStdPartialCorrEta::new(values.0.0.0, values.0.0.1, partial_corr, values.1)
     }
 
     fn gradient_to_shape(gradient: &Self::GradientEta) -> ShapeValues<Self::Shape> {
-        let partial_corr = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.partial_corr.get(row, col).unwrap_or(0.0))
-        });
+        let partial_corr = gradient.partial_corr.lower_rows();
         (((gradient.mu, gradient.sigma), partial_corr), gradient.tau)
     }
 
@@ -423,8 +406,8 @@ impl<const D: usize> MvStudentTMeanStdPartialCorrTheta<D> {
     ) -> Result<Self, ModelError> {
         let correlation_cholesky = correlation_cholesky_from_partial(&partial_corr);
         let covariance_cholesky = scale_cholesky_from_correlation(&sigma, &correlation_cholesky);
-        let scale_cholesky =
-            scaled_cholesky(&covariance_cholesky, scatter_per_standard_deviation(tau));
+        let scale_cholesky = covariance_cholesky
+            .map_lower(|_, _, value| scatter_per_standard_deviation(tau) * value);
         let theta = Self::from_parts_unchecked(
             mu,
             sigma,
@@ -507,20 +490,6 @@ impl<const D: usize> MvStudentTMeanStdPartialCorrTheta<D> {
 
 fn scatter_per_standard_deviation(tau: f64) -> f64 {
     ((tau - 2.0) / tau).sqrt()
-}
-
-fn scaled_cholesky<const D: usize>(
-    cholesky: &FixedLowerTriangular<D>,
-    factor: f64,
-) -> FixedLowerTriangular<D> {
-    let mut out = FixedLowerTriangular::zeros();
-    for row in 0..D {
-        for col in 0..=row {
-            out.set_lower(row, col, factor * cholesky.lower(row, col))
-                .expect("valid lower index");
-        }
-    }
-    out
 }
 
 fn valid_theta<const D: usize>(theta: &MvStudentTMeanStdPartialCorrTheta<D>) -> bool {

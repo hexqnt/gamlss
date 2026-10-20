@@ -8,6 +8,24 @@ use gamlss_spline::{
 
 use crate::{FittedTerm, TensorSmoothKind};
 
+macro_rules! impl_enum_penalty {
+    ($penalty:ident { $($variant:ident),+ $(,)? }) => {
+        impl Penalty for $penalty {
+            fn value(&self, beta: &[f64]) -> f64 {
+                match self { $(Self::$variant(penalty) => penalty.value(beta),)+ }
+            }
+
+            fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
+                match self { $(Self::$variant(penalty) => penalty.add_gradient(beta, grad),)+ }
+            }
+
+            fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
+                match self { $(Self::$variant(penalty) => penalty.validate_dim(dim),)+ }
+            }
+        }
+    };
+}
+
 type FormulaTensorPenalty = TensorProductPenalty<TensorMarginPenalty, TensorMarginPenalty>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,28 +34,7 @@ enum TensorMarginPenalty {
     Contrast(HelmertContrastPenalty<PreparedDifferencePenalty>),
 }
 
-impl Penalty for TensorMarginPenalty {
-    fn value(&self, beta: &[f64]) -> f64 {
-        match self {
-            Self::Direct(penalty) => penalty.value(beta),
-            Self::Contrast(penalty) => penalty.value(beta),
-        }
-    }
-
-    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        match self {
-            Self::Direct(penalty) => penalty.add_gradient(beta, grad),
-            Self::Contrast(penalty) => penalty.add_gradient(beta, grad),
-        }
-    }
-
-    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
-        match self {
-            Self::Direct(penalty) => penalty.validate_dim(dim),
-            Self::Contrast(penalty) => penalty.validate_dim(dim),
-        }
-    }
-}
+impl_enum_penalty!(TensorMarginPenalty { Direct, Contrast });
 
 impl MatrixPenalty for TensorMarginPenalty {
     fn add_penalty_matrix(&self, dim: usize, gram: &mut [f64]) {
@@ -55,31 +52,11 @@ enum SegmentPenaltyKind {
     Tensor(FormulaTensorPenalty),
 }
 
-impl Penalty for SegmentPenaltyKind {
-    fn value(&self, beta: &[f64]) -> f64 {
-        match self {
-            Self::Difference(penalty) => penalty.value(beta),
-            Self::Cyclic(penalty) => penalty.value(beta),
-            Self::Tensor(penalty) => penalty.value(beta),
-        }
-    }
-
-    fn add_gradient(&self, beta: &[f64], grad: &mut [f64]) {
-        match self {
-            Self::Difference(penalty) => penalty.add_gradient(beta, grad),
-            Self::Cyclic(penalty) => penalty.add_gradient(beta, grad),
-            Self::Tensor(penalty) => penalty.add_gradient(beta, grad),
-        }
-    }
-
-    fn validate_dim(&self, dim: usize) -> Result<(), ModelError> {
-        match self {
-            Self::Difference(penalty) => penalty.validate_dim(dim),
-            Self::Cyclic(penalty) => penalty.validate_dim(dim),
-            Self::Tensor(penalty) => penalty.validate_dim(dim),
-        }
-    }
-}
+impl_enum_penalty!(SegmentPenaltyKind {
+    Difference,
+    Cyclic,
+    Tensor
+});
 
 /// Formula-local segment penalty representation.
 #[derive(Debug, Clone, PartialEq, Default)]

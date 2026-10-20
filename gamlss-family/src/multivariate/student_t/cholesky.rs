@@ -84,29 +84,20 @@ where
         }
     }
 
-    fn theta_from_eta(eta: MvStudentTCholeskyEta<D>) -> MvStudentTCholeskyTheta<D> {
+    fn theta_from_eta(eta: &MvStudentTCholeskyEta<D>) -> MvStudentTCholeskyTheta<D> {
         let mut mu = [0.0; D];
-        let mut cholesky = FixedLowerTriangular::zeros();
         for (mu, eta_mu) in mu.iter_mut().zip(eta.mu) {
             *mu = MuLink::inverse(eta_mu);
         }
-        for row in 0..D {
-            for col in 0..=row {
-                let eta_value = eta.cholesky.get(row, col).expect("valid lower index");
-                let value = if row == col {
-                    DiagonalLink::inverse(eta_value)
-                } else {
-                    OffDiagonalLink::inverse(eta_value)
-                };
-                cholesky
-                    .set_lower(row, col, value)
-                    .expect("valid lower index");
-            }
-        }
+        let mut cholesky = FixedLowerTriangular::zeros();
+        crate::multivariate::cholesky::from_eta_into::<D, DiagonalLink, OffDiagonalLink>(
+            &eta.cholesky,
+            &mut cholesky,
+        );
         MvStudentTCholeskyTheta::from_parts_unchecked(mu, cholesky, TauLink::inverse(eta.tau))
     }
 
-    fn nll_theta(observation: [f64; D], theta: MvStudentTCholeskyTheta<D>) -> f64 {
+    fn nll_theta(observation: [f64; D], theta: &MvStudentTCholeskyTheta<D>) -> f64 {
         let mut z = [0.0; D];
         nll_location_scale(observation, &theta.mu, &theta.cholesky, theta.tau, &mut z)
     }
@@ -121,7 +112,7 @@ where
 
     fn nll_and_gradient_eta_values(
         observation: [f64; D],
-        eta: MvStudentTCholeskyEta<D>,
+        eta: &MvStudentTCholeskyEta<D>,
     ) -> (f64, MvStudentTCholeskyEta<D>) {
         let theta = Self::theta_from_eta(eta);
         let mut z = [0.0; D];
@@ -209,7 +200,7 @@ where
     fn workspace(&self) -> Self::Workspace {}
 
     fn theta(&self, eta: &Self::Eta, _workspace: &mut Self::Workspace) -> Self::Theta {
-        Self::theta_from_eta(*eta)
+        Self::theta_from_eta(eta)
     }
 
     #[inline]
@@ -219,7 +210,7 @@ where
         theta: &Self::Theta,
         _workspace: &mut Self::Workspace,
     ) -> f64 {
-        Self::nll_theta(observation, *theta)
+        Self::nll_theta(observation, theta)
     }
 
     #[inline]
@@ -229,7 +220,7 @@ where
         eta: &Self::Eta,
         _workspace: &mut Self::Workspace,
     ) -> f64 {
-        Self::nll_theta(observation, Self::theta_from_eta(*eta))
+        Self::nll_theta(observation, &Self::theta_from_eta(eta))
     }
 
     #[inline]
@@ -239,7 +230,7 @@ where
         eta: &Self::Eta,
         _workspace: &mut Self::Workspace,
     ) -> (f64, Self::GradientEta) {
-        Self::nll_and_gradient_eta_values(observation, *eta)
+        Self::nll_and_gradient_eta_values(observation, eta)
     }
 }
 
@@ -337,9 +328,7 @@ where
     }
 
     fn gradient_to_shape(gradient: &MvStudentTCholeskyEta<D>) -> ShapeValues<Self::Shape> {
-        let lower = std::array::from_fn(|row| {
-            std::array::from_fn(|col| gradient.cholesky.get(row, col).unwrap_or(0.0))
-        });
+        let lower = *gradient.cholesky.as_full_rows();
         ((gradient.mu, lower), gradient.tau)
     }
 
@@ -445,15 +434,7 @@ impl<const D: usize> MvStudentTCholeskyTheta<D> {
     /// documentation for the `tau > 2` conversion.
     #[must_use]
     pub fn scale_covariance(&self, row: usize, col: usize) -> Option<f64> {
-        if row >= D || col >= D {
-            return None;
-        }
-        let limit = row.min(col);
-        Some(
-            (0..=limit)
-                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
-                .sum(),
-        )
+        crate::multivariate::elliptical::covariance_from_cholesky(&self.cholesky, row, col)
     }
 
     /// Returns the marginal scale of one component.

@@ -5,7 +5,8 @@ use crate::transforms::{
     validate_non_empty_finite,
 };
 
-use super::power::{ProfileAccumulator, fit_lambda};
+use super::moments::Moments;
+use super::power::{fit_lambda, profile_log_likelihood};
 
 const LAMBDA_EPSILON: f64 = 1.0e-12;
 
@@ -171,19 +172,17 @@ fn validate_yeo_johnson_inverse_value(lambda: f64, value: f64) -> Result<(), Tra
 }
 
 fn yeo_johnson_profile_log_likelihood(y: &[f64], lambda: f64) -> Option<f64> {
-    let mut accumulator = ProfileAccumulator::default();
+    let mut accumulator = Moments::default();
     let mut log_jacobian = 0.0;
     for value in y.iter().copied() {
-        accumulator.push(transform_value(lambda, value))?;
+        accumulator.push_finite(transform_value(lambda, value))?;
         log_jacobian += if value >= 0.0 {
             (lambda - 1.0) * value.ln_1p()
         } else {
             (1.0 - lambda) * (-value).ln_1p()
         };
     }
-    accumulator
-        .log_likelihood()
-        .map(|profile| profile + log_jacobian)
+    profile_log_likelihood(accumulator).map(|profile| profile + log_jacobian)
 }
 
 #[cfg(test)]

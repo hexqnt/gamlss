@@ -49,26 +49,7 @@ pub struct ZinbTotalMeanSizeZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<3> for ZinbTotalMeanSizeZeroProbabilityEta {
-    #[inline]
-    fn from_array(values: [f64; 3]) -> Self {
-        Self {
-            total_mean: values[0],
-            size: values[1],
-            zero_probability: values[2],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.total_mean,
-            1 => self.size,
-            2 => self.zero_probability,
-            _ => unreachable!("ZINB total-mean/size eta only has indices 0 through 2"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZinbTotalMeanSizeZeroProbabilityEta, 3, { 0 => total_mean, 1 => size, 2 => zero_probability }, "ZINB total-mean/size eta only has indices 0 through 2");
 
 /// Natural-scale ZINB total-mean/size/zero-probability parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

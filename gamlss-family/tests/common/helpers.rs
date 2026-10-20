@@ -188,6 +188,14 @@ where
         std::any::type_name::<F>()
     );
     let cdf = family.cdf(y, &theta);
+    if (cdf - p).abs() > tolerance {
+        // Near support boundaries, adjacent f64 quantiles can span more probability than the requested tolerance. Require the target to lie within one representable step of the returned quantile.
+        let cdf_below = family.cdf(y.next_down(), &theta);
+        let cdf_above = family.cdf(y.next_up(), &theta);
+        if cdf_below <= cdf && cdf <= cdf_above && cdf_below <= p && p <= cdf_above {
+            return;
+        }
+    }
     assert_close_with_context(
         cdf,
         p,

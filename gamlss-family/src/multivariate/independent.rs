@@ -231,13 +231,11 @@ where
         rng: &mut Rng,
         theta: &Self::Theta,
     ) -> Result<Self::Sample, SimulationError> {
-        let mut samples = Vec::with_capacity(D);
-        for component_theta in theta {
-            samples.push(self.component.try_sample(rng, component_theta)?);
+        let mut samples: [Option<F::Sample>; D] = std::array::from_fn(|_| None);
+        for (sample, component_theta) in samples.iter_mut().zip(theta) {
+            *sample = Some(self.component.try_sample(rng, component_theta)?);
         }
-        samples
-            .try_into()
-            .map_err(|_| SimulationError::NumericalFailure("independent-product sample dimension"))
+        Ok(samples.map(|sample| sample.expect("each independent component was sampled")))
     }
 
     fn try_sample_into(
@@ -272,9 +270,14 @@ where
     where
         Obs: ObservationView<'obs, Observation = [f64; D]> + 'obs,
     {
+        // Reuse storage while keeping an eager scalar snapshot for arbitrary component initializers.
+        let mut values = Vec::new();
+        let mut weights = Vec::new();
         std::array::from_fn(|component| {
-            let mut values = Vec::with_capacity(obs.len());
-            let mut weights = Vec::with_capacity(obs.len());
+            values.clear();
+            values.reserve(obs.len());
+            weights.clear();
+            weights.reserve(obs.len());
             for row in 0..obs.len() {
                 values.push(obs.observation_at(row)[component]);
                 weights.push(obs.weight_at(row));
@@ -289,8 +292,9 @@ where
 mod tests {
     use approx::assert_relative_eq;
     use gamlss_core::{
-        DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf, InitialEtaFromObservations,
-        ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks, Sigma,
+        CompilableFamily, DenseDesign, Family, Gamlss, HasCdf, HasMarginalCdf,
+        InitialEtaFromObservations, ModelError, Mu, NoPenalty, ParameterBlock, ParameterBlocks,
+        Sigma,
     };
 
     use super::IndependentVec;
@@ -363,6 +367,54 @@ mod tests {
         assert_relative_eq!(gradient[0].sigma, gradient_0.sigma);
         assert_relative_eq!(gradient[1].mu, gradient_1.mu);
         assert_relative_eq!(gradient[1].sigma, gradient_1.sigma);
+    }
+
+    #[test]
+    fn component_initialization_preserves_weights_and_missing_values() {
+        let observations = [[f64::NAN, 2.0], [4.0, -1.0], [1.0, 6.0], [3.0, f64::NAN]];
+        let weights = [0.0, 0.5, 2.0, 1.0];
+        let obs = (observations.as_slice(), weights.as_slice());
+        let scalar = NormalMuSigma::new();
+        let family = IndependentVec::<_, 2>::new(scalar);
+        let actual = family.initial_shape(&obs);
+        let expected = std::array::from_fn(|component| {
+            let values = observations.map(|row| row[component]);
+            scalar.initial_shape(&(values.as_slice(), weights.as_slice()))
+        });
+        assert_eq!(actual, expected);
+    }
+
+    #[cfg(feature = "rand")]
+    #[test]
+    fn sampling_preserves_component_order_and_stops_rng_at_first_error() {
+        use gamlss_core::TrySimulate;
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let scalar = NormalMuSigma::new();
+        let family = IndependentVec::<_, 3>::new(scalar);
+        let valid = NormalTheta {
+            mu: 0.5,
+            sigma: 2.0,
+        };
+        let mut actual_rng = StdRng::seed_from_u64(42);
+        let mut expected_rng = StdRng::seed_from_u64(42);
+        let actual = family.try_sample(&mut actual_rng, &[valid; 3]).unwrap();
+        let expected: [f64; 3] =
+            std::array::from_fn(|_| scalar.try_sample(&mut expected_rng, &valid).unwrap());
+        assert_eq!(actual.map(f64::to_bits), expected.map(f64::to_bits));
+
+        let invalid = NormalTheta {
+            sigma: -1.0,
+            ..valid
+        };
+        assert!(
+            family
+                .try_sample(&mut actual_rng, &[valid, invalid, valid])
+                .is_err()
+        );
+        scalar.try_sample(&mut expected_rng, &valid).unwrap();
+        assert!(scalar.try_sample(&mut expected_rng, &invalid).is_err());
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
     }
 
     #[test]

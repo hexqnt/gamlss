@@ -179,31 +179,10 @@ pub(in crate::multivariate) fn scale_cholesky_from_correlation<const D: usize>(
     sigma: &[f64; D],
     correlation_cholesky: &FixedLowerTriangular<D>,
 ) -> FixedLowerTriangular<D> {
-    let mut out = FixedLowerTriangular::zeros();
-    for row in 0..D {
-        for col in 0..=row {
-            out.set_lower(row, col, sigma[row] * correlation_cholesky.lower(row, col))
-                .expect("valid lower index");
-        }
-    }
-    out
+    correlation_cholesky.map_lower(|row, _, value| sigma[row] * value)
 }
 
-pub(in crate::multivariate) fn covariance_from_cholesky<const D: usize>(
-    cholesky: &FixedLowerTriangular<D>,
-    row: usize,
-    col: usize,
-) -> Option<f64> {
-    if row >= D || col >= D {
-        return None;
-    }
-    let limit = row.min(col);
-    Some(
-        (0..=limit)
-            .map(|index| cholesky.lower(row, index) * cholesky.lower(col, index))
-            .sum(),
-    )
-}
+pub(in crate::multivariate) use super::elliptical::covariance_from_cholesky;
 
 /// Pulls a score on the correlation Cholesky factor back through the ordered
 /// partial-correlation construction.

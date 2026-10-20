@@ -11,37 +11,7 @@ permissions:
 jobs:
   verify:
     name: Pre-publish checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy with all features
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Clippy with default features
-        run: cargo clippy -p gamlss --lib --locked -- -D warnings
-
-      - name: Clippy without default features
-        run: cargo clippy --workspace --all-targets --no-default-features --locked -- -D warnings
-
-      - name: Tests
-        run: cargo test --workspace --all-features --locked
-
-      - name: Check package contents
-        run: cargo package --workspace --locked --list
+    uses: ./.github/workflows/ci.yml
 
   publish:
     name: Publish to crates.io

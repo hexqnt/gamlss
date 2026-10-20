@@ -29,20 +29,7 @@ pub struct ExponentialMeanEta {
     pub mean: f64,
 }
 
-impl ParameterParts<1> for ExponentialMeanEta {
-    #[inline]
-    fn from_array(values: [f64; 1]) -> Self {
-        Self { mean: values[0] }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.mean,
-            _ => unreachable!("exponential mean eta only has index 0"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ExponentialMeanEta, 1, { 0 => mean }, "exponential mean eta only has index 0");
 
 /// Natural-scale exponential mean parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -34,6 +34,7 @@
 * Предпочитать “parse, don’t validate”: на границе превращать внешний ввод в более строгие внутренние типы.
 * Корректность, численная устойчивость и понятные ошибки важнее микропроизводительности.
 * SIMD-oriented и sparse/dense backends желательны, но не должны преждевременно протекать в core abstractions.
+* Prefer bounds-check elimination patterns: iterators, slices/subslices, chunking, provable index ranges, loo   p-invariant prechecks, etc.
 
 ## Rust-стиль
 
@@ -44,6 +45,7 @@
 * В LaTeX-формулах внутри rustdoc для переноса строки пиши `\\\\`: после обработки Markdown в HTML останется требуемая KaTeX-команда `\\`.
 * Для recoverable errors использовать `Result`; не использовать panic для обычной валидации входных данных.
 * `unsafe` не добавлять без явного согласования. Любой согласованный `unsafe` должен быть изолирован, задокументирован и покрыт тестами.
+* Для обычного текста не делай "ручной" перенос на новую строку.
 
 ## Границы crate-ов
 

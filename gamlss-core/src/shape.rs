@@ -64,19 +64,10 @@ impl<Params, const K: usize> ParameterShape for ScalarTuple<Params, K> {
     }
 
     fn scale(values: &mut Self::Values, factor: f64) {
-        if factor == 0.0 {
-            values.fill(0.0);
-        } else {
-            for value in values.iter_mut() {
-                *value *= factor;
-            }
-        }
+        scale_values(values, factor);
     }
     fn add_assign(target: &mut Self::Values, source: &Self::Values) {
-        target
-            .iter_mut()
-            .zip(source)
-            .for_each(|(target, source)| *target += *source);
+        add_values(target, source);
     }
     fn add_to_first(values: &mut Self::Values, delta: f64) {
         if let Some(first) = values.first_mut() {
@@ -99,19 +90,10 @@ impl<P, const D: usize> ParameterShape for Vector<P, D> {
     }
 
     fn scale(values: &mut Self::Values, factor: f64) {
-        if factor == 0.0 {
-            values.fill(0.0);
-        } else {
-            for value in values.iter_mut() {
-                *value *= factor;
-            }
-        }
+        scale_values(values, factor);
     }
     fn add_assign(target: &mut Self::Values, source: &Self::Values) {
-        target
-            .iter_mut()
-            .zip(source)
-            .for_each(|(target, source)| *target += *source);
+        add_values(target, source);
     }
     fn add_to_first(values: &mut Self::Values, delta: f64) {
         if let Some(first) = values.first_mut() {
@@ -146,10 +128,7 @@ impl<P, const D: usize> ParameterShape for Lower<P, D> {
     }
     fn add_assign(target: &mut Self::Values, source: &Self::Values) {
         for (target_row, source_row) in target.iter_mut().zip(source) {
-            target_row
-                .iter_mut()
-                .zip(source_row)
-                .for_each(|(target, source)| *target += *source);
+            add_values(target_row, source_row);
         }
     }
     fn add_to_first(values: &mut Self::Values, delta: f64) {
@@ -184,10 +163,7 @@ impl<P, const D: usize> ParameterShape for StrictLower<P, D> {
     }
     fn add_assign(target: &mut Self::Values, source: &Self::Values) {
         for (target_row, source_row) in target.iter_mut().zip(source) {
-            target_row
-                .iter_mut()
-                .zip(source_row)
-                .for_each(|(target, source)| *target += *source);
+            add_values(target_row, source_row);
         }
     }
     fn add_to_first(values: &mut Self::Values, delta: f64) {
@@ -211,19 +187,10 @@ impl<P, const C: usize> ParameterShape for Simplex<P, C> {
     }
 
     fn scale(values: &mut Self::Values, factor: f64) {
-        if factor == 0.0 {
-            values.fill(0.0);
-        } else {
-            for value in values.iter_mut() {
-                *value *= factor;
-            }
-        }
+        scale_values(values, factor);
     }
     fn add_assign(target: &mut Self::Values, source: &Self::Values) {
-        target
-            .iter_mut()
-            .zip(source)
-            .for_each(|(target, source)| *target += *source);
+        add_values(target, source);
     }
     fn add_to_first(values: &mut Self::Values, delta: f64) {
         if C > 1 {
@@ -344,6 +311,23 @@ pub trait ParameterShape: sealed::Sealed {
 
     /// Adds `delta` to the first scalar coordinate, if the shape is non-empty.
     fn add_to_first(values: &mut Self::Values, delta: f64);
+}
+
+fn scale_values(values: &mut [f64], factor: f64) {
+    if factor == 0.0 {
+        values.fill(0.0);
+    } else {
+        for value in values {
+            *value *= factor;
+        }
+    }
+}
+
+fn add_values(target: &mut [f64], source: &[f64]) {
+    target
+        .iter_mut()
+        .zip(source)
+        .for_each(|(target, source)| *target += *source);
 }
 
 /// Checked number of entries in a packed lower-triangular matrix.

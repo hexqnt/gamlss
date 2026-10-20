@@ -23,6 +23,7 @@ pub mod log;
 pub mod log1p_shift;
 pub mod max_abs_scale;
 pub mod min_max_scale;
+mod moments;
 mod power;
 pub mod quantile;
 pub mod robust_standardize;
@@ -362,7 +363,7 @@ pub(crate) fn quantile_sorted(values: &[f64], probability: f64) -> Option<f64> {
         Some(values[lower])
     } else {
         let weight = index - lower as f64;
-        Some(values[lower] + weight * (values[upper] - values[lower]))
+        Some(weight.mul_add(values[upper] - values[lower], values[lower]))
     }
 }
 

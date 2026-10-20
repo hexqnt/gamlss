@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gamlss_core::{Log, Logit, ParameterParts, PositiveLink, UnitIntervalLink};
+use gamlss_core::{Log, Logit, PositiveLink, UnitIntervalLink};
 
 use gamlss_special::{discrete_quantile, is_nonnegative_integer, log_add_exp};
 
@@ -186,24 +186,7 @@ pub struct ZipComponentMeanZeroProbabilityEta {
     pub zero_probability: f64,
 }
 
-impl ParameterParts<2> for ZipComponentMeanZeroProbabilityEta {
-    #[inline]
-    fn from_array(values: [f64; 2]) -> Self {
-        Self {
-            component_mean: values[0],
-            zero_probability: values[1],
-        }
-    }
-
-    #[inline]
-    fn part(&self, index: usize) -> f64 {
-        match index {
-            0 => self.component_mean,
-            1 => self.zero_probability,
-            _ => unreachable!("zip eta only has indices 0 and 1"),
-        }
-    }
-}
+impl_scalar_parameter_parts!(ZipComponentMeanZeroProbabilityEta, 2, { 0 => component_mean, 1 => zero_probability }, "zip eta only has indices 0 and 1");
 
 /// Natural-scale component-mean ZIP parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]

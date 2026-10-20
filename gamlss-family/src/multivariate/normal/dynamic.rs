@@ -727,15 +727,7 @@ impl DynMvNormalCholeskyTheta {
     /// Returns one covariance entry from `L L'`.
     #[must_use]
     pub fn covariance(&self, row: usize, col: usize) -> Option<f64> {
-        if row >= self.mu.len() || col >= self.mu.len() {
-            return None;
-        }
-        let limit = row.min(col);
-        Some(
-            (0..=limit)
-                .map(|index| self.cholesky.lower(row, index) * self.cholesky.lower(col, index))
-                .sum(),
-        )
+        crate::multivariate::elliptical::covariance_from_cholesky(&self.cholesky, row, col)
     }
 
     /// Returns the marginal scale of one component.
